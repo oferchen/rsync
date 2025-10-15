@@ -163,6 +163,12 @@ impl TryFrom<u8> for MessageCode {
     }
 }
 
+impl From<MessageCode> for u8 {
+    fn from(value: MessageCode) -> Self {
+        value.as_u8()
+    }
+}
+
 /// Failures encountered while parsing or constructing multiplexed message headers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EnvelopeError {
@@ -250,7 +256,7 @@ impl MessageHeader {
     /// Encodes this header into the little-endian format used on the wire.
     #[must_use]
     pub fn encode(self) -> [u8; HEADER_LEN] {
-        let tag = u32::from(MPLEX_BASE) + u32::from(self.code.as_u8());
+        let tag = u32::from(MPLEX_BASE) + u32::from(u8::from(self.code));
         let raw = (tag << 24) | (self.payload_len & PAYLOAD_MASK);
         raw.to_le_bytes()
     }
@@ -316,6 +322,14 @@ mod tests {
             let raw = code.as_u8();
             let decoded = MessageCode::try_from(raw).expect("known code");
             assert_eq!(decoded, code);
+        }
+    }
+
+    #[test]
+    fn message_code_into_u8_matches_as_u8() {
+        for &code in MessageCode::all() {
+            let converted: u8 = code.into();
+            assert_eq!(converted, code.as_u8());
         }
     }
 
