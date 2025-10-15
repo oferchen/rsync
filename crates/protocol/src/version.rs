@@ -69,20 +69,6 @@ impl ProtocolVersionAdvertisement for &ProtocolVersion {
     }
 }
 
-impl ProtocolVersionAdvertisement for NonZeroU8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.get()
-    }
-}
-
-impl ProtocolVersionAdvertisement for &NonZeroU8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.get()
-    }
-}
-
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
         #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
