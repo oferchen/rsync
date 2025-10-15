@@ -13,7 +13,7 @@ use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 /// later validation). Otherwise the exchange proceeds in binary mode. When the
 /// caller has not yet accumulated enough bytes to decide, the helper reports
 /// [`NegotiationPrologue::NeedMoreData`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NegotiationPrologue {
     /// There is not enough buffered data to determine the negotiation style.
     NeedMoreData,

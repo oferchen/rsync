@@ -17,7 +17,7 @@ const PAYLOAD_MASK: u32 = 0x00FF_FFFF;
 /// Rust and C identifiers. Values that alias upstream `enum logcode`
 /// definitions retain their historic numbering to ensure interoperability with
 /// existing daemons.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum MessageCode {
     /// Raw file data written to the multiplexed stream.
@@ -97,7 +97,7 @@ impl TryFrom<u8> for MessageCode {
 }
 
 /// Failures encountered while parsing or constructing multiplexed message headers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum EnvelopeError {
     /// Fewer than [`HEADER_LEN`] bytes were provided when attempting to decode a
     /// header.
@@ -141,7 +141,7 @@ impl fmt::Display for EnvelopeError {
 impl std::error::Error for EnvelopeError {}
 
 /// A fully decoded multiplexed message header.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MessageHeader {
     code: MessageCode,
     payload_len: u32,

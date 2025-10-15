@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use crate::envelope::{EnvelopeError, HEADER_LEN, MessageCode, MessageHeader};
 
 /// A decoded multiplexed message consisting of the tag and payload bytes.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct MessageFrame {
     code: MessageCode,
     payload: Vec<u8>,

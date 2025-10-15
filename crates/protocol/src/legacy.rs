@@ -95,7 +95,7 @@ fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
 /// the ASCII-based negotiation path. These lines reuse the same prefix as the
 /// version greeting, so higher level code benefits from a typed representation
 /// to avoid stringly-typed comparisons while still mirroring upstream behavior.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum LegacyDaemonMessage<'a> {
     /// A protocol version announcement such as `@RSYNCD: 30.0`.
     Version(ProtocolVersion),

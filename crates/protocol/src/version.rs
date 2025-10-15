@@ -14,7 +14,7 @@ pub const SUPPORTED_PROTOCOLS: [u8; 5] = [32, 31, 30, 29, 28];
 const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> = 28..=32;
 
 /// A single negotiated rsync protocol version.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
 
 impl ProtocolVersion {
