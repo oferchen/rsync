@@ -10,7 +10,7 @@ use crate::error::NegotiationError;
 const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> = 28..=32;
 
 /// A single negotiated rsync protocol version.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
 
 /// Types that can be interpreted as peer-advertised protocol versions.
@@ -542,5 +542,15 @@ mod tests {
     fn protocol_version_display_matches_numeric_value() {
         let version = ProtocolVersion::try_from(32).expect("valid");
         assert_eq!(version.to_string(), "32");
+    }
+
+    #[test]
+    fn protocol_versions_are_hashable() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        assert!(set.insert(ProtocolVersion::NEWEST));
+        assert!(set.contains(&ProtocolVersion::NEWEST));
+        assert!(!set.insert(ProtocolVersion::NEWEST));
     }
 }
