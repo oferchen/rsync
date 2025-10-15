@@ -1,5 +1,4 @@
 use core::array::IntoIter;
-use core::cmp::min;
 use core::convert::TryFrom;
 use core::fmt;
 use core::num::NonZeroU8;
@@ -187,14 +186,21 @@ pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, Neg
 where
     I: IntoIterator<Item = u8>,
 {
-    let iter = peer_versions.into_iter();
-    let (lower_bound, _) = iter.size_hint();
-    let mut filtered: Vec<u8> = Vec::with_capacity(min(lower_bound, SUPPORTED_PROTOCOLS.len()));
+    let mut filtered = [0u8; SUPPORTED_PROTOCOLS.len()];
+    let mut filtered_len = 0usize;
     let mut oldest_rejection: Option<u8> = None;
 
-    for version in iter {
+    for version in peer_versions {
         match ProtocolVersion::from_peer_advertisement(version) {
-            Ok(proto) => filtered.push(proto.as_u8()),
+            Ok(proto) => {
+                let value = proto.as_u8();
+                if !filtered[..filtered_len].contains(&value) {
+                    if filtered_len < filtered.len() {
+                        filtered[filtered_len] = value;
+                        filtered_len += 1;
+                    }
+                }
+            }
             Err(NegotiationError::UnsupportedVersion(value))
                 if value < ProtocolVersion::OLDEST.as_u8() =>
             {
@@ -207,11 +213,8 @@ where
         }
     }
 
-    filtered.sort_unstable();
-    filtered.dedup();
-
     for ours in SUPPORTED_PROTOCOLS {
-        if filtered.binary_search(&ours).is_ok() {
+        if filtered[..filtered_len].contains(&ours) {
             return Ok(ProtocolVersion::new_const(ours));
         }
     }
@@ -220,9 +223,9 @@ where
         return Err(NegotiationError::UnsupportedVersion(value));
     }
 
-    Err(NegotiationError::NoMutualProtocol {
-        peer_versions: filtered,
-    })
+    let mut peer_versions = Vec::from(&filtered[..filtered_len]);
+    peer_versions.sort_unstable();
+    Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
 
 #[cfg(test)]
