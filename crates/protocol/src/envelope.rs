@@ -324,7 +324,11 @@ pub struct MessageHeader {
 
 impl MessageHeader {
     /// Creates a new header for `code` with the provided payload length.
-    pub fn new(code: MessageCode, payload_len: u32) -> Result<Self, EnvelopeError> {
+    ///
+    /// The constructor is `const` so golden multiplexed streams can be
+    /// assembled at compile time, matching upstream rsync's use of static
+    /// header tables for protocol tests.
+    pub const fn new(code: MessageCode, payload_len: u32) -> Result<Self, EnvelopeError> {
         if payload_len > MAX_PAYLOAD_LENGTH {
             return Err(EnvelopeError::OversizedPayload(payload_len));
         }
@@ -357,8 +361,8 @@ impl MessageHeader {
 
     /// Encodes this header into the little-endian format used on the wire.
     #[must_use]
-    pub fn encode(self) -> [u8; HEADER_LEN] {
-        let tag = u32::from(MPLEX_BASE) + u32::from(u8::from(self.code));
+    pub const fn encode(self) -> [u8; HEADER_LEN] {
+        let tag = (MPLEX_BASE as u32) + (self.code as u32);
         let raw = (tag << 24) | (self.payload_len & PAYLOAD_MASK);
         raw.to_le_bytes()
     }
@@ -388,6 +392,28 @@ mod tests {
         let encoded = header.encode();
         let decoded = MessageHeader::decode(&encoded).expect("decode succeeds");
         assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn message_header_new_supports_const_contexts() {
+        const HEADER: MessageHeader = match MessageHeader::new(MessageCode::Info, 42) {
+            Ok(header) => header,
+            Err(_) => panic!("valid header should be constructible in const context"),
+        };
+
+        assert_eq!(HEADER.code(), MessageCode::Info);
+        assert_eq!(HEADER.payload_len(), 42);
+    }
+
+    #[test]
+    fn message_header_encode_supports_const_contexts() {
+        const HEADER: MessageHeader = match MessageHeader::new(MessageCode::Warning, 7) {
+            Ok(header) => header,
+            Err(_) => panic!("valid header should be constructible in const context"),
+        };
+        const ENCODED: [u8; HEADER_LEN] = HEADER.encode();
+
+        assert_eq!(ENCODED, HEADER.encode());
     }
 
     #[test]
