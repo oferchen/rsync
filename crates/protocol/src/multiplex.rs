@@ -1,3 +1,4 @@
+use core::ops::{Deref, DerefMut};
 use std::collections::TryReserveError;
 use std::io::{self, IoSlice, Read, Write};
 use std::slice;
@@ -94,6 +95,20 @@ impl std::convert::TryFrom<(MessageCode, Vec<u8>)> for MessageFrame {
 impl From<MessageFrame> for (MessageCode, Vec<u8>) {
     fn from(frame: MessageFrame) -> Self {
         frame.into_parts()
+    }
+}
+
+impl Deref for MessageFrame {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.payload()
+    }
+}
+
+impl DerefMut for MessageFrame {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.payload_mut()
     }
 }
 
@@ -573,6 +588,8 @@ mod tests {
     fn message_frame_as_ref_exposes_payload_slice() {
         let frame = MessageFrame::new(MessageCode::Warning, b"slice".to_vec()).expect("frame");
         assert_eq!(AsRef::<[u8]>::as_ref(&frame), b"slice");
+        let deref: &[u8] = &*frame;
+        assert_eq!(deref, b"slice");
     }
 
     #[test]
@@ -581,6 +598,11 @@ mod tests {
         let payload = AsMut::<[u8]>::as_mut(&mut frame);
         payload.copy_from_slice(b"PATCH");
         assert_eq!(frame.payload(), b"PATCH");
+        {
+            let deref: &mut [u8] = &mut *frame;
+            deref.copy_from_slice(b"lower");
+        }
+        assert_eq!(frame.payload(), b"lower");
     }
 
     #[test]
