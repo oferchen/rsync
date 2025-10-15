@@ -308,6 +308,16 @@ mod tests {
     }
 
     #[test]
+    fn message_frame_into_payload_returns_owned_payload() {
+        let payload = b"payload".to_vec();
+        let frame = MessageFrame::new(MessageCode::Warning, payload.clone()).expect("frame");
+
+        let owned = frame.into_payload();
+
+        assert_eq!(owned, payload);
+    }
+
+    #[test]
     fn recv_msg_into_reuses_buffer_capacity_for_smaller_payloads() {
         let mut stream = Vec::new();
         send_msg(&mut stream, MessageCode::Warning, b"hi").expect("send succeeds");
@@ -393,12 +403,14 @@ mod tests {
         let mut buffer = Vec::with_capacity(8);
         buffer.extend_from_slice(b"junk");
         let capacity_before = buffer.capacity();
+        let ptr_before = buffer.as_ptr();
 
         let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
 
         assert_eq!(code, MessageCode::Log);
         assert!(buffer.is_empty());
         assert_eq!(buffer.capacity(), capacity_before);
+        assert_eq!(buffer.as_ptr(), ptr_before);
     }
 
     #[test]
