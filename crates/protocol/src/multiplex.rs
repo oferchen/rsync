@@ -74,9 +74,7 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// The function blocks until the full header and payload are read or an I/O
 /// error occurs. Invalid headers surface as [`io::ErrorKind::InvalidData`].
 pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
-    let mut header_bytes = [0u8; HEADER_LEN];
-    reader.read_exact(&mut header_bytes)?;
-    let header = MessageHeader::decode(&header_bytes).map_err(map_envelope_error)?;
+    let header = read_header(reader)?;
     let len = header.payload_len() as usize;
 
     let mut payload = vec![0u8; len];
@@ -86,6 +84,32 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
         code: header.code(),
         payload,
     })
+}
+
+/// Receives the next multiplexed message into a caller-provided buffer.
+///
+/// The helper mirrors [`recv_msg`] but avoids allocating a new vector for every
+/// frame. The buffer is cleared and then resized to the exact payload length,
+/// reusing any existing capacity to satisfy the workspace's buffer reuse
+/// guidance. The decoded message code is returned so the caller can dispatch on
+/// the frame type while reading the payload from `buffer`.
+pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<MessageCode> {
+    let header = read_header(reader)?;
+    let len = header.payload_len() as usize;
+
+    buffer.clear();
+    buffer.resize(len, 0);
+    if len != 0 {
+        reader.read_exact(buffer)?;
+    }
+
+    Ok(header.code())
+}
+
+fn read_header<R: Read>(reader: &mut R) -> io::Result<MessageHeader> {
+    let mut header_bytes = [0u8; HEADER_LEN];
+    reader.read_exact(&mut header_bytes)?;
+    MessageHeader::decode(&header_bytes).map_err(map_envelope_error)
 }
 
 fn map_envelope_error(err: EnvelopeError) -> io::Error {
@@ -193,5 +217,50 @@ mod tests {
                 u128::from(MAX_PAYLOAD_LENGTH)
             )
         );
+    }
+
+    #[test]
+    fn recv_msg_into_populates_caller_buffer() {
+        let mut serialized = Vec::new();
+        send_msg(&mut serialized, MessageCode::Warning, b"payload").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(serialized);
+        let mut buffer = Vec::new();
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Warning);
+        assert_eq!(buffer, b"payload");
+    }
+
+    #[test]
+    fn recv_msg_into_reuses_existing_capacity() {
+        let mut serialized = Vec::new();
+        send_msg(&mut serialized, MessageCode::Info, b"hello").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(serialized);
+        let mut buffer = vec![0u8; 8];
+        let original_capacity = buffer.capacity();
+        let original_ptr = buffer.as_ptr();
+        buffer.clear();
+
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Info);
+        assert_eq!(buffer, b"hello");
+        assert_eq!(buffer.capacity(), original_capacity);
+        assert_eq!(buffer.as_ptr(), original_ptr);
+    }
+
+    #[test]
+    fn recv_msg_into_handles_empty_payload_without_reading() {
+        let mut serialized = Vec::new();
+        send_msg(&mut serialized, MessageCode::Log, b"").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(serialized);
+        let mut buffer = vec![1u8; 4];
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Log);
+        assert!(buffer.is_empty());
     }
 }
