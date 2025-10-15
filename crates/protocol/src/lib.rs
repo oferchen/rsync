@@ -38,6 +38,33 @@ impl ProtocolVersion {
     /// The oldest protocol version supported by upstream rsync 3.4.1.
     pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(28);
 
+    /// Array of protocol versions supported by the Rust implementation,
+    /// ordered from newest to oldest.
+    pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] = [
+        ProtocolVersion::new_const(32),
+        ProtocolVersion::new_const(31),
+        ProtocolVersion::new_const(30),
+        ProtocolVersion::new_const(29),
+        ProtocolVersion::new_const(28),
+    ];
+
+    /// Returns a reference to the list of supported protocol versions in
+    /// newest-to-oldest order.
+    #[must_use]
+    pub const fn supported_versions() -> &'static [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] {
+        &Self::SUPPORTED_VERSIONS
+    }
+
+    /// Reports whether the provided version is supported by this
+    /// implementation. This helper mirrors the upstream negotiation guard and
+    /// allows callers to perform quick validation before attempting a
+    /// handshake.
+    #[must_use]
+    #[inline]
+    pub const fn is_supported(value: u8) -> bool {
+        matches!(value, 32 | 31 | 30 | 29 | 28)
+    }
+
     /// Returns the raw numeric value represented by this version.
     #[must_use]
     #[inline]
@@ -459,5 +486,24 @@ mod tests {
         assert_eq!(30, version);
         assert_ne!(version, 31);
         assert_ne!(31, version);
+    }
+
+    #[test]
+    fn supported_versions_constant_matches_u8_list() {
+        let as_u8: Vec<u8> = ProtocolVersion::supported_versions()
+            .iter()
+            .map(|version| version.as_u8())
+            .collect();
+        assert_eq!(as_u8.as_slice(), &SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn detects_supported_versions() {
+        for &version in &SUPPORTED_PROTOCOLS {
+            assert!(ProtocolVersion::is_supported(version));
+        }
+
+        assert!(!ProtocolVersion::is_supported(27));
+        assert!(!ProtocolVersion::is_supported(0));
     }
 }
