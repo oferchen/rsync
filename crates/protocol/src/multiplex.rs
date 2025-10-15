@@ -13,12 +13,7 @@ pub struct MessageFrame {
 impl MessageFrame {
     /// Constructs a frame from a message code and owned payload bytes.
     pub fn new(code: MessageCode, payload: Vec<u8>) -> Result<Self, io::Error> {
-        let len = payload.len();
-        if len > MAX_PAYLOAD_LENGTH as usize {
-            return Err(invalid_len_error(len));
-        }
-
-        let payload_len = len as u32;
+        let payload_len = ensure_payload_length(payload.len())?;
         MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
         Ok(Self { code, payload })
     }
@@ -107,12 +102,7 @@ impl From<MessageFrame> for (MessageCode, Vec<u8>) {
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
-    let len = payload.len();
-    if len > MAX_PAYLOAD_LENGTH as usize {
-        return Err(invalid_len_error(len));
-    }
-
-    let payload_len = len as u32;
+    let payload_len = ensure_payload_length(payload.len())?;
     let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
     writer.write_all(&header.encode())?;
     writer.write_all(payload)?;
@@ -182,6 +172,14 @@ fn invalid_len_error(len: usize) -> io::Error {
         io::ErrorKind::InvalidInput,
         format!("multiplexed payload length {len} exceeds maximum {max}"),
     )
+}
+
+fn ensure_payload_length(len: usize) -> io::Result<u32> {
+    if len > MAX_PAYLOAD_LENGTH as usize {
+        return Err(invalid_len_error(len));
+    }
+
+    Ok(len as u32)
 }
 
 fn reserve_payload(buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
@@ -540,5 +538,29 @@ mod tests {
         let err = super::reserve_payload(&mut buffer, usize::MAX).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
+    }
+
+    #[test]
+    fn ensure_payload_length_accepts_maximum_payload() {
+        let len = MAX_PAYLOAD_LENGTH as usize;
+        let validated = super::ensure_payload_length(len).expect("maximum allowed");
+
+        assert_eq!(validated, MAX_PAYLOAD_LENGTH);
+    }
+
+    #[test]
+    fn ensure_payload_length_rejects_values_above_limit() {
+        let len = MAX_PAYLOAD_LENGTH as usize + 1;
+        let err = super::ensure_payload_length(len).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "multiplexed payload length {} exceeds maximum {}",
+                u128::from(MAX_PAYLOAD_LENGTH) + 1,
+                u128::from(MAX_PAYLOAD_LENGTH)
+            )
+        );
     }
 }
