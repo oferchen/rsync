@@ -143,7 +143,9 @@ pub fn parse_legacy_daemon_message(
         return Err(malformed_legacy_greeting(trimmed));
     }
 
-    if payload
+    let payload_for_match = payload.trim_end();
+
+    if payload_for_match
         .as_bytes()
         .first()
         .copied()
@@ -152,7 +154,7 @@ pub fn parse_legacy_daemon_message(
         return parse_legacy_daemon_greeting(trimmed).map(LegacyDaemonMessage::Version);
     }
 
-    match payload {
+    match payload_for_match {
         "OK" => Ok(LegacyDaemonMessage::Ok),
         "EXIT" => Ok(LegacyDaemonMessage::Exit),
         payload => {
@@ -361,8 +363,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_accepts_ok_with_trailing_whitespace() {
+        let message =
+            parse_legacy_daemon_message("@RSYNCD: OK   \r\n").expect("keyword with padding");
+        assert_eq!(message, LegacyDaemonMessage::Ok);
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_accepts_exit_keyword() {
         let message = parse_legacy_daemon_message("@RSYNCD: EXIT\n").expect("keyword");
+        assert_eq!(message, LegacyDaemonMessage::Exit);
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_accepts_exit_with_trailing_whitespace() {
+        let message =
+            parse_legacy_daemon_message("@RSYNCD: EXIT   \n").expect("keyword with padding");
         assert_eq!(message, LegacyDaemonMessage::Exit);
     }
 
@@ -381,6 +397,18 @@ mod tests {
     fn parse_legacy_daemon_message_accepts_authreqd_without_module() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\n").expect("keyword");
         assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_accepts_authreqd_with_trailing_whitespace() {
+        let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD module   \n")
+            .expect("keyword with padding");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::AuthRequired {
+                module: Some("module"),
+            }
+        );
     }
 
     #[test]
