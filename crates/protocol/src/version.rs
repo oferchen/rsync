@@ -62,11 +62,13 @@ impl_protocol_version_advertisement!(
     u16 => |value: u16| value.min(u16::from(u8::MAX)) as u8,
     u32 => |value: u32| value.min(u32::from(u8::MAX)) as u8,
     u64 => |value: u64| value.min(u64::from(u8::MAX)) as u8,
+    u128 => |value: u128| value.min(u128::from(u8::MAX)) as u8,
     usize => |value: usize| value.min(usize::from(u8::MAX)) as u8,
     i8 => |value: i8| value.clamp(0, i8::MAX) as u8,
     i16 => |value: i16| value.clamp(0, i16::from(u8::MAX)) as u8,
     i32 => |value: i32| value.clamp(0, i32::from(u8::MAX)) as u8,
     i64 => |value: i64| value.clamp(0, i64::from(u8::MAX)) as u8,
+    i128 => |value: i128| value.clamp(0, i128::from(u8::MAX)) as u8,
     isize => |value: isize| value.clamp(0, isize::from(u8::MAX)) as u8,
 );
 
