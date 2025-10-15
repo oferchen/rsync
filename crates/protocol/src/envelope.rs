@@ -311,6 +311,31 @@ mod tests {
     }
 
     #[test]
+    fn encode_uses_little_endian_layout() {
+        let payload_len = 0x00A1_B2C3;
+        let header =
+            MessageHeader::new(MessageCode::Info, payload_len).expect("constructible header");
+        let encoded = header.encode();
+
+        let expected_raw =
+            ((u32::from(MPLEX_BASE) + u32::from(MessageCode::Info.as_u8())) << 24) | payload_len;
+        assert_eq!(encoded, expected_raw.to_le_bytes());
+    }
+
+    #[test]
+    fn decode_masks_payload_length_to_24_bits() {
+        let tag = (u32::from(MPLEX_BASE) + u32::from(MessageCode::Info.as_u8())) << 24;
+        let raw = tag | (MAX_PAYLOAD_LENGTH + 1);
+        let header =
+            MessageHeader::decode(&raw.to_le_bytes()).expect("payload length is masked to 24 bits");
+        assert_eq!(header.code(), MessageCode::Info);
+        assert_eq!(
+            header.payload_len(),
+            (MAX_PAYLOAD_LENGTH + 1) & PAYLOAD_MASK
+        );
+    }
+
+    #[test]
     fn new_rejects_oversized_payloads() {
         let err = MessageHeader::new(MessageCode::Info, MAX_PAYLOAD_LENGTH + 1).unwrap_err();
         assert_eq!(err, EnvelopeError::OversizedPayload(MAX_PAYLOAD_LENGTH + 1));
