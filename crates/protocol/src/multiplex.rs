@@ -49,6 +49,17 @@ impl MessageFrame {
     pub fn into_payload(self) -> Vec<u8> {
         self.payload
     }
+
+    /// Consumes the frame and returns the message code together with the owned payload bytes.
+    ///
+    /// Upstream rsync frequently pattern matches on both the multiplexed tag and the data that
+    /// follows. Providing a zero-copy destructor mirrors that style while keeping the Rust
+    /// implementation efficient by avoiding payload cloning when the caller needs ownership of
+    /// both values.
+    #[must_use]
+    pub fn into_parts(self) -> (MessageCode, Vec<u8>) {
+        (self.code, self.payload)
+    }
 }
 
 /// Sends a multiplexed message to `writer` using the upstream rsync envelope format.
@@ -193,6 +204,15 @@ mod tests {
 
         assert_eq!(code, MessageCode::Client);
         assert_eq!(buffer.as_slice(), b"payload");
+    }
+
+    #[test]
+    fn message_frame_into_parts_returns_code_and_payload_without_clone() {
+        let frame = MessageFrame::new(MessageCode::Warning, b"payload".to_vec()).expect("frame");
+        let (code, payload) = frame.into_parts();
+
+        assert_eq!(code, MessageCode::Warning);
+        assert_eq!(payload, b"payload");
     }
 
     #[test]
