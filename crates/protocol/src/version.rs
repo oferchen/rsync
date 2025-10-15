@@ -289,6 +289,12 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsupported_versions_via_helper() {
+        assert!(!ProtocolVersion::is_supported(27));
+        assert!(!ProtocolVersion::is_supported(33));
+    }
+
+    #[test]
     fn rejects_out_of_range_non_zero_u8() {
         let value = NonZeroU8::new(27).expect("non-zero");
         let err = ProtocolVersion::try_from(value).unwrap_err();
