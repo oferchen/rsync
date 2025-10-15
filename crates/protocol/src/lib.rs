@@ -8,6 +8,7 @@
 //! The constants and helpers in this module mirror the upstream defaults
 //! so that higher level components can implement byte-identical handshakes.
 
+use core::cmp::min;
 use core::convert::TryFrom;
 use core::fmt;
 use core::num::NonZeroU8;
@@ -317,10 +318,12 @@ pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, Neg
 where
     I: IntoIterator<Item = u8>,
 {
-    let mut filtered: Vec<u8> = Vec::new();
+    let iter = peer_versions.into_iter();
+    let (lower_bound, _) = iter.size_hint();
+    let mut filtered: Vec<u8> = Vec::with_capacity(min(lower_bound, SUPPORTED_PROTOCOLS.len()));
     let mut oldest_rejection: Option<u8> = None;
 
-    for version in peer_versions {
+    for version in iter {
         match ProtocolVersion::from_peer_advertisement(version) {
             Ok(proto) => filtered.push(proto.as_u8()),
             Err(NegotiationError::UnsupportedVersion(value))
@@ -410,6 +413,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_legacy_daemon_greeting_without_fractional_suffix() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 30\n").expect("fractional optional");
+        assert_eq!(parsed.as_u8(), 30);
+    }
+
+    #[test]
     fn parses_greeting_with_trailing_whitespace() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 30.0   \n").expect("valid greeting");
         assert_eq!(parsed.as_u8(), 30);
@@ -434,6 +443,19 @@ mod tests {
     #[test]
     fn rejects_greeting_with_unsupported_version() {
         let err = parse_legacy_daemon_greeting("@RSYNCD: 27.0").unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(27));
+    }
+
+    #[test]
+    fn clamps_future_versions_in_peer_advertisements_directly() {
+        let negotiated =
+            ProtocolVersion::from_peer_advertisement(40).expect("future versions clamp");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn rejects_peer_advertisements_older_than_supported_range() {
+        let err = ProtocolVersion::from_peer_advertisement(27).unwrap_err();
         assert_eq!(err, NegotiationError::UnsupportedVersion(27));
     }
 
