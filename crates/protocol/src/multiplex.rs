@@ -34,6 +34,16 @@ impl MessageFrame {
         &self.payload
     }
 
+    /// Returns the length of the payload in bytes without exposing the
+    /// underlying buffer. Upstream rsync frequently inspects the payload size
+    /// when routing multiplexed messages, so providing this accessor helps
+    /// mirror those call-sites without allocating or cloning.
+    #[must_use]
+    #[inline]
+    pub fn payload_len(&self) -> usize {
+        self.payload.len()
+    }
+
     /// Consumes the frame and returns the owned payload bytes.
     #[must_use]
     pub fn into_payload(self) -> Vec<u8> {
@@ -112,6 +122,19 @@ mod tests {
         let frame = recv_msg(&mut cursor).expect("receive succeeds");
         assert_eq!(frame.code(), MessageCode::Info);
         assert_eq!(frame.payload(), b"hello world");
+        assert_eq!(frame.payload_len(), b"hello world".len());
+    }
+
+    #[test]
+    fn round_trip_zero_length_payload() {
+        let mut buffer = Vec::new();
+        send_msg(&mut buffer, MessageCode::Warning, b"").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(buffer);
+        let frame = recv_msg(&mut cursor).expect("receive succeeds");
+        assert_eq!(frame.code(), MessageCode::Warning);
+        assert!(frame.payload().is_empty());
+        assert_eq!(frame.payload_len(), 0);
     }
 
     #[test]
