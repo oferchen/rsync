@@ -84,14 +84,17 @@ impl NegotiationPrologueDetector {
     #[must_use]
     pub fn observe(&mut self, chunk: &[u8]) -> NegotiationPrologue {
         if let Some(decided) = self.decided {
-            return decided;
+            if decided != NegotiationPrologue::LegacyAscii || self.len >= LEGACY_DAEMON_PREFIX_LEN {
+                return decided;
+            }
         }
 
         if chunk.is_empty() {
-            return NegotiationPrologue::NeedMoreData;
+            return self.decided.unwrap_or(NegotiationPrologue::NeedMoreData);
         }
 
         let prefix = LEGACY_DAEMON_PREFIX.as_bytes();
+        let mut decision = None;
 
         for &byte in chunk {
             if self.len == 0 {
@@ -101,27 +104,27 @@ impl NegotiationPrologueDetector {
 
                 self.buffer[0] = byte;
                 self.len = 1;
-                return self.decide(NegotiationPrologue::LegacyAscii);
-            }
-
-            if self.len >= LEGACY_DAEMON_PREFIX_LEN {
-                return self.decide(NegotiationPrologue::LegacyAscii);
-            }
-
-            self.buffer[self.len] = byte;
-            self.len += 1;
-
-            if self.buffer[..self.len] == prefix[..self.len] {
-                if self.len == LEGACY_DAEMON_PREFIX_LEN {
-                    return self.decide(NegotiationPrologue::LegacyAscii);
-                }
+                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
                 continue;
             }
 
-            return self.decide(NegotiationPrologue::LegacyAscii);
+            if self.len < LEGACY_DAEMON_PREFIX_LEN {
+                self.buffer[self.len] = byte;
+                self.len += 1;
+            }
+
+            if self.len >= LEGACY_DAEMON_PREFIX_LEN || self.buffer[..self.len] != prefix[..self.len]
+            {
+                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+                break;
+            }
         }
 
-        NegotiationPrologue::NeedMoreData
+        if let Some(decision) = decision {
+            return decision;
+        }
+
+        self.decided.unwrap_or(NegotiationPrologue::NeedMoreData)
     }
 
     /// Reports the finalized negotiation style, if one has been established.
@@ -139,6 +142,24 @@ impl NegotiationPrologueDetector {
     fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
         self.decided = Some(decision);
         decision
+    }
+
+    /// Returns the prefix bytes buffered while deciding on the negotiation style.
+    ///
+    /// When the detector concludes that the peer is using the legacy ASCII
+    /// greeting, the already consumed bytes must be included when parsing the
+    /// full banner. Upstream rsync accomplishes this by reusing the peeked
+    /// prefix. Callers of this Rust implementation can mirror that behavior by
+    /// reading the buffered prefix through this accessor instead of re-reading
+    /// from the underlying transport. The buffer continues to grow across
+    /// subsequent [`observe`] calls until the canonical `@RSYNCD:` prefix has
+    /// been captured or a mismatch forces the legacy classification. For binary
+    /// negotiations, no bytes are retained and this method returns an empty
+    /// slice.
+    #[must_use]
+    #[inline]
+    pub fn buffered_prefix(&self) -> &[u8] {
+        &self.buffer[..self.len]
     }
 }
 
@@ -254,6 +275,32 @@ mod tests {
 
         assert_eq!(detector.observe(b"x"), NegotiationPrologue::Binary);
         assert_eq!(detector.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn buffered_prefix_tracks_bytes_consumed_for_legacy_detection() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.buffered_prefix(), b"");
+
+        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@RS");
+
+        // Additional observations extend the buffered prefix until the full
+        // legacy marker is buffered.
+        assert_eq!(detector.observe(b"YNCD"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD");
+
+        // Feeding an empty chunk after the decision simply replays the cached
+        // classification and leaves the buffered prefix intact.
+        assert_eq!(detector.observe(b""), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD");
+    }
+
+    #[test]
+    fn buffered_prefix_is_empty_for_binary_detection() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
+        assert_eq!(detector.buffered_prefix(), b"");
     }
 
     fn assert_detector_matches_across_partitions(data: &[u8]) {
