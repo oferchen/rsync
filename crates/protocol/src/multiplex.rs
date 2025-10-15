@@ -1,7 +1,6 @@
-use std::convert::TryFrom;
 use std::io::{self, Read, Write};
 
-use crate::envelope::{EnvelopeError, HEADER_LEN, MessageCode, MessageHeader};
+use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
 
 /// A decoded multiplexed message consisting of the tag and payload bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,7 +12,12 @@ pub struct MessageFrame {
 impl MessageFrame {
     /// Constructs a frame from a message code and owned payload bytes.
     pub fn new(code: MessageCode, payload: Vec<u8>) -> Result<Self, io::Error> {
-        let len = u32::try_from(payload.len()).map_err(|_| invalid_len_error())?;
+        let len = payload.len();
+        if len > MAX_PAYLOAD_LENGTH as usize {
+            return Err(invalid_len_error(len));
+        }
+
+        let len = u32::try_from(len).expect("checked against MAX_PAYLOAD_LENGTH");
         MessageHeader::new(code, len).map_err(map_envelope_error_for_input)?;
         Ok(Self { code, payload })
     }
@@ -43,7 +47,12 @@ impl MessageFrame {
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
-    let len = u32::try_from(payload.len()).map_err(|_| invalid_len_error())?;
+    let len = payload.len();
+    if len > MAX_PAYLOAD_LENGTH as usize {
+        return Err(invalid_len_error(len));
+    }
+
+    let len = u32::try_from(len).expect("checked against MAX_PAYLOAD_LENGTH");
     let header = MessageHeader::new(code, len).map_err(map_envelope_error_for_input)?;
     writer.write_all(&header.encode())?;
     writer.write_all(payload)?;
@@ -80,10 +89,12 @@ fn map_envelope_error_for_input(err: EnvelopeError) -> io::Error {
     }
 }
 
-fn invalid_len_error() -> io::Error {
+fn invalid_len_error(len: usize) -> io::Error {
+    let len = len as u128;
+    let max = u128::from(MAX_PAYLOAD_LENGTH);
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        "multiplexed payload length exceeds representable range",
+        format!("multiplexed payload length {len} exceeds maximum {max}"),
     )
 }
 
@@ -129,6 +140,14 @@ mod tests {
         let payload = vec![0u8; (MAX_PAYLOAD_LENGTH + 1) as usize];
         let err = send_msg(&mut io::sink(), MessageCode::Error, &payload).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "multiplexed payload length {} exceeds maximum {}",
+                u128::from(MAX_PAYLOAD_LENGTH) + 1,
+                u128::from(MAX_PAYLOAD_LENGTH)
+            )
+        );
     }
 
     #[test]
@@ -136,5 +155,20 @@ mod tests {
         let frame = MessageFrame::new(MessageCode::Stats, b"stats".to_vec()).expect("frame");
         assert_eq!(frame.code(), MessageCode::Stats);
         assert_eq!(frame.payload(), b"stats");
+    }
+
+    #[test]
+    fn message_frame_new_rejects_oversized_payload() {
+        let payload = vec![0u8; (MAX_PAYLOAD_LENGTH + 1) as usize];
+        let err = MessageFrame::new(MessageCode::Info, payload).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "multiplexed payload length {} exceeds maximum {}",
+                u128::from(MAX_PAYLOAD_LENGTH) + 1,
+                u128::from(MAX_PAYLOAD_LENGTH)
+            )
+        );
     }
 }
