@@ -288,6 +288,22 @@ pub fn parse_legacy_daemon_greeting_bytes(
     }
 }
 
+/// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
+///
+/// Upstream daemons send a line such as `@RSYNCD: 32.0\n` when speaking to
+/// older clients. The Rust implementation mirrors that exact layout so callers
+/// can emit byte-identical banners during negotiation and round-trip the value
+/// through [`parse_legacy_daemon_greeting`].
+#[must_use]
+pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
+    let mut banner = String::with_capacity(16);
+    banner.push_str("@RSYNCD: ");
+    let digits = version.as_u8().to_string();
+    banner.push_str(&digits);
+    banner.push_str(".0\n");
+    banner
+}
+
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
 ///
 /// The caller provides the list of protocol versions advertised by the peer in any order.
@@ -479,6 +495,20 @@ mod tests {
             err,
             NegotiationError::MalformedLegacyGreeting { .. }
         ));
+    }
+
+    #[test]
+    fn formats_legacy_daemon_greeting_for_newest_protocol() {
+        let rendered = format_legacy_daemon_greeting(ProtocolVersion::NEWEST);
+        assert_eq!(rendered, "@RSYNCD: 32.0\n");
+    }
+
+    #[test]
+    fn formatted_legacy_greeting_round_trips_through_parser() {
+        let version = ProtocolVersion::try_from(29).expect("valid version");
+        let rendered = format_legacy_daemon_greeting(version);
+        let parsed = parse_legacy_daemon_greeting(&rendered).expect("parseable banner");
+        assert_eq!(parsed, version);
     }
 
     #[test]
