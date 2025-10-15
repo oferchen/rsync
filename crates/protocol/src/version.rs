@@ -34,6 +34,13 @@ impl ProtocolVersionAdvertisement for u8 {
     }
 }
 
+impl ProtocolVersionAdvertisement for NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
+    }
+}
+
 impl ProtocolVersionAdvertisement for ProtocolVersion {
     #[inline]
     fn into_advertised_version(self) -> u8 {
@@ -45,6 +52,13 @@ impl ProtocolVersionAdvertisement for &u8 {
     #[inline]
     fn into_advertised_version(self) -> u8 {
         *self
+    }
+}
+
+impl ProtocolVersionAdvertisement for &NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
     }
 }
 
