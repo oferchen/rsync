@@ -1,3 +1,4 @@
+use core::array::IntoIter;
 use core::cmp::min;
 use core::convert::TryFrom;
 use core::fmt;
@@ -46,6 +47,19 @@ impl ProtocolVersion {
     #[must_use]
     pub const fn supported_versions() -> &'static [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] {
         &Self::SUPPORTED_VERSIONS
+    }
+
+    /// Returns an iterator over the supported protocol versions in
+    /// newest-to-oldest order.
+    ///
+    /// The iterator yields copies of the cached [`ProtocolVersion`]
+    /// constants, mirroring the ordering exposed by
+    /// [`SUPPORTED_PROTOCOLS`]. Higher layers that only need to iterate
+    /// without borrowing the underlying array can rely on this helper to
+    /// avoid manual slice handling while still matching upstream parity.
+    #[must_use]
+    pub fn supported_versions_iter() -> IntoIter<ProtocolVersion, { SUPPORTED_PROTOCOLS.len() }> {
+        Self::SUPPORTED_VERSIONS.into_iter()
     }
 
     /// Reports whether the provided version is supported by this
@@ -286,6 +300,14 @@ mod tests {
             .map(ProtocolVersion::as_u8)
             .collect();
         assert_eq!(expected, SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn supported_versions_iterator_matches_constants() {
+        let via_iterator: Vec<u8> = ProtocolVersion::supported_versions_iter()
+            .map(ProtocolVersion::as_u8)
+            .collect();
+        assert_eq!(via_iterator, SUPPORTED_PROTOCOLS);
     }
 
     #[test]
