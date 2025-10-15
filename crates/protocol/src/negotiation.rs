@@ -115,8 +115,12 @@ impl NegotiationPrologueDetector {
                 self.len += 1;
             }
 
-            if self.len >= LEGACY_DAEMON_PREFIX_LEN || self.buffer[..self.len] != prefix[..self.len]
-            {
+            if self.buffer[..self.len] != prefix[..self.len] {
+                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+                break;
+            }
+
+            if self.len >= LEGACY_DAEMON_PREFIX_LEN {
                 decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
                 break;
             }
@@ -262,6 +266,25 @@ mod tests {
             detector.observe(b"additional"),
             NegotiationPrologue::LegacyAscii
         );
+    }
+
+    #[test]
+    fn prologue_detector_handles_mismatch_at_last_prefix_byte() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(
+            detector.observe(b"@RSYNCD;"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD;");
+
+        // Subsequent bytes keep replaying the cached decision without extending
+        // the buffered prefix because the canonical marker has already been
+        // ruled out by the mismatch in the final position.
+        assert_eq!(
+            detector.observe(b": more"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD;");
     }
 
     #[test]
