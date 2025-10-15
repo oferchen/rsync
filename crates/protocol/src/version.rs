@@ -314,6 +314,58 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, NegotiationError> {
+        use std::collections::BTreeSet;
+
+        let mut recognized = BTreeSet::new();
+        let mut seen_any = false;
+        let mut seen_max = ProtocolVersion::OLDEST.as_u8();
+        let mut oldest_rejection: Option<u8> = None;
+
+        for &advertised in peer_versions {
+            if advertised < ProtocolVersion::OLDEST.as_u8() {
+                oldest_rejection = Some(match oldest_rejection {
+                    Some(current) if advertised >= current => current,
+                    _ => advertised,
+                });
+                continue;
+            }
+
+            let clamped = advertised.min(ProtocolVersion::NEWEST.as_u8());
+            if recognized.insert(clamped) {
+                seen_any = true;
+                if clamped > seen_max {
+                    seen_max = clamped;
+                }
+            }
+        }
+
+        if let Some(&newest) = recognized.iter().rev().next() {
+            return Ok(ProtocolVersion::new_const(newest));
+        }
+
+        if let Some(rejected) = oldest_rejection {
+            return Err(NegotiationError::UnsupportedVersion(rejected));
+        }
+
+        let peer_versions = if seen_any {
+            let start = ProtocolVersion::OLDEST.as_u8();
+            let span = usize::from(seen_max.saturating_sub(start)) + 1;
+            let mut versions = Vec::with_capacity(span);
+            for version in start..=seen_max {
+                if recognized.contains(&version) {
+                    versions.push(version);
+                }
+            }
+            versions
+        } else {
+            Vec::new()
+        };
+
+        Err(NegotiationError::NoMutualProtocol { peer_versions })
+    }
 
     #[test]
     fn newest_protocol_is_preferred() {
@@ -538,5 +590,14 @@ mod tests {
         assert!(set.insert(ProtocolVersion::NEWEST));
         assert!(set.contains(&ProtocolVersion::NEWEST));
         assert!(!set.insert(ProtocolVersion::NEWEST));
+    }
+
+    proptest! {
+        #[test]
+        fn select_highest_mutual_matches_reference(peer_versions in proptest::collection::vec(0u8..=255, 0..=16)) {
+            let expected = reference_negotiation(&peer_versions);
+            let actual = select_highest_mutual(peer_versions.iter().copied());
+            prop_assert_eq!(actual, expected);
+        }
     }
 }
