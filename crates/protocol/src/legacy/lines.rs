@@ -172,6 +172,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_preserves_internal_whitespace_in_module_name() {
+        let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD  module name\t\r\n")
+            .expect("keyword with extra whitespace");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::AuthRequired {
+                module: Some("module name"),
+            }
+        );
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_accepts_authreqd_without_module() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\n").expect("keyword");
         assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
