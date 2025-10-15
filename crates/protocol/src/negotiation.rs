@@ -600,7 +600,11 @@ mod tests {
                 last
             };
 
-            assert_eq!(byte_result, slice_result, "decision mismatch for {:?}", data);
+            assert_eq!(
+                byte_result, slice_result,
+                "decision mismatch for {:?}",
+                data
+            );
             assert_eq!(
                 byte_detector.decision(),
                 slice_detector.decision(),

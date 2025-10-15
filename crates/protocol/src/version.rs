@@ -378,6 +378,19 @@ mod tests {
     }
 
     #[test]
+    fn select_highest_mutual_accepts_only_future_versions() {
+        let negotiated = select_highest_mutual([40]).expect("future-only handshake clamps");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_prefers_newest_when_future_and_too_old_mix() {
+        let negotiated = select_highest_mutual([0, 40])
+            .expect("unsupported low versions must not mask clamped future ones");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
     fn converts_protocol_version_to_non_zero_u8() {
         let value = NonZeroU8::new(28).expect("non-zero");
         let version = ProtocolVersion::try_from(value).expect("valid");
