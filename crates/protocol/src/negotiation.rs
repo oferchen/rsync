@@ -178,6 +178,28 @@ impl NegotiationPrologueDetector {
         matches!(self.decided, Some(NegotiationPrologue::LegacyAscii)) && self.prefix_complete
     }
 
+    /// Reports how many additional bytes are required to capture the canonical
+    /// legacy prefix when the detector has already classified the stream as
+    /// [`NegotiationPrologue::LegacyAscii`].
+    ///
+    /// Upstream rsync keeps reading from the transport until the full
+    /// `@RSYNCD:` marker has been buffered or a mismatch forces the legacy
+    /// classification. Higher layers often need the same information to decide
+    /// whether another blocking read is necessary before parsing the full
+    /// greeting line. Returning `Some(n)` indicates that `n` more bytes are
+    /// required to finish buffering the canonical prefix. Once the prefix has
+    /// been completed—or when the detector decides the exchange is binary—the
+    /// method returns `None`.
+    #[must_use]
+    pub const fn legacy_prefix_remaining(&self) -> Option<usize> {
+        match (self.decided, self.prefix_complete) {
+            (Some(NegotiationPrologue::LegacyAscii), false) => {
+                Some(LEGACY_DAEMON_PREFIX_LEN - self.len)
+            }
+            _ => None,
+        }
+    }
+
     fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
         self.decided = Some(decision);
         decision
@@ -351,6 +373,10 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
         assert_eq!(detector.buffered_prefix(), b"@");
+        assert_eq!(
+            detector.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 1)
+        );
 
         // Feeding an empty chunk while still collecting the canonical legacy
         // prefix must replay the cached decision without mutating the
@@ -359,12 +385,17 @@ mod tests {
         // observed.
         assert_eq!(detector.observe(b""), NegotiationPrologue::LegacyAscii);
         assert_eq!(detector.buffered_prefix(), b"@");
+        assert_eq!(
+            detector.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 1)
+        );
 
         assert_eq!(
             detector.observe(b"RSYNCD:"),
             NegotiationPrologue::LegacyAscii
         );
         assert_eq!(detector.buffered_prefix(), b"@RSYNCD:");
+        assert_eq!(detector.legacy_prefix_remaining(), None);
     }
 
     #[test]
@@ -374,19 +405,26 @@ mod tests {
 
         assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
         assert_eq!(detector.buffered_len(), 3);
+        assert_eq!(
+            detector.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 3)
+        );
 
         assert_eq!(detector.observe(b"YNCD:"), NegotiationPrologue::LegacyAscii);
         assert_eq!(detector.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(detector.legacy_prefix_remaining(), None);
 
         assert_eq!(
             detector.observe(b" 31.0\n"),
             NegotiationPrologue::LegacyAscii
         );
         assert_eq!(detector.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(detector.legacy_prefix_remaining(), None);
 
         let mut binary = NegotiationPrologueDetector::new();
         assert_eq!(binary.observe(b"modern"), NegotiationPrologue::Binary);
         assert_eq!(binary.buffered_len(), 0);
+        assert_eq!(binary.legacy_prefix_remaining(), None);
     }
 
     #[test]
@@ -397,6 +435,7 @@ mod tests {
             detector.observe(b"anything"),
             NegotiationPrologue::LegacyAscii
         );
+        assert_eq!(detector.legacy_prefix_remaining(), None);
     }
 
     #[test]
@@ -468,6 +507,29 @@ mod tests {
 
         detector.reset();
         assert!(!detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_remaining_reports_none_before_decision() {
+        let detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.legacy_prefix_remaining(), None);
+    }
+
+    #[test]
+    fn legacy_prefix_remaining_tracks_mismatch_completion() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(
+            detector.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 3)
+        );
+
+        // Diverging from the canonical marker completes the prefix handling
+        // immediately, mirroring upstream's behavior. The helper should report
+        // that no additional bytes are required once the mismatch has been
+        // observed.
+        assert_eq!(detector.observe(b"YNXD"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.legacy_prefix_remaining(), None);
     }
 
     #[test]
@@ -600,7 +662,11 @@ mod tests {
                 last
             };
 
-            assert_eq!(byte_result, slice_result, "decision mismatch for {:?}", data);
+            assert_eq!(
+                byte_result, slice_result,
+                "decision mismatch for {:?}",
+                data
+            );
             assert_eq!(
                 byte_detector.decision(),
                 slice_detector.decision(),
