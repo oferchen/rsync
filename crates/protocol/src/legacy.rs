@@ -400,6 +400,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_treats_whitespace_only_module_as_none() {
+        let message =
+            parse_legacy_daemon_message("@RSYNCD: AUTHREQD    \n").expect("keyword with padding");
+        assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_accepts_authreqd_with_trailing_whitespace() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD module   \n")
             .expect("keyword with padding");
@@ -436,6 +443,15 @@ mod tests {
             message,
             LegacyDaemonMessage::Version(ProtocolVersion::new_const(30))
         );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_rejects_missing_prefix() {
+        let err = parse_legacy_daemon_message("RSYNCD: AUTHREQD module\n").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
     }
 
     #[test]
