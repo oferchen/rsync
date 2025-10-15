@@ -46,3 +46,48 @@ impl fmt::Display for NegotiationError {
 }
 
 impl std::error::Error for NegotiationError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::version::ProtocolVersion;
+
+    #[test]
+    fn display_formats_no_mutual_protocol_context() {
+        let err = NegotiationError::NoMutualProtocol {
+            peer_versions: vec![29, 30],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "no mutual rsync protocol version; peer offered {:?}, we support {:?}",
+                vec![29, 30],
+                SUPPORTED_PROTOCOLS
+            )
+        );
+    }
+
+    #[test]
+    fn display_mentions_supported_range_for_unsupported_versions() {
+        let err = NegotiationError::UnsupportedVersion(27);
+        let rendered = err.to_string();
+
+        assert!(rendered.contains("peer advertised unsupported rsync protocol version 27"));
+        assert!(rendered.contains("valid range"));
+        assert!(rendered.contains(&ProtocolVersion::OLDEST.as_u8().to_string()));
+        assert!(rendered.contains(&ProtocolVersion::NEWEST.as_u8().to_string()));
+    }
+
+    #[test]
+    fn display_echoes_malformed_legacy_greetings() {
+        let err = NegotiationError::MalformedLegacyGreeting {
+            input: "@RSYNCD: ???".to_owned(),
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "malformed legacy rsync daemon greeting: \"@RSYNCD: ???\""
+        );
+    }
+}
