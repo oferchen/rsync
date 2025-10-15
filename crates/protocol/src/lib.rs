@@ -63,7 +63,7 @@ impl ProtocolVersion {
     #[must_use]
     #[inline]
     pub const fn is_supported(value: u8) -> bool {
-        matches!(value, 32 | 31 | 30 | 29 | 28)
+        matches!(value, 28..=32)
     }
 
     /// Returns the raw numeric value represented by this version.
@@ -193,7 +193,6 @@ impl std::error::Error for NegotiationError {}
 /// implementation accepts optional fractional suffixes (e.g. `.0`) but only the
 /// integer component participates in protocol negotiation. Any trailing carriage
 /// returns or line feeds are ignored.
-#[must_use]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
     const PREFIX: &str = "@RSYNCD:";
 
@@ -265,7 +264,6 @@ fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
 /// [`NegotiationError::MalformedLegacyGreeting`] that captures the lossy string
 /// representation for diagnostics, mirroring upstream behavior where the raw
 /// greeting is echoed back to the user.
-#[must_use]
 pub fn parse_legacy_daemon_greeting_bytes(
     line: &[u8],
 ) -> Result<ProtocolVersion, NegotiationError> {
@@ -301,7 +299,6 @@ pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
 /// value, matching upstream tolerance for future releases. Duplicate peer entries and
 /// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
-#[must_use]
 pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where
     I: IntoIterator<Item = u8>,
