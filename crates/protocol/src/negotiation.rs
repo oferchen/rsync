@@ -647,13 +647,19 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
 
         for &byte in LEGACY_DAEMON_PREFIX.as_bytes() {
-            assert_eq!(detector.observe_byte(byte), NegotiationPrologue::LegacyAscii);
+            assert_eq!(
+                detector.observe_byte(byte),
+                NegotiationPrologue::LegacyAscii
+            );
         }
         assert!(detector.legacy_prefix_complete());
 
         detector.reset();
 
-        assert_eq!(detector.observe_byte(b'@'), NegotiationPrologue::LegacyAscii);
+        assert_eq!(
+            detector.observe_byte(b'@'),
+            NegotiationPrologue::LegacyAscii
+        );
         assert_eq!(detector.buffered_prefix(), b"@");
         assert_eq!(detector.buffered_len(), 1);
         assert_eq!(
