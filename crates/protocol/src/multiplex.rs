@@ -87,6 +87,20 @@ impl AsMut<[u8]> for MessageFrame {
     }
 }
 
+impl std::convert::TryFrom<(MessageCode, Vec<u8>)> for MessageFrame {
+    type Error = io::Error;
+
+    fn try_from((code, payload): (MessageCode, Vec<u8>)) -> Result<Self, Self::Error> {
+        Self::new(code, payload)
+    }
+}
+
+impl From<MessageFrame> for (MessageCode, Vec<u8>) {
+    fn from(frame: MessageFrame) -> Self {
+        frame.into_parts()
+    }
+}
+
 /// Sends a multiplexed message to `writer` using the upstream rsync envelope format.
 ///
 /// The payload length is validated against [`MAX_PAYLOAD_LENGTH`], mirroring the
@@ -189,6 +203,7 @@ fn map_allocation_error(err: TryReserveError) -> io::Error {
 mod tests {
     use super::*;
     use crate::envelope::MAX_PAYLOAD_LENGTH;
+    use std::convert::TryFrom as _;
 
     #[test]
     fn send_and_receive_round_trip_info_message() {
@@ -360,6 +375,34 @@ mod tests {
                 u128::from(MAX_PAYLOAD_LENGTH)
             )
         );
+    }
+
+    #[test]
+    fn message_frame_try_from_tuple_constructs_frame() {
+        let payload = b"payload".to_vec();
+        let frame = MessageFrame::try_from((MessageCode::Warning, payload.clone()))
+            .expect("tuple conversion succeeds");
+        assert_eq!(frame.code(), MessageCode::Warning);
+        assert_eq!(frame.payload(), payload);
+    }
+
+    #[test]
+    fn message_frame_try_from_tuple_rejects_oversized_payload() {
+        let payload = vec![0u8; (MAX_PAYLOAD_LENGTH + 1) as usize];
+        let err = MessageFrame::try_from((MessageCode::Info, payload)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains(&format!(
+            "multiplexed payload length {}",
+            u128::from(MAX_PAYLOAD_LENGTH) + 1
+        )));
+    }
+
+    #[test]
+    fn message_frame_into_tuple_returns_owned_parts() {
+        let frame = MessageFrame::new(MessageCode::Deleted, b"done".to_vec()).expect("frame");
+        let (code, payload): (MessageCode, Vec<u8>) = frame.into();
+        assert_eq!(code, MessageCode::Deleted);
+        assert_eq!(payload, b"done");
     }
 
     #[test]
