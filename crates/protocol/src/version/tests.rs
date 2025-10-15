@@ -144,12 +144,20 @@ fn select_highest_mutual_saturates_large_signed_advertisements() {
     let peers = [i32::MAX];
     let negotiated = select_highest_mutual(peers).expect("large signed values clamp to newest");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let peers = [i128::MAX];
+    let negotiated = select_highest_mutual(peers).expect("i128 advertisements clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
 
 #[test]
 fn select_highest_mutual_saturates_wider_integer_advertisements() {
     let peers = [u32::MAX];
     let negotiated = select_highest_mutual(peers).expect("future versions clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let peers = [u128::MAX];
+    let negotiated = select_highest_mutual(peers).expect("u128 advertisements clamp");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
 
