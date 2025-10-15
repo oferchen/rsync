@@ -227,15 +227,21 @@ where
         return Err(NegotiationError::UnsupportedVersion(value));
     }
 
-    let mut peer_versions = Vec::new();
-    if seen_any {
+    let peer_versions = if seen_any {
         let start = ProtocolVersion::OLDEST.as_u8();
+        let span = usize::from(seen_max.saturating_sub(start)) + 1;
+        let mut versions = Vec::with_capacity(span);
+
         for version in start..=seen_max {
             if seen_mask & (1u64 << version) != 0 {
-                peer_versions.push(version);
+                versions.push(version);
             }
         }
-    }
+
+        versions
+    } else {
+        Vec::new()
+    };
 
     Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
