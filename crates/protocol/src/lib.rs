@@ -195,7 +195,8 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
 ///
 /// The caller provides the list of protocol versions advertised by the peer in any order.
 /// The function filters the peer list to versions that upstream rsync 3.4.1 recognizes and
-/// then chooses the highest version that both parties support. If no mutual protocol exists,
+/// then chooses the highest version that both parties support. Duplicate peer entries and
+/// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
 #[must_use]
 pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
