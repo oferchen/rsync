@@ -106,10 +106,18 @@ impl NegotiationPrologueSniffer {
     /// Bytes consumed during detection are appended to the internal buffer so
     /// callers can replay them into the legacy greeting parser if necessary.
     /// Once a decision has been cached, subsequent calls return immediately
-    /// without performing additional I/O.
+    /// without performing additional I/O **unless** the exchange has been
+    /// classified as legacy ASCII and the canonical `@RSYNCD:` prefix still
+    /// needs to be buffered. This mirrors upstream rsync, which keeps reading
+    /// until the marker has been captured so the greeting parser can reuse the
+    /// already consumed bytes.
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
         if let Some(decision) = self.detector.decision() {
-            return Ok(decision);
+            let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
+                && !self.detector.legacy_prefix_complete();
+            if !needs_more_prefix_bytes {
+                return Ok(decision);
+            }
         }
 
         let mut byte = [0u8; 1];
@@ -126,7 +134,9 @@ impl NegotiationPrologueSniffer {
                     let observed = &byte[..read];
                     self.buffered.extend_from_slice(observed);
                     let decision = self.detector.observe(observed);
-                    if decision != NegotiationPrologue::NeedMoreData {
+                    let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
+                        && !self.detector.legacy_prefix_complete();
+                    if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
                         return Ok(decision);
                     }
                 }
@@ -980,19 +990,42 @@ mod tests {
             .read_from(&mut cursor)
             .expect("legacy negotiation should succeed");
         assert_eq!(decision, NegotiationPrologue::LegacyAscii);
-        assert_eq!(sniffer.buffered(), b"@");
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
 
-        assert!(!sniffer.legacy_prefix_complete());
-        assert_eq!(
-            sniffer.legacy_prefix_remaining(),
-            Some(LEGACY_DAEMON_PREFIX_LEN - 1)
-        );
+        assert!(sniffer.legacy_prefix_complete());
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
 
         let mut remaining = Vec::new();
         cursor.read_to_end(&mut remaining).expect("read remainder");
         let mut replay = sniffer.into_buffered();
         replay.extend_from_slice(&remaining);
         assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_reads_until_canonical_prefix_is_buffered() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("first byte should classify legacy negotiation");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.legacy_prefix_complete());
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+
+        let position_after_prefix = cursor.position();
+
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("cached decision should avoid extra reads once prefix buffered");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(cursor.position(), position_after_prefix);
+
+        let mut remaining = Vec::new();
+        cursor.read_to_end(&mut remaining).expect("read remainder");
+        assert_eq!(remaining, b" 31.0\n");
     }
 
     #[test]
@@ -1012,12 +1045,12 @@ mod tests {
     #[test]
     fn prologue_sniffer_reset_clears_buffer_and_state() {
         let mut sniffer = NegotiationPrologueSniffer::new();
-        let mut cursor = Cursor::new(b"@".to_vec());
+        let mut cursor = Cursor::new(LEGACY_DAEMON_PREFIX.as_bytes().to_vec());
         let _ = sniffer
             .read_from(&mut cursor)
             .expect("legacy negotiation should succeed");
 
-        assert_eq!(sniffer.buffered(), b"@");
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 
         sniffer.reset();
