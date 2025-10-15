@@ -10,8 +10,8 @@ use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 ///
 /// The detection helper mirrors upstream's lightweight peek: if the very first
 /// byte equals `b'@'`, the stream is treated as a legacy greeting (subject to
-/// later validation). Otherwise the exchange proceeds in binary mode. When the
-/// caller has not yet accumulated enough bytes to decide, the helper reports
+/// later validation). Otherwise the exchange proceeds in binary mode. When no
+/// data has been observed yet, the helper reports
 /// [`NegotiationPrologue::NeedMoreData`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NegotiationPrologue {
@@ -45,11 +45,6 @@ pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
 
     if buffer[0] != b'@' {
         return NegotiationPrologue::Binary;
-    }
-
-    let prefix = LEGACY_DAEMON_PREFIX.as_bytes();
-    if buffer.len() < prefix.len() && &prefix[..buffer.len()] == buffer {
-        return NegotiationPrologue::NeedMoreData;
     }
 
     NegotiationPrologue::LegacyAscii
@@ -106,7 +101,7 @@ impl NegotiationPrologueDetector {
 
                 self.buffer[0] = byte;
                 self.len = 1;
-                continue;
+                return self.decide(NegotiationPrologue::LegacyAscii);
             }
 
             if self.len >= LEGACY_DAEMON_PREFIX_LEN {
@@ -166,10 +161,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_negotiation_prologue_waits_for_full_prefix() {
+    fn detect_negotiation_prologue_classifies_partial_prefix_as_legacy() {
         assert_eq!(
             detect_negotiation_prologue(b"@RS"),
-            NegotiationPrologue::NeedMoreData
+            NegotiationPrologue::LegacyAscii
         );
     }
 
@@ -201,7 +196,7 @@ mod tests {
     fn prologue_detector_requires_data() {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(b""), NegotiationPrologue::NeedMoreData);
-        assert_eq!(detector.observe(b"@"), NegotiationPrologue::NeedMoreData);
+        assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
         assert_eq!(
             detector.observe(b"RSYNCD: 31.0\n"),
             NegotiationPrologue::LegacyAscii
@@ -220,7 +215,7 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(
             detector.observe(b"@RSYNCD"),
-            NegotiationPrologue::NeedMoreData
+            NegotiationPrologue::LegacyAscii
         );
         assert_eq!(detector.observe(b"X"), NegotiationPrologue::LegacyAscii);
         assert_eq!(
@@ -232,8 +227,8 @@ mod tests {
     #[test]
     fn prologue_detector_handles_split_prefix_chunks() {
         let mut detector = NegotiationPrologueDetector::new();
-        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::NeedMoreData);
-        assert_eq!(detector.observe(b"YN"), NegotiationPrologue::NeedMoreData);
+        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.observe(b"YN"), NegotiationPrologue::LegacyAscii);
         assert_eq!(
             detector.observe(b"CD: 32"),
             NegotiationPrologue::LegacyAscii
