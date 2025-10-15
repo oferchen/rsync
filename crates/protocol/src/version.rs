@@ -188,25 +188,29 @@ pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, Neg
 where
     I: IntoIterator<Item = u8>,
 {
-    let mut filtered = [0u8; SUPPORTED_PROTOCOLS.len()];
-    let mut filtered_len = 0usize;
+    let mut seen_mask: u64 = 0;
+    let mut seen_any = false;
+    let mut seen_max = ProtocolVersion::OLDEST.as_u8();
     let mut oldest_rejection: Option<u8> = None;
 
     for version in peer_versions {
         match ProtocolVersion::from_peer_advertisement(version) {
             Ok(proto) => {
                 let value = proto.as_u8();
-                if !filtered[..filtered_len].contains(&value) && filtered_len < filtered.len() {
-                    filtered[filtered_len] = value;
-                    filtered_len += 1;
+                let bit = 1u64 << value;
+                if seen_mask & bit == 0 {
+                    seen_mask |= bit;
+                    seen_any = true;
+                    if value > seen_max {
+                        seen_max = value;
+                    }
                 }
             }
             Err(NegotiationError::UnsupportedVersion(value))
                 if value < ProtocolVersion::OLDEST.as_u8() =>
             {
-                match oldest_rejection {
-                    Some(current) if value >= current => {}
-                    _ => oldest_rejection = Some(value),
+                if oldest_rejection.map_or(true, |current| value < current) {
+                    oldest_rejection = Some(value);
                 }
             }
             Err(err) => return Err(err),
@@ -214,7 +218,7 @@ where
     }
 
     for ours in SUPPORTED_PROTOCOLS {
-        if filtered[..filtered_len].contains(&ours) {
+        if seen_mask & (1u64 << ours) != 0 {
             return Ok(ProtocolVersion::new_const(ours));
         }
     }
@@ -223,8 +227,16 @@ where
         return Err(NegotiationError::UnsupportedVersion(value));
     }
 
-    let mut peer_versions = Vec::from(&filtered[..filtered_len]);
-    peer_versions.sort_unstable();
+    let mut peer_versions = Vec::new();
+    if seen_any {
+        let start = ProtocolVersion::OLDEST.as_u8();
+        for version in start..=seen_max {
+            if seen_mask & (1u64 << version) != 0 {
+                peer_versions.push(version);
+            }
+        }
+    }
+
     Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
 
