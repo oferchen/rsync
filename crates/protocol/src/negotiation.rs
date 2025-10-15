@@ -259,6 +259,27 @@ mod tests {
     }
 
     #[test]
+    fn prologue_detector_handles_empty_chunk_while_waiting_for_prefix_completion() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@");
+
+        // Feeding an empty chunk while still collecting the canonical legacy
+        // prefix must replay the cached decision without mutating the
+        // buffered bytes. Upstream's detector simply waits for additional data
+        // while treating the exchange as legacy after the leading '@' is
+        // observed.
+        assert_eq!(detector.observe(b""), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@");
+
+        assert_eq!(
+            detector.observe(b"RSYNCD:"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD:");
+    }
+
+    #[test]
     fn prologue_detector_caches_decision() {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(b"@X"), NegotiationPrologue::LegacyAscii);
