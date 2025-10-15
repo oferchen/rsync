@@ -7,3 +7,6 @@ license = "GPL-3.0-or-later"
 authors = ["rsync rust port contributors"]
 
 [dependencies]
+
+[dev-dependencies]
+proptest = "1.4"
