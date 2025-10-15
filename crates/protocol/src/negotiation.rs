@@ -137,6 +137,18 @@ impl NegotiationPrologueDetector {
         self.decided.unwrap_or(NegotiationPrologue::NeedMoreData)
     }
 
+    /// Observes a single byte from the transport and updates the negotiation state.
+    ///
+    /// Upstream rsync often peeks at one octet at a time while deciding whether the
+    /// peer is speaking the legacy ASCII or binary handshake. Providing a
+    /// convenience wrapper keeps that call pattern expressive without forcing
+    /// callers to allocate temporary one-byte slices.
+    #[must_use]
+    #[inline]
+    pub fn observe_byte(&mut self, byte: u8) -> NegotiationPrologue {
+        self.observe(core::slice::from_ref(&byte))
+    }
+
     /// Reports the finalized negotiation style, if one has been established.
     ///
     /// Callers that feed data incrementally can use this accessor to check
@@ -569,5 +581,53 @@ mod tests {
         assert_detector_matches_across_partitions(b"@RSYNCX");
         assert_detector_matches_across_partitions(&[0x00, 0x20, 0x00, 0x00]);
         assert_detector_matches_across_partitions(b"modern");
+    }
+
+    #[test]
+    fn prologue_detector_observe_byte_matches_slice_behavior() {
+        fn run_case(data: &[u8]) {
+            let mut slice_detector = NegotiationPrologueDetector::new();
+            let slice_result = slice_detector.observe(data);
+
+            let mut byte_detector = NegotiationPrologueDetector::new();
+            let byte_result = if data.is_empty() {
+                byte_detector.observe(data)
+            } else {
+                let mut last = NegotiationPrologue::NeedMoreData;
+                for &byte in data {
+                    last = byte_detector.observe_byte(byte);
+                }
+                last
+            };
+
+            assert_eq!(byte_result, slice_result, "decision mismatch for {:?}", data);
+            assert_eq!(
+                byte_detector.decision(),
+                slice_detector.decision(),
+                "cached decision mismatch for {:?}",
+                data
+            );
+            assert_eq!(
+                byte_detector.legacy_prefix_complete(),
+                slice_detector.legacy_prefix_complete(),
+                "prefix completion mismatch for {:?}",
+                data
+            );
+            assert_eq!(
+                byte_detector.buffered_prefix(),
+                slice_detector.buffered_prefix(),
+                "buffered prefix mismatch for {:?}",
+                data
+            );
+        }
+
+        run_case(b"");
+        run_case(b"@");
+        run_case(b"@RS");
+        run_case(b"@RSYNCD:");
+        run_case(b"@RSYNCD: 31.0\n");
+        run_case(b"@RSYNCX");
+        run_case(b"modern");
+        run_case(&[0x00, 0x20, 0x00, 0x00]);
     }
 }
