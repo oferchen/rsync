@@ -192,6 +192,20 @@ impl NegotiationPrologueDetector {
         &self.buffer[..self.len]
     }
 
+    /// Returns the number of bytes retained in the prefix buffer.
+    ///
+    /// The detector only stores bytes while it is still determining whether
+    /// the exchange uses the legacy ASCII greeting. Once the binary path has
+    /// been selected the buffer remains empty. Higher layers that want to
+    /// mirror upstream rsync's peek logic can query this helper to decide how
+    /// many bytes should be replayed into the legacy greeting parser without
+    /// inspecting the raw slice returned by [`buffered_prefix`].
+    #[must_use]
+    #[inline]
+    pub const fn buffered_len(&self) -> usize {
+        self.len
+    }
+
     /// Resets the detector to its initial state so it can be reused for a new
     /// connection attempt.
     ///
@@ -342,6 +356,28 @@ mod tests {
             NegotiationPrologue::LegacyAscii
         );
         assert_eq!(detector.buffered_prefix(), b"@RSYNCD:");
+    }
+
+    #[test]
+    fn prologue_detector_reports_buffered_length() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.buffered_len(), 0);
+
+        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_len(), 3);
+
+        assert_eq!(detector.observe(b"YNCD:"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+
+        assert_eq!(
+            detector.observe(b" 31.0\n"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(detector.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut binary = NegotiationPrologueDetector::new();
+        assert_eq!(binary.observe(b"modern"), NegotiationPrologue::Binary);
+        assert_eq!(binary.buffered_len(), 0);
     }
 
     #[test]
