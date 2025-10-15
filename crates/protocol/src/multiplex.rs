@@ -1,3 +1,4 @@
+use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
@@ -88,8 +89,9 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len() as usize;
 
-    let mut payload = Vec::with_capacity(len);
+    let mut payload = Vec::new();
     if len != 0 {
+        reserve_payload(&mut payload, len)?;
         payload.resize(len, 0);
         reader.read_exact(&mut payload)?;
     }
@@ -109,8 +111,9 @@ pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Resul
     let len = header.payload_len() as usize;
 
     buffer.clear();
-    buffer.resize(len, 0);
     if len != 0 {
+        reserve_payload(buffer, len)?;
+        buffer.resize(len, 0);
         reader.read_exact(buffer)?;
     }
 
@@ -141,6 +144,21 @@ fn invalid_len_error(len: usize) -> io::Error {
         io::ErrorKind::InvalidInput,
         format!("multiplexed payload length {len} exceeds maximum {max}"),
     )
+}
+
+fn reserve_payload(buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
+    if buffer.capacity() < len {
+        let additional = len - buffer.capacity();
+        buffer
+            .try_reserve_exact(additional)
+            .map_err(map_allocation_error)?;
+    }
+
+    Ok(())
+}
+
+fn map_allocation_error(err: TryReserveError) -> io::Error {
+    io::Error::new(io::ErrorKind::OutOfMemory, err)
 }
 
 #[cfg(test)]
@@ -230,6 +248,13 @@ mod tests {
         assert_eq!(code, MessageCode::Warning);
         assert_eq!(buffer.as_slice(), b"hi");
         assert_eq!(buffer.capacity(), capacity_before);
+    }
+
+    #[test]
+    fn reserve_payload_rejects_capacity_overflow() {
+        let mut buffer = Vec::new();
+        let err = super::reserve_payload(&mut buffer, usize::MAX).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
     }
 
     #[test]
