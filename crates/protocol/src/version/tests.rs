@@ -1,4 +1,8 @@
 use super::*;
+use core::num::{
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU16,
+    NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+};
 use proptest::prelude::*;
 
 fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, NegotiationError> {
@@ -109,6 +113,72 @@ fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
     ];
     let negotiated = select_highest_mutual(peers).expect("non-zero values work");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_non_zero_unsigned_advertisements() {
+    fn check<T: ProtocolVersionAdvertisement + Copy>(advertised: T) {
+        let negotiated = select_highest_mutual([advertised]).expect("non-zero unsigned works");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    check(NonZeroU16::new(32).expect("non-zero"));
+    check(NonZeroU32::new(32).expect("non-zero"));
+    check(NonZeroU64::new(32).expect("non-zero"));
+    check(NonZeroU128::new(32).expect("non-zero"));
+    check(NonZeroUsize::new(32).expect("non-zero"));
+
+    let future = NonZeroU64::new(200).expect("non-zero");
+    let negotiated = select_highest_mutual([future]).expect("future values clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_non_zero_signed_advertisements() {
+    fn check<T: ProtocolVersionAdvertisement + Copy>(advertised: T, expected: ProtocolVersion) {
+        let negotiated = select_highest_mutual([advertised]).expect("non-zero signed works");
+        assert_eq!(negotiated, expected);
+    }
+
+    check(
+        NonZeroI8::new(32).expect("non-zero"),
+        ProtocolVersion::NEWEST,
+    );
+    check(
+        NonZeroI16::new(i16::from(ProtocolVersion::NEWEST.as_u8())).expect("non-zero"),
+        ProtocolVersion::NEWEST,
+    );
+    check(
+        NonZeroI32::new(i32::from(ProtocolVersion::OLDEST.as_u8())).expect("non-zero"),
+        ProtocolVersion::OLDEST,
+    );
+    check(
+        NonZeroI64::new(i64::from(ProtocolVersion::NEWEST.as_u8())).expect("non-zero"),
+        ProtocolVersion::NEWEST,
+    );
+    check(
+        NonZeroI128::new(i128::from(ProtocolVersion::NEWEST.as_u8())).expect("non-zero"),
+        ProtocolVersion::NEWEST,
+    );
+    check(
+        NonZeroIsize::new(isize::from(ProtocolVersion::NEWEST.as_u8())).expect("non-zero"),
+        ProtocolVersion::NEWEST,
+    );
+
+    let future = NonZeroI128::new(200).expect("non-zero");
+    let negotiated = select_highest_mutual([future]).expect("future values clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_clamps_negative_non_zero_signed_advertisements() {
+    let negative = NonZeroI16::new(-5).expect("non-zero");
+    let err = select_highest_mutual([negative]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
+
+    let negative_isize = NonZeroIsize::new(-12).expect("non-zero");
+    let err = select_highest_mutual([negative_isize]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
 }
 
 #[test]
