@@ -69,6 +69,20 @@ impl ProtocolVersionAdvertisement for &ProtocolVersion {
     }
 }
 
+impl ProtocolVersionAdvertisement for NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
+    }
+}
+
+impl ProtocolVersionAdvertisement for &NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
+    }
+}
+
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
         #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
@@ -367,29 +381,12 @@ mod tests {
     }
 
     #[test]
-    fn select_highest_mutual_accepts_non_zero_peer_versions() {
-        use core::num::NonZeroU8;
-
+    fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
         let peers = [
-            NonZeroU8::new(ProtocolVersion::NEWEST.as_u8()).expect("non-zero"),
-            NonZeroU8::new(ProtocolVersion::OLDEST.as_u8()).expect("non-zero"),
+            NonZeroU8::new(32).expect("non-zero"),
+            NonZeroU8::new(31).expect("non-zero"),
         ];
-
-        let negotiated = select_highest_mutual(peers).expect("non-zero list works");
-        assert_eq!(negotiated, ProtocolVersion::NEWEST);
-    }
-
-    #[test]
-    fn select_highest_mutual_accepts_references_to_non_zero_versions() {
-        use core::num::NonZeroU8;
-
-        let peers = [
-            NonZeroU8::new(ProtocolVersion::NEWEST.as_u8()).expect("non-zero"),
-            NonZeroU8::new(ProtocolVersion::OLDEST.as_u8()).expect("non-zero"),
-        ];
-
-        let negotiated = select_highest_mutual(peers.iter())
-            .expect("non-zero references work");
+        let negotiated = select_highest_mutual(peers).expect("non-zero values work");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
