@@ -212,7 +212,7 @@ where
 
     for ours in SUPPORTED_PROTOCOLS {
         if filtered.binary_search(&ours).is_ok() {
-            return ProtocolVersion::try_from(ours);
+            return Ok(ProtocolVersion::new_const(ours));
         }
     }
 
@@ -255,6 +255,12 @@ mod tests {
     #[test]
     fn select_highest_mutual_deduplicates_peer_versions() {
         let negotiated = select_highest_mutual([32, 32, 31, 31]).expect("must select 32");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_handles_unsorted_peer_versions() {
+        let negotiated = select_highest_mutual([29, 32, 30, 31]).expect("must select newest");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
