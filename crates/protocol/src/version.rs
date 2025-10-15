@@ -128,8 +128,7 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector.
     #[must_use]
-    pub fn supported_protocol_numbers_iter(
-    ) -> IntoIter<u8, { SUPPORTED_PROTOCOLS.len() }> {
+    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOLS.len() }> {
         SUPPORTED_PROTOCOLS.into_iter()
     }
 
