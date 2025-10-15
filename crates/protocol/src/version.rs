@@ -55,8 +55,14 @@ impl ProtocolVersion {
 
     /// Returns a reference to the list of supported protocol versions in
     /// newest-to-oldest order.
+    ///
+    /// Exposing the slice instead of the fixed-size array mirrors the API
+    /// shape found in upstream rsync's C helpers where callers operate on
+    /// spans rather than arrays with baked-in lengths. This keeps parity while
+    /// allowing downstream crates to consume the list without depending on the
+    /// const-generic length used by the internal cache.
     #[must_use]
-    pub const fn supported_versions() -> &'static [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] {
+    pub const fn supported_versions() -> &'static [ProtocolVersion] {
         &Self::SUPPORTED_VERSIONS
     }
 
@@ -339,6 +345,14 @@ mod tests {
             .map(ProtocolVersion::as_u8)
             .collect();
         assert_eq!(expected, SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn supported_versions_method_matches_constant_slice() {
+        assert_eq!(
+            ProtocolVersion::supported_versions(),
+            ProtocolVersion::SUPPORTED_VERSIONS.as_slice()
+        );
     }
 
     #[test]
