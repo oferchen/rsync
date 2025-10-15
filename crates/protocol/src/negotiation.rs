@@ -524,6 +524,26 @@ mod tests {
     }
 
     #[test]
+    fn observe_byte_after_reset_restarts_detection() {
+        let mut detector = NegotiationPrologueDetector::new();
+
+        for &byte in LEGACY_DAEMON_PREFIX.as_bytes() {
+            assert_eq!(detector.observe_byte(byte), NegotiationPrologue::LegacyAscii);
+        }
+        assert!(detector.legacy_prefix_complete());
+
+        detector.reset();
+
+        assert_eq!(detector.observe_byte(b'@'), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@");
+        assert_eq!(detector.buffered_len(), 1);
+        assert_eq!(
+            detector.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 1)
+        );
+    }
+
+    #[test]
     fn legacy_prefix_remaining_reports_none_before_decision() {
         let detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.legacy_prefix_remaining(), None);
@@ -642,9 +662,12 @@ mod tests {
         detector.reset();
         assert_eq!(detector.decision(), None);
         assert_eq!(detector.buffered_prefix(), b"");
+        assert_eq!(detector.buffered_len(), 0);
+        assert_eq!(detector.legacy_prefix_remaining(), None);
 
         assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
         assert_eq!(detector.decision(), Some(NegotiationPrologue::Binary));
+        assert_eq!(detector.legacy_prefix_remaining(), None);
     }
 
     fn assert_detector_matches_across_partitions(data: &[u8]) {
