@@ -198,11 +198,9 @@ impl MessageHeader {
             });
         }
 
-        let raw = u32::from_le_bytes(
-            bytes[..HEADER_LEN]
-                .try_into()
-                .expect("slice length checked"),
-        );
+        let mut encoded = [0u8; HEADER_LEN];
+        encoded.copy_from_slice(&bytes[..HEADER_LEN]);
+        let raw = u32::from_le_bytes(encoded);
         let tag = (raw >> 24) as u8;
         if tag < MPLEX_BASE {
             return Err(EnvelopeError::InvalidTag(tag));
