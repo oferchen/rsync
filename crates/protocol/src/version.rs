@@ -13,6 +13,48 @@ const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> = 28..=32;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
 
+/// Types that can be interpreted as peer-advertised protocol versions.
+///
+/// The negotiation helpers in this module frequently operate on raw numeric
+/// protocol identifiers transmitted by the peer. However, higher layers may
+/// already work with fully validated [`ProtocolVersion`] values or iterate over
+/// references when forwarding buffers. Exposing a small conversion trait keeps
+/// the public helper flexible without forcing callers to allocate temporary
+/// vectors or clone data solely to satisfy the type signature.
+#[doc(hidden)]
+pub trait ProtocolVersionAdvertisement: Copy {
+    /// Returns the numeric representation expected by the negotiation logic.
+    fn into_advertised_version(self) -> u8;
+}
+
+impl ProtocolVersionAdvertisement for u8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self
+    }
+}
+
+impl ProtocolVersionAdvertisement for ProtocolVersion {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.as_u8()
+    }
+}
+
+impl ProtocolVersionAdvertisement for &u8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        *self
+    }
+}
+
+impl ProtocolVersionAdvertisement for &ProtocolVersion {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.as_u8()
+    }
+}
+
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
         #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
@@ -190,9 +232,10 @@ impl PartialEq<ProtocolVersion> for u8 {
 /// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
 #[must_use = "the negotiation outcome must be checked"]
-pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
+pub fn select_highest_mutual<I, T>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where
-    I: IntoIterator<Item = u8>,
+    I: IntoIterator<Item = T>,
+    T: ProtocolVersionAdvertisement,
 {
     let mut seen_mask: u64 = 0;
     let mut seen_any = false;
@@ -200,7 +243,9 @@ where
     let mut oldest_rejection: Option<u8> = None;
 
     for version in peer_versions {
-        match ProtocolVersion::from_peer_advertisement(version) {
+        let advertised = version.into_advertised_version();
+
+        match ProtocolVersion::from_peer_advertisement(advertised) {
             Ok(proto) => {
                 let value = proto.as_u8();
                 let bit = 1u64 << value;
@@ -270,7 +315,7 @@ mod tests {
 
     #[test]
     fn reports_no_mutual_protocol() {
-        let err = select_highest_mutual(core::iter::empty()).unwrap_err();
+        let err = select_highest_mutual(core::iter::empty::<u8>()).unwrap_err();
         assert_eq!(
             err,
             NegotiationError::NoMutualProtocol {
@@ -288,6 +333,20 @@ mod tests {
     #[test]
     fn select_highest_mutual_handles_unsorted_peer_versions() {
         let negotiated = select_highest_mutual([29, 32, 30, 31]).expect("must select newest");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_slice_iterators() {
+        let peers = [31u8, 29, 32];
+        let negotiated = select_highest_mutual(peers.iter()).expect("slice iter works");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_protocol_version_references() {
+        let peers = ProtocolVersion::supported_versions();
+        let negotiated = select_highest_mutual(peers.iter()).expect("refs work");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
