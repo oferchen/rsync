@@ -55,6 +55,20 @@ impl ProtocolVersionAdvertisement for &ProtocolVersion {
     }
 }
 
+impl ProtocolVersionAdvertisement for NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
+    }
+}
+
+impl ProtocolVersionAdvertisement for &NonZeroU8 {
+    #[inline]
+    fn into_advertised_version(self) -> u8 {
+        self.get()
+    }
+}
+
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
         #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
@@ -349,6 +363,16 @@ mod tests {
     fn select_highest_mutual_accepts_protocol_version_references() {
         let peers = ProtocolVersion::supported_versions();
         let negotiated = select_highest_mutual(peers.iter()).expect("refs work");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
+        let peers = [
+            NonZeroU8::new(32).expect("non-zero"),
+            NonZeroU8::new(31).expect("non-zero"),
+        ];
+        let negotiated = select_highest_mutual(peers).expect("non-zero values work");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
