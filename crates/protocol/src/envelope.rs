@@ -99,6 +99,30 @@ impl MessageCode {
     pub const fn all() -> &'static [MessageCode; 18] {
         &Self::ALL
     }
+
+    /// Reports whether this message carries human-readable logging output.
+    ///
+    /// Upstream rsync routes multiplexed messages tagged with the `FINFO`,
+    /// `FERROR*`, `FWARNING`, `FLOG`, and `FCLIENT` log codes directly to the
+    /// logging subsystem inside `read_a_msg()` (see `io.c`). Messages in this
+    /// category contain UTF-8 text payloads destined for the user or daemon
+    /// logs rather than control data. The Rust implementation mirrors that
+    /// classification so higher layers can dispatch log records without
+    /// duplicating the tag match logic.
+    #[must_use]
+    pub const fn is_logging(self) -> bool {
+        matches!(
+            self,
+            MessageCode::ErrorXfer
+                | MessageCode::Info
+                | MessageCode::Error
+                | MessageCode::Warning
+                | MessageCode::ErrorSocket
+                | MessageCode::ErrorUtf8
+                | MessageCode::Log
+                | MessageCode::Client
+        )
+    }
 }
 
 impl TryFrom<u8> for MessageCode {
@@ -297,6 +321,25 @@ mod tests {
                 assert_eq!(decoded.code(), code);
                 assert_eq!(decoded.payload_len(), len);
             }
+        }
+    }
+
+    #[test]
+    fn logging_classification_matches_upstream_set() {
+        const LOGGING_CODES: &[MessageCode] = &[
+            MessageCode::ErrorXfer,
+            MessageCode::Info,
+            MessageCode::Error,
+            MessageCode::Warning,
+            MessageCode::ErrorSocket,
+            MessageCode::ErrorUtf8,
+            MessageCode::Log,
+            MessageCode::Client,
+        ];
+
+        for &code in MessageCode::all() {
+            let expected = LOGGING_CODES.iter().any(|candidate| *candidate == code);
+            assert_eq!(code.is_logging(), expected, "mismatch for code {code:?}");
         }
     }
 }
