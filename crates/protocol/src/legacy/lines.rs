@@ -154,6 +154,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_rejects_lowercase_prefix() {
+        let err = parse_legacy_daemon_message("@rsyncd: OK\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@rsyncd: OK");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_accepts_exit_with_trailing_whitespace() {
         let message =
             parse_legacy_daemon_message("@RSYNCD: EXIT   \n").expect("keyword with padding");
