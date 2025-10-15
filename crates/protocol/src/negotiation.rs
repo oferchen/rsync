@@ -84,7 +84,9 @@ impl NegotiationPrologueDetector {
     #[must_use]
     pub fn observe(&mut self, chunk: &[u8]) -> NegotiationPrologue {
         if let Some(decided) = self.decided {
-            if decided != NegotiationPrologue::LegacyAscii || self.len >= LEGACY_DAEMON_PREFIX_LEN {
+            let needs_more_prefix_bytes =
+                decided == NegotiationPrologue::LegacyAscii && self.len < LEGACY_DAEMON_PREFIX_LEN;
+            if !needs_more_prefix_bytes {
                 return decided;
             }
         }
