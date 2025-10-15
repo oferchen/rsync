@@ -77,13 +77,13 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len() as usize;
 
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
+    buffer.clear();
+    if len != 0 {
+        buffer.resize(len, 0);
+        reader.read_exact(buffer)?;
+    }
 
-    Ok(MessageFrame {
-        code: header.code(),
-        payload,
-    })
+    Ok(header.code())
 }
 
 /// Receives the next multiplexed message into a caller-provided buffer.
@@ -180,6 +180,53 @@ mod tests {
         let raw = (tag << 24).to_le_bytes();
         let err = recv_msg(&mut io::Cursor::new(raw)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn recv_msg_into_populates_existing_buffer() {
+        let mut stream = Vec::new();
+        send_msg(&mut stream, MessageCode::Client, b"payload").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(stream);
+        let mut buffer = Vec::new();
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Client);
+        assert_eq!(buffer.as_slice(), b"payload");
+    }
+
+    #[test]
+    fn recv_msg_into_reuses_buffer_capacity_for_smaller_payloads() {
+        let mut stream = Vec::new();
+        send_msg(&mut stream, MessageCode::Warning, b"hi").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(stream);
+        let mut buffer = Vec::with_capacity(64);
+        buffer.extend_from_slice(&[0u8; 16]);
+        let capacity_before = buffer.capacity();
+
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Warning);
+        assert_eq!(buffer.as_slice(), b"hi");
+        assert_eq!(buffer.capacity(), capacity_before);
+    }
+
+    #[test]
+    fn recv_msg_into_clears_buffer_for_empty_payloads() {
+        let mut stream = Vec::new();
+        send_msg(&mut stream, MessageCode::Log, b"").expect("send succeeds");
+
+        let mut cursor = io::Cursor::new(stream);
+        let mut buffer = Vec::with_capacity(8);
+        buffer.extend_from_slice(b"junk");
+        let capacity_before = buffer.capacity();
+
+        let code = recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
+
+        assert_eq!(code, MessageCode::Log);
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.capacity(), capacity_before);
     }
 
     #[test]
