@@ -1,0 +1,345 @@
+use super::*;
+use proptest::prelude::*;
+
+fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, NegotiationError> {
+    use std::collections::BTreeSet;
+
+    let mut recognized = BTreeSet::new();
+    let mut seen_any = false;
+    let mut seen_max = ProtocolVersion::OLDEST.as_u8();
+    let mut oldest_rejection: Option<u8> = None;
+
+    for &advertised in peer_versions {
+        if advertised < ProtocolVersion::OLDEST.as_u8() {
+            oldest_rejection = Some(match oldest_rejection {
+                Some(current) if advertised >= current => current,
+                _ => advertised,
+            });
+            continue;
+        }
+
+        let clamped = advertised.min(ProtocolVersion::NEWEST.as_u8());
+        if recognized.insert(clamped) {
+            seen_any = true;
+            if clamped > seen_max {
+                seen_max = clamped;
+            }
+        }
+    }
+
+    if let Some(&newest) = recognized.iter().next_back() {
+        return Ok(ProtocolVersion::new_const(newest));
+    }
+
+    if let Some(rejected) = oldest_rejection {
+        return Err(NegotiationError::UnsupportedVersion(rejected));
+    }
+
+    let peer_versions = if seen_any {
+        let start = ProtocolVersion::OLDEST.as_u8();
+        let span = usize::from(seen_max.saturating_sub(start)) + 1;
+        let mut versions = Vec::with_capacity(span);
+        for version in start..=seen_max {
+            if recognized.contains(&version) {
+                versions.push(version);
+            }
+        }
+        versions
+    } else {
+        Vec::new()
+    };
+
+    Err(NegotiationError::NoMutualProtocol { peer_versions })
+}
+
+#[test]
+fn newest_protocol_is_preferred() {
+    let result = select_highest_mutual([32, 31, 30]).expect("must succeed");
+    assert_eq!(result, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn downgrades_when_peer_lacks_newest() {
+    let result = select_highest_mutual([31]).expect("must succeed");
+    assert_eq!(result.as_u8(), 31);
+}
+
+#[test]
+fn reports_no_mutual_protocol() {
+    let err = select_highest_mutual(core::iter::empty::<u8>()).unwrap_err();
+    assert_eq!(
+        err,
+        NegotiationError::NoMutualProtocol {
+            peer_versions: vec![]
+        }
+    );
+}
+
+#[test]
+fn select_highest_mutual_deduplicates_peer_versions() {
+    let negotiated = select_highest_mutual([32, 32, 31, 31]).expect("must select 32");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_handles_unsorted_peer_versions() {
+    let negotiated = select_highest_mutual([29, 32, 30, 31]).expect("must select newest");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_slice_iterators() {
+    let peers = [31u8, 29, 32];
+    let negotiated = select_highest_mutual(peers.iter()).expect("slice iter works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_protocol_version_references() {
+    let peers = ProtocolVersion::supported_versions();
+    let negotiated = select_highest_mutual(peers.iter()).expect("refs work");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
+    let peers = [
+        NonZeroU8::new(32).expect("non-zero"),
+        NonZeroU8::new(31).expect("non-zero"),
+    ];
+    let negotiated = select_highest_mutual(peers).expect("non-zero values work");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_wider_integer_advertisements() {
+    let peers = [u16::from(ProtocolVersion::NEWEST.as_u8()), 0u16];
+    let negotiated = select_highest_mutual(peers).expect("wider integers supported");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let peers = [usize::from(ProtocolVersion::OLDEST.as_u8())];
+    let negotiated = select_highest_mutual(peers).expect("usize conversions work");
+    assert_eq!(negotiated, ProtocolVersion::OLDEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_signed_integer_advertisements() {
+    let peers = [32i16, 29i16];
+    let negotiated = select_highest_mutual(peers).expect("signed integers supported");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let peers = [-5isize, 31isize];
+    let negotiated = select_highest_mutual(peers).expect("negative values do not prevent success");
+    assert_eq!(negotiated.as_u8(), 31);
+}
+
+#[test]
+fn select_highest_mutual_clamps_negative_signed_advertisements() {
+    let err = select_highest_mutual([-1i8, -12i8]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
+}
+
+#[test]
+fn select_highest_mutual_saturates_large_signed_advertisements() {
+    let peers = [i32::MAX];
+    let negotiated = select_highest_mutual(peers).expect("large signed values clamp to newest");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_saturates_wider_integer_advertisements() {
+    let peers = [u32::MAX];
+    let negotiated = select_highest_mutual(peers).expect("future versions clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn display_for_no_mutual_protocol_mentions_filtered_list() {
+    let err = NegotiationError::NoMutualProtocol {
+        peer_versions: vec![29, 30],
+    };
+    let rendered = err.to_string();
+    assert!(rendered.contains("peer offered [29, 30]"));
+    assert!(rendered.contains("we support"));
+}
+
+#[test]
+fn rejects_zero_protocol_version() {
+    let err = select_highest_mutual([0]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
+}
+
+#[test]
+fn clamps_future_versions_in_peer_advertisements_directly() {
+    let negotiated = ProtocolVersion::from_peer_advertisement(40).expect("future versions clamp");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn rejects_peer_advertisements_older_than_supported_range() {
+    let err = ProtocolVersion::from_peer_advertisement(27).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(27));
+}
+
+#[test]
+fn clamps_future_peer_versions_in_selection() {
+    let negotiated = select_highest_mutual([35, 31]).expect("must clamp to newest");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn ignores_versions_older_than_supported_when_newer_exists() {
+    let negotiated = select_highest_mutual([27, 29, 27]).expect("29 should be selected");
+    assert_eq!(negotiated.as_u8(), 29);
+}
+
+#[test]
+fn reports_unsupported_when_only_too_old_versions_are_offered() {
+    let err = select_highest_mutual([27, 26]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(26));
+}
+
+#[test]
+fn supported_versions_constant_matches_u8_list() {
+    let expected: Vec<u8> = ProtocolVersion::SUPPORTED_VERSIONS
+        .into_iter()
+        .map(ProtocolVersion::as_u8)
+        .collect();
+    assert_eq!(expected, SUPPORTED_PROTOCOLS);
+}
+
+#[test]
+fn supported_versions_method_matches_constant_slice() {
+    assert_eq!(
+        ProtocolVersion::supported_versions(),
+        ProtocolVersion::SUPPORTED_VERSIONS.as_slice()
+    );
+}
+
+#[test]
+fn supported_protocol_numbers_matches_constant_slice() {
+    assert_eq!(
+        ProtocolVersion::supported_protocol_numbers(),
+        &SUPPORTED_PROTOCOLS
+    );
+}
+
+#[test]
+fn supported_versions_iterator_matches_constants() {
+    let via_iterator: Vec<u8> = ProtocolVersion::supported_versions_iter()
+        .map(ProtocolVersion::as_u8)
+        .collect();
+    assert_eq!(via_iterator, SUPPORTED_PROTOCOLS);
+}
+
+#[test]
+fn supported_protocol_numbers_iter_matches_constant_slice() {
+    let iterated: Vec<u8> = ProtocolVersion::supported_protocol_numbers_iter().collect();
+    assert_eq!(iterated.as_slice(), &SUPPORTED_PROTOCOLS);
+}
+
+#[test]
+fn supported_protocol_numbers_iter_is_sorted_descending() {
+    let iterated: Vec<u8> = ProtocolVersion::supported_protocol_numbers_iter().collect();
+    assert!(iterated.windows(2).all(|pair| pair[0] >= pair[1]));
+}
+
+#[test]
+fn supported_range_matches_upstream_bounds() {
+    assert_eq!(ProtocolVersion::supported_range(), UPSTREAM_PROTOCOL_RANGE);
+}
+
+#[test]
+fn detects_supported_versions() {
+    for version in SUPPORTED_PROTOCOLS {
+        assert!(ProtocolVersion::is_supported(version));
+    }
+}
+
+#[test]
+fn rejects_unsupported_versions_in_helper() {
+    assert!(!ProtocolVersion::is_supported(0));
+    assert!(!ProtocolVersion::is_supported(27));
+    assert!(!ProtocolVersion::is_supported(33));
+}
+
+#[test]
+fn rejects_out_of_range_non_zero_u8() {
+    let value = NonZeroU8::new(27).expect("non-zero");
+    let err = ProtocolVersion::try_from(value).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(27));
+}
+
+#[test]
+fn converts_from_non_zero_u8() {
+    let value = NonZeroU8::new(31).expect("non-zero");
+    let version = ProtocolVersion::try_from(value).expect("valid");
+    assert_eq!(version.as_u8(), 31);
+}
+
+#[test]
+fn select_highest_mutual_accepts_only_future_versions() {
+    let negotiated = select_highest_mutual([40]).expect("future-only handshake clamps");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_prefers_newest_when_future_and_too_old_mix() {
+    let negotiated = select_highest_mutual([0, 40])
+        .expect("unsupported low versions must not mask clamped future ones");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn converts_protocol_version_to_non_zero_u8() {
+    let value = NonZeroU8::new(28).expect("non-zero");
+    let version = ProtocolVersion::try_from(value).expect("valid");
+    let round_trip: NonZeroU8 = version.into();
+    assert_eq!(round_trip, value);
+}
+
+#[test]
+fn converts_protocol_version_to_u8() {
+    let version = ProtocolVersion::try_from(32).expect("valid");
+    let value: u8 = version.into();
+    assert_eq!(value, 32);
+}
+
+#[test]
+fn compares_directly_with_u8() {
+    let version = ProtocolVersion::try_from(30).expect("valid");
+    assert_eq!(version, 30);
+    assert_eq!(30, version);
+}
+
+#[test]
+fn supported_versions_are_sorted_descending() {
+    let mut sorted = SUPPORTED_PROTOCOLS;
+    sorted.sort_by(|a, b| b.cmp(a));
+    assert_eq!(sorted, SUPPORTED_PROTOCOLS);
+}
+
+#[test]
+fn protocol_version_display_matches_numeric_value() {
+    let version = ProtocolVersion::try_from(32).expect("valid");
+    assert_eq!(version.to_string(), "32");
+}
+
+#[test]
+fn protocol_versions_are_hashable() {
+    use std::collections::HashSet;
+
+    let mut set = HashSet::new();
+    assert!(set.insert(ProtocolVersion::NEWEST));
+    assert!(set.contains(&ProtocolVersion::NEWEST));
+    assert!(!set.insert(ProtocolVersion::NEWEST));
+}
+
+proptest! {
+    #[test]
+    fn select_highest_mutual_matches_reference(peer_versions in proptest::collection::vec(0u8..=255, 0..=16)) {
+        let expected = reference_negotiation(&peer_versions);
+        let actual = select_highest_mutual(peer_versions.iter().copied());
+        prop_assert_eq!(actual, expected);
+    }
+}
