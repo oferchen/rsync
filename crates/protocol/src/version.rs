@@ -27,47 +27,33 @@ pub trait ProtocolVersionAdvertisement: Copy {
     fn into_advertised_version(self) -> u8;
 }
 
-impl ProtocolVersionAdvertisement for u8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self
-    }
+macro_rules! impl_protocol_version_advertisement {
+    ($($ty:ty => $into:expr),+ $(,)?) => {
+        $(
+            impl ProtocolVersionAdvertisement for $ty {
+                #[inline]
+                fn into_advertised_version(self) -> u8 {
+                    let convert = $into;
+                    convert(self)
+                }
+            }
+
+            impl ProtocolVersionAdvertisement for &$ty {
+                #[inline]
+                fn into_advertised_version(self) -> u8 {
+                    let convert = $into;
+                    convert(*self)
+                }
+            }
+        )+
+    };
 }
 
-impl ProtocolVersionAdvertisement for NonZeroU8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.get()
-    }
-}
-
-impl ProtocolVersionAdvertisement for ProtocolVersion {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.as_u8()
-    }
-}
-
-impl ProtocolVersionAdvertisement for &u8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        *self
-    }
-}
-
-impl ProtocolVersionAdvertisement for &NonZeroU8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.get()
-    }
-}
-
-impl ProtocolVersionAdvertisement for &ProtocolVersion {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.as_u8()
-    }
-}
+impl_protocol_version_advertisement!(
+    u8 => |value: u8| value,
+    NonZeroU8 => NonZeroU8::get,
+    ProtocolVersion => ProtocolVersion::as_u8,
+);
 
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
