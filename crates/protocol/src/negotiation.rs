@@ -260,4 +260,43 @@ mod tests {
         assert_eq!(detector.observe(b"x"), NegotiationPrologue::Binary);
         assert_eq!(detector.decision(), Some(NegotiationPrologue::Binary));
     }
+
+    fn assert_detector_matches_across_partitions(data: &[u8]) {
+        let expected = detect_negotiation_prologue(data);
+
+        for first_end in 0..=data.len() {
+            for second_end in first_end..=data.len() {
+                let mut detector = NegotiationPrologueDetector::new();
+                let _ = detector.observe(&data[..first_end]);
+                let _ = detector.observe(&data[first_end..second_end]);
+                let result = detector.observe(&data[second_end..]);
+
+                assert_eq!(
+                    result, expected,
+                    "segmented detection mismatch for {:?} with splits ({}, {})",
+                    data, first_end, second_end
+                );
+
+                match expected {
+                    NegotiationPrologue::NeedMoreData => {
+                        assert_eq!(detector.decision(), None);
+                    }
+                    decision => {
+                        assert_eq!(detector.decision(), Some(decision));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prologue_detector_matches_stateless_detection_across_partitions() {
+        assert_detector_matches_across_partitions(b"");
+        assert_detector_matches_across_partitions(b"@");
+        assert_detector_matches_across_partitions(b"@RS");
+        assert_detector_matches_across_partitions(b"@RSYNCD: 31.0\n");
+        assert_detector_matches_across_partitions(b"@RSYNCX");
+        assert_detector_matches_across_partitions(&[0x00, 0x20, 0x00, 0x00]);
+        assert_detector_matches_across_partitions(b"modern");
+    }
 }
