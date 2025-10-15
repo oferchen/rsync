@@ -52,7 +52,8 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
         return Err(malformed());
     }
 
-    let version: u8 = digits.parse().map_err(|_| malformed())?;
+    let parsed_version = parse_ascii_digits_to_u32(digits);
+    let version = parsed_version.min(u32::from(u8::MAX)) as u8;
 
     ProtocolVersion::from_peer_advertisement(version)
 }
@@ -64,6 +65,21 @@ fn ascii_digit_prefix_len(input: &str) -> usize {
         .iter()
         .take_while(|byte| byte.is_ascii_digit())
         .count()
+}
+
+/// Parses a string consisting solely of ASCII digits into a `u32`, saturating on
+/// overflow.
+fn parse_ascii_digits_to_u32(digits: &str) -> u32 {
+    let mut value: u32 = 0;
+
+    for &byte in digits.as_bytes() {
+        debug_assert!(byte.is_ascii_digit());
+        let digit = u32::from(byte - b'0');
+        value = value.saturating_mul(10);
+        value = value.saturating_add(digit);
+    }
+
+    value
 }
 
 /// Constructs a [`NegotiationError::MalformedLegacyGreeting`] for `trimmed` input.
@@ -274,6 +290,18 @@ mod tests {
     fn clamps_future_versions_in_legacy_greeting() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 40.1\n").expect("must clamp");
         assert_eq!(parsed, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn parses_large_future_version_numbers_by_clamping() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 999999999999.0\n").expect("must clamp");
+        assert_eq!(parsed, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn parse_ascii_digits_to_u32_saturates_on_overflow() {
+        let digits = "999999999999999999999999999999";
+        assert_eq!(parse_ascii_digits_to_u32(digits), u32::MAX);
     }
 
     #[test]
