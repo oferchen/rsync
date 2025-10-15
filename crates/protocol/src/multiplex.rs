@@ -121,7 +121,7 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// error occurs. Invalid headers surface as [`io::ErrorKind::InvalidData`].
 pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
-    let len = header.payload_len() as usize;
+    let len = header.payload_len_usize();
 
     let mut payload = Vec::new();
     if len != 0 {
@@ -142,7 +142,7 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
 /// the frame type while reading the payload from `buffer`.
 pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<MessageCode> {
     let header = read_header(reader)?;
-    let len = header.payload_len() as usize;
+    let len = header.payload_len_usize();
 
     buffer.clear();
     if len != 0 {
