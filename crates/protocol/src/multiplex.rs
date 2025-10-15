@@ -274,9 +274,10 @@ mod tests {
         let tag_without_base = 6u32 << 24; // upstream MPLEX_BASE is 7
         let err = recv_msg(&mut io::Cursor::new(tag_without_base.to_le_bytes())).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err
-            .to_string()
-            .contains("multiplexed header contained invalid tag byte"));
+        assert!(
+            err.to_string()
+                .contains("multiplexed header contained invalid tag byte")
+        );
     }
 
     #[test]
