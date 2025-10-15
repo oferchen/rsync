@@ -198,6 +198,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_bytes_tolerates_leading_whitespace_before_version_digits() {
+        let message = parse_legacy_daemon_message_bytes(b"@RSYNCD:    28.0  \r\n")
+            .expect("version with padding");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Version(ProtocolVersion::new_const(28))
+        );
+    }
+
+    #[test]
     fn rejects_non_utf8_legacy_greetings() {
         let err = parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 31.0\xff\n").unwrap_err();
         match err {
