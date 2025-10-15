@@ -1,7 +1,10 @@
 use core::array::IntoIter;
 use core::convert::TryFrom;
 use core::fmt;
-use core::num::NonZeroU8;
+use core::num::{
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
+    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+};
 use core::ops::RangeInclusive;
 
 use crate::error::NegotiationError;
@@ -17,10 +20,11 @@ pub struct ProtocolVersion(NonZeroU8);
 ///
 /// The negotiation helpers in this module frequently operate on raw numeric
 /// protocol identifiers transmitted by the peer. However, higher layers may
-/// already work with fully validated [`ProtocolVersion`] values or iterate over
-/// references when forwarding buffers. Exposing a small conversion trait keeps
-/// the public helper flexible without forcing callers to allocate temporary
-/// vectors or clone data solely to satisfy the type signature.
+/// already work with fully validated [`ProtocolVersion`] values, store the
+/// negotiated byte in non-zero wrappers, or iterate over references when
+/// forwarding buffers. Exposing a small conversion trait keeps the public
+/// helper flexible without forcing callers to allocate temporary vectors,
+/// normalize wrappers, or clone data solely to satisfy the type signature.
 #[doc(hidden)]
 pub trait ProtocolVersionAdvertisement: Copy {
     /// Returns the numeric representation expected by the negotiation logic.
@@ -62,12 +66,25 @@ impl_protocol_version_advertisement!(
     u16 => |value: u16| value.min(u16::from(u8::MAX)) as u8,
     u32 => |value: u32| value.min(u32::from(u8::MAX)) as u8,
     u64 => |value: u64| value.min(u64::from(u8::MAX)) as u8,
+    u128 => |value: u128| value.min(u128::from(u8::MAX)) as u8,
     usize => |value: usize| value.min(usize::from(u8::MAX)) as u8,
+    NonZeroU16 => |value: NonZeroU16| value.get().min(u16::from(u8::MAX)) as u8,
+    NonZeroU32 => |value: NonZeroU32| value.get().min(u32::from(u8::MAX)) as u8,
+    NonZeroU64 => |value: NonZeroU64| value.get().min(u64::from(u8::MAX)) as u8,
+    NonZeroU128 => |value: NonZeroU128| value.get().min(u128::from(u8::MAX)) as u8,
+    NonZeroUsize => |value: NonZeroUsize| value.get().min(usize::from(u8::MAX)) as u8,
     i8 => |value: i8| value.clamp(0, i8::MAX) as u8,
     i16 => |value: i16| value.clamp(0, i16::from(u8::MAX)) as u8,
     i32 => |value: i32| value.clamp(0, i32::from(u8::MAX)) as u8,
     i64 => |value: i64| value.clamp(0, i64::from(u8::MAX)) as u8,
+    i128 => |value: i128| value.clamp(0, i128::from(u8::MAX)) as u8,
     isize => |value: isize| value.clamp(0, isize::from(u8::MAX)) as u8,
+    NonZeroI8 => |value: NonZeroI8| value.get().clamp(0, i8::MAX) as u8,
+    NonZeroI16 => |value: NonZeroI16| value.get().clamp(0, i16::from(u8::MAX)) as u8,
+    NonZeroI32 => |value: NonZeroI32| value.get().clamp(0, i32::from(u8::MAX)) as u8,
+    NonZeroI64 => |value: NonZeroI64| value.get().clamp(0, i64::from(u8::MAX)) as u8,
+    NonZeroI128 => |value: NonZeroI128| value.get().clamp(0, i128::from(u8::MAX)) as u8,
+    NonZeroIsize => |value: NonZeroIsize| value.get().clamp(0, isize::from(u8::MAX)) as u8,
 );
 
 macro_rules! declare_supported_protocols {
