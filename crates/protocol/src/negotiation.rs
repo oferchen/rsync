@@ -163,10 +163,7 @@ impl NegotiationPrologueDetector {
     /// the detector's internal fields.
     #[must_use]
     pub const fn legacy_prefix_complete(&self) -> bool {
-        matches!(
-            self.decided,
-            Some(NegotiationPrologue::LegacyAscii)
-        ) && self.prefix_complete
+        matches!(self.decided, Some(NegotiationPrologue::LegacyAscii)) && self.prefix_complete
     }
 
     fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
