@@ -55,7 +55,14 @@ impl ProtocolVersion {
     #[must_use]
     #[inline]
     pub const fn is_supported(value: u8) -> bool {
-        matches!(value, 28..=32)
+        let mut index = 0;
+        while index < SUPPORTED_PROTOCOLS.len() {
+            if SUPPORTED_PROTOCOLS[index] == value {
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 
     /// Returns the raw numeric value represented by this version.
@@ -286,6 +293,13 @@ mod tests {
         for version in SUPPORTED_PROTOCOLS {
             assert!(ProtocolVersion::is_supported(version));
         }
+    }
+
+    #[test]
+    fn rejects_unsupported_versions_in_helper() {
+        assert!(!ProtocolVersion::is_supported(0));
+        assert!(!ProtocolVersion::is_supported(27));
+        assert!(!ProtocolVersion::is_supported(33));
     }
 
     #[test]
