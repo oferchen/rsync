@@ -76,6 +76,11 @@ pub enum NegotiationError {
     },
     /// The peer advertised a protocol version outside the upstream supported range.
     UnsupportedVersion(u8),
+    /// A legacy ASCII daemon greeting could not be parsed.
+    MalformedLegacyGreeting {
+        /// The raw greeting text without trailing newlines.
+        input: String,
+    },
 }
 
 impl fmt::Display for NegotiationError {
@@ -97,11 +102,68 @@ impl fmt::Display for NegotiationError {
                     ProtocolVersion::NEWEST.as_u8()
                 )
             }
+            Self::MalformedLegacyGreeting { input } => {
+                write!(f, "malformed legacy rsync daemon greeting: {:?}", input)
+            }
         }
     }
 }
 
 impl std::error::Error for NegotiationError {}
+
+/// Parses a legacy ASCII daemon greeting of the form `@RSYNCD: <version>`.
+///
+/// Upstream rsync emits greetings such as `@RSYNCD: 31.0`. The Rust
+/// implementation accepts optional fractional suffixes (e.g. `.0`) but only the
+/// integer component participates in protocol negotiation. Any trailing carriage
+/// returns or line feeds are ignored.
+#[must_use]
+pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
+    const PREFIX: &str = "@RSYNCD:";
+
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let after_prefix =
+        trimmed
+            .strip_prefix(PREFIX)
+            .ok_or_else(|| NegotiationError::MalformedLegacyGreeting {
+                input: trimmed.to_owned(),
+            })?;
+
+    let remainder = after_prefix.trim_start();
+    if remainder.is_empty() {
+        return Err(NegotiationError::MalformedLegacyGreeting {
+            input: trimmed.to_owned(),
+        });
+    }
+
+    let mut digits = String::new();
+    let mut chars = remainder.chars();
+    while let Some(ch) = chars.next() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else if ch == '.' || ch.is_whitespace() {
+            break;
+        } else {
+            return Err(NegotiationError::MalformedLegacyGreeting {
+                input: trimmed.to_owned(),
+            });
+        }
+    }
+
+    if digits.is_empty() {
+        return Err(NegotiationError::MalformedLegacyGreeting {
+            input: trimmed.to_owned(),
+        });
+    }
+
+    let version: u8 = digits
+        .parse()
+        .map_err(|_| NegotiationError::MalformedLegacyGreeting {
+            input: trimmed.to_owned(),
+        })?;
+
+    ProtocolVersion::try_from(version)
+}
 
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
 ///
@@ -167,5 +229,35 @@ mod tests {
                 peer_versions: vec![]
             }
         );
+    }
+
+    #[test]
+    fn parses_legacy_daemon_greeting_with_minor_version() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 31.0\r\n").expect("valid greeting");
+        assert_eq!(parsed.as_u8(), 31);
+    }
+
+    #[test]
+    fn rejects_greeting_with_unsupported_version() {
+        let err = parse_legacy_daemon_greeting("@RSYNCD: 27.0").unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(27));
+    }
+
+    #[test]
+    fn rejects_greeting_with_missing_prefix() {
+        let err = parse_legacy_daemon_greeting("RSYNCD 32").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_greeting_without_version_digits() {
+        let err = parse_legacy_daemon_greeting("@RSYNCD: .0").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
     }
 }
