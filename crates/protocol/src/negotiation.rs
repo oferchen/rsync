@@ -149,6 +149,26 @@ impl NegotiationPrologueDetector {
         self.decided
     }
 
+    /// Reports whether the canonical legacy prefix (`@RSYNCD:`) has been fully
+    /// observed (or ruled out due to a mismatch) after classifying the stream
+    /// as [`NegotiationPrologue::LegacyAscii`].
+    ///
+    /// Legacy negotiations reuse the bytes that triggered the legacy
+    /// classification when parsing the full greeting line. Upstream rsync marks
+    /// the prefix handling as complete once the canonical marker is buffered or
+    /// a divergence is detected. This helper mirrors that behavior so higher
+    /// layers can determine when it is safe to hand the accumulated bytes to
+    /// [`parse_legacy_daemon_greeting_bytes`]
+    /// (`crate::legacy::parse_legacy_daemon_greeting_bytes`) without peeking at
+    /// the detector's internal fields.
+    #[must_use]
+    pub const fn legacy_prefix_complete(&self) -> bool {
+        matches!(
+            self.decided,
+            Some(NegotiationPrologue::LegacyAscii)
+        ) && self.prefix_complete
+    }
+
     fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
         self.decided = Some(decision);
         decision
@@ -357,6 +377,52 @@ mod tests {
         // upstream's handling once the legacy path has been chosen.
         assert_eq!(detector.observe(b"RSYN"), NegotiationPrologue::LegacyAscii);
         assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
+    }
+
+    #[test]
+    fn legacy_prefix_completion_reports_state_before_decision() {
+        let detector = NegotiationPrologueDetector::new();
+        assert!(!detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_completion_tracks_partial_prefix() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
+        assert!(!detector.legacy_prefix_complete());
+
+        assert_eq!(detector.observe(b"RSYN"), NegotiationPrologue::LegacyAscii);
+        assert!(!detector.legacy_prefix_complete());
+
+        assert_eq!(detector.observe(b"CD:"), NegotiationPrologue::LegacyAscii);
+        assert!(detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_completion_handles_mismatch() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(b"@X"), NegotiationPrologue::LegacyAscii);
+        assert!(detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_completion_stays_false_for_binary_detection() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
+        assert!(!detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_completion_resets_with_detector() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(
+            detector.observe(b"@RSYNCD:"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert!(detector.legacy_prefix_complete());
+
+        detector.reset();
+        assert!(!detector.legacy_prefix_complete());
     }
 
     #[test]
