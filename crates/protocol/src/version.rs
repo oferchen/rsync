@@ -48,24 +48,13 @@ impl ProtocolVersionAdvertisement for ProtocolVersion {
     }
 }
 
-impl ProtocolVersionAdvertisement for &u8 {
+impl<'a, T> ProtocolVersionAdvertisement for &'a T
+where
+    T: ProtocolVersionAdvertisement,
+{
     #[inline]
     fn into_advertised_version(self) -> u8 {
-        *self
-    }
-}
-
-impl ProtocolVersionAdvertisement for &NonZeroU8 {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.get()
-    }
-}
-
-impl ProtocolVersionAdvertisement for &ProtocolVersion {
-    #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.as_u8()
+        (*self).into_advertised_version()
     }
 }
 
