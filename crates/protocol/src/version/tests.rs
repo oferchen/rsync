@@ -56,6 +56,17 @@ fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, Negoti
     Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
 
+fn collect_advertised<I, T>(inputs: I) -> Vec<u8>
+where
+    I: IntoIterator<Item = T>,
+    T: ProtocolVersionAdvertisement,
+{
+    inputs
+        .into_iter()
+        .map(|value| value.into_advertised_version())
+        .collect()
+}
+
 #[test]
 fn newest_protocol_is_preferred() {
     let result = select_highest_mutual([32, 31, 30]).expect("must succeed");
@@ -418,6 +429,26 @@ proptest! {
     fn select_highest_mutual_matches_reference(peer_versions in proptest::collection::vec(0u8..=255, 0..=16)) {
         let expected = reference_negotiation(&peer_versions);
         let actual = select_highest_mutual(peer_versions.iter().copied());
+        prop_assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn select_highest_mutual_matches_reference_for_wider_unsigned(
+        peer_versions in proptest::collection::vec(any::<u16>(), 0..=16)
+    ) {
+        let advertised = collect_advertised(peer_versions.clone());
+        let expected = reference_negotiation(&advertised);
+        let actual = select_highest_mutual(peer_versions);
+        prop_assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn select_highest_mutual_matches_reference_for_signed(
+        peer_versions in proptest::collection::vec(any::<i16>(), 0..=16)
+    ) {
+        let advertised = collect_advertised(peer_versions.clone());
+        let expected = reference_negotiation(&advertised);
+        let actual = select_highest_mutual(peer_versions);
         prop_assert_eq!(actual, expected);
     }
 }
