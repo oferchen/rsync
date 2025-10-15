@@ -30,6 +30,7 @@ pub use legacy::{
 };
 pub use multiplex::{MessageFrame, recv_msg, recv_msg_into, send_msg};
 pub use negotiation::{
-    NegotiationPrologue, NegotiationPrologueDetector, detect_negotiation_prologue,
+    NegotiationPrologue, NegotiationPrologueDetector, NegotiationPrologueSniffer,
+    detect_negotiation_prologue,
 };
 pub use version::{ProtocolVersion, SUPPORTED_PROTOCOLS, select_highest_mutual};
