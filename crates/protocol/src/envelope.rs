@@ -572,10 +572,13 @@ impl MessageHeader {
     #[must_use]
     #[inline]
     pub fn payload_len_usize(self) -> usize {
-        debug_assert!(
-            usize::BITS >= 24,
-            "multiplexed payloads require pointer widths of at least 24 bits"
-        );
+        #[allow(clippy::assertions_on_constants)]
+        {
+            debug_assert!(
+                usize::BITS >= 24,
+                "multiplexed payloads require pointer widths of at least 24 bits"
+            );
+        }
         self.payload_len as usize
     }
 }
