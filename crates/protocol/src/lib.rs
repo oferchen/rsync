@@ -116,6 +116,14 @@ impl TryFrom<u8> for ProtocolVersion {
     }
 }
 
+impl TryFrom<NonZeroU8> for ProtocolVersion {
+    type Error = NegotiationError;
+
+    fn try_from(value: NonZeroU8) -> Result<Self, Self::Error> {
+        <ProtocolVersion as TryFrom<u8>>::try_from(value.get())
+    }
+}
+
 impl fmt::Display for ProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_u8())
@@ -564,6 +572,20 @@ mod tests {
         let version = ProtocolVersion::try_from(32).expect("valid version");
         let numeric: NonZeroU8 = version.into();
         assert_eq!(numeric.get(), 32);
+    }
+
+    #[test]
+    fn converts_from_non_zero_u8() {
+        let non_zero = NonZeroU8::new(32).expect("non-zero literal");
+        let version = ProtocolVersion::try_from(non_zero).expect("within range");
+        assert_eq!(version, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn rejects_out_of_range_non_zero_u8() {
+        let non_zero = NonZeroU8::new(27).expect("non-zero literal");
+        let err = ProtocolVersion::try_from(non_zero).unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(27));
     }
 
     #[test]
