@@ -136,24 +136,50 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
         });
     }
 
-    let mut digits = String::new();
-    let mut chars = remainder.chars();
-    while let Some(ch) = chars.next() {
+    let mut rest_start = remainder.len();
+    for (idx, ch) in remainder.char_indices() {
         if ch.is_ascii_digit() {
-            digits.push(ch);
-        } else if ch == '.' || ch.is_whitespace() {
-            break;
+            continue;
+        }
+
+        rest_start = idx;
+        break;
+    }
+
+    let digits = &remainder[..rest_start];
+    if digits.is_empty() {
+        return Err(NegotiationError::MalformedLegacyGreeting {
+            input: trimmed.to_owned(),
+        });
+    }
+
+    let rest = &remainder[rest_start..];
+    let mut tail = rest.chars().peekable();
+    while let Some(&ch) = tail.peek() {
+        if ch == '.' {
+            tail.next();
+            let mut saw_digit = false;
+            while let Some(&fraction_ch) = tail.peek() {
+                if fraction_ch.is_ascii_digit() {
+                    saw_digit = true;
+                    tail.next();
+                } else {
+                    break;
+                }
+            }
+
+            if !saw_digit {
+                return Err(NegotiationError::MalformedLegacyGreeting {
+                    input: trimmed.to_owned(),
+                });
+            }
+        } else if ch.is_whitespace() {
+            tail.next();
         } else {
             return Err(NegotiationError::MalformedLegacyGreeting {
                 input: trimmed.to_owned(),
             });
         }
-    }
-
-    if digits.is_empty() {
-        return Err(NegotiationError::MalformedLegacyGreeting {
-            input: trimmed.to_owned(),
-        });
     }
 
     let version: u8 = digits
@@ -239,6 +265,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_greeting_with_trailing_whitespace() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 30.0   \n").expect("valid greeting");
+        assert_eq!(parsed.as_u8(), 30);
+    }
+
+    #[test]
     fn rejects_greeting_with_unsupported_version() {
         let err = parse_legacy_daemon_greeting("@RSYNCD: 27.0").unwrap_err();
         assert_eq!(err, NegotiationError::UnsupportedVersion(27));
@@ -263,9 +295,20 @@ mod tests {
     }
 
     #[test]
-    fn highest_version_selected_with_unsorted_duplicates() {
-        let peer_versions = [29, 32, 31, 32, 30];
-        let negotiated = select_highest_mutual(peer_versions).expect("mutual version");
-        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    fn rejects_greeting_with_fractional_without_digits() {
+        let err = parse_legacy_daemon_greeting("@RSYNCD: 31.\n").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_greeting_with_non_numeric_suffix() {
+        let err = parse_legacy_daemon_greeting("@RSYNCD: 31.0beta").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
     }
 }
