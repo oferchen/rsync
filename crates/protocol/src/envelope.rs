@@ -562,6 +562,22 @@ impl MessageHeader {
     pub const fn payload_len(self) -> u32 {
         self.payload_len
     }
+
+    /// Returns the payload length encoded in the header as a native pointer-sized value.
+    ///
+    /// Upstream rsync's multiplexed payload field is limited to 24 bits, which comfortably fits
+    /// into the pointer widths supported by this project (32-bit and 64-bit architectures). The
+    /// conversion is therefore infallible, but a debug assertion is kept to surface potential
+    /// regressions if a narrower architecture is ever introduced.
+    #[must_use]
+    #[inline]
+    pub fn payload_len_usize(self) -> usize {
+        debug_assert!(
+            usize::BITS >= 24,
+            "multiplexed payloads require pointer widths of at least 24 bits"
+        );
+        self.payload_len as usize
+    }
 }
 
 #[cfg(test)]
@@ -585,6 +601,20 @@ mod tests {
 
         assert_eq!(HEADER.code(), MessageCode::Info);
         assert_eq!(HEADER.payload_len(), 42);
+    }
+
+    #[test]
+    fn payload_len_usize_matches_u32_accessor() {
+        if usize::BITS < 24 {
+            // Architectures with pointer widths below 24 bits cannot represent the full
+            // multiplexed payload range. The implementation itself guards this via a debug
+            // assertion, so skip the comparison in that niche configuration.
+            return;
+        }
+
+        let header =
+            MessageHeader::new(MessageCode::Data, MAX_PAYLOAD_LENGTH).expect("max payload");
+        assert_eq!(header.payload_len_usize(), header.payload_len() as usize);
     }
 
     #[test]
