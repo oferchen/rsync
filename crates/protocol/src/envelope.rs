@@ -349,6 +349,20 @@ mod tests {
     }
 
     #[test]
+    fn message_code_all_is_sorted_by_numeric_value() {
+        let all = MessageCode::all();
+        for window in all.windows(2) {
+            let first = window[0];
+            let second = window[1];
+            assert!(
+                first.as_u8() <= second.as_u8(),
+                "MessageCode::all() is not sorted: {:?}",
+                all
+            );
+        }
+    }
+
+    #[test]
     fn header_round_trips_for_all_codes_and_sample_lengths() {
         const PAYLOAD_SAMPLES: [u32; 3] = [0, 1, MAX_PAYLOAD_LENGTH];
 
