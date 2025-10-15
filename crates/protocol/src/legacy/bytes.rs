@@ -74,6 +74,24 @@ pub fn parse_legacy_daemon_greeting_bytes(
 mod tests {
     use super::*;
     use crate::version::ProtocolVersion;
+    use proptest::prelude::*;
+
+    fn printable_payload_byte() -> impl Strategy<Value = u8> {
+        prop_oneof![Just(b'\t'), any::<u8>().prop_map(|byte| b' ' + (byte % 95)),]
+    }
+
+    fn payload_strategy() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(printable_payload_byte(), 0..=32)
+    }
+
+    fn newline_strategy() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            Just(Vec::<u8>::new()),
+            Just(vec![b'\n']),
+            Just(vec![b'\r']),
+            Just(vec![b'\r', b'\n']),
+        ]
+    }
 
     #[test]
     fn parse_legacy_daemon_message_bytes_round_trips() {
@@ -96,6 +114,24 @@ mod tests {
                 assert_eq!(input, "RSYNCD: AUTHREQD module");
             }
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_legacy_daemon_message_bytes_matches_str_parser(
+            tail in payload_strategy(),
+            newline in newline_strategy(),
+        ) {
+            let mut bytes = b"@RSYNCD:".to_vec();
+            bytes.extend_from_slice(&tail);
+            bytes.extend_from_slice(&newline);
+
+            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
+            let expected = parse_legacy_daemon_message(&text);
+            let actual = parse_legacy_daemon_message_bytes(&bytes);
+
+            prop_assert_eq!(actual, expected);
         }
     }
 
@@ -215,6 +251,24 @@ mod tests {
                 assert_eq!(input, "@RSYNCD: 31.0\u{fffd}");
             }
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_legacy_daemon_greeting_bytes_matches_str_parser(
+            tail in payload_strategy(),
+            newline in newline_strategy(),
+        ) {
+            let mut bytes = b"@RSYNCD:".to_vec();
+            bytes.extend_from_slice(&tail);
+            bytes.extend_from_slice(&newline);
+
+            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
+            let expected = parse_legacy_daemon_greeting(&text);
+            let actual = parse_legacy_daemon_greeting_bytes(&bytes);
+
+            prop_assert_eq!(actual, expected);
         }
     }
 }
