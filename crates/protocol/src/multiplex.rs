@@ -35,6 +35,18 @@ impl MessageFrame {
         &self.payload
     }
 
+    /// Returns a mutable view into the payload bytes carried by the frame.
+    ///
+    /// Upstream rsync occasionally rewrites multiplexed payloads in place (for
+    /// example when decrypting or decompressing data blocks) before handing the
+    /// buffer to the next pipeline stage. Exposing a mutable slice allows the
+    /// Rust implementation to mirror that style without cloning the payload,
+    /// keeping buffer reuse intact for larger transfers.
+    #[must_use]
+    pub fn payload_mut(&mut self) -> &mut [u8] {
+        &mut self.payload
+    }
+
     /// Returns the length of the payload in bytes without exposing the
     /// underlying buffer. Upstream rsync frequently inspects the payload size
     /// when routing multiplexed messages, so providing this accessor helps
@@ -248,6 +260,19 @@ mod tests {
         assert_eq!(code, MessageCode::Warning);
         assert_eq!(buffer.as_slice(), b"hi");
         assert_eq!(buffer.capacity(), capacity_before);
+    }
+
+    #[test]
+    fn message_frame_payload_mut_allows_in_place_updates() {
+        let mut frame = MessageFrame::new(MessageCode::Data, b"payload".to_vec()).expect("frame");
+
+        {
+            let payload = frame.payload_mut();
+            payload[..4].copy_from_slice(b"data");
+        }
+
+        assert_eq!(frame.payload(), b"dataoad");
+        assert_eq!(frame.payload_len(), 7);
     }
 
     #[test]
