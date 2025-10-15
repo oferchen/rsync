@@ -122,6 +122,18 @@ impl ProtocolVersion {
         &Self::SUPPORTED_VERSIONS
     }
 
+    /// Returns the numeric protocol identifiers supported by this
+    /// implementation in newest-to-oldest order.
+    ///
+    /// Upstream rsync frequently passes around the raw `u8` identifiers when
+    /// negotiating with a peer. Providing a slice view avoids forcing callers
+    /// to depend on the exported [`SUPPORTED_PROTOCOLS`] array directly while
+    /// still guaranteeing byte-for-byte parity with upstream's ordering.
+    #[must_use]
+    pub const fn supported_protocol_numbers() -> &'static [u8] {
+        &SUPPORTED_PROTOCOLS
+    }
+
     /// Returns an iterator over the supported protocol versions in
     /// newest-to-oldest order.
     ///
@@ -437,6 +449,14 @@ mod tests {
         assert_eq!(
             ProtocolVersion::supported_versions(),
             ProtocolVersion::SUPPORTED_VERSIONS.as_slice()
+        );
+    }
+
+    #[test]
+    fn supported_protocol_numbers_matches_constant_slice() {
+        assert_eq!(
+            ProtocolVersion::supported_protocol_numbers(),
+            &SUPPORTED_PROTOCOLS
         );
     }
 
