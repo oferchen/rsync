@@ -63,6 +63,7 @@ pub struct NegotiationPrologueDetector {
     buffer: [u8; LEGACY_DAEMON_PREFIX_LEN],
     len: usize,
     decided: Option<NegotiationPrologue>,
+    prefix_complete: bool,
 }
 
 impl NegotiationPrologueDetector {
@@ -73,6 +74,7 @@ impl NegotiationPrologueDetector {
             buffer: [0; LEGACY_DAEMON_PREFIX_LEN],
             len: 0,
             decided: None,
+            prefix_complete: false,
         }
     }
 
@@ -85,7 +87,7 @@ impl NegotiationPrologueDetector {
     pub fn observe(&mut self, chunk: &[u8]) -> NegotiationPrologue {
         if let Some(decided) = self.decided {
             let needs_more_prefix_bytes =
-                decided == NegotiationPrologue::LegacyAscii && self.len < LEGACY_DAEMON_PREFIX_LEN;
+                decided == NegotiationPrologue::LegacyAscii && !self.prefix_complete;
             if !needs_more_prefix_bytes {
                 return decided;
             }
@@ -116,11 +118,13 @@ impl NegotiationPrologueDetector {
             }
 
             if self.buffer[..self.len] != prefix[..self.len] {
+                self.prefix_complete = true;
                 decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
                 break;
             }
 
             if self.len >= LEGACY_DAEMON_PREFIX_LEN {
+                self.prefix_complete = true;
                 decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
                 break;
             }
@@ -183,6 +187,7 @@ impl NegotiationPrologueDetector {
         self.buffer = [0; LEGACY_DAEMON_PREFIX_LEN];
         self.len = 0;
         self.decided = None;
+        self.prefix_complete = false;
     }
 }
 
@@ -388,6 +393,29 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
         assert_eq!(detector.buffered_prefix(), b"");
+    }
+
+    #[test]
+    fn buffered_prefix_stops_growing_after_mismatch_with_long_chunk() {
+        let mut detector = NegotiationPrologueDetector::new();
+
+        // Feed a chunk that starts with the legacy marker but diverges on the
+        // second byte. The detector should record the observed prefix up to
+        // the mismatch and ignore the remainder of the chunk, mirroring
+        // upstream's behavior of replaying the legacy decision without
+        // extending the buffered slice past the canonical marker length.
+        let mut chunk = Vec::new();
+        chunk.push(b'@');
+        chunk.extend_from_slice(&[b'X'; 32]);
+
+        assert_eq!(detector.observe(&chunk), NegotiationPrologue::LegacyAscii,);
+        assert_eq!(detector.buffered_prefix(), b"@X");
+        assert_eq!(detector.buffered_prefix().len(), 2);
+
+        // Additional bytes keep replaying the cached decision without mutating
+        // the buffered prefix that was captured before the mismatch.
+        assert_eq!(detector.observe(b"more"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@X");
     }
 
     #[test]
