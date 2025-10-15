@@ -125,29 +125,72 @@ impl From<LogCode> for u8 {
     }
 }
 
-/// Error returned when parsing a log code from its numeric representation fails.
+impl FromStr for LogCode {
+    type Err = ParseLogCodeError;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "FNONE" => Ok(Self::None),
+            "FERROR_XFER" => Ok(Self::ErrorXfer),
+            "FINFO" => Ok(Self::Info),
+            "FERROR" => Ok(Self::Error),
+            "FWARNING" => Ok(Self::Warning),
+            "FERROR_SOCKET" => Ok(Self::ErrorSocket),
+            "FLOG" => Ok(Self::Log),
+            "FCLIENT" => Ok(Self::Client),
+            "FERROR_UTF8" => Ok(Self::ErrorUtf8),
+            other => Err(ParseLogCodeError::new_name(other)),
+        }
+    }
+}
+
+/// Error returned when parsing a log code from its representation fails.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParseLogCodeError {
-    invalid_value: u8,
+pub enum ParseLogCodeError {
+    /// The provided numeric identifier is not known to rsync 3.4.1.
+    InvalidValue(u8),
+    /// The provided mnemonic name is not known to rsync 3.4.1.
+    InvalidName(String),
 }
 
 impl ParseLogCodeError {
     /// Creates a parse error that records the invalid numeric value.
     #[must_use]
     pub const fn new(invalid_value: u8) -> Self {
-        Self { invalid_value }
+        Self::InvalidValue(invalid_value)
     }
 
-    /// Returns the numeric value that failed to parse.
+    /// Creates a parse error that records the invalid mnemonic name.
     #[must_use]
-    pub const fn invalid_value(&self) -> u8 {
-        self.invalid_value
+    pub fn new_name(invalid_name: &str) -> Self {
+        Self::InvalidName(invalid_name.to_owned())
+    }
+
+    /// Returns the numeric value that failed to parse, when available.
+    #[must_use]
+    pub const fn invalid_value(&self) -> Option<u8> {
+        match self {
+            Self::InvalidValue(value) => Some(*value),
+            Self::InvalidName(_) => None,
+        }
+    }
+
+    /// Returns the mnemonic name that failed to parse, when available.
+    #[must_use]
+    pub fn invalid_name(&self) -> Option<&str> {
+        match self {
+            Self::InvalidValue(_) => None,
+            Self::InvalidName(name) => Some(name.as_str()),
+        }
     }
 }
 
 impl fmt::Display for ParseLogCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown log code value: {}", self.invalid_value)
+        match self {
+            Self::InvalidValue(value) => write!(f, "unknown log code value: {value}"),
+            Self::InvalidName(name) => write!(f, "unknown log code name: \"{name}\""),
+        }
     }
 }
 
@@ -868,8 +911,24 @@ mod tests {
     fn log_code_from_u8_rejects_unknown_values() {
         assert_eq!(LogCode::from_u8(9), None);
         let err = LogCode::try_from(9).unwrap_err();
-        assert_eq!(err.invalid_value(), 9);
+        assert_eq!(err.invalid_value(), Some(9));
         assert_eq!(err.to_string(), "unknown log code value: 9");
+    }
+
+    #[test]
+    fn log_code_from_str_parses_known_names() {
+        for &code in LogCode::all() {
+            let parsed: LogCode = code.name().parse().expect("known log code name");
+            assert_eq!(parsed, code);
+        }
+    }
+
+    #[test]
+    fn log_code_from_str_rejects_unknown_names() {
+        let err = "FUNKNOWN".parse::<LogCode>().unwrap_err();
+        assert_eq!(err.invalid_name(), Some("FUNKNOWN"));
+        assert_eq!(err.to_string(), "unknown log code name: \"FUNKNOWN\"");
+        assert_eq!(err.invalid_value(), None);
     }
 
     #[test]
