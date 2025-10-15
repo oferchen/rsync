@@ -116,7 +116,7 @@ impl NegotiationPrologueDetector {
             self.buffer[self.len] = byte;
             self.len += 1;
 
-            if &self.buffer[..self.len] == &prefix[..self.len] {
+            if self.buffer[..self.len] == prefix[..self.len] {
                 if self.len == LEGACY_DAEMON_PREFIX_LEN {
                     return self.decide(NegotiationPrologue::LegacyAscii);
                 }
