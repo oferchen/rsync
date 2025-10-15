@@ -153,6 +153,43 @@ impl MessageCode {
                 | MessageCode::Client
         )
     }
+
+    /// Returns the upstream `MSG_*` identifier associated with this code.
+    ///
+    /// The mapping mirrors `enum msgcode` in upstream rsync's `rsync.h` so that
+    /// diagnostics and tracing can surface the same mnemonic names that C
+    /// implementations print through helpers such as `get_mplex_name()`. Keeping
+    /// the strings identical makes it easier to compare mixed Rust/C traces when
+    /// validating parity.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            MessageCode::Data => "MSG_DATA",
+            MessageCode::ErrorXfer => "MSG_ERROR_XFER",
+            MessageCode::Info => "MSG_INFO",
+            MessageCode::Error => "MSG_ERROR",
+            MessageCode::Warning => "MSG_WARNING",
+            MessageCode::ErrorSocket => "MSG_ERROR_SOCKET",
+            MessageCode::Log => "MSG_LOG",
+            MessageCode::Client => "MSG_CLIENT",
+            MessageCode::ErrorUtf8 => "MSG_ERROR_UTF8",
+            MessageCode::Redo => "MSG_REDO",
+            MessageCode::Stats => "MSG_STATS",
+            MessageCode::IoError => "MSG_IO_ERROR",
+            MessageCode::IoTimeout => "MSG_IO_TIMEOUT",
+            MessageCode::NoOp => "MSG_NOOP",
+            MessageCode::ErrorExit => "MSG_ERROR_EXIT",
+            MessageCode::Success => "MSG_SUCCESS",
+            MessageCode::Deleted => "MSG_DELETED",
+            MessageCode::NoSend => "MSG_NO_SEND",
+        }
+    }
+}
+
+impl fmt::Display for MessageCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 impl TryFrom<u8> for MessageCode {
@@ -418,6 +455,37 @@ mod tests {
         for &code in MessageCode::all() {
             let expected = LOGGING_CODES.iter().any(|candidate| *candidate == code);
             assert_eq!(code.is_logging(), expected, "mismatch for code {code:?}");
+        }
+    }
+
+    #[test]
+    fn message_code_name_matches_upstream_identifiers() {
+        use MessageCode::*;
+
+        let expected = [
+            (Data, "MSG_DATA"),
+            (ErrorXfer, "MSG_ERROR_XFER"),
+            (Info, "MSG_INFO"),
+            (Error, "MSG_ERROR"),
+            (Warning, "MSG_WARNING"),
+            (ErrorSocket, "MSG_ERROR_SOCKET"),
+            (Log, "MSG_LOG"),
+            (Client, "MSG_CLIENT"),
+            (ErrorUtf8, "MSG_ERROR_UTF8"),
+            (Redo, "MSG_REDO"),
+            (Stats, "MSG_STATS"),
+            (IoError, "MSG_IO_ERROR"),
+            (IoTimeout, "MSG_IO_TIMEOUT"),
+            (NoOp, "MSG_NOOP"),
+            (ErrorExit, "MSG_ERROR_EXIT"),
+            (Success, "MSG_SUCCESS"),
+            (Deleted, "MSG_DELETED"),
+            (NoSend, "MSG_NO_SEND"),
+        ];
+
+        for &(code, name) in &expected {
+            assert_eq!(code.name(), name);
+            assert_eq!(code.to_string(), name);
         }
     }
 }
