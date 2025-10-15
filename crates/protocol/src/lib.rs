@@ -18,7 +18,9 @@ pub use error::NegotiationError;
 pub use legacy::{
     LegacyDaemonMessage, format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
     parse_legacy_daemon_greeting_bytes, parse_legacy_daemon_message,
-    parse_legacy_daemon_message_bytes,
+    parse_legacy_daemon_message_bytes, parse_legacy_error_message,
+    parse_legacy_error_message_bytes, parse_legacy_warning_message,
+    parse_legacy_warning_message_bytes,
 };
 pub use negotiation::{
     NegotiationPrologue, NegotiationPrologueDetector, detect_negotiation_prologue,
