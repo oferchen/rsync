@@ -241,6 +241,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_tolerates_leading_whitespace_before_version_digits() {
+        let message =
+            parse_legacy_daemon_message("@RSYNCD:    29.0  \r\n").expect("version with padding");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Version(ProtocolVersion::new_const(29))
+        );
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_rejects_missing_prefix() {
         let err = parse_legacy_daemon_message("RSYNCD: AUTHREQD module\n").unwrap_err();
         assert!(matches!(
