@@ -476,6 +476,31 @@ mod tests {
     }
 
     #[test]
+    fn select_highest_mutual_accepts_signed_integer_advertisements() {
+        let peers = [32i16, 29i16];
+        let negotiated = select_highest_mutual(peers).expect("signed integers supported");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+        let peers = [-5isize, 31isize];
+        let negotiated =
+            select_highest_mutual(peers).expect("negative values do not prevent success");
+        assert_eq!(negotiated.as_u8(), 31);
+    }
+
+    #[test]
+    fn select_highest_mutual_clamps_negative_signed_advertisements() {
+        let err = select_highest_mutual([-1i8, -12i8]).unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(0));
+    }
+
+    #[test]
+    fn select_highest_mutual_saturates_large_signed_advertisements() {
+        let peers = [i32::MAX];
+        let negotiated = select_highest_mutual(peers).expect("large signed values clamp to newest");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
     fn select_highest_mutual_saturates_wider_integer_advertisements() {
         let peers = [u32::MAX];
         let negotiated = select_highest_mutual(peers).expect("future versions clamp");
