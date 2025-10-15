@@ -83,10 +83,7 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
         reader.read_exact(&mut payload)?;
     }
 
-    Ok(MessageFrame {
-        code: header.code(),
-        payload,
-    })
+    MessageFrame::new(header.code(), payload)
 }
 
 /// Receives the next multiplexed message into a caller-provided buffer.
