@@ -18,6 +18,60 @@ use core::ops::RangeInclusive;
 /// banner negotiation path.
 const LEGACY_DAEMON_PREFIX: &str = "@RSYNCD:";
 
+/// Classification of the negotiation prologue received from a peer.
+///
+/// Upstream rsync distinguishes between two negotiation styles:
+///
+/// * Legacy ASCII greetings that begin with `@RSYNCD:`. These are produced by
+///   peers that only understand protocols older than 30.
+/// * Binary handshakes used by newer clients and daemons.
+///
+/// The detection helper mirrors upstream's lightweight peek: if the very first
+/// byte equals `b'@'`, the stream is treated as a legacy greeting (subject to
+/// later validation). Otherwise the exchange proceeds in binary mode. When the
+/// caller has not yet accumulated enough bytes to decide, the helper reports
+/// [`NegotiationPrologue::NeedMoreData`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NegotiationPrologue {
+    /// There is not enough buffered data to determine the negotiation style.
+    NeedMoreData,
+    /// The peer is speaking the legacy ASCII `@RSYNCD:` protocol.
+    LegacyAscii,
+    /// The peer is speaking the modern binary negotiation protocol.
+    Binary,
+}
+
+/// Determines whether the peer is performing the legacy ASCII negotiation or
+/// the modern binary handshake.
+///
+/// The caller provides the initial bytes read from the transport without
+/// consuming them. The helper follows upstream rsync's logic:
+///
+/// * If no data has been received yet, more bytes are required before a
+///   decision can be made.
+/// * If the first byte is `b'@'`, the peer is assumed to speak the legacy
+///   protocol. Callers should then parse the banner via
+///   [`parse_legacy_daemon_greeting_bytes`], which will surface malformed input
+///   as [`NegotiationError::MalformedLegacyGreeting`].
+/// * Otherwise, the exchange uses the binary negotiation.
+#[must_use]
+pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
+    if buffer.is_empty() {
+        return NegotiationPrologue::NeedMoreData;
+    }
+
+    if buffer[0] != b'@' {
+        return NegotiationPrologue::Binary;
+    }
+
+    let prefix = LEGACY_DAEMON_PREFIX.as_bytes();
+    if buffer.len() < prefix.len() && &prefix[..buffer.len()] == buffer {
+        return NegotiationPrologue::NeedMoreData;
+    }
+
+    NegotiationPrologue::LegacyAscii
+}
+
 /// Protocol versions supported by the Rust implementation, ordered from
 /// newest to oldest as required by upstream rsync's negotiation logic.
 pub const SUPPORTED_PROTOCOLS: [u8; 5] = [32, 31, 30, 29, 28];
@@ -614,5 +668,45 @@ mod tests {
 
         assert!(!ProtocolVersion::is_supported(27));
         assert!(!ProtocolVersion::is_supported(0));
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_requires_data() {
+        assert_eq!(
+            detect_negotiation_prologue(b""),
+            NegotiationPrologue::NeedMoreData
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_waits_for_full_prefix() {
+        assert_eq!(
+            detect_negotiation_prologue(b"@RS"),
+            NegotiationPrologue::NeedMoreData
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_flags_legacy_ascii() {
+        assert_eq!(
+            detect_negotiation_prologue(b"@RSYNCD: 31.0\n"),
+            NegotiationPrologue::LegacyAscii
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_flags_malformed_ascii_as_legacy() {
+        assert_eq!(
+            detect_negotiation_prologue(b"@RSYNCX"),
+            NegotiationPrologue::LegacyAscii
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_detects_binary() {
+        assert_eq!(
+            detect_negotiation_prologue(&[0x00, 0x20, 0x00, 0x00]),
+            NegotiationPrologue::Binary
+        );
     }
 }
