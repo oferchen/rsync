@@ -228,9 +228,19 @@ where
     I: IntoIterator<Item = u8>,
 {
     let mut filtered: Vec<u8> = Vec::new();
+    let mut oldest_rejection: Option<u8> = None;
+
     for version in peer_versions {
         match ProtocolVersion::from_peer_advertisement(version) {
             Ok(proto) => filtered.push(proto.as_u8()),
+            Err(NegotiationError::UnsupportedVersion(value))
+                if value < ProtocolVersion::OLDEST.as_u8() =>
+            {
+                match oldest_rejection {
+                    Some(current) if value >= current => {}
+                    _ => oldest_rejection = Some(value),
+                }
+            }
             Err(err) => return Err(err),
         }
     }
@@ -242,6 +252,10 @@ where
         if filtered.binary_search(&ours).is_ok() {
             return ProtocolVersion::try_from(ours);
         }
+    }
+
+    if let Some(value) = oldest_rejection {
+        return Err(NegotiationError::UnsupportedVersion(value));
     }
 
     Err(NegotiationError::NoMutualProtocol {
@@ -266,12 +280,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_lack_of_overlap() {
-        let err = select_highest_mutual([30, 27]).unwrap_err();
-        assert!(matches!(err, NegotiationError::UnsupportedVersion(27)));
-    }
-
-    #[test]
     fn reports_no_mutual_protocol() {
         let err = select_highest_mutual(core::iter::empty()).unwrap_err();
         assert_eq!(
@@ -280,6 +288,12 @@ mod tests {
                 peer_versions: vec![]
             }
         );
+    }
+
+    #[test]
+    fn rejects_zero_protocol_version() {
+        let err = select_highest_mutual([0]).unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(0));
     }
 
     #[test]
@@ -310,6 +324,18 @@ mod tests {
     fn clamps_future_versions_in_legacy_greeting() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 40.1\n").expect("must clamp");
         assert_eq!(parsed, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn ignores_versions_older_than_supported_when_newer_exists() {
+        let negotiated = select_highest_mutual([27, 29, 27]).expect("29 should be selected");
+        assert_eq!(negotiated.as_u8(), 29);
+    }
+
+    #[test]
+    fn reports_unsupported_when_only_too_old_versions_are_offered() {
+        let err = select_highest_mutual([27, 26]).unwrap_err();
+        assert_eq!(err, NegotiationError::UnsupportedVersion(26));
     }
 
     #[test]
