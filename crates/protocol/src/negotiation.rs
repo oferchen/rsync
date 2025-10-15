@@ -299,6 +299,16 @@ mod tests {
     }
 
     #[test]
+    fn buffered_prefix_captures_full_marker_when_present_in_single_chunk() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(
+            detector.observe(b"@RSYNCD: 31.0\n"),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD:");
+    }
+
+    #[test]
     fn buffered_prefix_is_empty_for_binary_detection() {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
