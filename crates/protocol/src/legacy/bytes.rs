@@ -88,6 +88,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_bytes_rejects_missing_prefix() {
+        let err = parse_legacy_daemon_message_bytes(b"RSYNCD: AUTHREQD module\n").unwrap_err();
+
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "RSYNCD: AUTHREQD module");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_non_utf8_legacy_daemon_message_bytes() {
         let err = parse_legacy_daemon_message_bytes(b"@RSYNCD: AUTHREQD\xff\r\n").unwrap_err();
         match err {
