@@ -66,6 +66,39 @@ impl MessageCode {
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
+
+    /// Ordered list of all message codes understood by rsync 3.4.1.
+    ///
+    /// The variants are arranged by their numeric value so that callers can
+    /// iterate deterministically when constructing golden multiplexed streams
+    /// or exhaustively testing round-trips. The ordering mirrors upstream's
+    /// `enum msgcode` definitions to preserve byte-level parity.
+    pub const ALL: [MessageCode; 18] = [
+        MessageCode::Data,
+        MessageCode::ErrorXfer,
+        MessageCode::Info,
+        MessageCode::Error,
+        MessageCode::Warning,
+        MessageCode::ErrorSocket,
+        MessageCode::Log,
+        MessageCode::Client,
+        MessageCode::ErrorUtf8,
+        MessageCode::Redo,
+        MessageCode::Stats,
+        MessageCode::IoError,
+        MessageCode::IoTimeout,
+        MessageCode::NoOp,
+        MessageCode::ErrorExit,
+        MessageCode::Success,
+        MessageCode::Deleted,
+        MessageCode::NoSend,
+    ];
+
+    /// Returns the ordered list of all known message codes.
+    #[must_use]
+    pub const fn all() -> &'static [MessageCode; 18] {
+        &Self::ALL
+    }
 }
 
 impl TryFrom<u8> for MessageCode {
@@ -243,5 +276,29 @@ mod tests {
     fn new_rejects_oversized_payloads() {
         let err = MessageHeader::new(MessageCode::Info, MAX_PAYLOAD_LENGTH + 1).unwrap_err();
         assert_eq!(err, EnvelopeError::OversizedPayload(MAX_PAYLOAD_LENGTH + 1));
+    }
+
+    #[test]
+    fn message_code_variants_round_trip_through_try_from() {
+        for &code in MessageCode::all() {
+            let raw = code.as_u8();
+            let decoded = MessageCode::try_from(raw).expect("known code");
+            assert_eq!(decoded, code);
+        }
+    }
+
+    #[test]
+    fn header_round_trips_for_all_codes_and_sample_lengths() {
+        const PAYLOAD_SAMPLES: [u32; 3] = [0, 1, MAX_PAYLOAD_LENGTH];
+
+        for &code in MessageCode::all() {
+            for &len in &PAYLOAD_SAMPLES {
+                let header = MessageHeader::new(code, len).expect("constructible header");
+                let encoded = header.encode();
+                let decoded = MessageHeader::decode(&encoded).expect("decode succeeds");
+                assert_eq!(decoded.code(), code);
+                assert_eq!(decoded.payload_len(), len);
+            }
+        }
     }
 }
