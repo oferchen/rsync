@@ -227,6 +227,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_rejects_empty_payload() {
+        let err = parse_legacy_daemon_message("@RSYNCD:\n").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_accepts_authreqd_with_trailing_tabs() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\tmodule\t\n")
             .expect("keyword with tabs");
@@ -246,9 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_error_message_returns_none_for_unrecognized_prefix() {
+        assert!(parse_legacy_error_message("something else\n").is_none());
+    }
+
+    #[test]
     fn parses_legacy_warning_message_and_trims_payload() {
         let payload =
             parse_legacy_warning_message("@WARNING: will retry  \n").expect("warning payload");
         assert_eq!(payload, "will retry");
+    }
+
+    #[test]
+    fn parse_legacy_warning_message_returns_none_for_unrecognized_prefix() {
+        assert!(parse_legacy_warning_message("something else\n").is_none());
     }
 }
