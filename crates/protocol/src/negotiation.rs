@@ -280,6 +280,20 @@ mod tests {
     }
 
     #[test]
+    fn prologue_detector_exposes_legacy_decision_state() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.decision(), None);
+
+        assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
+
+        // Additional observations keep reporting the cached decision, matching
+        // upstream's handling once the legacy path has been chosen.
+        assert_eq!(detector.observe(b"RSYN"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
+    }
+
+    #[test]
     fn buffered_prefix_tracks_bytes_consumed_for_legacy_detection() {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.buffered_prefix(), b"");
