@@ -489,6 +489,26 @@ pub fn parse_legacy_daemon_message(
     }
 }
 
+/// Parses a byte-oriented legacy daemon message by validating UTF-8 and then
+/// delegating to [`parse_legacy_daemon_message`].
+///
+/// The byte-level variant mirrors [`parse_legacy_daemon_greeting_bytes`]
+/// so transports that accumulate raw network buffers can request a structured
+/// classification without first materializing an owned string. Invalid UTF-8
+/// sequences are rejected with [`NegotiationError::MalformedLegacyGreeting`]
+/// containing a lossy rendering of the offending bytes, matching the
+/// diagnostics emitted by upstream rsync when echoing unexpected banners.
+pub fn parse_legacy_daemon_message_bytes(
+    line: &[u8],
+) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
+    match core::str::from_utf8(line) {
+        Ok(text) => parse_legacy_daemon_message(text),
+        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
+            input: String::from_utf8_lossy(line).into_owned(),
+        }),
+    }
+}
+
 /// Parses a byte-oriented legacy daemon greeting by first validating UTF-8 and
 /// then delegating to [`parse_legacy_daemon_greeting`].
 ///
@@ -784,6 +804,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_utf8_legacy_daemon_message_bytes() {
+        let err = parse_legacy_daemon_message_bytes(b"@RSYNCD: OK\xff").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
     fn converts_protocol_version_to_u8() {
         let version = ProtocolVersion::try_from(31).expect("valid version");
         let numeric: u8 = version.into();
@@ -866,6 +895,18 @@ mod tests {
     fn parse_legacy_daemon_message_accepts_authreqd_without_module() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\n").expect("keyword");
         assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_bytes_round_trips() {
+        let message =
+            parse_legacy_daemon_message_bytes(b"@RSYNCD: AUTHREQD module\r\n").expect("keyword");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::AuthRequired {
+                module: Some("module"),
+            }
+        );
     }
 
     #[test]
