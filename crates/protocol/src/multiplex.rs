@@ -75,6 +75,18 @@ impl MessageFrame {
     }
 }
 
+impl AsRef<[u8]> for MessageFrame {
+    fn as_ref(&self) -> &[u8] {
+        self.payload()
+    }
+}
+
+impl AsMut<[u8]> for MessageFrame {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.payload_mut()
+    }
+}
+
 /// Sends a multiplexed message to `writer` using the upstream rsync envelope format.
 ///
 /// The payload length is validated against [`MAX_PAYLOAD_LENGTH`], mirroring the
@@ -273,6 +285,20 @@ mod tests {
 
         assert_eq!(frame.payload(), b"dataoad");
         assert_eq!(frame.payload_len(), 7);
+    }
+
+    #[test]
+    fn message_frame_as_ref_exposes_payload_slice() {
+        let frame = MessageFrame::new(MessageCode::Warning, b"slice".to_vec()).expect("frame");
+        assert_eq!(AsRef::<[u8]>::as_ref(&frame), b"slice");
+    }
+
+    #[test]
+    fn message_frame_as_mut_allows_mutating_payload_slice() {
+        let mut frame = MessageFrame::new(MessageCode::Warning, b"slice".to_vec()).expect("frame");
+        let payload = AsMut::<[u8]>::as_mut(&mut frame);
+        payload.copy_from_slice(b"PATCH");
+        assert_eq!(frame.payload(), b"PATCH");
     }
 
     #[test]
