@@ -24,6 +24,12 @@ pub struct ProtocolVersion(NonZeroU8);
 #[doc(hidden)]
 pub trait ProtocolVersionAdvertisement: Copy {
     /// Returns the numeric representation expected by the negotiation logic.
+    ///
+    /// Implementations for integer types wider than `u8` saturate to
+    /// `u8::MAX` to mirror upstream rsync's tolerance for future protocol
+    /// revisions. Values above the byte range are therefore treated as
+    /// "newer than supported" and subsequently clamped to
+    /// [`ProtocolVersion::NEWEST`].
     fn into_advertised_version(self) -> u8;
 }
 
@@ -53,6 +59,15 @@ impl_protocol_version_advertisement!(
     u8 => |value: u8| value,
     NonZeroU8 => NonZeroU8::get,
     ProtocolVersion => ProtocolVersion::as_u8,
+    u16 => |value: u16| value.min(u16::from(u8::MAX)) as u8,
+    u32 => |value: u32| value.min(u32::from(u8::MAX)) as u8,
+    u64 => |value: u64| value.min(u64::from(u8::MAX)) as u8,
+    usize => |value: usize| value.min(usize::from(u8::MAX)) as u8,
+    i8 => |value: i8| value.clamp(0, i8::MAX) as u8,
+    i16 => |value: i16| value.clamp(0, i16::from(u8::MAX)) as u8,
+    i32 => |value: i32| value.clamp(0, i32::from(u8::MAX)) as u8,
+    i64 => |value: i64| value.clamp(0, i64::from(u8::MAX)) as u8,
+    isize => |value: isize| value.clamp(0, isize::from(u8::MAX)) as u8,
 );
 
 macro_rules! declare_supported_protocols {
@@ -446,6 +461,24 @@ mod tests {
             NonZeroU8::new(31).expect("non-zero"),
         ];
         let negotiated = select_highest_mutual(peers).expect("non-zero values work");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_wider_integer_advertisements() {
+        let peers = [u16::from(ProtocolVersion::NEWEST.as_u8()), 0u16];
+        let negotiated = select_highest_mutual(peers).expect("wider integers supported");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+        let peers = [usize::from(ProtocolVersion::OLDEST.as_u8())];
+        let negotiated = select_highest_mutual(peers).expect("usize conversions work");
+        assert_eq!(negotiated, ProtocolVersion::OLDEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_saturates_wider_integer_advertisements() {
+        let peers = [u32::MAX];
+        let negotiated = select_highest_mutual(peers).expect("future versions clamp");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
