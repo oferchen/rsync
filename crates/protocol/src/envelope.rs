@@ -840,7 +840,7 @@ mod tests {
         ];
 
         for &code in MessageCode::all() {
-            let expected = LOGGING_CODES.iter().any(|candidate| *candidate == code);
+            let expected = LOGGING_CODES.contains(&code);
             assert_eq!(code.is_logging(), expected, "mismatch for code {code:?}");
         }
     }
