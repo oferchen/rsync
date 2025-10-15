@@ -1,5 +1,6 @@
 use std::collections::TryReserveError;
-use std::io::{self, Read, Write};
+use std::io::{self, IoSlice, Read, Write};
+use std::slice;
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
 
@@ -104,9 +105,14 @@ impl From<MessageFrame> for (MessageCode, Vec<u8>) {
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
     let payload_len = ensure_payload_length(payload.len())?;
     let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
-    writer.write_all(&header.encode())?;
-    writer.write_all(payload)?;
-    Ok(())
+    let header_bytes = header.encode();
+
+    if payload.is_empty() {
+        writer.write_all(&header_bytes)?;
+        return Ok(());
+    }
+
+    write_all_vectored(writer, &header_bytes, payload)
 }
 
 /// Receives the next multiplexed message from `reader`.
@@ -197,6 +203,53 @@ fn map_allocation_error(err: TryReserveError) -> io::Error {
     io::Error::new(io::ErrorKind::OutOfMemory, err)
 }
 
+fn write_all_vectored<W: Write + ?Sized>(
+    writer: &mut W,
+    mut header: &[u8],
+    mut payload: &[u8],
+) -> io::Result<()> {
+    while !header.is_empty() || !payload.is_empty() {
+        let written = if header.is_empty() {
+            let slice = IoSlice::new(payload);
+            writer.write_vectored(slice::from_ref(&slice))?
+        } else if payload.is_empty() {
+            let slice = IoSlice::new(header);
+            writer.write_vectored(slice::from_ref(&slice))?
+        } else {
+            let slices = [IoSlice::new(header), IoSlice::new(payload)];
+            writer.write_vectored(&slices)?
+        };
+
+        if written == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to write multiplexed message",
+            ));
+        }
+
+        let mut remaining = written;
+        if !header.is_empty() {
+            if remaining >= header.len() {
+                remaining -= header.len();
+                header = &[];
+            } else {
+                header = &header[remaining..];
+                continue;
+            }
+        }
+
+        if remaining > 0 && !payload.is_empty() {
+            if remaining >= payload.len() {
+                payload = &[];
+            } else {
+                payload = &payload[remaining..];
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +285,149 @@ mod tests {
 
         assert_eq!(&buffer[..HEADER_LEN], &expected_header);
         assert_eq!(&buffer[HEADER_LEN..], payload);
+    }
+
+    #[test]
+    fn send_msg_prefers_vectored_writes_when_supported() {
+        struct RecordingWriter {
+            writes: Vec<u8>,
+            write_calls: usize,
+            vectored_calls: usize,
+        }
+
+        impl RecordingWriter {
+            fn new() -> Self {
+                Self {
+                    writes: Vec::new(),
+                    write_calls: 0,
+                    vectored_calls: 0,
+                }
+            }
+        }
+
+        impl Write for RecordingWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.write_calls += 1;
+                self.writes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.vectored_calls += 1;
+                let mut written = 0;
+                for buf in bufs {
+                    self.writes.extend_from_slice(buf);
+                    written += buf.len();
+                }
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = RecordingWriter::new();
+        let payload = b"payload";
+        send_msg(&mut writer, MessageCode::Warning, payload).expect("send succeeds");
+
+        assert_eq!(writer.write_calls, 0, "fallback write() should not be used");
+        assert_eq!(writer.vectored_calls, 1, "single vectored call expected");
+
+        let header = MessageHeader::new(MessageCode::Warning, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+        assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_msg_vectored_handles_partial_writes() {
+        struct ChunkedWriter {
+            max_chunk: usize,
+            data: Vec<u8>,
+            calls: usize,
+        }
+
+        impl ChunkedWriter {
+            fn new(max_chunk: usize) -> Self {
+                Self {
+                    max_chunk,
+                    data: Vec::new(),
+                    calls: 0,
+                }
+            }
+        }
+
+        impl Write for ChunkedWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                panic!("send_msg should rely on vectored writes when available");
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.calls += 1;
+                let mut remaining = self.max_chunk;
+                let mut written = 0;
+
+                for buf in bufs {
+                    if buf.is_empty() || remaining == 0 {
+                        continue;
+                    }
+
+                    let take = remaining.min(buf.len());
+                    self.data.extend_from_slice(&buf[..take]);
+                    remaining -= take;
+                    written += take;
+
+                    if take < buf.len() {
+                        break;
+                    }
+                }
+
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = ChunkedWriter::new(2);
+        let payload = b"abcdefgh";
+        send_msg(&mut writer, MessageCode::Client, payload).expect("send succeeds");
+
+        let header = MessageHeader::new(MessageCode::Client, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+        assert_eq!(writer.data, expected);
+        assert!(
+            writer.calls > 1,
+            "partial writes should require multiple calls"
+        );
+    }
+
+    #[test]
+    fn send_msg_vectored_detects_write_zero() {
+        struct ZeroWriter;
+
+        impl Write for ZeroWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                panic!("unexpected write fallback");
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                Ok(0)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = ZeroWriter;
+        let err = send_msg(&mut writer, MessageCode::Info, b"payload").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+        assert_eq!(err.to_string(), "failed to write multiplexed message");
     }
 
     #[test]
