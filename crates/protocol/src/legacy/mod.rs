@@ -43,7 +43,10 @@ mod tests {
 
     #[test]
     fn lossy_trimmed_input_replaces_invalid_utf8() {
-        assert_eq!(lossy_trimmed_input(b"@RSYNCD: AUTHREQD\xff\n"), "@RSYNCD: AUTHREQD\u{fffd}");
+        assert_eq!(
+            lossy_trimmed_input(b"@RSYNCD: AUTHREQD\xff\n"),
+            "@RSYNCD: AUTHREQD\u{fffd}"
+        );
     }
 
     #[test]
