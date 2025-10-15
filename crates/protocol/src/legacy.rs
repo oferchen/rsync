@@ -174,6 +174,28 @@ pub fn parse_legacy_daemon_message(
     }
 }
 
+/// Parses a legacy daemon error line of the form `@ERROR: ...`.
+///
+/// Legacy rsync daemons sometimes terminate the ASCII negotiation path with an
+/// explicit error banner rather than the regular `@RSYNCD:` responses. The
+/// payload following `@ERROR:` is returned with surrounding ASCII whitespace
+/// removed, allowing callers to surface the daemon's diagnostic verbatim while
+/// still matching upstream trimming behavior.
+#[must_use]
+pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
+    parse_prefixed_payload(line, "@ERROR:")
+}
+
+/// Parses a legacy daemon warning line of the form `@WARNING: ...`.
+///
+/// The returned payload mirrors [`parse_legacy_error_message`], enabling higher
+/// layers to surface warning text emitted by older daemons without guessing the
+/// exact formatting nuances.
+#[must_use]
+pub fn parse_legacy_warning_message(line: &str) -> Option<&str> {
+    parse_prefixed_payload(line, "@WARNING:")
+}
+
 /// Parses a byte-oriented legacy daemon message by validating UTF-8 and then
 /// delegating to [`parse_legacy_daemon_message`].
 ///
@@ -188,6 +210,33 @@ pub fn parse_legacy_daemon_message_bytes(
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
     match core::str::from_utf8(line) {
         Ok(text) => parse_legacy_daemon_message(text),
+        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
+            input: String::from_utf8_lossy(line).into_owned(),
+        }),
+    }
+}
+
+/// Parses a byte-oriented legacy daemon error line of the form `@ERROR: ...`.
+///
+/// Invalid UTF-8 input is rejected with
+/// [`NegotiationError::MalformedLegacyGreeting`], mirroring
+/// [`parse_legacy_daemon_message_bytes`].
+pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
+    match core::str::from_utf8(line) {
+        Ok(text) => Ok(parse_legacy_error_message(text)),
+        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
+            input: String::from_utf8_lossy(line).into_owned(),
+        }),
+    }
+}
+
+/// Parses a byte-oriented legacy daemon warning line of the form `@WARNING: ...`.
+///
+/// Invalid UTF-8 input is rejected with the same diagnostics as
+/// [`parse_legacy_error_message_bytes`].
+pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
+    match core::str::from_utf8(line) {
+        Ok(text) => Ok(parse_legacy_warning_message(text)),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
             input: String::from_utf8_lossy(line).into_owned(),
         }),
@@ -213,6 +262,11 @@ pub fn parse_legacy_daemon_greeting_bytes(
             input: String::from_utf8_lossy(line).into_owned(),
         }),
     }
+}
+
+fn parse_prefixed_payload<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    trimmed.strip_prefix(prefix).map(|rest| rest.trim())
 }
 
 /// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
@@ -461,5 +515,41 @@ mod tests {
             err,
             NegotiationError::MalformedLegacyGreeting { .. }
         ));
+    }
+
+    #[test]
+    fn parses_legacy_error_message_and_trims_payload() {
+        let payload =
+            parse_legacy_error_message("@ERROR: access denied\r\n").expect("error payload");
+        assert_eq!(payload, "access denied");
+    }
+
+    #[test]
+    fn parses_legacy_error_message_bytes() {
+        let payload = parse_legacy_error_message_bytes(b"@ERROR: access denied\n").expect("parse");
+        assert_eq!(payload, Some("access denied"));
+    }
+
+    #[test]
+    fn rejects_non_utf8_legacy_error_message_bytes() {
+        let err = parse_legacy_error_message_bytes(b"@ERROR: denied\xff").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
+    fn parses_legacy_warning_message_and_trims_payload() {
+        let payload =
+            parse_legacy_warning_message("@WARNING: will retry  \n").expect("warning payload");
+        assert_eq!(payload, "will retry");
+    }
+
+    #[test]
+    fn parses_legacy_warning_message_bytes() {
+        let payload =
+            parse_legacy_warning_message_bytes(b"@WARNING: watch out\r\n").expect("parse");
+        assert_eq!(payload, Some("watch out"));
     }
 }
