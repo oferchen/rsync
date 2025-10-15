@@ -347,6 +347,31 @@ impl MessageCode {
         }
     }
 
+    /// Returns the multiplexed message code associated with a log code when a
+    /// one-to-one mapping exists.
+    ///
+    /// Upstream rsync defines the `MSG_*` logging variants with numeric values
+    /// that mirror the entries in `enum logcode`. The Rust implementation
+    /// exposes the inverse mapping so that higher layers can start from the
+    /// log classification (for example when translating user-specified
+    /// `--info` or `--debug` categories) and recover the multiplexed tag used
+    /// on the wire. Variants such as [`LogCode::None`] do not have a
+    /// corresponding multiplexed tag and therefore yield `None`.
+    #[must_use]
+    pub const fn from_log_code(log: LogCode) -> Option<Self> {
+        match log {
+            LogCode::ErrorXfer => Some(Self::ErrorXfer),
+            LogCode::Info => Some(Self::Info),
+            LogCode::Error => Some(Self::Error),
+            LogCode::Warning => Some(Self::Warning),
+            LogCode::ErrorSocket => Some(Self::ErrorSocket),
+            LogCode::Log => Some(Self::Log),
+            LogCode::Client => Some(Self::Client),
+            LogCode::ErrorUtf8 => Some(Self::ErrorUtf8),
+            LogCode::None => None,
+        }
+    }
+
     /// Returns the upstream `MSG_*` identifier associated with this code.
     ///
     /// The mapping mirrors `enum msgcode` in upstream rsync's `rsync.h` so that
@@ -840,5 +865,22 @@ mod tests {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn message_code_from_log_code_round_trips_logging_variants() {
+        for &log in LogCode::all() {
+            match MessageCode::from_log_code(log) {
+                Some(code) => {
+                    assert_eq!(code.log_code(), Some(log), "round-trip failed for {log:?}");
+                }
+                None => assert_eq!(log, LogCode::None, "only FNONE lacks a multiplexed tag"),
+            }
+        }
+    }
+
+    #[test]
+    fn message_code_from_log_code_rejects_none_variant() {
+        assert_eq!(MessageCode::from_log_code(LogCode::None), None);
     }
 }
