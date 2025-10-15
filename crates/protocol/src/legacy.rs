@@ -12,7 +12,6 @@ pub(crate) const LEGACY_DAEMON_PREFIX_LEN: usize = LEGACY_DAEMON_PREFIX.len();
 /// implementation accepts optional fractional suffixes (e.g. `.0`) but only the
 /// integer component participates in protocol negotiation. Any trailing carriage
 /// returns or line feeds are ignored.
-#[must_use]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let malformed = || malformed_legacy_greeting(trimmed);
@@ -131,7 +130,6 @@ pub enum LegacyDaemonMessage<'a> {
 /// variants and all remaining inputs yield [`LegacyDaemonMessage::Other`],
 /// allowing callers to gracefully handle extensions without guessing upstream's
 /// future strings.
-#[must_use]
 pub fn parse_legacy_daemon_message(
     line: &str,
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
@@ -207,7 +205,6 @@ pub fn parse_legacy_warning_message(line: &str) -> Option<&str> {
 /// sequences are rejected with [`NegotiationError::MalformedLegacyGreeting`]
 /// containing a lossy rendering of the offending bytes, matching the
 /// diagnostics emitted by upstream rsync when echoing unexpected banners.
-#[must_use]
 pub fn parse_legacy_daemon_message_bytes(
     line: &[u8],
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
@@ -224,7 +221,6 @@ pub fn parse_legacy_daemon_message_bytes(
 /// Invalid UTF-8 input is rejected with
 /// [`NegotiationError::MalformedLegacyGreeting`], mirroring
 /// [`parse_legacy_daemon_message_bytes`].
-#[must_use]
 pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
     match core::str::from_utf8(line) {
         Ok(text) => Ok(parse_legacy_error_message(text)),
@@ -238,7 +234,6 @@ pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, Neg
 ///
 /// Invalid UTF-8 input is rejected with the same diagnostics as
 /// [`parse_legacy_error_message_bytes`].
-#[must_use]
 pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
     match core::str::from_utf8(line) {
         Ok(text) => Ok(parse_legacy_warning_message(text)),
@@ -258,7 +253,6 @@ pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, N
 /// [`NegotiationError::MalformedLegacyGreeting`] that captures the lossy string
 /// representation for diagnostics, mirroring upstream behavior where the raw
 /// greeting is echoed back to the user.
-#[must_use]
 pub fn parse_legacy_daemon_greeting_bytes(
     line: &[u8],
 ) -> Result<ProtocolVersion, NegotiationError> {
