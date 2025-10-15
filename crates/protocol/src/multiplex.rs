@@ -588,7 +588,7 @@ mod tests {
     fn message_frame_as_ref_exposes_payload_slice() {
         let frame = MessageFrame::new(MessageCode::Warning, b"slice".to_vec()).expect("frame");
         assert_eq!(AsRef::<[u8]>::as_ref(&frame), b"slice");
-        let deref: &[u8] = &*frame;
+        let deref: &[u8] = &frame;
         assert_eq!(deref, b"slice");
     }
 
@@ -599,7 +599,7 @@ mod tests {
         payload.copy_from_slice(b"PATCH");
         assert_eq!(frame.payload(), b"PATCH");
         {
-            let deref: &mut [u8] = &mut *frame;
+            let deref: &mut [u8] = &mut frame;
             deref.copy_from_slice(b"lower");
         }
         assert_eq!(frame.payload(), b"lower");
@@ -747,7 +747,7 @@ mod tests {
 
         impl Write for FailingWriter {
             fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::Other, "injected failure"))
+                Err(io::Error::other("injected failure"))
             }
 
             fn flush(&mut self) -> io::Result<()> {

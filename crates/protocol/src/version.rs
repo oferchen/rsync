@@ -342,7 +342,7 @@ mod tests {
             }
         }
 
-        if let Some(&newest) = recognized.iter().rev().next() {
+        if let Some(&newest) = recognized.iter().next_back() {
             return Ok(ProtocolVersion::new_const(newest));
         }
 
