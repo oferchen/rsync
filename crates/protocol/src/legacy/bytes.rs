@@ -119,6 +119,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_error_message_bytes_allows_empty_payload() {
+        let payload = parse_legacy_error_message_bytes(b"@ERROR:\r\n").expect("parse");
+        assert_eq!(payload, Some(""));
+    }
+
+    #[test]
     fn rejects_non_utf8_legacy_error_message_bytes() {
         let err = parse_legacy_error_message_bytes(b"@ERROR: denied\xff\r\n").unwrap_err();
         match err {
@@ -140,6 +146,12 @@ mod tests {
     fn parse_legacy_warning_message_bytes_returns_none_for_unrecognized_prefix() {
         let payload = parse_legacy_warning_message_bytes(b"another prefix\n").expect("parse");
         assert_eq!(payload, None);
+    }
+
+    #[test]
+    fn parse_legacy_warning_message_bytes_allows_empty_payload() {
+        let payload = parse_legacy_warning_message_bytes(b"@WARNING:\n").expect("parse");
+        assert_eq!(payload, Some(""));
     }
 
     #[test]
