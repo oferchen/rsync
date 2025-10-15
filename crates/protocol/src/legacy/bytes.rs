@@ -81,6 +81,7 @@ pub fn parse_legacy_daemon_greeting_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::version::ProtocolVersion;
 
     #[test]
     fn parse_legacy_daemon_message_bytes_round_trips() {
@@ -112,6 +113,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_error_message_bytes_returns_none_for_unrecognized_prefix() {
+        let payload = parse_legacy_error_message_bytes(b"something else\n").expect("parse");
+        assert_eq!(payload, None);
+    }
+
+    #[test]
     fn rejects_non_utf8_legacy_error_message_bytes() {
         let err = parse_legacy_error_message_bytes(b"@ERROR: denied\xff\r\n").unwrap_err();
         match err {
@@ -130,6 +137,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_warning_message_bytes_returns_none_for_unrecognized_prefix() {
+        let payload = parse_legacy_warning_message_bytes(b"another prefix\n").expect("parse");
+        assert_eq!(payload, None);
+    }
+
+    #[test]
     fn rejects_non_utf8_legacy_warning_message_bytes() {
         let err = parse_legacy_warning_message_bytes(b"@WARNING: caution\xff\n").unwrap_err();
         match err {
@@ -145,6 +158,16 @@ mod tests {
         let parsed =
             parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 29.0\r\n").expect("valid byte greeting");
         assert_eq!(parsed.as_u8(), 29);
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_bytes_routes_version_banner() {
+        let message =
+            parse_legacy_daemon_message_bytes(b"@RSYNCD: 30.0\n").expect("version banner");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Version(ProtocolVersion::new_const(30))
+        );
     }
 
     #[test]
