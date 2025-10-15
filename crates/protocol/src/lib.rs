@@ -146,6 +146,18 @@ impl NegotiationPrologueDetector {
         NegotiationPrologue::NeedMoreData
     }
 
+    /// Reports the finalized negotiation style, if one has been established.
+    ///
+    /// Callers that feed data incrementally can use this accessor to check
+    /// whether a definitive classification has already been produced without
+    /// issuing another `observe` call. This mirrors upstream rsync's approach
+    /// where the decision is sticky after the first non-`NeedMoreData`
+    /// determination.
+    #[must_use]
+    pub const fn decision(&self) -> Option<NegotiationPrologue> {
+        self.decided
+    }
+
     fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
         self.decided = Some(decision);
         decision
@@ -974,5 +986,16 @@ mod tests {
             detector.observe(b"anything"),
             NegotiationPrologue::LegacyAscii
         );
+    }
+
+    #[test]
+    fn prologue_detector_exposes_decision_state() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.decision(), None);
+        assert_eq!(detector.observe(b""), NegotiationPrologue::NeedMoreData);
+        assert_eq!(detector.decision(), None);
+
+        assert_eq!(detector.observe(b"x"), NegotiationPrologue::Binary);
+        assert_eq!(detector.decision(), Some(NegotiationPrologue::Binary));
     }
 }
