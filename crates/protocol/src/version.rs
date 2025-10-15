@@ -170,6 +170,20 @@ impl ProtocolVersion {
     }
 }
 
+impl From<ProtocolVersion> for u8 {
+    #[inline]
+    fn from(version: ProtocolVersion) -> Self {
+        version.as_u8()
+    }
+}
+
+impl From<ProtocolVersion> for NonZeroU8 {
+    #[inline]
+    fn from(version: ProtocolVersion) -> Self {
+        version.0
+    }
+}
+
 impl TryFrom<u8> for ProtocolVersion {
     type Error = NegotiationError;
 
@@ -196,18 +210,6 @@ impl TryFrom<NonZeroU8> for ProtocolVersion {
 impl fmt::Display for ProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_u8())
-    }
-}
-
-impl From<ProtocolVersion> for u8 {
-    fn from(value: ProtocolVersion) -> Self {
-        value.as_u8()
-    }
-}
-
-impl From<ProtocolVersion> for NonZeroU8 {
-    fn from(value: ProtocolVersion) -> Self {
-        value.0
     }
 }
 
