@@ -43,6 +43,29 @@ impl ProtocolVersion {
     pub const fn as_u8(self) -> u8 {
         self.0.get()
     }
+
+    /// Converts a peer-advertised version into the negotiated protocol version.
+    ///
+    /// Upstream rsync tolerates peers that advertise a protocol newer than it
+    /// understands by clamping the negotiated value to its newest supported
+    /// protocol. Versions older than [`ProtocolVersion::OLDEST`] remain
+    /// unsupported.
+    pub fn from_peer_advertisement(value: u8) -> Result<Self, NegotiationError> {
+        if value < Self::OLDEST.as_u8() {
+            return Err(NegotiationError::UnsupportedVersion(value));
+        }
+
+        let clamped = if value > Self::NEWEST.as_u8() {
+            Self::NEWEST.as_u8()
+        } else {
+            value
+        };
+
+        match NonZeroU8::new(clamped) {
+            Some(non_zero) => Ok(Self(non_zero)),
+            None => Err(NegotiationError::UnsupportedVersion(value)),
+        }
+    }
 }
 
 impl TryFrom<u8> for ProtocolVersion {
@@ -188,14 +211,15 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
             input: trimmed.to_owned(),
         })?;
 
-    ProtocolVersion::try_from(version)
+    ProtocolVersion::from_peer_advertisement(version)
 }
 
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
 ///
 /// The caller provides the list of protocol versions advertised by the peer in any order.
 /// The function filters the peer list to versions that upstream rsync 3.4.1 recognizes and
-/// then chooses the highest version that both parties support. Duplicate peer entries and
+/// clamps versions newer than [`ProtocolVersion::NEWEST`] down to the newest supported
+/// value, matching upstream tolerance for future releases. Duplicate peer entries and
 /// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
 #[must_use]
@@ -205,7 +229,7 @@ where
 {
     let mut filtered: Vec<u8> = Vec::new();
     for version in peer_versions {
-        match ProtocolVersion::try_from(version) {
+        match ProtocolVersion::from_peer_advertisement(version) {
             Ok(proto) => filtered.push(proto.as_u8()),
             Err(err) => return Err(err),
         }
@@ -274,6 +298,18 @@ mod tests {
     fn rejects_greeting_with_unsupported_version() {
         let err = parse_legacy_daemon_greeting("@RSYNCD: 27.0").unwrap_err();
         assert_eq!(err, NegotiationError::UnsupportedVersion(27));
+    }
+
+    #[test]
+    fn clamps_future_peer_versions_in_selection() {
+        let negotiated = select_highest_mutual([35, 31]).expect("must clamp to newest");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn clamps_future_versions_in_legacy_greeting() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 40.1\n").expect("must clamp");
+        assert_eq!(parsed, ProtocolVersion::NEWEST);
     }
 
     #[test]
