@@ -1,5 +1,8 @@
 use core::convert::TryFrom;
 use core::fmt;
+use core::str::FromStr;
+
+use std::string::String;
 
 /// Number of bytes in a multiplexed rsync message header.
 pub const HEADER_LEN: usize = 4;
@@ -58,6 +61,40 @@ pub enum MessageCode {
     /// Sender failed to open a requested file.
     NoSend = 102,
 }
+
+/// Error returned when parsing a multiplexed message code from its mnemonic name fails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseMessageCodeError {
+    invalid_name: String,
+}
+
+impl ParseMessageCodeError {
+    /// Creates a parse error that records the invalid mnemonic name.
+    #[must_use]
+    pub fn new(invalid_name: &str) -> Self {
+        Self {
+            invalid_name: invalid_name.to_owned(),
+        }
+    }
+
+    /// Returns the mnemonic name that failed to parse.
+    #[must_use]
+    pub fn invalid_name(&self) -> &str {
+        &self.invalid_name
+    }
+}
+
+impl fmt::Display for ParseMessageCodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "unknown multiplexed message code name: \"{}\"",
+            self.invalid_name
+        )
+    }
+}
+
+impl std::error::Error for ParseMessageCodeError {}
 
 impl MessageCode {
     /// Returns the numeric representation expected on the wire.
@@ -197,6 +234,34 @@ impl TryFrom<u8> for MessageCode {
 
     fn try_from(value: u8) -> Result<Self, EnvelopeError> {
         Self::from_u8(value).ok_or(EnvelopeError::UnknownMessageCode(value))
+    }
+}
+
+impl FromStr for MessageCode {
+    type Err = ParseMessageCodeError;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "MSG_DATA" => Ok(Self::Data),
+            "MSG_ERROR_XFER" => Ok(Self::ErrorXfer),
+            "MSG_INFO" => Ok(Self::Info),
+            "MSG_ERROR" => Ok(Self::Error),
+            "MSG_WARNING" => Ok(Self::Warning),
+            "MSG_ERROR_SOCKET" => Ok(Self::ErrorSocket),
+            "MSG_LOG" => Ok(Self::Log),
+            "MSG_CLIENT" => Ok(Self::Client),
+            "MSG_ERROR_UTF8" => Ok(Self::ErrorUtf8),
+            "MSG_REDO" => Ok(Self::Redo),
+            "MSG_STATS" => Ok(Self::Stats),
+            "MSG_IO_ERROR" => Ok(Self::IoError),
+            "MSG_IO_TIMEOUT" => Ok(Self::IoTimeout),
+            "MSG_NOOP" => Ok(Self::NoOp),
+            "MSG_ERROR_EXIT" => Ok(Self::ErrorExit),
+            "MSG_SUCCESS" => Ok(Self::Success),
+            "MSG_DELETED" => Ok(Self::Deleted),
+            "MSG_NO_SEND" => Ok(Self::NoSend),
+            other => Err(ParseMessageCodeError::new(other)),
+        }
     }
 }
 
@@ -408,6 +473,24 @@ mod tests {
     fn message_code_from_u8_rejects_unknown_values() {
         assert_eq!(MessageCode::from_u8(11), None);
         assert_eq!(MessageCode::from_u8(0xFF), None);
+    }
+
+    #[test]
+    fn message_code_from_str_parses_known_names() {
+        for &code in MessageCode::all() {
+            let parsed: MessageCode = code.name().parse().expect("known name");
+            assert_eq!(parsed, code);
+        }
+    }
+
+    #[test]
+    fn message_code_from_str_rejects_unknown_names() {
+        let err = "MSG_SOMETHING_ELSE".parse::<MessageCode>().unwrap_err();
+        assert_eq!(err.invalid_name(), "MSG_SOMETHING_ELSE");
+        assert_eq!(
+            err.to_string(),
+            "unknown multiplexed message code name: \"MSG_SOMETHING_ELSE\""
+        );
     }
 
     #[test]
