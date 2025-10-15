@@ -17,7 +17,8 @@ mod negotiation;
 mod version;
 
 pub use envelope::{
-    EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader,
+    EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode,
+    MessageHeader, ParseMessageCodeError,
 };
 pub use error::NegotiationError;
 pub use legacy::{
