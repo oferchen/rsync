@@ -257,6 +257,8 @@ impl NegotiationPrologueDetector {
 }
 
 impl Default for NegotiationPrologueDetector {
+    /// Creates a detector that has not yet observed any bytes.
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -315,6 +317,17 @@ mod tests {
             detector.observe(b"RSYNCD: 31.0\n"),
             NegotiationPrologue::LegacyAscii
         );
+    }
+
+    #[test]
+    fn prologue_detector_default_matches_initial_state() {
+        let detector = NegotiationPrologueDetector::default();
+
+        assert_eq!(detector.decision(), None);
+        assert_eq!(detector.buffered_prefix(), b"");
+        assert_eq!(detector.buffered_len(), 0);
+        assert!(!detector.legacy_prefix_complete());
+        assert_eq!(detector.legacy_prefix_remaining(), None);
     }
 
     #[test]
