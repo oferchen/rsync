@@ -267,6 +267,7 @@ impl Default for NegotiationPrologueDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn detect_negotiation_prologue_requires_data() {
@@ -735,5 +736,55 @@ mod tests {
         run_case(b"@RSYNCX");
         run_case(b"modern");
         run_case(&[0x00, 0x20, 0x00, 0x00]);
+    }
+
+    proptest! {
+        #[test]
+        fn prologue_detector_matches_stateless_detection_for_random_chunks(
+            chunks in prop::collection::vec(
+                prop::collection::vec(any::<u8>(), 0..=LEGACY_DAEMON_PREFIX_LEN + 2),
+                0..=4
+            )
+        ) {
+            let concatenated: Vec<u8> = chunks.iter().flatten().copied().collect();
+            let expected = detect_negotiation_prologue(&concatenated);
+
+            let mut detector = NegotiationPrologueDetector::new();
+            let mut last = NegotiationPrologue::NeedMoreData;
+
+            for chunk in &chunks {
+                last = detector.observe(chunk);
+            }
+
+            prop_assert_eq!(last, expected);
+
+            match expected {
+                NegotiationPrologue::NeedMoreData => {
+                    prop_assert_eq!(detector.decision(), None);
+                }
+                decision => {
+                    prop_assert_eq!(detector.decision(), Some(decision));
+                }
+            }
+
+            let buffered = detector.buffered_prefix();
+            prop_assert_eq!(buffered.len(), detector.buffered_len());
+
+            match detector.decision() {
+                Some(NegotiationPrologue::LegacyAscii) => {
+                    if let Some(remaining) = detector.legacy_prefix_remaining() {
+                        prop_assert!(remaining > 0);
+                        prop_assert!(!detector.legacy_prefix_complete());
+                    } else {
+                        prop_assert!(detector.legacy_prefix_complete());
+                    }
+                }
+                _ => {
+                    prop_assert_eq!(detector.legacy_prefix_remaining(), None);
+                    prop_assert!(!detector.legacy_prefix_complete());
+                    prop_assert!(buffered.is_empty());
+                }
+            }
+        }
     }
 }
