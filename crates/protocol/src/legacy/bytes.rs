@@ -10,6 +10,18 @@ use super::{
     lossy_trimmed_input,
 };
 
+fn parse_lossy_ascii_bytes<'a, T, F>(line: &'a [u8], parser: F) -> Result<T, NegotiationError>
+where
+    F: FnOnce(&'a str) -> Result<T, NegotiationError>,
+{
+    match core::str::from_utf8(line) {
+        Ok(text) => parser(text),
+        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
+            input: lossy_trimmed_input(line),
+        }),
+    }
+}
+
 /// Parses a byte-oriented legacy daemon message by validating UTF-8 and then
 /// delegating to [`parse_legacy_daemon_message`].
 ///
@@ -22,12 +34,7 @@ use super::{
 pub fn parse_legacy_daemon_message_bytes(
     line: &[u8],
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {
-    match core::str::from_utf8(line) {
-        Ok(text) => parse_legacy_daemon_message(text),
-        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: lossy_trimmed_input(line),
-        }),
-    }
+    parse_lossy_ascii_bytes(line, parse_legacy_daemon_message)
 }
 
 /// Parses a byte-oriented legacy daemon error line of the form `@ERROR: ...`.
@@ -36,12 +43,7 @@ pub fn parse_legacy_daemon_message_bytes(
 /// [`NegotiationError::MalformedLegacyGreeting`], mirroring
 /// [`parse_legacy_daemon_message_bytes`].
 pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
-    match core::str::from_utf8(line) {
-        Ok(text) => Ok(parse_legacy_error_message(text)),
-        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: lossy_trimmed_input(line),
-        }),
-    }
+    parse_lossy_ascii_bytes(line, |text| Ok(parse_legacy_error_message(text)))
 }
 
 /// Parses a byte-oriented legacy daemon warning line of the form `@WARNING: ...`.
@@ -49,12 +51,7 @@ pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, Neg
 /// Invalid UTF-8 input is rejected with the same diagnostics as
 /// [`parse_legacy_error_message_bytes`].
 pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, NegotiationError> {
-    match core::str::from_utf8(line) {
-        Ok(text) => Ok(parse_legacy_warning_message(text)),
-        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: lossy_trimmed_input(line),
-        }),
-    }
+    parse_lossy_ascii_bytes(line, |text| Ok(parse_legacy_warning_message(text)))
 }
 
 /// Parses a byte-oriented legacy daemon greeting by first validating UTF-8 and
@@ -70,12 +67,7 @@ pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, N
 pub fn parse_legacy_daemon_greeting_bytes(
     line: &[u8],
 ) -> Result<ProtocolVersion, NegotiationError> {
-    match core::str::from_utf8(line) {
-        Ok(text) => parse_legacy_daemon_greeting(text),
-        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: lossy_trimmed_input(line),
-        }),
-    }
+    parse_lossy_ascii_bytes(line, parse_legacy_daemon_greeting)
 }
 
 #[cfg(test)]
