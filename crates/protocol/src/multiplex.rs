@@ -77,13 +77,13 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len() as usize;
 
-    buffer.clear();
+    let mut payload = Vec::with_capacity(len);
     if len != 0 {
-        buffer.resize(len, 0);
-        reader.read_exact(buffer)?;
+        payload.resize(len, 0);
+        reader.read_exact(&mut payload)?;
     }
 
-    Ok(header.code())
+    MessageFrame::new(header.code(), payload)
 }
 
 /// Receives the next multiplexed message into a caller-provided buffer.
