@@ -546,6 +546,33 @@ mod tests {
     }
 
     #[test]
+    fn legacy_prefix_remaining_counts_down_through_canonical_prefix() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.legacy_prefix_remaining(), None);
+
+        for (idx, &byte) in LEGACY_DAEMON_PREFIX.as_bytes().iter().enumerate() {
+            let observed = detector.observe_byte(byte);
+            assert_eq!(observed, NegotiationPrologue::LegacyAscii);
+
+            let expected_remaining = if idx + 1 < LEGACY_DAEMON_PREFIX_LEN {
+                Some(LEGACY_DAEMON_PREFIX_LEN - idx - 1)
+            } else {
+                None
+            };
+
+            assert_eq!(detector.legacy_prefix_remaining(), expected_remaining);
+            assert_eq!(detector.buffered_len(), idx + 1);
+            assert_eq!(
+                detector.buffered_prefix(),
+                &LEGACY_DAEMON_PREFIX.as_bytes()[..idx + 1]
+            );
+        }
+
+        assert!(detector.legacy_prefix_complete());
+        assert_eq!(detector.buffered_prefix(), LEGACY_DAEMON_PREFIX.as_bytes());
+    }
+
+    #[test]
     fn buffered_prefix_tracks_bytes_consumed_for_legacy_detection() {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.buffered_prefix(), b"");
