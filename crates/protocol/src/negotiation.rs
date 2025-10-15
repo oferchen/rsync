@@ -135,6 +135,37 @@ impl NegotiationPrologueSniffer {
             }
         }
     }
+
+    /// Reports whether the canonical legacy prefix (`@RSYNCD:`) has already
+    /// been fully observed.
+    ///
+    /// Legacy ASCII negotiations reuse the bytes captured during detection when
+    /// parsing the daemon greeting. Higher layers therefore need to know when
+    /// the marker has been buffered or ruled out so they can decide whether to
+    /// keep reading from the transport before handing the accumulated bytes to
+    /// the legacy greeting parser. The helper simply forwards to
+    /// [`NegotiationPrologueDetector::legacy_prefix_complete`], keeping the
+    /// sniffer's API in sync with the lower-level detector without exposing the
+    /// internal field directly.
+    #[must_use]
+    pub fn legacy_prefix_complete(&self) -> bool {
+        self.detector.legacy_prefix_complete()
+    }
+
+    /// Reports how many additional bytes are still required to finish buffering
+    /// the canonical legacy prefix.
+    ///
+    /// When the detector has already classified the stream as legacy ASCII but
+    /// the full `@RSYNCD:` prefix has not yet been captured, callers can use the
+    /// returned count to decide whether another read is necessary before
+    /// replaying the buffered bytes into the legacy greeting parser. Once the
+    /// prefix has been fully observed—or when the exchange is binary—the helper
+    /// yields `None`, mirroring
+    /// [`NegotiationPrologueDetector::legacy_prefix_remaining`].
+    #[must_use]
+    pub fn legacy_prefix_remaining(&self) -> Option<usize> {
+        self.detector.legacy_prefix_remaining()
+    }
 }
 
 /// Incremental detector for the negotiation prologue style.
@@ -929,11 +960,31 @@ mod tests {
         assert_eq!(decision, NegotiationPrologue::LegacyAscii);
         assert_eq!(sniffer.buffered(), b"@");
 
+        assert!(!sniffer.legacy_prefix_complete());
+        assert_eq!(
+            sniffer.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 1)
+        );
+
         let mut remaining = Vec::new();
         cursor.read_to_end(&mut remaining).expect("read remainder");
         let mut replay = sniffer.into_buffered();
         replay.extend_from_slice(&remaining);
         assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_reports_binary_prefix_state() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(vec![0x00, 0x20, 0x00]);
+
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("binary negotiation should succeed");
+        assert_eq!(decision, NegotiationPrologue::Binary);
+
+        assert!(!sniffer.legacy_prefix_complete());
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
     }
 
     #[test]
