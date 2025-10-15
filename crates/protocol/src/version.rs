@@ -194,11 +194,9 @@ where
         match ProtocolVersion::from_peer_advertisement(version) {
             Ok(proto) => {
                 let value = proto.as_u8();
-                if !filtered[..filtered_len].contains(&value) {
-                    if filtered_len < filtered.len() {
-                        filtered[filtered_len] = value;
-                        filtered_len += 1;
-                    }
+                if !filtered[..filtered_len].contains(&value) && filtered_len < filtered.len() {
+                    filtered[filtered_len] = value;
+                    filtered_len += 1;
                 }
             }
             Err(NegotiationError::UnsupportedVersion(value))
