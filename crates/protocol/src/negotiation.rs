@@ -61,7 +61,7 @@ pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
 /// transient `EINTR` interruptions. This helper mirrors upstream behavior while
 /// providing a higher level interface that owns the buffered prefix so callers
 /// can replay the bytes into the legacy greeting parser without reallocating.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NegotiationPrologueSniffer {
     detector: NegotiationPrologueDetector,
     buffered: Vec<u8>,
@@ -165,6 +165,15 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()
+    }
+}
+
+impl Default for NegotiationPrologueSniffer {
+    fn default() -> Self {
+        Self {
+            detector: NegotiationPrologueDetector::new(),
+            buffered: Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN),
+        }
     }
 }
 
@@ -647,13 +656,19 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
 
         for &byte in LEGACY_DAEMON_PREFIX.as_bytes() {
-            assert_eq!(detector.observe_byte(byte), NegotiationPrologue::LegacyAscii);
+            assert_eq!(
+                detector.observe_byte(byte),
+                NegotiationPrologue::LegacyAscii
+            );
         }
         assert!(detector.legacy_prefix_complete());
 
         detector.reset();
 
-        assert_eq!(detector.observe_byte(b'@'), NegotiationPrologue::LegacyAscii);
+        assert_eq!(
+            detector.observe_byte(b'@'),
+            NegotiationPrologue::LegacyAscii
+        );
         assert_eq!(detector.buffered_prefix(), b"@");
         assert_eq!(detector.buffered_len(), 1);
         assert_eq!(
@@ -947,6 +962,13 @@ mod tests {
             .expect("cached decision should be returned");
         assert_eq!(decision, NegotiationPrologue::Binary);
         assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn prologue_sniffer_preallocates_legacy_prefix_capacity() {
+        let buffered = NegotiationPrologueSniffer::new().into_buffered();
+        assert!(buffered.capacity() >= LEGACY_DAEMON_PREFIX_LEN);
+        assert!(buffered.is_empty());
     }
 
     #[test]
