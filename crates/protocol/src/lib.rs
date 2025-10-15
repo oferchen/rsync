@@ -198,73 +198,61 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
     const PREFIX: &str = "@RSYNCD:";
 
     let trimmed = line.trim_end_matches(['\r', '\n']);
-    let after_prefix =
-        trimmed
-            .strip_prefix(PREFIX)
-            .ok_or_else(|| NegotiationError::MalformedLegacyGreeting {
-                input: trimmed.to_owned(),
-            })?;
+    let malformed = || malformed_legacy_greeting(trimmed);
+
+    let after_prefix = trimmed.strip_prefix(PREFIX).ok_or_else(malformed)?;
 
     let remainder = after_prefix.trim_start();
     if remainder.is_empty() {
-        return Err(NegotiationError::MalformedLegacyGreeting {
-            input: trimmed.to_owned(),
-        });
+        return Err(malformed());
     }
 
-    let mut rest_start = remainder.len();
-    for (idx, ch) in remainder.char_indices() {
-        if ch.is_ascii_digit() {
+    let digits_len = ascii_digit_prefix_len(remainder);
+    let digits = &remainder[..digits_len];
+    if digits.is_empty() {
+        return Err(malformed());
+    }
+
+    let mut rest = &remainder[digits_len..];
+    loop {
+        rest = rest.trim_start_matches(char::is_whitespace);
+
+        if rest.is_empty() {
+            break;
+        }
+
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let fractional_len = ascii_digit_prefix_len(after_dot);
+            if fractional_len == 0 {
+                return Err(malformed());
+            }
+
+            rest = &after_dot[fractional_len..];
             continue;
         }
 
-        rest_start = idx;
-        break;
+        return Err(malformed());
     }
 
-    let digits = &remainder[..rest_start];
-    if digits.is_empty() {
-        return Err(NegotiationError::MalformedLegacyGreeting {
-            input: trimmed.to_owned(),
-        });
-    }
-
-    let rest = &remainder[rest_start..];
-    let mut tail = rest.chars().peekable();
-    while let Some(&ch) = tail.peek() {
-        if ch == '.' {
-            tail.next();
-            let mut saw_digit = false;
-            while let Some(&fraction_ch) = tail.peek() {
-                if fraction_ch.is_ascii_digit() {
-                    saw_digit = true;
-                    tail.next();
-                } else {
-                    break;
-                }
-            }
-
-            if !saw_digit {
-                return Err(NegotiationError::MalformedLegacyGreeting {
-                    input: trimmed.to_owned(),
-                });
-            }
-        } else if ch.is_whitespace() {
-            tail.next();
-        } else {
-            return Err(NegotiationError::MalformedLegacyGreeting {
-                input: trimmed.to_owned(),
-            });
-        }
-    }
-
-    let version: u8 = digits
-        .parse()
-        .map_err(|_| NegotiationError::MalformedLegacyGreeting {
-            input: trimmed.to_owned(),
-        })?;
+    let version: u8 = digits.parse().map_err(|_| malformed())?;
 
     ProtocolVersion::from_peer_advertisement(version)
+}
+
+/// Returns the length of the leading ASCII-digit run within `input`.
+fn ascii_digit_prefix_len(input: &str) -> usize {
+    input
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count()
+}
+
+/// Constructs a [`NegotiationError::MalformedLegacyGreeting`] for `trimmed` input.
+fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
+    NegotiationError::MalformedLegacyGreeting {
+        input: trimmed.to_owned(),
+    }
 }
 
 /// Parses a byte-oriented legacy daemon greeting by first validating UTF-8 and
@@ -410,6 +398,18 @@ mod tests {
     fn parses_legacy_daemon_greeting_with_minor_version() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 31.0\r\n").expect("valid greeting");
         assert_eq!(parsed.as_u8(), 31);
+    }
+
+    #[test]
+    fn parses_legacy_daemon_greeting_without_space_after_prefix() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD:31.0\n").expect("valid greeting");
+        assert_eq!(parsed.as_u8(), 31);
+    }
+
+    #[test]
+    fn parses_legacy_daemon_greeting_with_whitespace_before_fractional() {
+        let parsed = parse_legacy_daemon_greeting("@RSYNCD: 32   .0   \n").expect("valid greeting");
+        assert_eq!(parsed, ProtocolVersion::NEWEST);
     }
 
     #[test]
