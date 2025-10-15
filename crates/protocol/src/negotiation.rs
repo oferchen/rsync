@@ -447,7 +447,43 @@ impl Default for NegotiationPrologueDetector {
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use std::io::{Cursor, Read};
+    use std::io::{self, Cursor, Read};
+
+    struct InterruptedOnceReader {
+        inner: Cursor<Vec<u8>>,
+        interrupted: bool,
+    }
+
+    impl InterruptedOnceReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                inner: Cursor::new(data),
+                interrupted: false,
+            }
+        }
+
+        fn was_interrupted(&self) -> bool {
+            self.interrupted
+        }
+
+        fn into_inner(self) -> Cursor<Vec<u8>> {
+            self.inner
+        }
+    }
+
+    impl Read for InterruptedOnceReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "simulated EINTR during negotiation sniff",
+                ));
+            }
+
+            self.inner.read(buf)
+        }
+    }
 
     #[test]
     fn detect_negotiation_prologue_requires_data() {
@@ -1147,5 +1183,28 @@ mod tests {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let err = sniffer.read_from(&mut cursor).expect_err("EOF should fail");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn prologue_sniffer_retries_after_interrupted_read() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = InterruptedOnceReader::new(b"@RSYNCD: 31.0\n".to_vec());
+
+        let decision = sniffer
+            .read_from(&mut reader)
+            .expect("sniffer should retry after EINTR");
+
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert!(
+            reader.was_interrupted(),
+            "the reader must report an interruption"
+        );
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.legacy_prefix_complete());
+
+        let mut cursor = reader.into_inner();
+        let mut remainder = Vec::new();
+        cursor.read_to_end(&mut remainder).expect("read remainder");
+        assert_eq!(remainder, b" 31.0\n");
     }
 }
