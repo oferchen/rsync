@@ -71,7 +71,6 @@ impl ProtocolVersion {
     /// understands by clamping the negotiated value to its newest supported
     /// protocol. Versions older than [`ProtocolVersion::OLDEST`] remain
     /// unsupported.
-    #[must_use]
     pub fn from_peer_advertisement(value: u8) -> Result<Self, NegotiationError> {
         if value < Self::OLDEST.as_u8() {
             return Err(NegotiationError::UnsupportedVersion(value));
@@ -151,7 +150,6 @@ impl PartialEq<ProtocolVersion> for u8 {
 /// value, matching upstream tolerance for future releases. Duplicate peer entries and
 /// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
-#[must_use]
 pub fn select_highest_mutual<I>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where
     I: IntoIterator<Item = u8>,
