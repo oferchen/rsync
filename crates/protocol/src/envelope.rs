@@ -97,6 +97,15 @@ impl fmt::Display for ParseMessageCodeError {
 impl std::error::Error for ParseMessageCodeError {}
 
 impl MessageCode {
+    /// Alias constant representing the legacy `MSG_FLUSH` identifier.
+    ///
+    /// Upstream rsync exposes `MSG_FLUSH` as a preprocessor macro that maps to
+    /// the same numeric value as [`MessageCode::Info`]. Maintaining the alias
+    /// allows callers to reference the historic name when mirroring traces or
+    /// constructing golden streams while still reusing the canonical `Info`
+    /// variant for on-the-wire encoding.
+    pub const FLUSH: MessageCode = MessageCode::Info;
+
     /// Returns the numeric representation expected on the wire.
     #[must_use]
     #[inline]
@@ -245,6 +254,7 @@ impl FromStr for MessageCode {
             "MSG_DATA" => Ok(Self::Data),
             "MSG_ERROR_XFER" => Ok(Self::ErrorXfer),
             "MSG_INFO" => Ok(Self::Info),
+            "MSG_FLUSH" => Ok(Self::Info),
             "MSG_ERROR" => Ok(Self::Error),
             "MSG_WARNING" => Ok(Self::Warning),
             "MSG_ERROR_SOCKET" => Ok(Self::ErrorSocket),
@@ -596,5 +606,14 @@ mod tests {
             assert_eq!(code.name(), name);
             assert_eq!(code.to_string(), name);
         }
+    }
+
+    #[test]
+    fn message_code_flush_alias_matches_info() {
+        assert_eq!(MessageCode::FLUSH, MessageCode::Info);
+        assert_eq!(MessageCode::FLUSH.as_u8(), MessageCode::Info.as_u8());
+
+        let parsed: MessageCode = "MSG_FLUSH".parse().expect("known alias");
+        assert_eq!(parsed, MessageCode::Info);
     }
 }
