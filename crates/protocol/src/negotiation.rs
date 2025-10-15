@@ -1,3 +1,5 @@
+use std::io::{self, Read};
+
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 
 /// Classification of the negotiation prologue received from a peer.
@@ -48,6 +50,91 @@ pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
     }
 
     NegotiationPrologue::LegacyAscii
+}
+
+/// Incrementally reads bytes from a [`Read`] implementation until the
+/// negotiation style can be determined.
+///
+/// Upstream rsync only needs to observe the very first octet to decide between
+/// the legacy ASCII negotiation (`@RSYNCD:`) and the modern binary handshake.
+/// Real transports, however, may deliver that byte in small fragments or after
+/// transient `EINTR` interruptions. This helper mirrors upstream behavior while
+/// providing a higher level interface that owns the buffered prefix so callers
+/// can replay the bytes into the legacy greeting parser without reallocating.
+#[derive(Debug, Default)]
+pub struct NegotiationPrologueSniffer {
+    detector: NegotiationPrologueDetector,
+    buffered: Vec<u8>,
+}
+
+impl NegotiationPrologueSniffer {
+    /// Creates a sniffer with an empty buffer and undecided negotiation state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the buffered bytes that were consumed while detecting the
+    /// negotiation style.
+    #[must_use]
+    pub fn buffered(&self) -> &[u8] {
+        &self.buffered
+    }
+
+    /// Consumes the sniffer and returns the owned buffer containing the bytes
+    /// that were read while determining the negotiation style.
+    #[must_use]
+    pub fn into_buffered(self) -> Vec<u8> {
+        self.buffered
+    }
+
+    /// Reports the cached negotiation decision, if any.
+    #[must_use]
+    pub fn decision(&self) -> Option<NegotiationPrologue> {
+        self.detector.decision()
+    }
+
+    /// Clears the buffered prefix and resets the negotiation detector so the
+    /// sniffer can be reused for another connection attempt.
+    pub fn reset(&mut self) {
+        self.detector.reset();
+        self.buffered.clear();
+    }
+
+    /// Reads from `reader` until the negotiation style can be determined.
+    ///
+    /// Bytes consumed during detection are appended to the internal buffer so
+    /// callers can replay them into the legacy greeting parser if necessary.
+    /// Once a decision has been cached, subsequent calls return immediately
+    /// without performing additional I/O.
+    pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
+        if let Some(decision) = self.detector.decision() {
+            return Ok(decision);
+        }
+
+        let mut byte = [0u8; 1];
+
+        loop {
+            match reader.read(&mut byte) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed before rsync negotiation prologue was determined",
+                    ));
+                }
+                Ok(read) => {
+                    let observed = &byte[..read];
+                    self.buffered.extend_from_slice(observed);
+                    let decision = self.detector.observe(observed);
+                    if decision != NegotiationPrologue::NeedMoreData {
+                        return Ok(decision);
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
 }
 
 /// Incremental detector for the negotiation prologue style.
@@ -268,6 +355,7 @@ impl Default for NegotiationPrologueDetector {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::io::{Cursor, Read};
 
     #[test]
     fn detect_negotiation_prologue_requires_data() {
@@ -786,5 +874,66 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prologue_sniffer_reports_binary_negotiation() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(vec![0x00, 0x20, 0x00]);
+
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("binary negotiation should succeed");
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(sniffer.buffered(), &[0x00]);
+
+        // Subsequent calls reuse the cached decision and avoid additional I/O.
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("cached decision should be returned");
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn prologue_sniffer_reports_legacy_negotiation() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+
+        let decision = sniffer
+            .read_from(&mut cursor)
+            .expect("legacy negotiation should succeed");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(sniffer.buffered(), b"@");
+
+        let mut remaining = Vec::new();
+        cursor.read_to_end(&mut remaining).expect("read remainder");
+        let mut replay = sniffer.into_buffered();
+        replay.extend_from_slice(&remaining);
+        assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_reset_clears_buffer_and_state() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(b"@".to_vec());
+        let _ = sniffer
+            .read_from(&mut cursor)
+            .expect("legacy negotiation should succeed");
+
+        assert_eq!(sniffer.buffered(), b"@");
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+
+        sniffer.reset();
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_handles_unexpected_eof() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let err = sniffer.read_from(&mut cursor).expect_err("EOF should fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 }
