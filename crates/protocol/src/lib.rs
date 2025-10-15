@@ -40,6 +40,7 @@ impl ProtocolVersion {
 
     /// Returns the raw numeric value represented by this version.
     #[must_use]
+    #[inline]
     pub const fn as_u8(self) -> u8 {
         self.0.get()
     }
@@ -86,6 +87,30 @@ impl TryFrom<u8> for ProtocolVersion {
 impl fmt::Display for ProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_u8())
+    }
+}
+
+impl From<ProtocolVersion> for u8 {
+    fn from(value: ProtocolVersion) -> Self {
+        value.as_u8()
+    }
+}
+
+impl From<ProtocolVersion> for NonZeroU8 {
+    fn from(value: ProtocolVersion) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<u8> for ProtocolVersion {
+    fn eq(&self, other: &u8) -> bool {
+        self.as_u8() == *other
+    }
+}
+
+impl PartialEq<ProtocolVersion> for u8 {
+    fn eq(&self, other: &ProtocolVersion) -> bool {
+        *self == other.as_u8()
     }
 }
 
@@ -288,6 +313,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::num::NonZeroU8;
 
     #[test]
     fn newest_protocol_is_preferred() {
@@ -410,5 +436,28 @@ mod tests {
             err,
             NegotiationError::MalformedLegacyGreeting { .. }
         ));
+    }
+
+    #[test]
+    fn converts_protocol_version_to_u8() {
+        let version = ProtocolVersion::try_from(31).expect("valid version");
+        let numeric: u8 = version.into();
+        assert_eq!(numeric, 31);
+    }
+
+    #[test]
+    fn converts_protocol_version_to_non_zero_u8() {
+        let version = ProtocolVersion::try_from(32).expect("valid version");
+        let numeric: NonZeroU8 = version.into();
+        assert_eq!(numeric.get(), 32);
+    }
+
+    #[test]
+    fn compares_directly_with_u8() {
+        let version = ProtocolVersion::try_from(30).expect("valid version");
+        assert_eq!(version, 30);
+        assert_eq!(30, version);
+        assert_ne!(version, 31);
+        assert_ne!(31, version);
     }
 }
