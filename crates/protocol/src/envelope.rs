@@ -20,7 +20,7 @@ const PAYLOAD_MASK: u32 = 0x00FF_FFFF;
 /// by upstream traces. While only a subset of log codes flow over the
 /// multiplexed stream, the complete enum is provided for parity (including
 /// `FNONE`, which upstream reserves for internal use).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum LogCode {
     /// Placeholder that is never transmitted on the wire (`FNONE`).
@@ -160,7 +160,7 @@ impl std::error::Error for ParseLogCodeError {}
 /// Rust and C identifiers. Values that alias upstream `enum logcode`
 /// definitions retain their historic numbering to ensure interoperability with
 /// existing daemons.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum MessageCode {
     /// Raw file data written to the multiplexed stream.
@@ -626,6 +626,26 @@ mod tests {
         const ENCODED: [u8; HEADER_LEN] = HEADER.encode();
 
         assert_eq!(ENCODED, HEADER.encode());
+    }
+
+    #[test]
+    fn log_codes_are_hashable() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        assert!(set.insert(LogCode::Info));
+        assert!(set.contains(&LogCode::Info));
+        assert!(!set.insert(LogCode::Info));
+    }
+
+    #[test]
+    fn message_codes_are_hashable() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        assert!(set.insert(MessageCode::Data));
+        assert!(set.contains(&MessageCode::Data));
+        assert!(!set.insert(MessageCode::Data));
     }
 
     #[test]
