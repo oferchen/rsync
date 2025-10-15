@@ -261,6 +261,13 @@ mod tests {
     }
 
     #[test]
+    fn recv_msg_reports_truncated_header() {
+        let mut cursor = io::Cursor::new([0u8; HEADER_LEN - 1]);
+        let err = recv_msg(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
     fn recv_msg_rejects_unknown_message_codes() {
         let unknown_code = 11u8;
         let tag = u32::from(7u8) + u32::from(unknown_code); // MPLEX_BASE + unknown code
@@ -317,6 +324,32 @@ mod tests {
         assert_eq!(code, MessageCode::Warning);
         assert_eq!(buffer.as_slice(), b"hi");
         assert_eq!(buffer.capacity(), capacity_before);
+    }
+
+    #[test]
+    fn recv_msg_into_handles_back_to_back_frames_without_reallocation() {
+        let mut stream = Vec::new();
+        let first_payload = b"primary payload";
+        let second_payload = b"ok";
+
+        send_msg(&mut stream, MessageCode::Info, first_payload).expect("first send");
+        send_msg(&mut stream, MessageCode::Warning, second_payload).expect("second send");
+
+        let mut cursor = io::Cursor::new(stream);
+        let mut buffer = Vec::new();
+
+        let first_code = recv_msg_into(&mut cursor, &mut buffer).expect("first receive");
+        assert_eq!(first_code, MessageCode::Info);
+        assert_eq!(buffer.as_slice(), first_payload);
+
+        let capacity_after_first = buffer.capacity();
+        let ptr_after_first = buffer.as_ptr();
+
+        let second_code = recv_msg_into(&mut cursor, &mut buffer).expect("second receive");
+        assert_eq!(second_code, MessageCode::Warning);
+        assert_eq!(buffer.as_slice(), second_payload);
+        assert_eq!(buffer.capacity(), capacity_after_first);
+        assert_eq!(buffer.as_ptr(), ptr_after_first);
     }
 
     #[test]
