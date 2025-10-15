@@ -267,6 +267,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_error_message_allows_empty_payload() {
+        let payload = parse_legacy_error_message("@ERROR:\n").expect("empty payload");
+        assert_eq!(payload, "");
+    }
+
+    #[test]
     fn parse_legacy_error_message_returns_none_for_unrecognized_prefix() {
         assert!(parse_legacy_error_message("something else\n").is_none());
     }
@@ -276,6 +282,12 @@ mod tests {
         let payload =
             parse_legacy_warning_message("@WARNING: will retry  \n").expect("warning payload");
         assert_eq!(payload, "will retry");
+    }
+
+    #[test]
+    fn parse_legacy_warning_message_allows_empty_payload() {
+        let payload = parse_legacy_warning_message("@WARNING:\r\n").expect("empty payload");
+        assert_eq!(payload, "");
     }
 
     #[test]
