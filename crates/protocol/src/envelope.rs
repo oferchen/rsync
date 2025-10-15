@@ -67,6 +67,36 @@ impl MessageCode {
         self as u8
     }
 
+    /// Attempts to construct a [`MessageCode`] from its on-the-wire numeric representation.
+    ///
+    /// The mapping mirrors the upstream `enum msgcode` table and can be used in const
+    /// contexts where [`TryFrom<u8>`] is not available. Invalid values yield `None`, allowing
+    /// callers to fall back to [`EnvelopeError::UnknownMessageCode`] for diagnostics.
+    #[must_use]
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Data),
+            1 => Some(Self::ErrorXfer),
+            2 => Some(Self::Info),
+            3 => Some(Self::Error),
+            4 => Some(Self::Warning),
+            5 => Some(Self::ErrorSocket),
+            6 => Some(Self::Log),
+            7 => Some(Self::Client),
+            8 => Some(Self::ErrorUtf8),
+            9 => Some(Self::Redo),
+            10 => Some(Self::Stats),
+            22 => Some(Self::IoError),
+            33 => Some(Self::IoTimeout),
+            42 => Some(Self::NoOp),
+            86 => Some(Self::ErrorExit),
+            100 => Some(Self::Success),
+            101 => Some(Self::Deleted),
+            102 => Some(Self::NoSend),
+            _ => None,
+        }
+    }
+
     /// Ordered list of all message codes understood by rsync 3.4.1.
     ///
     /// The variants are arranged by their numeric value so that callers can
@@ -129,27 +159,7 @@ impl TryFrom<u8> for MessageCode {
     type Error = EnvelopeError;
 
     fn try_from(value: u8) -> Result<Self, EnvelopeError> {
-        match value {
-            0 => Ok(Self::Data),
-            1 => Ok(Self::ErrorXfer),
-            2 => Ok(Self::Info),
-            3 => Ok(Self::Error),
-            4 => Ok(Self::Warning),
-            5 => Ok(Self::ErrorSocket),
-            6 => Ok(Self::Log),
-            7 => Ok(Self::Client),
-            8 => Ok(Self::ErrorUtf8),
-            9 => Ok(Self::Redo),
-            10 => Ok(Self::Stats),
-            22 => Ok(Self::IoError),
-            33 => Ok(Self::IoTimeout),
-            42 => Ok(Self::NoOp),
-            86 => Ok(Self::ErrorExit),
-            100 => Ok(Self::Success),
-            101 => Ok(Self::Deleted),
-            102 => Ok(Self::NoSend),
-            other => Err(EnvelopeError::UnknownMessageCode(other)),
-        }
+        Self::from_u8(value).ok_or(EnvelopeError::UnknownMessageCode(value))
     }
 }
 
@@ -307,6 +317,21 @@ mod tests {
             let decoded = MessageCode::try_from(raw).expect("known code");
             assert_eq!(decoded, code);
         }
+    }
+
+    #[test]
+    fn message_code_from_u8_matches_try_from() {
+        for &code in MessageCode::all() {
+            let raw = code.as_u8();
+            assert_eq!(MessageCode::from_u8(raw), Some(code));
+            assert_eq!(MessageCode::try_from(raw).ok(), MessageCode::from_u8(raw));
+        }
+    }
+
+    #[test]
+    fn message_code_from_u8_rejects_unknown_values() {
+        assert_eq!(MessageCode::from_u8(11), None);
+        assert_eq!(MessageCode::from_u8(0xFF), None);
     }
 
     #[test]
