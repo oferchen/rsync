@@ -7,16 +7,33 @@ use core::ops::RangeInclusive;
 
 use crate::error::NegotiationError;
 
-/// Protocol versions supported by the Rust implementation, ordered from
-/// newest to oldest as required by upstream rsync's negotiation logic.
-pub const SUPPORTED_PROTOCOLS: [u8; 5] = [32, 31, 30, 29, 28];
-
 /// Inclusive range of protocol versions that upstream rsync 3.4.1 understands.
 const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> = 28..=32;
 
 /// A single negotiated rsync protocol version.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
+
+macro_rules! declare_supported_protocols {
+    ($($ver:literal),+ $(,)?) => {
+        #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
+        #[doc = "newest to oldest as required by upstream rsync's negotiation logic."]
+        pub const SUPPORTED_PROTOCOLS: [u8; declare_supported_protocols!(@len $($ver),+)] = [
+            $($ver),+
+        ];
+        const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion;
+            declare_supported_protocols!(@len $($ver),+)
+        ] = [
+            $(ProtocolVersion::new_const($ver)),+
+        ];
+    };
+    (@len $($ver:literal),+) => {
+        <[()]>::len(&[$(declare_supported_protocols!(@unit $ver)),+])
+    };
+    (@unit $ver:literal) => { () };
+}
+
+declare_supported_protocols!(32, 31, 30, 29, 28);
 
 impl ProtocolVersion {
     pub(crate) const fn new_const(value: u8) -> Self {
@@ -34,13 +51,8 @@ impl ProtocolVersion {
 
     /// Array of protocol versions supported by the Rust implementation,
     /// ordered from newest to oldest.
-    pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] = [
-        ProtocolVersion::new_const(32),
-        ProtocolVersion::new_const(31),
-        ProtocolVersion::new_const(30),
-        ProtocolVersion::new_const(29),
-        ProtocolVersion::new_const(28),
-    ];
+    pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] =
+        SUPPORTED_PROTOCOL_VERSIONS;
 
     /// Returns a reference to the list of supported protocol versions in
     /// newest-to-oldest order.
