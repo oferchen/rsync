@@ -202,7 +202,7 @@ fn map_allocation_error(err: TryReserveError) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::envelope::MAX_PAYLOAD_LENGTH;
+    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
     use std::convert::TryFrom as _;
 
     #[test]
@@ -215,6 +215,25 @@ mod tests {
         assert_eq!(frame.code(), MessageCode::Info);
         assert_eq!(frame.payload(), b"hello world");
         assert_eq!(frame.payload_len(), b"hello world".len());
+    }
+
+    #[test]
+    fn send_msg_emits_upstream_compatible_envelope() {
+        let payload = b"abc";
+        let mut buffer = Vec::new();
+        send_msg(&mut buffer, MessageCode::Info, payload).expect("send succeeds");
+
+        assert_eq!(buffer.len(), HEADER_LEN + payload.len());
+
+        // Upstream encodes multiplexed headers using the MPLEX_BASE constant of 7,
+        // adds the message code, shifts the tag into the high byte, and stores the
+        // payload length in little-endian order. See rsync 3.4.1's io.c:send_msg().
+        const UPSTREAM_MPLEX_BASE: u8 = 7;
+        let tag = u32::from(UPSTREAM_MPLEX_BASE) + u32::from(MessageCode::Info.as_u8());
+        let expected_header = ((tag << 24) | payload.len() as u32).to_le_bytes();
+
+        assert_eq!(&buffer[..HEADER_LEN], &expected_header);
+        assert_eq!(&buffer[HEADER_LEN..], payload);
     }
 
     #[test]
@@ -248,6 +267,16 @@ mod tests {
         let raw = (tag << 24).to_le_bytes();
         let err = recv_msg(&mut io::Cursor::new(raw)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn recv_msg_rejects_headers_without_mplex_base() {
+        let tag_without_base = 6u32 << 24; // upstream MPLEX_BASE is 7
+        let err = recv_msg(&mut io::Cursor::new(tag_without_base.to_le_bytes())).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err
+            .to_string()
+            .contains("multiplexed header contained invalid tag byte"));
     }
 
     #[test]
