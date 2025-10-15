@@ -120,6 +120,17 @@ impl ProtocolVersion {
         &SUPPORTED_PROTOCOLS
     }
 
+    /// Returns the inclusive range of protocol versions supported by this implementation.
+    ///
+    /// Higher layers frequently render diagnostics that mention the supported protocol span.
+    /// Exposing the range directly keeps those call-sites in sync with the
+    /// [`ProtocolVersion::OLDEST`] and [`ProtocolVersion::NEWEST`] bounds without duplicating the
+    /// numeric literals.
+    #[must_use]
+    pub const fn supported_range() -> RangeInclusive<u8> {
+        Self::OLDEST.as_u8()..=Self::NEWEST.as_u8()
+    }
+
     /// Returns an iterator over the supported protocol versions in
     /// newest-to-oldest order.
     ///
@@ -504,6 +515,11 @@ mod tests {
             .map(ProtocolVersion::as_u8)
             .collect();
         assert_eq!(via_iterator, SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn supported_range_matches_upstream_bounds() {
+        assert_eq!(ProtocolVersion::supported_range(), UPSTREAM_PROTOCOL_RANGE);
     }
 
     #[test]
