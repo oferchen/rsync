@@ -17,8 +17,8 @@ impl MessageFrame {
             return Err(invalid_len_error(len));
         }
 
-        let len = u32::try_from(len).expect("checked against MAX_PAYLOAD_LENGTH");
-        MessageHeader::new(code, len).map_err(map_envelope_error_for_input)?;
+        let payload_len = len as u32;
+        MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
         Ok(Self { code, payload })
     }
 
@@ -62,8 +62,8 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
         return Err(invalid_len_error(len));
     }
 
-    let len = u32::try_from(len).expect("checked against MAX_PAYLOAD_LENGTH");
-    let header = MessageHeader::new(code, len).map_err(map_envelope_error_for_input)?;
+    let payload_len = len as u32;
+    let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
     writer.write_all(&header.encode())?;
     writer.write_all(payload)?;
     Ok(())
