@@ -163,6 +163,23 @@ impl NegotiationPrologueDetector {
     pub fn buffered_prefix(&self) -> &[u8] {
         &self.buffer[..self.len]
     }
+
+    /// Resets the detector to its initial state so it can be reused for a new
+    /// connection attempt.
+    ///
+    /// Higher layers often keep a detector instance around while reading from a
+    /// transport in small increments. Once a negotiation completes (success or
+    /// failure), the same buffer can be recycled by clearing the buffered
+    /// prefix and any cached decision rather than allocating a new detector.
+    /// The method restores the struct to the state produced by
+    /// [`NegotiationPrologueDetector::new`], mirroring upstream rsync's
+    /// practice of zeroing its detection state before accepting another
+    /// connection.
+    pub fn reset(&mut self) {
+        self.buffer = [0; LEGACY_DAEMON_PREFIX_LEN];
+        self.len = 0;
+        self.decided = None;
+    }
 }
 
 impl Default for NegotiationPrologueDetector {
@@ -348,6 +365,21 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
         assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
         assert_eq!(detector.buffered_prefix(), b"");
+    }
+
+    #[test]
+    fn prologue_detector_can_be_reset_for_reuse() {
+        let mut detector = NegotiationPrologueDetector::new();
+        assert_eq!(detector.observe(b"@RS"), NegotiationPrologue::LegacyAscii);
+        assert_eq!(detector.buffered_prefix(), b"@RS");
+        assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
+
+        detector.reset();
+        assert_eq!(detector.decision(), None);
+        assert_eq!(detector.buffered_prefix(), b"");
+
+        assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
+        assert_eq!(detector.decision(), Some(NegotiationPrologue::Binary));
     }
 
     fn assert_detector_matches_across_partitions(data: &[u8]) {
