@@ -366,6 +366,22 @@ mod tests {
     }
 
     #[test]
+    fn select_highest_mutual_deduplicates_peer_versions() {
+        let negotiated = select_highest_mutual([32, 32, 31, 31]).expect("must select 32");
+        assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn display_for_no_mutual_protocol_mentions_filtered_list() {
+        let err = NegotiationError::NoMutualProtocol {
+            peer_versions: vec![29, 30],
+        };
+        let rendered = err.to_string();
+        assert!(rendered.contains("peer offered [29, 30]"));
+        assert!(rendered.contains("we support"));
+    }
+
+    #[test]
     fn rejects_zero_protocol_version() {
         let err = select_highest_mutual([0]).unwrap_err();
         assert_eq!(err, NegotiationError::UnsupportedVersion(0));
