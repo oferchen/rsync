@@ -191,6 +191,17 @@ mod tests {
     }
 
     #[test]
+    fn rejects_greeting_with_lowercase_prefix() {
+        let err = parse_legacy_daemon_greeting("@rsyncd: 31.0\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@rsyncd: 31.0");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn formats_legacy_daemon_greeting_for_newest_protocol() {
         let rendered = format_legacy_daemon_greeting(ProtocolVersion::NEWEST);
         assert_eq!(rendered, "@RSYNCD: 32.0\n");
