@@ -94,6 +94,48 @@ impl NegotiationPrologueSniffer {
         self.detector.decision()
     }
 
+    /// Observes bytes that have already been read from the transport while tracking how
+    /// many of them were required to determine the negotiation style.
+    ///
+    /// Callers that perform buffered reads or speculative peeks can forward the captured
+    /// bytes to this helper instead of re-reading from the underlying transport. The sniffer
+    /// mirrors [`NegotiationPrologueDetector::observe`] by consuming bytes until a definitive
+    /// decision is available or the canonical legacy prefix (`@RSYNCD:`) has been fully
+    /// buffered. Any remaining data in `chunk` is left untouched so higher layers can process
+    /// it according to the negotiated protocol.
+    #[must_use]
+    pub fn observe(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
+        let cached = self.detector.decision();
+        let needs_more_prefix_bytes = cached == Some(NegotiationPrologue::LegacyAscii)
+            && !self.detector.legacy_prefix_complete();
+
+        if chunk.is_empty() || (cached.is_some() && !needs_more_prefix_bytes) {
+            return (cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0);
+        }
+
+        let mut consumed = 0;
+
+        for &byte in chunk {
+            self.buffered.push(byte);
+            consumed += 1;
+
+            let decision = self.detector.observe_byte(byte);
+            let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
+                && !self.detector.legacy_prefix_complete();
+
+            if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
+                return (decision, consumed);
+            }
+        }
+
+        (
+            self.detector
+                .decision()
+                .unwrap_or(NegotiationPrologue::NeedMoreData),
+            consumed,
+        )
+    }
+
     /// Clears the buffered prefix and resets the negotiation detector so the
     /// sniffer can be reused for another connection attempt.
     pub fn reset(&mut self) {
@@ -132,8 +174,8 @@ impl NegotiationPrologueSniffer {
                 }
                 Ok(read) => {
                     let observed = &byte[..read];
-                    self.buffered.extend_from_slice(observed);
-                    let decision = self.detector.observe(observed);
+                    let (decision, consumed) = self.observe(observed);
+                    debug_assert_eq!(consumed, observed.len());
                     let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
                         && !self.detector.legacy_prefix_complete();
                     if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
@@ -1000,6 +1042,47 @@ mod tests {
         let mut replay = sniffer.into_buffered();
         replay.extend_from_slice(&remaining);
         assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_observe_consumes_only_required_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let (decision, consumed) = sniffer.observe(b"@RS");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 3);
+        assert_eq!(sniffer.buffered(), b"@RS");
+        assert_eq!(
+            sniffer.legacy_prefix_remaining(),
+            Some(LEGACY_DAEMON_PREFIX_LEN - 3)
+        );
+
+        let (decision, consumed) = sniffer.observe(b"YNCD: remainder");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN - 3);
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.legacy_prefix_complete());
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+
+        let (decision, consumed) = sniffer.observe(b" trailing data");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 0);
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    }
+
+    #[test]
+    fn prologue_sniffer_observe_handles_binary_detection() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let (decision, consumed) = sniffer.observe(&[0x42, 0x99, 0x00]);
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+        assert_eq!(sniffer.buffered(), &[0x42]);
+
+        let (decision, consumed) = sniffer.observe(&[0x00]);
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 0);
+        assert_eq!(sniffer.buffered(), &[0x42]);
     }
 
     #[test]
