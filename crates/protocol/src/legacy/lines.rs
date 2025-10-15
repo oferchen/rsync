@@ -76,7 +76,19 @@ pub fn parse_legacy_daemon_message(
         payload => {
             const AUTHREQD_KEYWORD: &str = "AUTHREQD";
             if let Some(rest) = payload.strip_prefix(AUTHREQD_KEYWORD) {
-                let module = rest.trim_start();
+                if rest.is_empty() {
+                    return Ok(LegacyDaemonMessage::AuthRequired { module: None });
+                }
+
+                if !rest
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_whitespace())
+                {
+                    return Ok(LegacyDaemonMessage::Other(payload));
+                }
+
+                let module = rest.trim();
                 let module = if module.is_empty() {
                     None
                 } else {
@@ -163,6 +175,12 @@ mod tests {
     fn parse_legacy_daemon_message_accepts_authreqd_without_module() {
         let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQD\n").expect("keyword");
         assert_eq!(message, LegacyDaemonMessage::AuthRequired { module: None });
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_requires_delimiter_after_authreqd_keyword() {
+        let message = parse_legacy_daemon_message("@RSYNCD: AUTHREQDmodule\n").expect("keyword");
+        assert_eq!(message, LegacyDaemonMessage::Other("AUTHREQDmodule"));
     }
 
     #[test]
