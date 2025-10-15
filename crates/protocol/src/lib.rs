@@ -214,6 +214,28 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
     ProtocolVersion::from_peer_advertisement(version)
 }
 
+/// Parses a byte-oriented legacy daemon greeting by first validating UTF-8 and
+/// then delegating to [`parse_legacy_daemon_greeting`].
+///
+/// Legacy clients and daemons exchange greetings as ASCII byte streams. The
+/// Rust implementation keeps the byte-oriented helper separate so higher level
+/// transports can operate directly on buffers received from the network without
+/// performing lossy conversions. Invalid UTF-8 sequences are rejected with a
+/// [`NegotiationError::MalformedLegacyGreeting`] that captures the lossy string
+/// representation for diagnostics, mirroring upstream behavior where the raw
+/// greeting is echoed back to the user.
+#[must_use]
+pub fn parse_legacy_daemon_greeting_bytes(
+    line: &[u8],
+) -> Result<ProtocolVersion, NegotiationError> {
+    match core::str::from_utf8(line) {
+        Ok(text) => parse_legacy_daemon_greeting(text),
+        Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
+            input: String::from_utf8_lossy(line).into_owned(),
+        }),
+    }
+}
+
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
 ///
 /// The caller provides the list of protocol versions advertised by the peer in any order.
@@ -306,6 +328,22 @@ mod tests {
     fn parses_greeting_with_trailing_whitespace() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 30.0   \n").expect("valid greeting");
         assert_eq!(parsed.as_u8(), 30);
+    }
+
+    #[test]
+    fn parses_legacy_greeting_from_bytes() {
+        let parsed =
+            parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 29.0\r\n").expect("valid byte greeting");
+        assert_eq!(parsed.as_u8(), 29);
+    }
+
+    #[test]
+    fn rejects_non_utf8_legacy_greetings() {
+        let err = parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 31.0\xff").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
     }
 
     #[test]
