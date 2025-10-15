@@ -13,6 +13,146 @@ pub const MAX_PAYLOAD_LENGTH: u32 = 0x00FF_FFFF;
 const MPLEX_BASE: u8 = 7;
 const PAYLOAD_MASK: u32 = 0x00FF_FFFF;
 
+/// Log classification used by upstream rsync's `enum logcode` table.
+///
+/// The numeric values mirror the identifiers found in `rsync.h` so the logging
+/// subsystem can translate between multiplexed tags and the log severities used
+/// by upstream traces. While only a subset of log codes flow over the
+/// multiplexed stream, the complete enum is provided for parity (including
+/// `FNONE`, which upstream reserves for internal use).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum LogCode {
+    /// Placeholder that is never transmitted on the wire (`FNONE`).
+    None = 0,
+    /// Fatal transfer error (`FERROR_XFER`).
+    ErrorXfer = 1,
+    /// Informational log message (`FINFO`).
+    Info = 2,
+    /// Non-fatal error (`FERROR`).
+    Error = 3,
+    /// Warning message (`FWARNING`).
+    Warning = 4,
+    /// Error emitted by the sibling process over the receiver/generator pipe
+    /// (`FERROR_SOCKET`).
+    ErrorSocket = 5,
+    /// Log message only written to the daemon logs (`FLOG`).
+    Log = 6,
+    /// Client-only message (`FCLIENT`).
+    Client = 7,
+    /// UTF-8 conversion problem reported by a sibling (`FERROR_UTF8`).
+    ErrorUtf8 = 8,
+}
+
+impl LogCode {
+    /// Ordered list of all log codes understood by rsync 3.4.1.
+    pub const ALL: [LogCode; 9] = [
+        LogCode::None,
+        LogCode::ErrorXfer,
+        LogCode::Info,
+        LogCode::Error,
+        LogCode::Warning,
+        LogCode::ErrorSocket,
+        LogCode::Log,
+        LogCode::Client,
+        LogCode::ErrorUtf8,
+    ];
+
+    /// Returns the ordered list of all log codes.
+    #[must_use]
+    pub const fn all() -> &'static [LogCode; 9] {
+        &Self::ALL
+    }
+
+    /// Returns the numeric representation expected on the wire.
+    #[must_use]
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Attempts to construct a [`LogCode`] from its numeric representation.
+    #[must_use]
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::None),
+            1 => Some(Self::ErrorXfer),
+            2 => Some(Self::Info),
+            3 => Some(Self::Error),
+            4 => Some(Self::Warning),
+            5 => Some(Self::ErrorSocket),
+            6 => Some(Self::Log),
+            7 => Some(Self::Client),
+            8 => Some(Self::ErrorUtf8),
+            _ => None,
+        }
+    }
+
+    /// Returns the upstream `F*` identifier associated with this log code.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            LogCode::None => "FNONE",
+            LogCode::ErrorXfer => "FERROR_XFER",
+            LogCode::Info => "FINFO",
+            LogCode::Error => "FERROR",
+            LogCode::Warning => "FWARNING",
+            LogCode::ErrorSocket => "FERROR_SOCKET",
+            LogCode::Log => "FLOG",
+            LogCode::Client => "FCLIENT",
+            LogCode::ErrorUtf8 => "FERROR_UTF8",
+        }
+    }
+}
+
+impl fmt::Display for LogCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl TryFrom<u8> for LogCode {
+    type Error = ParseLogCodeError;
+
+    fn try_from(value: u8) -> Result<Self, ParseLogCodeError> {
+        Self::from_u8(value).ok_or(ParseLogCodeError::new(value))
+    }
+}
+
+impl From<LogCode> for u8 {
+    fn from(value: LogCode) -> Self {
+        value.as_u8()
+    }
+}
+
+/// Error returned when parsing a log code from its numeric representation fails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseLogCodeError {
+    invalid_value: u8,
+}
+
+impl ParseLogCodeError {
+    /// Creates a parse error that records the invalid numeric value.
+    #[must_use]
+    pub const fn new(invalid_value: u8) -> Self {
+        Self { invalid_value }
+    }
+
+    /// Returns the numeric value that failed to parse.
+    #[must_use]
+    pub const fn invalid_value(&self) -> u8 {
+        self.invalid_value
+    }
+}
+
+impl fmt::Display for ParseLogCodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown log code value: {}", self.invalid_value)
+    }
+}
+
+impl std::error::Error for ParseLogCodeError {}
+
 /// Tags used for multiplexed messages flowing over the rsync protocol stream.
 ///
 /// The numeric values mirror the upstream `enum msgcode` definitions so that
@@ -187,17 +327,24 @@ impl MessageCode {
     /// duplicating the tag match logic.
     #[must_use]
     pub const fn is_logging(self) -> bool {
-        matches!(
-            self,
-            MessageCode::ErrorXfer
-                | MessageCode::Info
-                | MessageCode::Error
-                | MessageCode::Warning
-                | MessageCode::ErrorSocket
-                | MessageCode::ErrorUtf8
-                | MessageCode::Log
-                | MessageCode::Client
-        )
+        self.log_code().is_some()
+    }
+
+    /// Returns the log code associated with this message code when the payload
+    /// represents logging output.
+    #[must_use]
+    pub const fn log_code(self) -> Option<LogCode> {
+        match self {
+            MessageCode::ErrorXfer => Some(LogCode::ErrorXfer),
+            MessageCode::Info => Some(LogCode::Info),
+            MessageCode::Error => Some(LogCode::Error),
+            MessageCode::Warning => Some(LogCode::Warning),
+            MessageCode::ErrorSocket => Some(LogCode::ErrorSocket),
+            MessageCode::Log => Some(LogCode::Log),
+            MessageCode::Client => Some(LogCode::Client),
+            MessageCode::ErrorUtf8 => Some(LogCode::ErrorUtf8),
+            _ => None,
+        }
     }
 
     /// Returns the upstream `MSG_*` identifier associated with this code.
@@ -615,5 +762,83 @@ mod tests {
 
         let parsed: MessageCode = "MSG_FLUSH".parse().expect("known alias");
         assert_eq!(parsed, MessageCode::Info);
+    }
+
+    #[test]
+    fn log_code_all_is_sorted_by_numeric_value() {
+        let all = LogCode::all();
+        for window in all.windows(2) {
+            let first = window[0];
+            let second = window[1];
+            assert!(
+                first.as_u8() <= second.as_u8(),
+                "LogCode::all() unsorted: {all:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn log_code_from_u8_matches_try_from() {
+        for &code in LogCode::all() {
+            let raw = code.as_u8();
+            assert_eq!(LogCode::from_u8(raw), Some(code));
+            assert_eq!(LogCode::try_from(raw).ok(), LogCode::from_u8(raw));
+        }
+    }
+
+    #[test]
+    fn log_code_from_u8_rejects_unknown_values() {
+        assert_eq!(LogCode::from_u8(9), None);
+        let err = LogCode::try_from(9).unwrap_err();
+        assert_eq!(err.invalid_value(), 9);
+        assert_eq!(err.to_string(), "unknown log code value: 9");
+    }
+
+    #[test]
+    fn log_code_name_matches_upstream_identifiers() {
+        use LogCode::*;
+
+        let expected = [
+            (None, "FNONE"),
+            (ErrorXfer, "FERROR_XFER"),
+            (Info, "FINFO"),
+            (Error, "FERROR"),
+            (Warning, "FWARNING"),
+            (ErrorSocket, "FERROR_SOCKET"),
+            (Log, "FLOG"),
+            (Client, "FCLIENT"),
+            (ErrorUtf8, "FERROR_UTF8"),
+        ];
+
+        for &(code, name) in &expected {
+            assert_eq!(code.name(), name);
+            assert_eq!(code.to_string(), name);
+        }
+    }
+
+    #[test]
+    fn message_code_log_code_matches_logging_subset() {
+        for &code in MessageCode::all() {
+            let log_code = code.log_code();
+            assert_eq!(
+                log_code.is_some(),
+                code.is_logging(),
+                "mismatch for {code:?}"
+            );
+
+            if let Some(mapped) = log_code {
+                assert!(matches!(
+                    mapped,
+                    LogCode::ErrorXfer
+                        | LogCode::Info
+                        | LogCode::Error
+                        | LogCode::Warning
+                        | LogCode::ErrorSocket
+                        | LogCode::Log
+                        | LogCode::Client
+                        | LogCode::ErrorUtf8
+                ));
+            }
+        }
     }
 }
