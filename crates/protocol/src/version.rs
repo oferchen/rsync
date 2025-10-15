@@ -120,6 +120,19 @@ impl ProtocolVersion {
         &SUPPORTED_PROTOCOLS
     }
 
+    /// Returns an iterator over the numeric protocol identifiers supported by this implementation.
+    ///
+    /// Upstream rsync often iterates over the protocol list while negotiating with peers,
+    /// especially when emitting diagnostics that mention every supported version. Exposing an
+    /// iterator keeps those call sites allocation-free and mirrors the semantics provided by
+    /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
+    /// exported slice into an owned vector.
+    #[must_use]
+    pub fn supported_protocol_numbers_iter(
+    ) -> IntoIter<u8, { SUPPORTED_PROTOCOLS.len() }> {
+        SUPPORTED_PROTOCOLS.into_iter()
+    }
+
     /// Returns the inclusive range of protocol versions supported by this implementation.
     ///
     /// Higher layers frequently render diagnostics that mention the supported protocol span.
@@ -515,6 +528,18 @@ mod tests {
             .map(ProtocolVersion::as_u8)
             .collect();
         assert_eq!(via_iterator, SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn supported_protocol_numbers_iter_matches_constant_slice() {
+        let iterated: Vec<u8> = ProtocolVersion::supported_protocol_numbers_iter().collect();
+        assert_eq!(iterated.as_slice(), &SUPPORTED_PROTOCOLS);
+    }
+
+    #[test]
+    fn supported_protocol_numbers_iter_is_sorted_descending() {
+        let iterated: Vec<u8> = ProtocolVersion::supported_protocol_numbers_iter().collect();
+        assert!(iterated.windows(2).all(|pair| pair[0] >= pair[1]));
     }
 
     #[test]
