@@ -211,7 +211,7 @@ pub fn parse_legacy_daemon_message_bytes(
     match core::str::from_utf8(line) {
         Ok(text) => parse_legacy_daemon_message(text),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: String::from_utf8_lossy(line).into_owned(),
+            input: lossy_trimmed_input(line),
         }),
     }
 }
@@ -225,7 +225,7 @@ pub fn parse_legacy_error_message_bytes(line: &[u8]) -> Result<Option<&str>, Neg
     match core::str::from_utf8(line) {
         Ok(text) => Ok(parse_legacy_error_message(text)),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: String::from_utf8_lossy(line).into_owned(),
+            input: lossy_trimmed_input(line),
         }),
     }
 }
@@ -238,7 +238,7 @@ pub fn parse_legacy_warning_message_bytes(line: &[u8]) -> Result<Option<&str>, N
     match core::str::from_utf8(line) {
         Ok(text) => Ok(parse_legacy_warning_message(text)),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: String::from_utf8_lossy(line).into_owned(),
+            input: lossy_trimmed_input(line),
         }),
     }
 }
@@ -259,7 +259,7 @@ pub fn parse_legacy_daemon_greeting_bytes(
     match core::str::from_utf8(line) {
         Ok(text) => parse_legacy_daemon_greeting(text),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
-            input: String::from_utf8_lossy(line).into_owned(),
+            input: lossy_trimmed_input(line),
         }),
     }
 }
@@ -267,6 +267,15 @@ pub fn parse_legacy_daemon_greeting_bytes(
 fn parse_prefixed_payload<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     trimmed.strip_prefix(prefix).map(|rest| rest.trim())
+}
+
+fn lossy_trimmed_input(bytes: &[u8]) -> String {
+    let mut owned = String::from_utf8_lossy(bytes).into_owned();
+    let trimmed_len = owned.trim_end_matches(['\r', '\n']).len();
+    if trimmed_len != owned.len() {
+        owned.truncate(trimmed_len);
+    }
+    owned
 }
 
 /// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
@@ -329,11 +338,13 @@ mod tests {
 
     #[test]
     fn rejects_non_utf8_legacy_greetings() {
-        let err = parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 31.0\xff").unwrap_err();
-        assert!(matches!(
-            err,
-            NegotiationError::MalformedLegacyGreeting { .. }
-        ));
+        let err = parse_legacy_daemon_greeting_bytes(b"@RSYNCD: 31.0\xff\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@RSYNCD: 31.0\u{fffd}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
@@ -510,11 +521,13 @@ mod tests {
 
     #[test]
     fn rejects_non_utf8_legacy_daemon_message_bytes() {
-        let err = parse_legacy_daemon_message_bytes(b"@RSYNCD: AUTHREQD\xff").unwrap_err();
-        assert!(matches!(
-            err,
-            NegotiationError::MalformedLegacyGreeting { .. }
-        ));
+        let err = parse_legacy_daemon_message_bytes(b"@RSYNCD: AUTHREQD\xff\r\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@RSYNCD: AUTHREQD\u{fffd}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
@@ -532,11 +545,13 @@ mod tests {
 
     #[test]
     fn rejects_non_utf8_legacy_error_message_bytes() {
-        let err = parse_legacy_error_message_bytes(b"@ERROR: denied\xff").unwrap_err();
-        assert!(matches!(
-            err,
-            NegotiationError::MalformedLegacyGreeting { .. }
-        ));
+        let err = parse_legacy_error_message_bytes(b"@ERROR: denied\xff\r\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@ERROR: denied\u{fffd}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
@@ -551,5 +566,16 @@ mod tests {
         let payload =
             parse_legacy_warning_message_bytes(b"@WARNING: watch out\r\n").expect("parse");
         assert_eq!(payload, Some("watch out"));
+    }
+
+    #[test]
+    fn rejects_non_utf8_legacy_warning_message_bytes() {
+        let err = parse_legacy_warning_message_bytes(b"@WARNING: caution\xff\n").unwrap_err();
+        match err {
+            NegotiationError::MalformedLegacyGreeting { input } => {
+                assert_eq!(input, "@WARNING: caution\u{fffd}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }
