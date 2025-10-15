@@ -512,4 +512,33 @@ mod tests {
         assert_eq!(code, MessageCode::Log);
         assert!(buffer.is_empty());
     }
+
+    #[test]
+    fn send_msg_propagates_write_errors() {
+        struct FailingWriter;
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::Other, "injected failure"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = FailingWriter;
+        let err = send_msg(&mut writer, MessageCode::Info, b"payload").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(err.to_string().contains("injected failure"));
+    }
+
+    #[test]
+    fn reserve_payload_maps_overflow_to_out_of_memory() {
+        let mut buffer = Vec::new();
+        let err = super::reserve_payload(&mut buffer, usize::MAX).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
+    }
 }
