@@ -14,6 +14,10 @@ use core::fmt;
 use core::num::NonZeroU8;
 use core::ops::RangeInclusive;
 
+/// Legacy daemon greeting prefix used by rsync versions that speak the ASCII
+/// banner negotiation path.
+const LEGACY_DAEMON_PREFIX: &str = "@RSYNCD:";
+
 /// Protocol versions supported by the Rust implementation, ordered from
 /// newest to oldest as required by upstream rsync's negotiation logic.
 pub const SUPPORTED_PROTOCOLS: [u8; 5] = [32, 31, 30, 29, 28];
@@ -194,12 +198,12 @@ impl std::error::Error for NegotiationError {}
 /// integer component participates in protocol negotiation. Any trailing carriage
 /// returns or line feeds are ignored.
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
-    const PREFIX: &str = "@RSYNCD:";
-
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let malformed = || malformed_legacy_greeting(trimmed);
 
-    let after_prefix = trimmed.strip_prefix(PREFIX).ok_or_else(malformed)?;
+    let after_prefix = trimmed
+        .strip_prefix(LEGACY_DAEMON_PREFIX)
+        .ok_or_else(malformed)?;
 
     let remainder = after_prefix.trim_start();
     if remainder.is_empty() {
@@ -284,7 +288,8 @@ pub fn parse_legacy_daemon_greeting_bytes(
 #[must_use]
 pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
     let mut banner = String::with_capacity(16);
-    banner.push_str("@RSYNCD: ");
+    banner.push_str(LEGACY_DAEMON_PREFIX);
+    banner.push(' ');
     let digits = version.as_u8().to_string();
     banner.push_str(&digits);
     banner.push_str(".0\n");
@@ -528,6 +533,23 @@ mod tests {
         let rendered = format_legacy_daemon_greeting(version);
         let parsed = parse_legacy_daemon_greeting(&rendered).expect("parseable banner");
         assert_eq!(parsed, version);
+    }
+
+    #[test]
+    fn parses_legacy_daemon_greeting_bytes() {
+        let bytes = b"@RSYNCD: 30.0\n";
+        let parsed = parse_legacy_daemon_greeting_bytes(bytes).expect("valid greeting");
+        assert_eq!(parsed.as_u8(), 30);
+    }
+
+    #[test]
+    fn rejects_non_utf8_legacy_daemon_greeting_bytes() {
+        let bytes = b"@RSYNCD: 31.0\xff";
+        let err = parse_legacy_daemon_greeting_bytes(bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
     }
 
     #[test]
