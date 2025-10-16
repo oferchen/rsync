@@ -707,6 +707,24 @@ impl MessageHeader {
     }
 }
 
+impl TryFrom<[u8; HEADER_LEN]> for MessageHeader {
+    type Error = EnvelopeError;
+
+    #[inline]
+    fn try_from(bytes: [u8; HEADER_LEN]) -> Result<Self, Self::Error> {
+        Self::decode(&bytes)
+    }
+}
+
+impl TryFrom<&[u8; HEADER_LEN]> for MessageHeader {
+    type Error = EnvelopeError;
+
+    #[inline]
+    fn try_from(bytes: &[u8; HEADER_LEN]) -> Result<Self, Self::Error> {
+        Self::decode(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +736,32 @@ mod tests {
         let encoded = header.encode();
         let decoded = MessageHeader::decode(&encoded).expect("decode succeeds");
         assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn message_header_try_from_array_round_trips() {
+        let header = MessageHeader::new(MessageCode::Data, 17).expect("constructible header");
+        let encoded = header.encode();
+        let decoded = MessageHeader::try_from(encoded).expect("array conversion succeeds");
+
+        assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn message_header_try_from_slice_round_trips() {
+        let header = MessageHeader::new(MessageCode::Info, 7).expect("constructible header");
+        let encoded = header.encode();
+        let decoded = MessageHeader::try_from(&encoded).expect("slice conversion succeeds");
+
+        assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn message_header_try_from_array_rejects_invalid_tag() {
+        let encoded = [0u8; HEADER_LEN];
+        let err = MessageHeader::try_from(encoded).expect_err("invalid tag must fail");
+
+        assert_eq!(err, EnvelopeError::InvalidTag(0));
     }
 
     #[test]
