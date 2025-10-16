@@ -121,6 +121,13 @@ impl NegotiationPrologueSniffer {
                 .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
         }
 
+        // Defensively cap the returned capacity at the canonical prefix length so callers never
+        // retain an excessively large allocation even if the sniffer previously observed a
+        // malformed banner that forced the buffer to grow. The buffered length never exceeds the
+        // prefix length, making the shrink operation a no-op for successful detections while
+        // mirroring upstream's fixed-size peek storage.
+        drained.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+
         drained
     }
 
@@ -1337,6 +1344,7 @@ mod tests {
 
         let buffered = sniffer.take_buffered();
         assert_eq!(buffered, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(buffered.capacity() <= LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
         assert_eq!(sniffer.legacy_prefix_remaining(), None);
@@ -1355,6 +1363,7 @@ mod tests {
 
         let buffered = sniffer.take_buffered();
         assert_eq!(buffered, [0x80]);
+        assert!(buffered.capacity() <= LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
     }
