@@ -212,6 +212,34 @@ const _: () = {
         );
         index += 1;
     }
+
+    let range_oldest = *SUPPORTED_PROTOCOL_RANGE.start();
+    let range_newest = *SUPPORTED_PROTOCOL_RANGE.end();
+    assert!(
+        range_oldest == ProtocolVersion::OLDEST.as_u8(),
+        "supported protocol range must begin at the oldest supported version",
+    );
+    assert!(
+        range_newest == ProtocolVersion::NEWEST.as_u8(),
+        "supported protocol range must end at the newest supported version",
+    );
+
+    let (bounds_oldest, bounds_newest) = SUPPORTED_PROTOCOL_BOUNDS;
+    assert!(
+        bounds_oldest == range_oldest,
+        "supported protocol bounds tuple must begin at the oldest supported version",
+    );
+    assert!(
+        bounds_newest == range_newest,
+        "supported protocol bounds tuple must end at the newest supported version",
+    );
+
+    let upstream_oldest = *UPSTREAM_PROTOCOL_RANGE.start();
+    let upstream_newest = *UPSTREAM_PROTOCOL_RANGE.end();
+    assert!(
+        range_oldest == upstream_oldest && range_newest == upstream_newest,
+        "supported protocol range must match upstream rsync's protocol span",
+    );
 };
 
 impl ProtocolVersion {
