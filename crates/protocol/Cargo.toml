@@ -1,10 +1,11 @@
 [package]
 name = "rsync-protocol"
 version = "0.0.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "Protocol negotiation utilities for the Rust rsync reimplementation"
-license = "GPL-3.0-or-later"
-authors = ["rsync rust port contributors"]
 
 [dependencies]
 
