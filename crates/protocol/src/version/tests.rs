@@ -787,6 +787,26 @@ fn from_supported_rejects_values_outside_range() {
 }
 
 #[test]
+fn from_supported_matches_bitmap_guard() {
+    for value in ProtocolVersion::OLDEST.as_u8()..=ProtocolVersion::NEWEST.as_u8() {
+        assert_eq!(
+            ProtocolVersion::from_supported(value).is_some(),
+            ProtocolVersion::is_supported_protocol_number(value)
+        );
+    }
+}
+
+#[test]
+fn is_supported_matches_bitmap_guard() {
+    for value in ProtocolVersion::OLDEST.as_u8()..=ProtocolVersion::NEWEST.as_u8() {
+        assert_eq!(
+            ProtocolVersion::is_supported(value),
+            ProtocolVersion::is_supported_protocol_number(value)
+        );
+    }
+}
+
+#[test]
 fn converts_from_non_zero_u8() {
     let value = NonZeroU8::new(31).expect("non-zero");
     let version = ProtocolVersion::try_from(value).expect("valid");

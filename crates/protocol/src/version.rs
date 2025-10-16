@@ -722,7 +722,7 @@ impl ProtocolVersion {
     /// ```
     #[must_use]
     pub const fn from_supported(value: u8) -> Option<Self> {
-        if value >= Self::OLDEST.as_u8() && value <= Self::NEWEST.as_u8() {
+        if Self::is_supported_protocol_number(value) {
             Some(Self::new_const(value))
         } else {
             None
@@ -736,7 +736,7 @@ impl ProtocolVersion {
     #[must_use]
     #[inline]
     pub const fn is_supported(value: u8) -> bool {
-        Self::from_supported(value).is_some()
+        Self::is_supported_protocol_number(value)
     }
 
     /// Returns the zero-based offset from [`ProtocolVersion::OLDEST`] when iterating
