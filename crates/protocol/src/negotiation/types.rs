@@ -134,7 +134,7 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 /// assert!(legacy.is_legacy());
 /// # Ok::<_, ParseNegotiationPrologueError>(())
 /// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NegotiationPrologue {
     /// There is not enough buffered data to determine the negotiation style.
     NeedMoreData,
@@ -211,6 +211,12 @@ impl NegotiationPrologue {
         } else {
             Self::Binary
         }
+    }
+}
+
+impl From<NegotiationPrologue> for &'static str {
+    fn from(prologue: NegotiationPrologue) -> Self {
+        prologue.as_str()
     }
 }
 

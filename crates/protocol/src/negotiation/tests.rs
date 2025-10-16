@@ -4,7 +4,7 @@ use crate::NegotiationError;
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN};
 use proptest::prelude::*;
 use std::{
-    collections::TryReserveError,
+    collections::{HashSet, TryReserveError},
     error::Error as _,
     io::{self, Cursor, Read, Write},
     ptr, slice,
@@ -153,6 +153,25 @@ fn negotiation_prologue_as_str_matches_display() {
     assert_eq!(legacy.to_string(), "legacy-ascii");
     assert_eq!(binary.to_string(), "binary");
     assert_eq!(undecided.to_string(), "need-more-data");
+}
+
+#[test]
+fn negotiation_prologue_converts_into_static_str() {
+    let legacy: &'static str = NegotiationPrologue::LegacyAscii.into();
+    let binary: &'static str = NegotiationPrologue::Binary.into();
+    let undecided: &'static str = NegotiationPrologue::NeedMoreData.into();
+
+    assert_eq!(legacy, "legacy-ascii");
+    assert_eq!(binary, "binary");
+    assert_eq!(undecided, "need-more-data");
+
+    let mut set = HashSet::new();
+    set.insert(NegotiationPrologue::Binary);
+    set.insert(NegotiationPrologue::LegacyAscii);
+    set.insert(NegotiationPrologue::NeedMoreData);
+
+    assert_eq!(set.len(), 3);
+    assert!(set.contains(&NegotiationPrologue::Binary));
 }
 
 #[test]
