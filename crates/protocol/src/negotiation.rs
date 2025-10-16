@@ -2013,6 +2013,28 @@ mod tests {
     }
 
     #[test]
+    fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"@");
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(consumed, 1);
+        assert_eq!(
+            sniffer.decision(),
+            Some(NegotiationPrologue::LegacyAscii),
+            "detector caches legacy decision once '@' is observed",
+        );
+        assert!(!sniffer.legacy_prefix_complete());
+
+        let mut reader = Cursor::new(b" remainder\n".to_vec());
+        let mut line = b"seed".to_vec();
+        let err = read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+            .expect_err("incomplete legacy prefix must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(line, b"seed");
+        assert_eq!(sniffer.buffered(), b"@");
+    }
+
+    #[test]
     fn read_legacy_daemon_line_rejects_non_legacy_state() {
         let mut sniffer = NegotiationPrologueSniffer::new();
         let (decision, consumed) = sniffer.observe(&[0x00]);
