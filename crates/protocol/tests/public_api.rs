@@ -1,10 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use rsync_protocol::{
-    select_highest_mutual,
-    ProtocolVersion,
-    ProtocolVersionAdvertisement,
-};
+use rsync_protocol::{ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual};
 
 #[derive(Clone, Copy)]
 struct CustomAdvertised(u8);
