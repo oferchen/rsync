@@ -1,8 +1,10 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LogCode, LogCodeConversionError, MessageCode, ParseLogCodeError, ProtocolVersion,
-    ProtocolVersionAdvertisement, select_highest_mutual,
+    LogCode, LogCodeConversionError, MessageCode, NegotiationPrologue,
+    NegotiationPrologueSniffer, ParseLogCodeError, ProtocolVersion,
+    ProtocolVersionAdvertisement, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
+    select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -138,4 +140,25 @@ fn log_code_conversion_error_exposes_context() {
         err.to_string(),
         "message code MSG_DATA has no log code equivalent"
     );
+}
+
+#[test]
+fn negotiation_prologue_sniffer_reports_buffered_length() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+
+    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX_BYTES);
+
+    let mut replay = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+    let copied = sniffer
+        .take_buffered_into_slice(&mut replay)
+        .expect("slice large enough to hold legacy prefix");
+    assert_eq!(copied, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(&replay, LEGACY_DAEMON_PREFIX_BYTES);
+
+    assert_eq!(sniffer.buffered_len(), 0);
+    assert!(sniffer.buffered().is_empty());
 }
