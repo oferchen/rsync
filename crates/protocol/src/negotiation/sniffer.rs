@@ -1,4 +1,4 @@
-use core::{mem, slice};
+use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
@@ -565,9 +565,40 @@ pub fn read_legacy_daemon_line<R: Read>(
     Ok(())
 }
 
+#[derive(Debug)]
+struct LegacyBufferReserveError {
+    inner: TryReserveError,
+}
+
+impl LegacyBufferReserveError {
+    fn new(inner: TryReserveError) -> Self {
+        Self { inner }
+    }
+
+    fn inner(&self) -> &TryReserveError {
+        &self.inner
+    }
+}
+
+impl fmt::Display for LegacyBufferReserveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to reserve memory for legacy negotiation buffer: {}",
+            self.inner
+        )
+    }
+}
+
+impl std::error::Error for LegacyBufferReserveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.inner())
+    }
+}
+
 pub(crate) fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
     io::Error::new(
         io::ErrorKind::OutOfMemory,
-        format!("failed to reserve memory for legacy negotiation buffer: {err}"),
+        LegacyBufferReserveError::new(err),
     )
 }
