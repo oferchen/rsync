@@ -39,6 +39,44 @@
 //! let negotiated = select_highest_mutual([32, 31]).expect("mutual version exists");
 //! assert_eq!(negotiated, ProtocolVersion::NEWEST);
 //! ```
+//!
+//! ## Replaying legacy negotiation prefixes
+//!
+//! When a peer selects the legacy ASCII negotiation, the bytes that triggered
+//! the decision must be replayed into the greeting parser so the full
+//! `@RSYNCD:` line can be reconstructed. [`NegotiationPrologueSniffer`] owns the
+//! buffered prefix, allowing callers to reuse it without copying more data than
+//! upstream rsync would have consumed.
+//!
+//! ```
+//! use rsync_protocol::{
+//!     NegotiationPrologue, NegotiationPrologueSniffer, parse_legacy_daemon_greeting,
+//! };
+//! use std::io::{Cursor, Read};
+//!
+//! let mut reader = Cursor::new(&b"@RSYNCD: 31.0\n"[..]);
+//! let mut sniffer = NegotiationPrologueSniffer::new();
+//!
+//! let decision = sniffer
+//!     .read_from(&mut reader)
+//!     .expect("sniffing never fails for in-memory data");
+//! assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+//!
+//! let mut prefix = Vec::new();
+//! sniffer
+//!     .take_buffered_into(&mut prefix)
+//!     .expect("the vector has enough capacity for @RSYNCD:");
+//! assert_eq!(prefix, b"@RSYNCD:");
+//!
+//! let mut full_line = prefix;
+//! reader.read_to_end(&mut full_line).expect("cursor read cannot fail");
+//! assert_eq!(full_line, b"@RSYNCD: 31.0\n");
+//! assert_eq!(
+//!     parse_legacy_daemon_greeting(std::str::from_utf8(&full_line).unwrap())
+//!         .expect("banner is well-formed"),
+//!     rsync_protocol::ProtocolVersion::from_supported(31).unwrap()
+//! );
+//! ```
 
 mod envelope;
 mod error;
