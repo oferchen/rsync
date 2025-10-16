@@ -3,6 +3,8 @@ use super::*;
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 use proptest::prelude::*;
 use std::{
+    collections::TryReserveError,
+    error::Error as _,
     io::{self, Cursor, Read, Write},
     ptr, slice,
 };
@@ -1320,6 +1322,9 @@ fn map_reserve_error_for_io_marks_out_of_memory() {
             .to_string()
             .contains("failed to reserve memory for legacy negotiation buffer")
     );
+
+    let source = mapped.source().expect("mapped error must retain source");
+    assert!(source.downcast_ref::<TryReserveError>().is_some());
 }
 
 #[test]
