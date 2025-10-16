@@ -36,6 +36,7 @@ use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDete
 pub struct NegotiationPrologueSniffer {
     detector: NegotiationPrologueDetector,
     buffered: Vec<u8>,
+    prefix_bytes_retained: usize,
 }
 
 impl NegotiationPrologueSniffer {
@@ -58,6 +59,7 @@ impl NegotiationPrologueSniffer {
         let mut sniffer = Self {
             detector: NegotiationPrologueDetector::new(),
             buffered: buffer,
+            prefix_bytes_retained: 0,
         };
         sniffer.reset();
         sniffer
@@ -68,6 +70,20 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
         &self.buffered
+    }
+
+    /// Returns the bytes buffered beyond the sniffed negotiation prefix.
+    ///
+    /// The slice excludes the canonical prefix captured while detecting the
+    /// negotiation style, mirroring upstream rsync's behavior where the peeked
+    /// bytes are replayed before processing additional payload. Once the prefix
+    /// has been drained—via [`take_buffered`](Self::take_buffered) or one of its
+    /// variants—the returned slice covers the entire buffered remainder.
+    #[must_use]
+    pub fn buffered_remainder(&self) -> &[u8] {
+        let prefix_len = self.sniffed_prefix_len();
+        debug_assert!(prefix_len <= self.buffered.len());
+        &self.buffered[prefix_len..]
     }
 
     /// Reports whether the negotiation style has been determined.
@@ -126,7 +142,9 @@ impl NegotiationPrologueSniffer {
     pub fn sniffed_prefix_len(&self) -> usize {
         match self.detector.decision() {
             Some(NegotiationPrologue::Binary) => self.buffered.len().min(1),
-            _ => self.detector.buffered_len().min(self.buffered.len()),
+            Some(NegotiationPrologue::LegacyAscii)
+            | Some(NegotiationPrologue::NeedMoreData)
+            | None => self.prefix_bytes_retained.min(self.buffered.len()),
         }
     }
 
@@ -385,6 +403,7 @@ impl NegotiationPrologueSniffer {
             consumed += 1;
 
             let decision = self.detector.observe_byte(byte);
+            self.update_prefix_retention();
             let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
 
             if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
@@ -545,6 +564,7 @@ impl NegotiationPrologueSniffer {
         // Clearing always happens first so subsequent capacity adjustments observe the canonical
         // empty-length state expected by `shrink_to` and `reserve_exact`.
         self.buffered.clear();
+        self.prefix_bytes_retained = 0;
 
         if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
             // Trim oversized allocations that may have been introduced when parsing malformed
@@ -590,6 +610,18 @@ impl NegotiationPrologueSniffer {
             }
         }
     }
+
+    fn update_prefix_retention(&mut self) {
+        self.prefix_bytes_retained = match self.detector.decision() {
+            Some(NegotiationPrologue::LegacyAscii) | Some(NegotiationPrologue::NeedMoreData) => {
+                self.detector
+                    .buffered_len()
+                    .min(self.buffered.len())
+                    .min(LEGACY_DAEMON_PREFIX_LEN)
+            }
+            Some(NegotiationPrologue::Binary) | None => 0,
+        };
+    }
 }
 
 impl Default for NegotiationPrologueSniffer {
@@ -597,6 +629,7 @@ impl Default for NegotiationPrologueSniffer {
         Self {
             detector: NegotiationPrologueDetector::new(),
             buffered: Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN),
+            prefix_bytes_retained: 0,
         }
     }
 }
