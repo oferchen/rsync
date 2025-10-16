@@ -33,4 +33,9 @@ pub use negotiation::{
     NegotiationPrologue, NegotiationPrologueDetector, NegotiationPrologueSniffer,
     detect_negotiation_prologue,
 };
-pub use version::{ProtocolVersion, SUPPORTED_PROTOCOLS, select_highest_mutual};
+pub use version::{
+    ProtocolVersion,
+    ProtocolVersionAdvertisement,
+    SUPPORTED_PROTOCOLS,
+    select_highest_mutual,
+};
