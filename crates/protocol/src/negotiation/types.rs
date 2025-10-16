@@ -1,4 +1,5 @@
 use core::fmt;
+use core::str::FromStr;
 use std::io;
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
@@ -43,6 +44,49 @@ impl fmt::Display for BufferedPrefixTooSmall {
 
 impl std::error::Error for BufferedPrefixTooSmall {}
 
+/// Error category produced when parsing a [`NegotiationPrologue`] from text fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParseNegotiationPrologueErrorKind {
+    /// The provided string was empty after trimming ASCII whitespace.
+    Empty,
+    /// The provided string did not match a known negotiation identifier.
+    Invalid,
+}
+
+/// Error returned when parsing a [`NegotiationPrologue`] from text fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseNegotiationPrologueError {
+    kind: ParseNegotiationPrologueErrorKind,
+}
+
+impl ParseNegotiationPrologueError {
+    const fn new(kind: ParseNegotiationPrologueErrorKind) -> Self {
+        Self { kind }
+    }
+
+    /// Returns the classification describing why parsing failed.
+    #[must_use]
+    pub const fn kind(self) -> ParseNegotiationPrologueErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for ParseNegotiationPrologueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind {
+            ParseNegotiationPrologueErrorKind::Empty => {
+                f.write_str("negotiation prologue identifier is empty")
+            }
+            ParseNegotiationPrologueErrorKind::Invalid => f.write_str(
+                "unrecognized negotiation prologue identifier (expected need-more-data, \
+                     legacy-ascii, or binary)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ParseNegotiationPrologueError {}
+
 impl From<BufferedPrefixTooSmall> for io::Error {
     fn from(err: BufferedPrefixTooSmall) -> Self {
         io::Error::new(io::ErrorKind::InvalidInput, err)
@@ -62,6 +106,20 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 /// later validation). Otherwise the exchange proceeds in binary mode. When no
 /// data has been observed yet, the helper reports
 /// [`NegotiationPrologue::NeedMoreData`].
+///
+/// # Examples
+///
+/// Parse the textual identifier produced by [`NegotiationPrologue::as_str`] back into the
+/// corresponding enum variant.
+///
+/// ```
+/// use std::str::FromStr;
+/// use rsync_protocol::{NegotiationPrologue, ParseNegotiationPrologueError};
+///
+/// let legacy = NegotiationPrologue::from_str(" legacy-ascii ")?;
+/// assert!(legacy.is_legacy());
+/// # Ok::<_, ParseNegotiationPrologueError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NegotiationPrologue {
     /// There is not enough buffered data to determine the negotiation style.
@@ -145,6 +203,29 @@ impl NegotiationPrologue {
 impl fmt::Display for NegotiationPrologue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for NegotiationPrologue {
+    type Err = ParseNegotiationPrologueError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() {
+            return Err(ParseNegotiationPrologueError::new(
+                ParseNegotiationPrologueErrorKind::Empty,
+            ));
+        }
+
+        match trimmed {
+            "need-more-data" => Ok(Self::NeedMoreData),
+            "legacy-ascii" => Ok(Self::LegacyAscii),
+            "binary" => Ok(Self::Binary),
+            _ => Err(ParseNegotiationPrologueError::new(
+                ParseNegotiationPrologueErrorKind::Invalid,
+            )),
+        }
     }
 }
 

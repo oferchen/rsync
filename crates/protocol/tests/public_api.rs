@@ -3,7 +3,8 @@
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
     MessageCode, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
-    ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
+    ParseLogCodeError, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
+    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
     SupportedProtocolNumbersIter, SupportedVersionsIter, select_highest_mutual,
 };
 use std::iter::FusedIterator;
@@ -250,6 +251,17 @@ fn negotiation_prologue_sniffer_reports_buffered_length() {
     assert_eq!(sniffer.buffered_len(), 0);
     assert_eq!(sniffer.sniffed_prefix_len(), 0);
     assert!(sniffer.buffered().is_empty());
+}
+
+#[test]
+fn negotiation_prologue_from_str_is_part_of_public_api() {
+    let parsed: NegotiationPrologue = "binary".parse().expect("identifier should parse");
+    assert!(parsed.is_binary());
+
+    let err: ParseNegotiationPrologueError = "unknown"
+        .parse::<NegotiationPrologue>()
+        .expect_err("unknown value should fail");
+    assert_eq!(err.kind(), ParseNegotiationPrologueErrorKind::Invalid);
 }
 
 #[test]
