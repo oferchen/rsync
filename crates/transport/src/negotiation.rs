@@ -94,19 +94,44 @@ impl<R> NegotiatedStream<R> {
         self.inner
     }
 
-    fn with_state(
+    fn from_components(
         inner: R,
         decision: NegotiationPrologue,
         sniffed_prefix_len: usize,
         buffered: Vec<u8>,
+        buffered_pos: usize,
     ) -> Self {
+        let clamped_prefix_len = sniffed_prefix_len.min(buffered.len());
+        let clamped_buffered_pos = buffered_pos.min(buffered.len());
+
         Self {
             inner,
             decision,
-            sniffed_prefix_len,
-            buffered_pos: 0,
+            sniffed_prefix_len: clamped_prefix_len,
+            buffered_pos: clamped_buffered_pos,
             buffered,
         }
+    }
+
+    /// Reconstructs a [`NegotiatedStream`] from its previously extracted parts.
+    ///
+    /// The helper restores the buffered read position so consumers that staged
+    /// the stream's state for inspection or temporary ownership changes can
+    /// resume reading without replaying bytes that were already delivered. The
+    /// clamped invariants mirror the construction performed during negotiation
+    /// sniffing to guarantee the prefix length never exceeds the buffered
+    /// payload.
+    #[must_use]
+    pub fn from_parts(parts: NegotiatedStreamParts<R>) -> Self {
+        let NegotiatedStreamParts {
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+            inner,
+        } = parts;
+
+        Self::from_components(inner, decision, sniffed_prefix_len, buffered, buffered_pos)
     }
 }
 
@@ -250,11 +275,12 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
     debug_assert!(sniffed_prefix_len <= LEGACY_DAEMON_PREFIX_LEN);
     debug_assert!(sniffed_prefix_len <= buffered.len());
 
-    Ok(NegotiatedStream::with_state(
+    Ok(NegotiatedStream::from_components(
         reader,
         decision,
         sniffed_prefix_len,
         buffered,
+        0,
     ))
 }
 
@@ -338,5 +364,35 @@ mod tests {
         assert_eq!(parts.sniffed_prefix(), b"\x00");
         assert!(parts.buffered_remainder().is_empty());
         assert_eq!(parts.buffered_remaining(), parts.sniffed_prefix_len());
+    }
+
+    #[test]
+    fn parts_can_be_rehydrated_without_rewinding_consumed_bytes() {
+        let data = b"@RSYNCD: 29.0\nrest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut prefix_chunk = [0u8; 4];
+        stream
+            .read_exact(&mut prefix_chunk)
+            .expect("read_exact consumes part of the buffered prefix");
+        assert_eq!(&prefix_chunk, b"@RSY");
+
+        let parts = stream.into_parts();
+        assert_eq!(
+            parts.buffered_remaining(),
+            LEGACY_DAEMON_PREFIX_LEN - prefix_chunk.len()
+        );
+
+        let mut rehydrated = NegotiatedStream::from_parts(parts);
+        assert_eq!(
+            rehydrated.buffered_remaining(),
+            LEGACY_DAEMON_PREFIX_LEN - prefix_chunk.len()
+        );
+
+        let mut remainder = Vec::new();
+        rehydrated
+            .read_to_end(&mut remainder)
+            .expect("reconstructed stream yields the remaining bytes");
+        assert_eq!(remainder, b"NCD: 29.0\nrest");
     }
 }
