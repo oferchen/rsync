@@ -1589,10 +1589,7 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, partial_len);
     assert_eq!(sniffer.buffered(), partial_prefix);
-    assert_eq!(
-        sniffer.decision(),
-        Some(NegotiationPrologue::LegacyAscii)
-    );
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
     assert!(sniffer.requires_more_data());
 
     let mut cloned = sniffer.clone();
@@ -1620,10 +1617,7 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
 
     assert!(sniffer.buffered().is_empty());
     assert!(sniffer.requires_more_data());
-    assert_eq!(
-        sniffer.decision(),
-        Some(NegotiationPrologue::LegacyAscii)
-    );
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 }
 
 #[test]
