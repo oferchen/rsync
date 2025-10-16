@@ -228,6 +228,36 @@ impl NegotiationPrologueSniffer {
         self.detector.decision()
     }
 
+    /// Returns `true` when the sniffer has determined that the peer selected the legacy
+    /// ASCII negotiation.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_legacy`] while accounting for the
+    /// fact that the decision may still be pending. Callers that only need a boolean view
+    /// can rely on this method instead of matching on [`Self::decision`]. The return value
+    /// stays `true` even while the canonical `@RSYNCD:` prefix is still being buffered,
+    /// matching upstream rsync's behavior where the negotiation style is considered decided
+    /// as soon as the leading `@` byte is observed.
+    #[must_use]
+    pub fn is_legacy(&self) -> bool {
+        self.detector
+            .decision()
+            .map_or(false, NegotiationPrologue::is_legacy)
+    }
+
+    /// Returns `true` when the sniffer has determined that the peer selected the binary
+    /// negotiation path.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_binary`] while tolerating undecided
+    /// states. It becomes `true` as soon as the initial byte rules out the legacy ASCII
+    /// prefix, ensuring higher layers can react immediately without waiting for additional
+    /// I/O.
+    #[must_use]
+    pub fn is_binary(&self) -> bool {
+        self.detector
+            .decision()
+            .map_or(false, NegotiationPrologue::is_binary)
+    }
+
     /// Observes bytes that have already been read from the transport while tracking how
     /// many of them were required to determine the negotiation style.
     ///
