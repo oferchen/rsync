@@ -306,12 +306,14 @@ impl NegotiationPrologueSniffer {
     /// until the marker has been captured so the greeting parser can reuse the
     /// already consumed bytes.
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
-        if let Some(decision) = self.detector.decision() {
-            let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
-                && !self.detector.legacy_prefix_complete();
-            if !needs_more_prefix_bytes {
+        match self.detector.decision() {
+            Some(decision)
+                if decision != NegotiationPrologue::LegacyAscii
+                    || self.detector.legacy_prefix_complete() =>
+            {
                 return Ok(decision);
             }
+            _ => {}
         }
 
         let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
@@ -320,10 +322,8 @@ impl NegotiationPrologueSniffer {
             let cached = self.detector.decision();
             let needs_more_prefix_bytes = cached == Some(NegotiationPrologue::LegacyAscii)
                 && !self.detector.legacy_prefix_complete();
-            if let Some(decision) = cached {
-                if !needs_more_prefix_bytes {
-                    return Ok(decision);
-                }
+            if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
+                return Ok(decision);
             }
 
             let bytes_to_read = if needs_more_prefix_bytes {
