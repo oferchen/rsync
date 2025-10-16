@@ -675,6 +675,28 @@ macro_rules! impl_from_protocol_version_for_unsigned {
 
 impl_from_protocol_version_for_unsigned!(u16, u32, u64, u128, usize);
 
+impl From<ProtocolVersion> for i8 {
+    #[inline]
+    fn from(version: ProtocolVersion) -> Self {
+        i8::try_from(version.as_u8()).expect("protocol versions fit within i8")
+    }
+}
+
+macro_rules! impl_from_protocol_version_for_signed {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl From<ProtocolVersion> for $ty {
+                #[inline]
+                fn from(version: ProtocolVersion) -> Self {
+                    <$ty as From<u8>>::from(version.as_u8())
+                }
+            }
+        )+
+    };
+}
+
+impl_from_protocol_version_for_signed!(i16, i32, i64, i128, isize);
+
 macro_rules! impl_from_protocol_version_for_nonzero_unsigned {
     ($($ty:ty => $base:ty),+ $(,)?) => {
         $(
@@ -695,6 +717,36 @@ impl_from_protocol_version_for_nonzero_unsigned!(
     NonZeroU64 => u64,
     NonZeroU128 => u128,
     NonZeroUsize => usize,
+);
+
+impl From<ProtocolVersion> for NonZeroI8 {
+    #[inline]
+    fn from(version: ProtocolVersion) -> Self {
+        NonZeroI8::new(i8::try_from(version.as_u8()).expect("protocol versions fit within i8"))
+            .expect("protocol versions are always non-zero")
+    }
+}
+
+macro_rules! impl_from_protocol_version_for_nonzero_signed {
+    ($($ty:ty => $base:ty),+ $(,)?) => {
+        $(
+            impl From<ProtocolVersion> for $ty {
+                #[inline]
+                fn from(version: ProtocolVersion) -> Self {
+                    <$ty>::new(<$base as From<u8>>::from(version.as_u8()))
+                        .expect("protocol versions are always non-zero")
+                }
+            }
+        )+
+    };
+}
+
+impl_from_protocol_version_for_nonzero_signed!(
+    NonZeroI16 => i16,
+    NonZeroI32 => i32,
+    NonZeroI64 => i64,
+    NonZeroI128 => i128,
+    NonZeroIsize => isize,
 );
 
 impl TryFrom<u8> for ProtocolVersion {
