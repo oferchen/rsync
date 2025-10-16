@@ -1,7 +1,49 @@
-use core::{mem, slice};
+use core::{fmt, mem, slice};
 use std::io::{self, Read};
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
+
+/// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BufferedPrefixTooSmall {
+    required: usize,
+    available: usize,
+}
+
+impl BufferedPrefixTooSmall {
+    /// Creates an error describing the required and available capacities.
+    #[must_use]
+    pub const fn new(required: usize, available: usize) -> Self {
+        Self {
+            required,
+            available,
+        }
+    }
+
+    /// Returns the number of bytes required to copy the buffered prefix.
+    #[must_use]
+    pub const fn required(self) -> usize {
+        self.required
+    }
+
+    /// Returns the caller-provided capacity.
+    #[must_use]
+    pub const fn available(self) -> usize {
+        self.available
+    }
+}
+
+impl fmt::Display for BufferedPrefixTooSmall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "provided buffer of length {} is too small for negotiation prefix (requires {})",
+            self.available, self.required
+        )
+    }
+}
+
+impl std::error::Error for BufferedPrefixTooSmall {}
 
 /// Classification of the negotiation prologue received from a peer.
 ///
@@ -115,11 +157,7 @@ impl NegotiationPrologueSniffer {
         let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
         let mut drained = Vec::with_capacity(target_capacity);
         mem::swap(&mut self.buffered, &mut drained);
-
-        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
-            self.buffered
-                .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
-        }
+        self.reset_buffer_for_reuse();
 
         // Defensively cap the returned capacity at the canonical prefix length so callers never
         // retain an excessively large allocation even if the sniffer previously observed a
@@ -147,19 +185,31 @@ impl NegotiationPrologueSniffer {
         target.reserve_exact(self.buffered.len());
         target.extend_from_slice(&self.buffered);
         let drained = target.len();
-
-        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
-            let mut replacement = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
-            mem::swap(&mut self.buffered, &mut replacement);
-        } else {
-            self.buffered.clear();
-            if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
-                self.buffered
-                    .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
-            }
-        }
+        self.reset_buffer_for_reuse();
 
         drained
+    }
+
+    /// Drains the buffered bytes into the caller-provided slice without allocating.
+    ///
+    /// The helper mirrors [`take_buffered_into`] but writes the captured prefix directly into
+    /// `target`, allowing callers with stack-allocated storage to replay the negotiation prologue
+    /// without constructing a temporary [`Vec`]. When `target` is too small to hold the buffered
+    /// prefix a [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains
+    /// untouched so the caller can retry after resizing their storage.
+    pub fn take_buffered_into_slice(
+        &mut self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        let required = self.buffered.len();
+        if target.len() < required {
+            return Err(BufferedPrefixTooSmall::new(required, target.len()));
+        }
+
+        target[..required].copy_from_slice(&self.buffered);
+        self.reset_buffer_for_reuse();
+
+        Ok(required)
     }
 
     /// Reports the cached negotiation decision, if any.
@@ -334,6 +384,19 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()
+    }
+
+    fn reset_buffer_for_reuse(&mut self) {
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
+            return;
+        }
+
+        self.buffered.clear();
+        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered
+                .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
+        }
     }
 }
 
@@ -1509,6 +1572,54 @@ mod tests {
         sniffer.reset();
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+        assert!(sniffer.legacy_prefix_complete());
+
+        let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+        let copied = sniffer
+            .take_buffered_into_slice(&mut scratch)
+            .expect("slice should fit negotiation prefix");
+
+        assert_eq!(copied, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(&scratch[..copied], LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_slice_reports_small_buffer() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 1];
+        let err = sniffer
+            .take_buffered_into_slice(&mut scratch)
+            .expect_err("insufficient slice should error");
+
+        assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(err.available(), scratch.len());
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_display_mentions_lengths() {
+        let err = BufferedPrefixTooSmall::new(LEGACY_DAEMON_PREFIX_LEN, 4);
+        let rendered = err.to_string();
+
+        assert!(rendered.contains(&LEGACY_DAEMON_PREFIX_LEN.to_string()));
+        assert!(rendered.contains("4"));
     }
 
     #[test]
