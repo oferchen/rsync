@@ -804,6 +804,8 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     let undecided = NegotiationPrologueSniffer::new();
     assert!(!undecided.is_binary());
     assert!(!undecided.is_legacy());
+    assert!(!undecided.is_decided());
+    assert!(undecided.requires_more_data());
 
     let mut binary = NegotiationPrologueSniffer::new();
     let (decision, consumed) = binary.observe(&[0x00, 0x10, 0x20]);
@@ -811,12 +813,16 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert_eq!(consumed, 1);
     assert!(binary.is_binary());
     assert!(!binary.is_legacy());
+    assert!(binary.is_decided());
+    assert!(!binary.requires_more_data());
 
     let mut partial_legacy = NegotiationPrologueSniffer::new();
     let (decision, consumed) = partial_legacy.observe(b"@R");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert!(partial_legacy.is_legacy());
     assert!(!partial_legacy.is_binary());
+    assert!(partial_legacy.is_decided());
+    assert!(partial_legacy.requires_more_data());
     assert_eq!(consumed, 2);
 
     let mut legacy = NegotiationPrologueSniffer::new();
@@ -825,6 +831,8 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(legacy.is_legacy());
     assert!(!legacy.is_binary());
+    assert!(legacy.is_decided());
+    assert!(!legacy.requires_more_data());
 }
 
 #[test]
