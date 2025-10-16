@@ -635,12 +635,14 @@ impl NegotiationPrologueSniffer {
         if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
             // Grow undersized buffers back to the canonical prefix length. This mirrors upstream
             // rsync's fixed-size stack storage and avoids repeated incremental reallocations when
-            // the sniffer is reused across connections. Reserving space for the full prefix in one
-            // step guarantees the resulting capacity can store `@RSYNCD:` without further
-            // allocations even when the previous buffer had already shrunk below the target size.
+            // the sniffer is reused across connections. The allocation is best-effort: if the
+            // system cannot reserve the small amount of additional space required for the legacy
+            // prefix we keep the existing buffer. Subsequent calls that actually need to push
+            // bytes will attempt a fallible reservation and surface the allocation error to the
+            // caller, matching the rest of the module's error propagation strategy.
             let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
             if required > 0 {
-                self.buffered.reserve_exact(required);
+                let _ = self.buffered.try_reserve_exact(required);
             }
         }
     }
