@@ -2132,6 +2132,27 @@ fn read_and_parse_legacy_daemon_greeting_succeeds() {
 }
 
 #[test]
+fn read_and_parse_legacy_daemon_greeting_details_exposes_metadata() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(b"@RSYNCD: 31.0 md4 md5\n".to_vec());
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("legacy negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+
+    let mut line = Vec::new();
+    let greeting =
+        read_and_parse_legacy_daemon_greeting_details(&mut sniffer, &mut reader, &mut line)
+            .expect("legacy greeting should parse");
+
+    assert_eq!(greeting.protocol().as_u8(), 31);
+    assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    assert!(greeting.has_subprotocol());
+    assert_eq!(line, b"@RSYNCD: 31.0 md4 md5\n");
+}
+
+#[test]
 fn read_and_parse_legacy_daemon_greeting_reports_parse_errors() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let mut reader = Cursor::new(b"@RSYNCD: ???\n".to_vec());
@@ -2171,6 +2192,24 @@ fn read_and_parse_legacy_daemon_greeting_rejects_binary_negotiation() {
 
     let mut line = Vec::new();
     let err = read_and_parse_legacy_daemon_greeting(&mut sniffer, &mut reader, &mut line)
+        .expect_err("binary negotiation should reject legacy greeting parser");
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(line.is_empty());
+}
+
+#[test]
+fn read_and_parse_legacy_daemon_greeting_details_rejects_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(vec![0x00, 0x42, 0x43]);
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("binary negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+
+    let mut line = Vec::new();
+    let err = read_and_parse_legacy_daemon_greeting_details(&mut sniffer, &mut reader, &mut line)
         .expect_err("binary negotiation should reject legacy greeting parser");
 
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);

@@ -3,14 +3,78 @@ use crate::version::ProtocolVersion;
 
 use super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
 
+/// Detailed representation of a legacy ASCII daemon greeting.
+///
+/// Legacy daemons announce their protocol support via lines such as
+/// `@RSYNCD: 31.0 md4 md5`. Besides the major protocol number the banner may
+/// contain a fractional component (known as the "subprotocol") and an optional
+/// digest list used for challenge/response authentication. Upstream rsync
+/// retains all of this metadata during negotiation so the Rust implementation
+/// mirrors that structure to avoid lossy parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LegacyDaemonGreeting<'a> {
+    protocol: ProtocolVersion,
+    advertised_protocol: u32,
+    subprotocol: Option<u32>,
+    digest_list: Option<&'a str>,
+}
+
+impl<'a> LegacyDaemonGreeting<'a> {
+    /// Returns the negotiated protocol version after clamping unsupported
+    /// advertisements to the newest supported release.
+    #[must_use]
+    pub const fn protocol(self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns the protocol number advertised by the peer before clamping.
+    ///
+    /// Future peers may announce versions newer than we support. Upstream rsync
+    /// still records the advertised value, so the helper exposes it for higher
+    /// layers that mirror that behaviour.
+    #[must_use]
+    pub const fn advertised_protocol(self) -> u32 {
+        self.advertised_protocol
+    }
+
+    /// Returns the parsed subprotocol value or zero when it was absent.
+    #[must_use]
+    pub const fn subprotocol(self) -> u32 {
+        match self.subprotocol {
+            Some(value) => value,
+            None => 0,
+        }
+    }
+
+    /// Reports whether the greeting explicitly supplied a subprotocol suffix.
+    #[must_use]
+    pub const fn has_subprotocol(self) -> bool {
+        self.subprotocol.is_some()
+    }
+
+    /// Returns the digest list announced by the daemon, if any.
+    #[must_use]
+    pub const fn digest_list(self) -> Option<&'a str> {
+        self.digest_list
+    }
+}
+
 /// Parses a legacy ASCII daemon greeting of the form `@RSYNCD: <version>`.
 ///
-/// Upstream rsync emits greetings such as `@RSYNCD: 31.0`. The Rust
-/// implementation accepts optional fractional suffixes (e.g. `.0`) but only the
-/// integer component participates in protocol negotiation. Any trailing carriage
-/// returns or line feeds are ignored.
+/// This convenience wrapper retains the historical API by returning only the
+/// negotiated [`ProtocolVersion`]. Callers that need access to the advertised
+/// protocol number, subprotocol suffix, or digest list should use
+/// [`parse_legacy_daemon_greeting_details`].
 #[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
+    parse_legacy_daemon_greeting_details(line).map(LegacyDaemonGreeting::protocol)
+}
+
+/// Parses a legacy daemon greeting and returns a structured representation.
+#[must_use = "legacy daemon greeting parsing errors must be handled"]
+pub fn parse_legacy_daemon_greeting_details(
+    line: &str,
+) -> Result<LegacyDaemonGreeting<'_>, NegotiationError> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let malformed = || malformed_legacy_greeting(trimmed);
 
@@ -18,42 +82,70 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
         .strip_prefix(LEGACY_DAEMON_PREFIX)
         .ok_or_else(malformed)?;
 
-    let remainder = after_prefix.trim_start();
+    let mut remainder = after_prefix.trim_start();
     if remainder.is_empty() {
         return Err(malformed());
     }
 
     let digits_len = ascii_digit_prefix_len(remainder);
-    let digits = &remainder[..digits_len];
-    if digits.is_empty() {
+    if digits_len == 0 {
         return Err(malformed());
     }
 
-    let mut rest = &remainder[digits_len..];
-    loop {
-        rest = rest.trim_start_matches(char::is_whitespace);
+    let digits = &remainder[..digits_len];
+    let advertised_protocol = parse_ascii_digits_to_u32(digits);
+    remainder = &remainder[digits_len..];
 
-        if rest.is_empty() {
+    let mut subprotocol = None;
+    loop {
+        let trimmed_remainder = remainder.trim_start_matches(char::is_whitespace);
+        let had_leading_whitespace = trimmed_remainder.len() != remainder.len();
+
+        if trimmed_remainder.is_empty() {
+            remainder = trimmed_remainder;
             break;
         }
 
-        if let Some(after_dot) = rest.strip_prefix('.') {
+        if let Some(after_dot) = trimmed_remainder.strip_prefix('.') {
             let fractional_len = ascii_digit_prefix_len(after_dot);
             if fractional_len == 0 {
                 return Err(malformed());
             }
 
-            rest = &after_dot[fractional_len..];
+            let fractional_digits = &after_dot[..fractional_len];
+            subprotocol = Some(parse_ascii_digits_to_u32(fractional_digits));
+            remainder = &after_dot[fractional_len..];
             continue;
         }
 
+        if !had_leading_whitespace {
+            return Err(malformed());
+        }
+
+        remainder = trimmed_remainder;
+        break;
+    }
+
+    if advertised_protocol >= 31 && subprotocol.is_none() {
         return Err(malformed());
     }
 
-    let parsed_version = parse_ascii_digits_to_u32(digits);
-    let version = parsed_version.min(u32::from(u8::MAX)) as u8;
+    let digest_list = remainder.trim();
+    let digest_list = if digest_list.is_empty() {
+        None
+    } else {
+        Some(digest_list)
+    };
 
-    ProtocolVersion::from_peer_advertisement(version)
+    let negotiated = advertised_protocol.min(u32::from(u8::MAX)) as u8;
+    let protocol = ProtocolVersion::from_peer_advertisement(negotiated)?;
+
+    Ok(LegacyDaemonGreeting {
+        protocol,
+        advertised_protocol,
+        subprotocol,
+        digest_list,
+    })
 }
 
 /// Returns the length of the leading ASCII-digit run within `input`.
@@ -123,6 +215,58 @@ mod tests {
     fn parses_legacy_daemon_greeting_without_fractional_suffix() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 30\n").expect("fractional optional");
         assert_eq!(parsed.as_u8(), 30);
+    }
+
+    #[test]
+    fn parses_legacy_daemon_greeting_details_with_digest_list() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md4 md5\n")
+            .expect("digest list should parse");
+
+        assert_eq!(
+            greeting.protocol(),
+            ProtocolVersion::from_supported(31).unwrap()
+        );
+        assert_eq!(greeting.advertised_protocol(), 31);
+        assert!(greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol(), 0);
+        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    }
+
+    #[test]
+    fn greeting_details_accepts_trailing_whitespace_in_digest_list() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0   md4   md5  \r\n")
+            .expect("digest list should tolerate padding");
+
+        assert_eq!(greeting.digest_list(), Some("md4   md5"));
+    }
+
+    #[test]
+    fn greeting_details_records_absence_of_subprotocol_for_old_versions() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 29\n")
+            .expect("old protocols may omit subprotocol");
+
+        assert_eq!(greeting.protocol().as_u8(), 29);
+        assert!(!greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol(), 0);
+    }
+
+    #[test]
+    fn greeting_details_rejects_missing_subprotocol_for_newer_versions() {
+        let err = parse_legacy_daemon_greeting_details("@RSYNCD: 31\n").unwrap_err();
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { .. }
+        ));
+    }
+
+    #[test]
+    fn greeting_details_clamps_future_versions_but_retains_advertisement() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 999.1\n")
+            .expect("future versions clamp");
+
+        assert_eq!(greeting.protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(greeting.advertised_protocol(), 999);
+        assert_eq!(greeting.subprotocol(), 1);
     }
 
     #[test]

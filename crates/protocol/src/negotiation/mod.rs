@@ -4,7 +4,8 @@ mod types;
 
 pub use detector::NegotiationPrologueDetector;
 pub use sniffer::{
-    NegotiationPrologueSniffer, read_and_parse_legacy_daemon_greeting, read_legacy_daemon_line,
+    NegotiationPrologueSniffer, read_and_parse_legacy_daemon_greeting,
+    read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
 pub use types::{
     BufferedPrefixTooSmall, NegotiationPrologue, ParseNegotiationPrologueError,
