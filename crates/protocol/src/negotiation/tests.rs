@@ -156,6 +156,15 @@ fn negotiation_prologue_as_str_matches_display() {
 }
 
 #[test]
+fn negotiation_prologue_default_represents_undecided_state() {
+    let default = NegotiationPrologue::default();
+
+    assert_eq!(default, NegotiationPrologue::NeedMoreData);
+    assert!(default.requires_more_data());
+    assert!(!default.is_decided());
+}
+
+#[test]
 fn negotiation_prologue_from_initial_byte_matches_binary_split() {
     assert_eq!(
         NegotiationPrologue::from_initial_byte(b'@'),
