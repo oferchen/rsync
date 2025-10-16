@@ -1487,6 +1487,48 @@ fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
 }
 
 #[test]
+fn prologue_sniffer_observe_empty_chunk_after_partial_legacy_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+
+    let (decision, consumed) = sniffer.observe(b"@").expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 1);
+    assert!(sniffer.requires_more_data());
+    assert_eq!(sniffer.buffered(), b"@");
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 0);
+    assert_eq!(sniffer.buffered(), b"@");
+    assert!(sniffer.requires_more_data());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
+fn prologue_sniffer_observe_empty_chunk_after_complete_legacy_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+
+    let (decision, consumed) = sniffer.observe(b"@").expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 1);
+
+    let (decision, consumed) = sniffer
+        .observe(b"RSYNCD:")
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN - 1);
+    assert!(sniffer.legacy_prefix_complete());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX_BYTES);
+
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, 0);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX_BYTES);
+    assert!(sniffer.legacy_prefix_complete());
+}
+
+#[test]
 fn prologue_sniffer_observe_handles_binary_detection() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
