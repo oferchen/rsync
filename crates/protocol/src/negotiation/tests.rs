@@ -1845,6 +1845,66 @@ fn prologue_sniffer_take_sniffed_prefix_into_is_noop_when_prefix_incomplete() {
 }
 
 #[test]
+fn prologue_sniffer_take_sniffed_prefix_preserves_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(LEGACY_DAEMON_PREFIX_BYTES.to_vec());
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("legacy negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+
+    let remainder = b"module data";
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(remainder);
+    let remainder_snapshot = sniffer.buffered_remainder().to_vec();
+
+    let prefix = sniffer.take_sniffed_prefix();
+    assert_eq!(prefix, LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert_eq!(sniffer.buffered(), remainder_snapshot);
+    assert_eq!(sniffer.buffered_remainder(), remainder);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    assert!(!sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_is_noop_when_prefix_incomplete() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    sniffer
+        .observe(b"@R")
+        .expect("buffer reservation succeeds");
+    assert!(sniffer.requires_more_data());
+
+    let before = sniffer.buffered().to_vec();
+    let prefix = sniffer.take_sniffed_prefix();
+    assert!(prefix.is_empty());
+    assert_eq!(sniffer.buffered(), before);
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_handles_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(vec![0x7F, 0x01, 0x02]);
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("binary negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(&[0xAA, 0x55]);
+
+    let prefix = sniffer.take_sniffed_prefix();
+    assert_eq!(prefix, vec![0x7F]);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert_eq!(sniffer.buffered(), &[0xAA, 0x55]);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    assert!(!sniffer.requires_more_data());
+}
+
+#[test]
 fn prologue_sniffer_reset_trims_oversized_buffer_capacity() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let oversized = LEGACY_DAEMON_PREFIX_LEN * 4;

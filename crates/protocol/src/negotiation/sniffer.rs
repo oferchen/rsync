@@ -254,6 +254,35 @@ impl NegotiationPrologueSniffer {
         Ok(prefix_len)
     }
 
+    /// Returns the sniffed negotiation prefix as an owned vector while preserving any buffered
+    /// remainder.
+    ///
+    /// The helper mirrors [`take_sniffed_prefix_into`](Self::take_sniffed_prefix_into) but
+    /// allocates a new vector for the caller. When the negotiation decision is still pending (or
+    /// when the legacy prefix has not been fully buffered yet) the sniffer behaves like upstream
+    /// rsync by returning an empty prefix without mutating the internal buffer. Once the exchange
+    /// has been classified the canonical detection bytes are drained, leaving any previously
+    /// buffered remainder untouched so higher layers can continue processing without re-reading
+    /// from the transport.
+    #[must_use = "the drained negotiation prefix must be replayed"]
+    pub fn take_sniffed_prefix(&mut self) -> Vec<u8> {
+        if self.requires_more_data() {
+            return Vec::new();
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            return Vec::new();
+        }
+
+        let mut drained = Vec::with_capacity(prefix_len);
+        drained.extend_from_slice(&self.buffered[..prefix_len]);
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        drained
+    }
+
     /// Drains the buffered bytes into an existing vector supplied by the caller.
     ///
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
@@ -642,6 +671,8 @@ impl NegotiationPrologueSniffer {
             // caller, matching the rest of the module's error propagation strategy.
             let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
             if required > 0 {
+                // Allocation failures surface through the later `try_reserve` calls that precede
+                // actual writes; preallocation here is a best-effort optimisation.
                 let _ = self.buffered.try_reserve_exact(required);
             }
         }
