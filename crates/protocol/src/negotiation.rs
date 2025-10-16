@@ -1107,6 +1107,26 @@ mod tests {
     }
 
     #[test]
+    fn prologue_sniffer_observe_handles_prefix_mismatches() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let (decision, consumed) = sniffer.observe(b"@X remainder");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 2);
+        assert_eq!(sniffer.buffered(), b"@X");
+        assert!(sniffer.legacy_prefix_complete());
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+
+        let (decision, consumed) = sniffer.observe(b"anything else");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 0);
+        assert_eq!(sniffer.buffered(), b"@X");
+
+        let replay = sniffer.into_buffered();
+        assert_eq!(replay, b"@X");
+    }
+
+    #[test]
     fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
         let mut sniffer = NegotiationPrologueSniffer::new();
 
