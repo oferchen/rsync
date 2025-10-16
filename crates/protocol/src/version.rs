@@ -293,6 +293,19 @@ impl ProtocolVersion {
         self.0.get()
     }
 
+    /// Returns the protocol version as a [`NonZeroU8`].
+    ///
+    /// Upstream rsync frequently stores negotiated protocol values in
+    /// non-zero integer wrappers when caching them in global state. Providing a
+    /// direct accessor avoids repeating `NonZeroU8::new` calls and keeps higher
+    /// layers allocation-free while matching the exact numeric representation
+    /// emitted on the wire.
+    #[must_use]
+    #[inline]
+    pub const fn as_non_zero_u8(self) -> NonZeroU8 {
+        self.0
+    }
+
     /// Converts a peer-advertised version into the negotiated protocol version.
     ///
     /// Upstream rsync tolerates peers that advertise a protocol newer than it
@@ -328,7 +341,7 @@ impl From<ProtocolVersion> for u8 {
 impl From<ProtocolVersion> for NonZeroU8 {
     #[inline]
     fn from(version: ProtocolVersion) -> Self {
-        version.0
+        version.as_non_zero_u8()
     }
 }
 
