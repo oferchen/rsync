@@ -537,7 +537,6 @@ pub fn read_legacy_daemon_line<R: Read>(
         }
     }
 
-    line.clear();
     sniffer
         .take_buffered_into(line)
         .map_err(map_reserve_error_for_io)?;
