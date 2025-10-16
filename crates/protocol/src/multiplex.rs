@@ -295,7 +295,7 @@ fn write_all_vectored<W: Write + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
+    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};
     use std::collections::VecDeque;
     use std::convert::TryFrom as _;
 
