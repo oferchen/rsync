@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::version::SUPPORTED_PROTOCOLS;
+use crate::version::ProtocolVersion;
 
 /// Errors that can occur while attempting to negotiate a protocol version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,14 +23,15 @@ impl fmt::Display for NegotiationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoMutualProtocol { peer_versions } => {
+                let supported = ProtocolVersion::supported_protocol_numbers();
                 write!(
                     f,
                     "no mutual rsync protocol version; peer offered {:?}, we support {:?}",
-                    peer_versions, SUPPORTED_PROTOCOLS
+                    peer_versions, supported
                 )
             }
             Self::UnsupportedVersion(version) => {
-                let (oldest, newest) = crate::version::ProtocolVersion::supported_range_bounds();
+                let (oldest, newest) = ProtocolVersion::supported_range_bounds();
                 write!(
                     f,
                     "peer advertised unsupported rsync protocol version {} (valid range {}-{})",
@@ -49,7 +50,6 @@ impl std::error::Error for NegotiationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::version::ProtocolVersion;
 
     #[test]
     fn display_formats_no_mutual_protocol_context() {
@@ -62,7 +62,7 @@ mod tests {
             format!(
                 "no mutual rsync protocol version; peer offered {:?}, we support {:?}",
                 vec![29, 30],
-                SUPPORTED_PROTOCOLS
+                ProtocolVersion::supported_protocol_numbers()
             )
         );
     }
