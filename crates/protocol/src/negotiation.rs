@@ -310,16 +310,28 @@ impl NegotiationPrologueSniffer {
     /// bytes to this helper instead of re-reading from the underlying transport. The sniffer
     /// mirrors [`NegotiationPrologueDetector::observe`] by consuming bytes until a definitive
     /// decision is available or the canonical legacy prefix (`@RSYNCD:`) has been fully
-    /// buffered. Any remaining data in `chunk` is left untouched so higher layers can process
-    /// it according to the negotiated protocol.
+    /// buffered. Until that prefix has been captured, the returned decision is
+    /// [`NegotiationPrologue::NeedMoreData`] even if the detector has already determined that the
+    /// exchange uses the legacy ASCII handshake. Callers that need to know how many additional
+    /// bytes are required can query [`legacy_prefix_remaining`](Self::legacy_prefix_remaining).
+    /// Any remaining data in `chunk` is left untouched so higher layers can process it according
+    /// to the negotiated protocol.
     #[must_use]
     pub fn observe(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
         let cached = self.detector.decision();
         let needs_more_prefix_bytes =
             cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
 
-        if chunk.is_empty() || (cached.is_some() && !needs_more_prefix_bytes) {
+        if chunk.is_empty() {
+            if needs_more_prefix_bytes {
+                return (NegotiationPrologue::NeedMoreData, 0);
+            }
+
             return (cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0);
+        }
+
+        if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
+            return (decision, 0);
         }
 
         let mut consumed = 0;
@@ -336,12 +348,15 @@ impl NegotiationPrologueSniffer {
             }
         }
 
-        (
-            self.detector
-                .decision()
-                .unwrap_or(NegotiationPrologue::NeedMoreData),
-            consumed,
-        )
+        let final_decision = self.detector.decision();
+        if final_decision.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision)) {
+            (NegotiationPrologue::NeedMoreData, consumed)
+        } else {
+            (
+                final_decision.unwrap_or(NegotiationPrologue::NeedMoreData),
+                consumed,
+            )
+        }
     }
 
     /// Observes a single byte that has already been read from the transport.
@@ -1554,12 +1569,12 @@ mod tests {
         assert_eq!(sniffer.buffered_len(), 0);
 
         let (decision, consumed) = sniffer.observe(b"@RS");
-        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
         assert_eq!(consumed, 3);
         assert_eq!(sniffer.buffered_len(), 3);
 
         let (decision, consumed) = sniffer.observe(b"YN");
-        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
         assert_eq!(consumed, 2);
         assert_eq!(sniffer.buffered_len(), 5);
 
@@ -1574,7 +1589,7 @@ mod tests {
         let mut sniffer = NegotiationPrologueSniffer::new();
 
         let (decision, consumed) = sniffer.observe(b"@RS");
-        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
         assert_eq!(consumed, 3);
         assert_eq!(sniffer.buffered(), b"@RS");
         assert_eq!(
