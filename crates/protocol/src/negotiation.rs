@@ -242,6 +242,7 @@ impl NegotiationPrologueSniffer {
     /// without constructing a temporary [`Vec`]. When `target` is too small to hold the buffered
     /// prefix a [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains
     /// untouched so the caller can retry after resizing their storage.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
     pub fn take_buffered_into_slice(
         &mut self,
         target: &mut [u8],
@@ -1733,6 +1734,25 @@ mod tests {
 
         assert_eq!(reused, [0x80]);
         assert_eq!(drained, 1);
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_slice_returns_initial_binary_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(&[0x80, 0x81, 0x82]);
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+
+        let mut scratch = [0xAA; LEGACY_DAEMON_PREFIX_LEN];
+        let copied = sniffer
+            .take_buffered_into_slice(&mut scratch)
+            .expect("scratch slice fits binary prefix");
+
+        assert_eq!(copied, 1);
+        assert_eq!(scratch[0], 0x80);
+        assert!(scratch[1..].iter().all(|&byte| byte == 0xAA));
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
     }
