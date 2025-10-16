@@ -50,10 +50,8 @@ impl NegotiationPrologueDetector {
             Some(NegotiationPrologue::LegacyAscii) if !self.prefix_complete
         );
 
-        if let Some(decided) = self.decided {
-            if !needs_more_prefix_bytes {
-                return decided;
-            }
+        if let Some(decided) = self.decided.filter(|_| !needs_more_prefix_bytes) {
+            return decided;
         }
 
         if chunk.is_empty() {

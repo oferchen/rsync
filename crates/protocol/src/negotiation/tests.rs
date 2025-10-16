@@ -1543,14 +1543,14 @@ struct FailingWriter {
 impl FailingWriter {
     fn new() -> Self {
         Self {
-            error: io::Error::new(io::ErrorKind::Other, "simulated write failure"),
+            error: io::Error::other("simulated write failure"),
         }
     }
 }
 
 impl Write for FailingWriter {
     fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-        Err(io::Error::new(self.error.kind(), self.error.to_string()))
+        Err(io::Error::other(self.error.to_string()))
     }
 
     fn flush(&mut self) -> io::Result<()> {
