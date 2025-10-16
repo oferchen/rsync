@@ -375,6 +375,14 @@ fn supported_protocol_numbers_matches_constant_slice() {
 }
 
 #[test]
+fn supported_protocol_numbers_array_matches_constant_slice() {
+    assert_eq!(
+        ProtocolVersion::supported_protocol_numbers_array(),
+        &SUPPORTED_PROTOCOLS
+    );
+}
+
+#[test]
 fn supported_versions_iterator_matches_constants() {
     let via_iterator: Vec<u8> = ProtocolVersion::supported_versions_iter()
         .map(ProtocolVersion::as_u8)

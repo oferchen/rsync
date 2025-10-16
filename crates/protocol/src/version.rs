@@ -240,6 +240,18 @@ impl ProtocolVersion {
         &SUPPORTED_PROTOCOLS
     }
 
+    /// Returns the numeric protocol identifiers as a fixed-size array reference.
+    ///
+    /// Some compile-time contexts require access to the concrete array type
+    /// instead of a slice—mirroring upstream code that embeds protocol tables in
+    /// static data structures. Providing this helper keeps those call sites in
+    /// sync with the canonical [`SUPPORTED_PROTOCOLS`] constant without
+    /// re-exporting the array in multiple locations.
+    #[must_use]
+    pub const fn supported_protocol_numbers_array() -> &'static [u8; SUPPORTED_PROTOCOL_COUNT] {
+        &SUPPORTED_PROTOCOLS
+    }
+
     /// Returns an iterator over the numeric protocol identifiers supported by this implementation.
     ///
     /// Upstream rsync often iterates over the protocol list while negotiating with peers,
