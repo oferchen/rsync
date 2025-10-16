@@ -384,6 +384,7 @@ const _: () = {
 /// rsync's tables. The type implements [`DoubleEndedIterator`] and
 /// [`ExactSizeIterator`], making it suitable for diagnostics that need to walk the list
 /// in either direction while retaining the precise remaining length.
+#[must_use = "iterators are lazy and do nothing unless consumed"]
 #[derive(Clone, Copy, Debug)]
 pub struct SupportedProtocolNumbersIter {
     slice: &'static [u8],
@@ -451,6 +452,7 @@ impl FusedIterator for SupportedProtocolNumbersIter {}
 ///
 /// The iterator mirrors [`SupportedProtocolNumbersIter`] but yields [`ProtocolVersion`] values
 /// directly, keeping higher layers type-safe without materialising intermediate arrays.
+#[must_use = "iterators are lazy and do nothing unless consumed"]
 #[derive(Clone, Copy, Debug)]
 pub struct SupportedVersionsIter {
     slice: &'static [ProtocolVersion],
