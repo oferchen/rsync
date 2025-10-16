@@ -100,10 +100,7 @@ impl NegotiationPrologueSniffer {
     /// allocation in line with the workspace's buffer reuse guidance.
     #[must_use]
     pub fn take_buffered(&mut self) -> Vec<u8> {
-        let capacity = self
-            .buffered
-            .capacity()
-            .max(LEGACY_DAEMON_PREFIX_LEN);
+        let capacity = self.buffered.capacity().max(LEGACY_DAEMON_PREFIX_LEN);
         let mut drained = Vec::with_capacity(capacity);
         mem::swap(&mut self.buffered, &mut drained);
         drained
@@ -159,9 +156,21 @@ impl NegotiationPrologueSniffer {
 
     /// Clears the buffered prefix and resets the negotiation detector so the
     /// sniffer can be reused for another connection attempt.
+    ///
+    /// The internal buffer retains its allocation when it already matches the
+    /// canonical legacy prefix length so that back-to-back legacy negotiations
+    /// do not pay repeated allocations. If the buffer had previously grown
+    /// beyond that size—for instance when an attacker sent a very large
+    /// malformed banner before the session was aborted—the capacity is trimmed
+    /// back to the prefix length to avoid carrying an unnecessarily large
+    /// allocation into subsequent connections.
     pub fn reset(&mut self) {
         self.detector.reset();
-        self.buffered.clear();
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
+        } else {
+            self.buffered.clear();
+        }
     }
 
     /// Reads from `reader` until the negotiation style can be determined.
@@ -1263,6 +1272,22 @@ mod tests {
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 
         sniffer.reset();
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_reset_trims_excess_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // Inflate the backing allocation to simulate a previous oversized prefix capture.
+        sniffer.buffered = Vec::with_capacity(128);
+        sniffer
+            .buffered
+            .extend_from_slice(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
+
+        sniffer.reset();
+        assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), None);
     }
