@@ -3,9 +3,7 @@ use std::collections::TryReserveError;
 use std::io::{self, IoSlice, Read, Write};
 use std::slice;
 
-use crate::envelope::{
-    EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader,
-};
+use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
 
 /// A decoded multiplexed message consisting of the tag and payload bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,12 +22,14 @@ impl MessageFrame {
 
     /// Returns the message code associated with the frame.
     #[must_use]
+    #[inline]
     pub const fn code(&self) -> MessageCode {
         self.code
     }
 
     /// Returns the raw payload bytes carried by the frame.
     #[must_use]
+    #[inline]
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
@@ -42,6 +42,7 @@ impl MessageFrame {
     /// Rust implementation to mirror that style without cloning the payload,
     /// keeping buffer reuse intact for larger transfers.
     #[must_use]
+    #[inline]
     pub fn payload_mut(&mut self) -> &mut [u8] {
         &mut self.payload
     }
@@ -58,6 +59,7 @@ impl MessageFrame {
 
     /// Consumes the frame and returns the owned payload bytes.
     #[must_use]
+    #[inline]
     pub fn into_payload(self) -> Vec<u8> {
         self.payload
     }
@@ -69,6 +71,7 @@ impl MessageFrame {
     /// implementation efficient by avoiding payload cloning when the caller needs ownership of
     /// both values.
     #[must_use]
+    #[inline]
     pub fn into_parts(self) -> (MessageCode, Vec<u8>) {
         (self.code, self.payload)
     }
