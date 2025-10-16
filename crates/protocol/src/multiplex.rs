@@ -291,6 +291,7 @@ fn write_all_vectored<W: Write + ?Sized>(
 mod tests {
     use super::*;
     use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
+    use std::collections::VecDeque;
     use std::convert::TryFrom as _;
 
     #[test]
@@ -397,6 +398,93 @@ mod tests {
         let mut expected = Vec::from(header.encode());
         expected.extend_from_slice(payload);
         assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_msg_handles_partial_vectored_writes() {
+        struct PartialWriter {
+            schedule: VecDeque<usize>,
+            written: Vec<u8>,
+            write_calls: usize,
+        }
+
+        impl PartialWriter {
+            fn new(schedule: VecDeque<usize>) -> Self {
+                Self {
+                    schedule,
+                    written: Vec::new(),
+                    write_calls: 0,
+                }
+            }
+
+            fn record(&mut self, mut remaining: usize, bufs: &[IoSlice<'_>]) -> usize {
+                let mut produced = 0usize;
+
+                for buf in bufs {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if buf.is_empty() {
+                        continue;
+                    }
+
+                    let take = buf.len().min(remaining);
+                    self.written.extend_from_slice(&buf[..take]);
+                    produced += take;
+                    remaining -= take;
+
+                    if take < buf.len() {
+                        break;
+                    }
+                }
+
+                produced
+            }
+        }
+
+        impl Write for PartialWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.write_vectored(slice::from_ref(&IoSlice::new(buf)))
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.write_calls += 1;
+
+                let allowed = self.schedule.pop_front().unwrap_or(usize::MAX);
+                debug_assert!(
+                    allowed != 0,
+                    "partial writer schedule must contain positive chunk sizes",
+                );
+                if allowed == 0 {
+                    return Ok(0);
+                }
+
+                let produced = self.record(allowed, bufs);
+                if produced == 0 {
+                    return Ok(0);
+                }
+
+                Ok(produced)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = PartialWriter::new(VecDeque::from(vec![2, 1, 3, 2]));
+        let payload = b"chunked-payload";
+        send_msg(&mut writer, MessageCode::Info, payload).expect("send succeeds");
+
+        let header = MessageHeader::new(MessageCode::Info, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+
+        assert_eq!(writer.written, expected);
+        assert!(
+            writer.write_calls >= 4,
+            "partial schedule should trigger repeated writes"
+        );
     }
 
     #[test]
