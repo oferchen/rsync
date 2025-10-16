@@ -85,14 +85,31 @@ impl NegotiationPrologueSniffer {
 
     /// Returns the number of bytes retained while sniffing the negotiation prologue.
     ///
-    /// Higher layers that forward the captured prefix to the legacy ASCII parser often only
-    /// need to know how many bytes should be replayed without inspecting the raw slice. Providing
-    /// the length mirrors [`NegotiationPrologueDetector::buffered_len`] and keeps the sniffer's
-    /// API aligned with the lower-level helper while avoiding repeated `len()` calls at the call
-    /// site.
+    /// The total includes any additional data that was pulled from the transport while deciding
+    /// between the binary and legacy ASCII handshakes. When [`read_from`](Self::read_from) reads a
+    /// chunk that extends beyond the canonical `@RSYNCD:` marker, the excess bytes are preserved so
+    /// higher layers can replay them without re-reading from the transport. Callers that only need
+    /// the number of bytes consumed for the prefix itself (excluding the buffered remainder) can
+    /// use [`sniffed_prefix_len`](Self::sniffed_prefix_len).
     #[must_use]
     pub fn buffered_len(&self) -> usize {
         self.buffered.len()
+    }
+
+    /// Returns the number of bytes that were required to classify the negotiation prologue.
+    ///
+    /// The value mirrors [`NegotiationPrologueDetector::buffered_len`], allowing callers to
+    /// distinguish between the canonical prefix that must be replayed and any additional payload
+    /// preserved by [`buffered_len`](Self::buffered_len). If the buffered prefix has already been
+    /// drained the helper reports `0`, mirroring upstream's behavior where no bytes remain queued
+    /// for replay. When the exchange selects the binary protocol this yields the number of bytes
+    /// that triggered the decision (typically `1`).
+    #[must_use]
+    pub fn sniffed_prefix_len(&self) -> usize {
+        match self.detector.decision() {
+            Some(NegotiationPrologue::Binary) => self.buffered.len().min(1),
+            _ => self.detector.buffered_len().min(self.buffered.len()),
+        }
     }
 
     #[cfg(test)]
