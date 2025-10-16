@@ -45,6 +45,24 @@ impl NegotiationPrologueSniffer {
         Self::default()
     }
 
+    /// Creates a sniffer that reuses the caller-provided buffer for prefix storage.
+    ///
+    /// The allocation is cleared and its capacity is normalized to the canonical
+    /// legacy prefix length so the resulting sniffer mirrors the behavior of
+    /// [`Self::new`]. This mirrors upstream rsync's approach of recycling fixed-size
+    /// storage for the `@RSYNCD:` marker while avoiding unnecessary allocations when a
+    /// pooling layer already owns reusable buffers. The returned sniffer starts in the
+    /// undecided state just like [`Self::new`].
+    #[must_use]
+    pub fn with_buffer(buffer: Vec<u8>) -> Self {
+        let mut sniffer = Self {
+            detector: NegotiationPrologueDetector::new(),
+            buffered: buffer,
+        };
+        sniffer.reset();
+        sniffer
+    }
+
     /// Returns the buffered bytes that were consumed while detecting the
     /// negotiation style.
     #[must_use]
@@ -558,7 +576,9 @@ impl NegotiationPrologueSniffer {
                 chunk_len.min(LEGACY_DAEMON_PREFIX_LEN.saturating_sub(buffered_prefix))
             }
             Some(NegotiationPrologue::NeedMoreData) | None => {
-                let remaining = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(buffered_prefix).max(1);
+                let remaining = LEGACY_DAEMON_PREFIX_LEN
+                    .saturating_sub(buffered_prefix)
+                    .max(1);
                 chunk_len.min(remaining)
             }
         }
