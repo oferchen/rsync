@@ -598,6 +598,33 @@ impl ProtocolVersion {
         Self::from_supported(value).is_some()
     }
 
+    /// Returns the zero-based offset from [`ProtocolVersion::OLDEST`] when iterating
+    /// protocol versions in ascending order.
+    ///
+    /// Upstream rsync often indexes lookup tables by subtracting the oldest supported
+    /// protocol value from the negotiated byte. Exposing the same arithmetic keeps the
+    /// Rust implementation in sync while avoiding ad-hoc calculations (and the risk of
+    /// off-by-one mistakes) in higher layers. The helper can be used in const contexts,
+    /// making it suitable for compile-time table initialisation.
+    #[must_use]
+    #[inline]
+    pub const fn offset_from_oldest(self) -> usize {
+        (self.as_u8() - Self::OLDEST.as_u8()) as usize
+    }
+
+    /// Returns the zero-based offset from [`ProtocolVersion::NEWEST`] when iterating
+    /// protocol versions in the descending order used by [`SUPPORTED_PROTOCOLS`].
+    ///
+    /// This index matches the position of the version within [`SUPPORTED_PROTOCOLS`]
+    /// and [`ProtocolVersion::SUPPORTED_VERSIONS`], allowing lookup tables keyed by the
+    /// canonical newest-to-oldest order to perform constant-time indexing without
+    /// recomputing differences at every call site.
+    #[must_use]
+    #[inline]
+    pub const fn offset_from_newest(self) -> usize {
+        (Self::NEWEST.as_u8() - self.as_u8()) as usize
+    }
+
     /// Returns the raw numeric value represented by this version.
     #[must_use]
     #[inline]

@@ -100,6 +100,21 @@ fn supported_protocol_bitmap_matches_helpers() {
 }
 
 #[test]
+fn protocol_version_offsets_track_supported_ordering() {
+    for (ascending_index, version) in ProtocolVersion::supported_versions()
+        .iter()
+        .rev()
+        .enumerate()
+    {
+        assert_eq!(version.offset_from_oldest(), ascending_index);
+    }
+
+    for (descending_index, version) in ProtocolVersion::supported_versions().iter().enumerate() {
+        assert_eq!(version.offset_from_newest(), descending_index);
+    }
+}
+
+#[test]
 fn legacy_daemon_prefix_constants_are_public() {
     assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX, "@RSYNCD:");
     assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_LEN, 8);
