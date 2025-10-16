@@ -112,6 +112,22 @@ impl NegotiationPrologueSniffer {
         }
     }
 
+    /// Returns the bytes that were required to classify the negotiation prologue.
+    ///
+    /// The returned slice is limited to the canonical prefix captured while deciding between the
+    /// legacy ASCII (`@RSYNCD:`) and binary negotiations. Any additional payload buffered by the
+    /// sniffer—such as trailing data that arrived in the same read—is excluded so callers can
+    /// operate on the detection prefix without trimming the backing allocation themselves. The
+    /// slice remains valid for as long as the sniffer is alive and is typically paired with
+    /// [`sniffed_prefix_len`](Self::sniffed_prefix_len) when replaying the prefix into the legacy
+    /// greeting parser.
+    #[must_use]
+    pub fn sniffed_prefix(&self) -> &[u8] {
+        let prefix_len = self.sniffed_prefix_len();
+        debug_assert!(prefix_len <= self.buffered.len());
+        &self.buffered[..prefix_len]
+    }
+
     #[cfg(test)]
     pub(crate) fn buffered_storage(&self) -> &Vec<u8> {
         &self.buffered
