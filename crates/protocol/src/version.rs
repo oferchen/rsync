@@ -246,6 +246,27 @@ macro_rules! declare_supported_protocols {
 
 declare_supported_protocols!(32, 31, 30, 29, 28);
 
+/// Bitmask describing the protocol versions supported by the Rust implementation.
+///
+/// Each bit position corresponds to the numeric protocol identifier understood by upstream
+/// rsync 3.4.1. For example, bit `32` (counting from zero) represents protocol 32. The mask is
+/// used by helpers that need to perform constant-time membership checks or preallocate lookup
+/// tables keyed by the negotiated protocol value without iterating over the canonical version
+/// list. Exposing the bitmap keeps those call sites in sync with [`SUPPORTED_PROTOCOLS`] while
+/// avoiding duplicate literals that could drift as new protocols are added.
+pub const SUPPORTED_PROTOCOL_BITMAP: u64 = {
+    let mut bitmap = 0u64;
+    let mut index = 0usize;
+
+    while index < SUPPORTED_PROTOCOL_COUNT {
+        let protocol = SUPPORTED_PROTOCOLS[index];
+        bitmap |= 1u64 << protocol;
+        index += 1;
+    }
+
+    bitmap
+};
+
 // Compile-time guard that mirrors the runtime assertions covered by the unit
 // tests. Keeping the invariants in a `const` block ensures the workspace cannot
 // accidentally reorder, duplicate, or drift the advertised protocol list even
@@ -298,6 +319,29 @@ const _: () = {
         );
         index += 1;
     }
+
+    let mut bitmap = 0u64;
+    index = 0usize;
+    while index < SUPPORTED_PROTOCOL_COUNT {
+        bitmap |= 1u64 << protocols[index];
+        index += 1;
+    }
+    assert!(
+        bitmap == SUPPORTED_PROTOCOL_BITMAP,
+        "supported protocol bitmap must mirror numeric protocol list",
+    );
+    assert!(
+        SUPPORTED_PROTOCOL_BITMAP.count_ones() as usize == SUPPORTED_PROTOCOL_COUNT,
+        "supported protocol bitmap must contain one bit per protocol version",
+    );
+    assert!(
+        SUPPORTED_PROTOCOL_BITMAP >> (ProtocolVersion::NEWEST.as_u8() as usize + 1) == 0,
+        "supported protocol bitmap must not include bits above the newest supported version",
+    );
+    assert!(
+        SUPPORTED_PROTOCOL_BITMAP & ((1u64 << ProtocolVersion::OLDEST.as_u8()) - 1) == 0,
+        "supported protocol bitmap must not include bits below the oldest supported version",
+    );
 
     let range_oldest = *SUPPORTED_PROTOCOL_RANGE.start();
     let range_newest = *SUPPORTED_PROTOCOL_RANGE.end();
@@ -421,6 +465,18 @@ impl ProtocolVersion {
     #[must_use]
     pub const fn supported_protocol_numbers_array() -> &'static [u8; SUPPORTED_PROTOCOL_COUNT] {
         &SUPPORTED_PROTOCOLS
+    }
+
+    /// Returns a bitmap describing the protocol versions supported by this implementation.
+    ///
+    /// Each set bit corresponds to the numeric identifier advertised to peers, making it useful
+    /// for constant-time membership tests and pre-sizing data structures indexed by protocol
+    /// version. For example, bit `32` (counting from zero) represents protocol 32. The bitmap is
+    /// derived from the canonical [`SUPPORTED_PROTOCOLS`] list to guarantee it stays in sync with
+    /// the negotiated versions.
+    #[must_use]
+    pub const fn supported_protocol_bitmap() -> u64 {
+        SUPPORTED_PROTOCOL_BITMAP
     }
 
     /// Returns an iterator over the numeric protocol identifiers supported by this implementation.

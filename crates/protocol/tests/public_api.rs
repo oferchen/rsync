@@ -3,7 +3,8 @@
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
     MessageCode, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
-    ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
+    ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
+    select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -71,6 +72,31 @@ fn supported_protocol_exports_cover_range() {
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
     assert_eq!(rsync_protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
+}
+
+#[test]
+fn supported_protocol_bitmap_matches_helpers() {
+    let bitmap = ProtocolVersion::supported_protocol_bitmap();
+    assert_eq!(bitmap, SUPPORTED_PROTOCOL_BITMAP);
+
+    for &version in ProtocolVersion::supported_protocol_numbers() {
+        let mask = 1u64 << version;
+        assert_ne!(bitmap & mask, 0, "bit for protocol {version} must be set");
+    }
+
+    let lower_mask = (1u64 << ProtocolVersion::OLDEST.as_u8()) - 1;
+    assert_eq!(
+        bitmap & lower_mask,
+        0,
+        "no bits below oldest supported version"
+    );
+
+    let upper_shift = usize::from(ProtocolVersion::NEWEST.as_u8()) + 1;
+    assert_eq!(
+        bitmap >> upper_shift,
+        0,
+        "no bits above newest supported version"
+    );
 }
 
 #[test]

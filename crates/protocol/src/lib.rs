@@ -67,6 +67,6 @@ pub use negotiation::{
 };
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
-    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_COUNT,
-    SUPPORTED_PROTOCOL_RANGE, SUPPORTED_PROTOCOLS, select_highest_mutual,
+    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
+    SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOL_RANGE, SUPPORTED_PROTOCOLS, select_highest_mutual,
 };
