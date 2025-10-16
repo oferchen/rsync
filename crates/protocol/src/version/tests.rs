@@ -344,8 +344,26 @@ fn supported_protocol_number_guard_matches_constants() {
         assert!(ProtocolVersion::is_supported_protocol_number(value));
     }
 
-    assert!(!ProtocolVersion::is_supported_protocol_number(ProtocolVersion::OLDEST.as_u8() - 1));
-    assert!(!ProtocolVersion::is_supported_protocol_number(ProtocolVersion::NEWEST.as_u8() + 1));
+    assert!(!ProtocolVersion::is_supported_protocol_number(
+        ProtocolVersion::OLDEST.as_u8() - 1
+    ));
+    assert!(!ProtocolVersion::is_supported_protocol_number(
+        ProtocolVersion::NEWEST.as_u8() + 1
+    ));
+}
+
+#[test]
+fn supported_protocol_count_matches_helpers() {
+    assert_eq!(
+        SUPPORTED_PROTOCOL_COUNT,
+        SUPPORTED_PROTOCOLS.len(),
+        "count constant must match numeric list length",
+    );
+    assert_eq!(
+        SUPPORTED_PROTOCOL_COUNT,
+        ProtocolVersion::supported_versions().len(),
+        "count constant must match cached ProtocolVersion list",
+    );
 }
 
 #[test]
