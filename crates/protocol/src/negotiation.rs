@@ -76,28 +76,28 @@ impl NegotiationPrologue {
     /// transport yields a decision. Centralizing the predicate keeps higher layers from
     /// duplicating `matches!` checks and mirrors the explicit boolean helpers commonly
     /// found in the C implementation.
-    #[must_use]
+    #[must_use = "check whether the negotiation style has been determined"]
     #[inline]
     pub const fn is_decided(self) -> bool {
         !matches!(self, Self::NeedMoreData)
     }
 
     /// Reports whether additional bytes must be read before the negotiation style is known.
-    #[must_use]
+    #[must_use = "determine if additional negotiation bytes must be read"]
     #[inline]
     pub const fn requires_more_data(self) -> bool {
         matches!(self, Self::NeedMoreData)
     }
 
     /// Returns `true` when the peer is using the legacy ASCII `@RSYNCD:` negotiation.
-    #[must_use]
+    #[must_use = "check whether the peer selected the legacy ASCII negotiation"]
     #[inline]
     pub const fn is_legacy(self) -> bool {
         matches!(self, Self::LegacyAscii)
     }
 
     /// Returns `true` when the peer is using the binary negotiation introduced in protocol 30.
-    #[must_use]
+    #[must_use = "check whether the peer selected the binary negotiation"]
     #[inline]
     pub const fn is_binary(self) -> bool {
         matches!(self, Self::Binary)
