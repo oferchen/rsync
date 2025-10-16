@@ -98,6 +98,7 @@ impl<R> NegotiatedStream<R> {
         inner: R,
         decision: NegotiationPrologue,
         sniffed_prefix_len: usize,
+        buffered_pos: usize,
         buffered: Vec<u8>,
         buffered_pos: usize,
     ) -> Self {
@@ -250,6 +251,23 @@ impl<R> NegotiatedStreamParts<R> {
     pub fn into_inner(self) -> R {
         self.inner
     }
+
+    /// Reassembles a [`NegotiatedStream`] from the extracted components.
+    ///
+    /// Callers can temporarily inspect or adjust the buffered negotiation
+    /// state (for example, updating transport-level settings on the inner
+    /// reader) and then continue consuming data through the replaying wrapper
+    /// without cloning the sniffed bytes.
+    #[must_use]
+    pub fn into_stream(self) -> NegotiatedStream<R> {
+        NegotiatedStream::with_state(
+            self.inner,
+            self.decision,
+            self.sniffed_prefix_len,
+            self.buffered_pos,
+            self.buffered,
+        )
+    }
 }
 
 /// Sniffs the negotiation prologue from the provided reader.
@@ -279,6 +297,7 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
         reader,
         decision,
         sniffed_prefix_len,
+        0,
         buffered,
         0,
     ))
