@@ -1,6 +1,6 @@
 use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 
@@ -277,6 +277,24 @@ impl NegotiationPrologueSniffer {
         self.reset_buffer_for_reuse();
 
         Ok(required)
+    }
+
+    /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
+    ///
+    /// The helper mirrors [`take_buffered_into_slice`](Self::take_buffered_into_slice) but hands
+    /// the captured prefix directly to a writer supplied by the caller. This is particularly
+    /// useful for transports that forward the sniffed bytes into an in-flight I/O buffer or a
+    /// [`Vec<u8>`](Vec) managed by a pooling layer. When writing succeeds the sniffer is reset for
+    /// reuse while preserving the canonical capacity used for the legacy prefix. Should the writer
+    /// report an error, the buffered bytes remain intact so the caller can retry or surface the
+    /// failure.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
+        target.write_all(&self.buffered)?;
+        let written = self.buffered.len();
+        self.reset_buffer_for_reuse();
+
+        Ok(written)
     }
 
     /// Reports the cached negotiation decision, if any.
@@ -1766,6 +1784,92 @@ mod tests {
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
         assert_eq!(sniffer.legacy_prefix_remaining(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_writer_copies_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+        let decision = sniffer
+            .read_from(&mut reader)
+            .expect("legacy negotiation detection succeeds");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+
+        let mut sink = Vec::new();
+        let written = sniffer
+            .take_buffered_into_writer(&mut sink)
+            .expect("writing buffered prefix succeeds");
+        assert_eq!(written, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(sink, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered().is_empty());
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_writer_allows_empty_buffers() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut sink = Vec::new();
+
+        let written = sniffer
+            .take_buffered_into_writer(&mut sink)
+            .expect("writing empty buffer succeeds");
+        assert_eq!(written, 0);
+        assert!(sink.is_empty());
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_writer_returns_initial_binary_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(vec![0x42, 0x00, 0x00, 0x00]);
+        let decision = sniffer
+            .read_from(&mut reader)
+            .expect("binary negotiation detection succeeds");
+        assert_eq!(decision, NegotiationPrologue::Binary);
+
+        let mut sink = Vec::new();
+        let written = sniffer
+            .take_buffered_into_writer(&mut sink)
+            .expect("writing buffered binary byte succeeds");
+        assert_eq!(written, 1);
+        assert_eq!(sink, [0x42]);
+        assert!(sniffer.buffered().is_empty());
+    }
+
+    struct FailingWriter {
+        error: io::Error,
+    }
+
+    impl FailingWriter {
+        fn new() -> Self {
+            Self {
+                error: io::Error::new(io::ErrorKind::Other, "simulated write failure"),
+            }
+        }
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(self.error.kind(), self.error.to_string()))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_writer_preserves_buffer_on_error() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(b"@RSYNCD: 29.0\n".to_vec());
+        sniffer
+            .read_from(&mut reader)
+            .expect("legacy negotiation detection succeeds");
+
+        let mut failing = FailingWriter::new();
+        let err = sniffer
+            .take_buffered_into_writer(&mut failing)
+            .expect_err("writer failure should be propagated");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
     }
 
     #[test]
