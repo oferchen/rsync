@@ -775,9 +775,10 @@ impl Default for NegotiationPrologueDetector {
 }
 
 fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
-    io::Error::other(format!(
-        "failed to reserve memory for legacy negotiation buffer: {err}"
-    ))
+    io::Error::new(
+        io::ErrorKind::OutOfMemory,
+        format!("failed to reserve memory for legacy negotiation buffer: {err}"),
+    )
 }
 
 #[cfg(test)]
@@ -1898,6 +1899,22 @@ mod tests {
 
         assert!(rendered.contains(&LEGACY_DAEMON_PREFIX_LEN.to_string()));
         assert!(rendered.contains("4"));
+    }
+
+    #[test]
+    fn map_reserve_error_for_io_marks_out_of_memory() {
+        let mut buffer = Vec::<u8>::new();
+        let reserve_err = buffer
+            .try_reserve_exact(usize::MAX)
+            .expect_err("capacity overflow should error");
+
+        let mapped = map_reserve_error_for_io(reserve_err);
+        assert_eq!(mapped.kind(), io::ErrorKind::OutOfMemory);
+        assert!(
+            mapped
+                .to_string()
+                .contains("failed to reserve memory for legacy negotiation buffer")
+        );
     }
 
     #[test]
