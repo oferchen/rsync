@@ -136,13 +136,17 @@ impl NegotiationPrologueSniffer {
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
     /// caller already owns a reusable buffer. The destination vector is cleared before the
     /// captured prefix is copied into it, ensuring the slice matches the bytes that were
-    /// consumed during negotiation sniffing. After the transfer the sniffer retains an empty
+    /// consumed during negotiation sniffing. The returned length mirrors the number of bytes
+    /// that were replayed into `target`, keeping the API consistent with the I/O traits used
+    /// throughout the transport layer. After the transfer the sniffer retains an empty
     /// buffer whose capacity is clamped to the canonical legacy prefix length so repeated
     /// connections continue to benefit from buffer reuse.
-    pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) {
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> usize {
         target.clear();
         target.reserve_exact(self.buffered.len());
         target.extend_from_slice(&self.buffered);
+        let drained = target.len();
 
         if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
             let mut replacement = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
@@ -154,6 +158,8 @@ impl NegotiationPrologueSniffer {
                     .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
             }
         }
+
+        drained
     }
 
     /// Reports the cached negotiation decision, if any.
@@ -1430,9 +1436,10 @@ mod tests {
         assert!(sniffer.legacy_prefix_complete());
 
         let mut reused = b"placeholder".to_vec();
-        sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer.take_buffered_into(&mut reused);
 
         assert_eq!(reused, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
         assert_eq!(sniffer.legacy_prefix_remaining(), None);
@@ -1464,9 +1471,10 @@ mod tests {
         assert_eq!(consumed, 1);
 
         let mut reused = Vec::with_capacity(16);
-        sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer.take_buffered_into(&mut reused);
 
         assert_eq!(reused, [0x80]);
+        assert_eq!(drained, 1);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
     }
@@ -1491,9 +1499,10 @@ mod tests {
         assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
 
         let mut reused = Vec::new();
-        sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer.take_buffered_into(&mut reused);
 
         assert!(reused.is_empty());
+        assert_eq!(drained, 0);
         assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
@@ -1508,11 +1517,12 @@ mod tests {
         let ptr = reused.as_ptr();
         let capacity_before = reused.capacity();
 
-        sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer.take_buffered_into(&mut reused);
 
         assert_eq!(reused, LEGACY_DAEMON_PREFIX.as_bytes());
         assert_eq!(reused.as_ptr(), ptr);
         assert_eq!(reused.capacity(), capacity_before);
+        assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
     }
 
     #[test]
