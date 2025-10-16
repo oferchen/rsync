@@ -212,11 +212,13 @@ fn legacy_daemon_greeting_details_are_exposed() {
     );
     assert_eq!(greeting.digest_list(), Some("md4 md5"));
     assert!(greeting.has_subprotocol());
+    assert_eq!(greeting.subprotocol_raw(), Some(0));
 
     let bytes: LegacyDaemonGreeting = parse_legacy_daemon_greeting_bytes_details(b"@RSYNCD: 29\n")
         .expect("byte parser should parse");
     assert_eq!(bytes.protocol().as_u8(), 29);
     assert!(!bytes.has_subprotocol());
+    assert_eq!(bytes.subprotocol_raw(), None);
 
     let mut sniffer = NegotiationPrologueSniffer::new();
     let mut reader = std::io::Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
