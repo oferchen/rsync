@@ -279,7 +279,21 @@ impl NegotiationPrologueSniffer {
         let required = self.buffered.len();
 
         if target.capacity() < required {
-            target.try_reserve_exact(required - target.capacity())?;
+            // `Vec::try_reserve_exact` interprets the requested value as additional
+            // elements beyond the current *length*, not the spare capacity. When the
+            // caller hands us a vector that already stores data, reserving the
+            // difference between the required length and the existing capacity would
+            // therefore undershoot the amount of space we need. The subsequent
+            // `extend_from_slice` would then have to grow the vector again, which in
+            // turn panics on allocation failure instead of surfacing a
+            // `TryReserveError` to the caller. Reserving relative to the vector's
+            // length guarantees the resulting capacity can hold the replayed prefix
+            // without further allocations.
+            debug_assert!(target.len() < required);
+            let additional = required - target.len();
+            if additional > 0 {
+                target.try_reserve_exact(additional)?;
+            }
         }
         target.clear();
         target.extend_from_slice(&self.buffered);
@@ -2212,6 +2226,28 @@ mod tests {
         assert_eq!(reused.as_ptr(), ptr);
         assert_eq!(reused.capacity(), capacity_before);
         assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_into_accounts_for_existing_length_when_growing() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+        // Start with a destination vector that already contains data and whose capacity
+        // is smaller than the buffered prefix. The helper must base its reservation on
+        // the vector's *length* so the subsequent extend does not trigger another
+        // allocation (which would panic on OOM instead of returning `TryReserveError`).
+        let mut reused = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN - 2);
+        reused.resize(LEGACY_DAEMON_PREFIX_LEN - 2, 0xAA);
+        let drained = sniffer
+            .take_buffered_into(&mut reused)
+            .expect("should grow destination to canonical prefix length");
+
+        assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(reused, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(reused.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
     #[test]
