@@ -441,6 +441,12 @@ fn rejects_peer_advertisements_older_than_supported_range() {
 }
 
 #[test]
+fn rejects_zero_peer_advertisement() {
+    let err = ProtocolVersion::from_peer_advertisement(0).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
+}
+
+#[test]
 fn clamps_future_peer_versions_in_selection() {
     let negotiated = select_highest_mutual([35, 31]).expect("must clamp to newest");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
