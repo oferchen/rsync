@@ -45,6 +45,7 @@ pub struct NegotiationPrologueSniffer {
 impl NegotiationPrologueSniffer {
     /// Creates a sniffer with an empty buffer and undecided negotiation state.
     #[must_use]
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -58,6 +59,7 @@ impl NegotiationPrologueSniffer {
     /// pooling layer already owns reusable buffers. The returned sniffer starts in the
     /// undecided state just like [`Self::new`].
     #[must_use]
+    #[inline]
     pub fn with_buffer(buffer: Vec<u8>) -> Self {
         let mut sniffer = Self {
             detector: NegotiationPrologueDetector::new(),
@@ -71,6 +73,7 @@ impl NegotiationPrologueSniffer {
     /// Returns the buffered bytes that were consumed while detecting the
     /// negotiation style.
     #[must_use]
+    #[inline]
     pub fn buffered(&self) -> &[u8] {
         &self.buffered
     }
@@ -83,6 +86,7 @@ impl NegotiationPrologueSniffer {
     /// has been drained—via [`take_buffered`](Self::take_buffered) or one of its
     /// variants—the returned slice covers the entire buffered remainder.
     #[must_use]
+    #[inline]
     pub fn buffered_remainder(&self) -> &[u8] {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
@@ -99,6 +103,7 @@ impl NegotiationPrologueSniffer {
     /// convenient for higher layers that need both slices simultaneously when staging the replay
     /// buffers used during negotiation.
     #[must_use]
+    #[inline]
     pub fn buffered_split(&self) -> (&[u8], &[u8]) {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
@@ -114,6 +119,7 @@ impl NegotiationPrologueSniffer {
     /// before the greeting parser can run. Callers that need to know whether more I/O is required
     /// can pair this with [`requires_more_data`](Self::requires_more_data).
     #[must_use]
+    #[inline]
     pub fn is_decided(&self) -> bool {
         self.detector
             .decision()
@@ -128,6 +134,7 @@ impl NegotiationPrologueSniffer {
     /// has been fully buffered, mirroring the behavior of [`read_from`](Self::read_from) which keeps
     /// pulling data until the legacy marker can be replayed.
     #[must_use]
+    #[inline]
     pub fn requires_more_data(&self) -> bool {
         match self.detector.decision() {
             Some(NegotiationPrologue::LegacyAscii) => !self.detector.legacy_prefix_complete(),
@@ -146,6 +153,7 @@ impl NegotiationPrologueSniffer {
     /// the number of bytes consumed for the prefix itself (excluding the buffered remainder) can
     /// use [`sniffed_prefix_len`](Self::sniffed_prefix_len).
     #[must_use]
+    #[inline]
     pub fn buffered_len(&self) -> usize {
         self.buffered.len()
     }
@@ -159,6 +167,7 @@ impl NegotiationPrologueSniffer {
     /// for replay. When the exchange selects the binary protocol this yields the number of bytes
     /// that triggered the decision (typically `1`).
     #[must_use]
+    #[inline]
     pub fn sniffed_prefix_len(&self) -> usize {
         self.prefix_bytes_retained.min(self.buffered.len())
     }
@@ -173,6 +182,7 @@ impl NegotiationPrologueSniffer {
     /// [`sniffed_prefix_len`](Self::sniffed_prefix_len) when replaying the prefix into the legacy
     /// greeting parser.
     #[must_use]
+    #[inline]
     pub fn sniffed_prefix(&self) -> &[u8] {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
@@ -180,11 +190,13 @@ impl NegotiationPrologueSniffer {
     }
 
     #[cfg(test)]
+    #[inline]
     pub(crate) fn buffered_storage(&self) -> &Vec<u8> {
         &self.buffered
     }
 
     #[cfg(test)]
+    #[inline]
     pub(crate) fn buffered_storage_mut(&mut self) -> &mut Vec<u8> {
         &mut self.buffered
     }
@@ -482,6 +494,7 @@ impl NegotiationPrologueSniffer {
     /// layers to stage it for subsequent protocol handling. When no remainder is
     /// available the method returns an empty vector.
     #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    #[inline]
     pub fn take_buffered_remainder(&mut self) -> Vec<u8> {
         let prefix_len = self.sniffed_prefix_len();
         if self.buffered.len() <= prefix_len {
@@ -503,6 +516,7 @@ impl NegotiationPrologueSniffer {
     /// the remainder is appended to it. The returned length corresponds to the
     /// number of bytes drained into `target`.
     #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    #[inline]
     pub fn take_buffered_remainder_into(
         &mut self,
         target: &mut Vec<u8>,
@@ -531,6 +545,7 @@ impl NegotiationPrologueSniffer {
     /// sniffer state remains unchanged so the caller can retry with a larger
     /// workspace.
     #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    #[inline]
     pub fn take_buffered_remainder_into_slice(
         &mut self,
         target: &mut [u8],
@@ -573,6 +588,7 @@ impl NegotiationPrologueSniffer {
     /// detection prefix remains buffered so callers can still replay it into the
     /// legacy greeting parser.
     #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    #[inline]
     pub fn take_buffered_remainder_into_writer<W: Write>(
         &mut self,
         target: &mut W,
@@ -599,6 +615,7 @@ impl NegotiationPrologueSniffer {
     /// transport layers can account for the replayed prefix. Invoking the helper on an empty buffer
     /// or after the prefix has already been dropped is a no-op.
     #[must_use]
+    #[inline]
     pub fn discard_sniffed_prefix(&mut self) -> usize {
         let prefix_len = self.sniffed_prefix_len();
         if prefix_len == 0 {
@@ -613,6 +630,7 @@ impl NegotiationPrologueSniffer {
 
     /// Reports the cached negotiation decision, if any.
     #[must_use]
+    #[inline]
     pub fn decision(&self) -> Option<NegotiationPrologue> {
         self.detector.decision()
     }
@@ -627,6 +645,7 @@ impl NegotiationPrologueSniffer {
     /// matching upstream rsync's behavior where the negotiation style is considered decided
     /// as soon as the leading `@` byte is observed.
     #[must_use]
+    #[inline]
     pub fn is_legacy(&self) -> bool {
         self.detector.is_legacy()
     }
@@ -639,6 +658,7 @@ impl NegotiationPrologueSniffer {
     /// prefix, ensuring higher layers can react immediately without waiting for additional
     /// I/O.
     #[must_use]
+    #[inline]
     pub fn is_binary(&self) -> bool {
         self.detector.is_binary()
     }
@@ -824,6 +844,7 @@ impl NegotiationPrologueSniffer {
     /// sniffer's API in sync with the lower-level detector without exposing the
     /// internal field directly.
     #[must_use]
+    #[inline]
     pub fn legacy_prefix_complete(&self) -> bool {
         self.detector.legacy_prefix_complete()
     }
@@ -839,6 +860,7 @@ impl NegotiationPrologueSniffer {
     /// yields `None`, mirroring
     /// [`NegotiationPrologueDetector::legacy_prefix_remaining`].
     #[must_use]
+    #[inline]
     pub fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()
     }
