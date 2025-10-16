@@ -1580,6 +1580,53 @@ fn prologue_sniffer_take_buffered_into_clamps_replacement_capacity() {
 }
 
 #[test]
+fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let partial_len = 3;
+    let partial_prefix = &LEGACY_DAEMON_PREFIX.as_bytes()[..partial_len];
+
+    let (decision, consumed) = sniffer.observe(partial_prefix);
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, partial_len);
+    assert_eq!(sniffer.buffered(), partial_prefix);
+    assert_eq!(
+        sniffer.decision(),
+        Some(NegotiationPrologue::LegacyAscii)
+    );
+    assert!(sniffer.requires_more_data());
+
+    let mut cloned = sniffer.clone();
+    assert_eq!(cloned.buffered(), partial_prefix);
+    assert_eq!(cloned.decision(), sniffer.decision());
+    assert_eq!(cloned.requires_more_data(), sniffer.requires_more_data());
+
+    let drained = sniffer.take_buffered();
+    assert_eq!(drained, partial_prefix);
+    assert!(sniffer.buffered().is_empty());
+    assert!(sniffer.requires_more_data());
+
+    let remaining_prefix = &LEGACY_DAEMON_PREFIX.as_bytes()[partial_len..];
+    let (clone_decision, clone_consumed) = cloned.observe(remaining_prefix);
+    assert_eq!(clone_decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(clone_consumed, remaining_prefix.len());
+    assert_eq!(cloned.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(cloned.is_legacy());
+    assert!(!cloned.requires_more_data());
+
+    let replay = cloned.take_buffered();
+    assert_eq!(replay, LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(cloned.buffered().is_empty());
+    assert!(!cloned.requires_more_data());
+
+    assert!(sniffer.buffered().is_empty());
+    assert!(sniffer.requires_more_data());
+    assert_eq!(
+        sniffer.decision(),
+        Some(NegotiationPrologue::LegacyAscii)
+    );
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_reuses_destination_capacity() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, _) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());

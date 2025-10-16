@@ -31,7 +31,7 @@ use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDete
 /// assert_eq!(decision, NegotiationPrologue::LegacyAscii);
 /// assert_eq!(sniffer.buffered(), b"@RSYNCD:");
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NegotiationPrologueSniffer {
     detector: NegotiationPrologueDetector,
     buffered: Vec<u8>,
