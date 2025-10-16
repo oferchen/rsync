@@ -1168,6 +1168,59 @@ fn prologue_sniffer_buffered_remainder_survives_draining() {
 }
 
 #[test]
+fn prologue_sniffer_discard_sniffed_prefix_preserves_remainder_for_legacy_negotiations() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX_BYTES);
+
+    let expected_remainder = b" trailing payload";
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(expected_remainder);
+
+    let dropped = sniffer.discard_sniffed_prefix();
+
+    assert_eq!(dropped, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert!(sniffer.sniffed_prefix().is_empty());
+    assert_eq!(sniffer.buffered(), expected_remainder);
+    assert_eq!(sniffer.buffered_remainder(), expected_remainder);
+    assert_eq!(sniffer.buffered_len(), expected_remainder.len());
+}
+
+#[test]
+fn prologue_sniffer_discard_sniffed_prefix_releases_binary_prefix_byte() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let payload = [0x00, 0x05, 0x08, 0x09];
+    let (decision, consumed) = sniffer
+        .observe(&payload)
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(consumed, 1);
+    assert!(sniffer.is_binary());
+
+    let expected_remainder = &payload[consumed..];
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(expected_remainder);
+
+    let dropped = sniffer.discard_sniffed_prefix();
+
+    assert_eq!(dropped, 1);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert!(sniffer.sniffed_prefix().is_empty());
+    assert_eq!(sniffer.buffered(), expected_remainder);
+    assert_eq!(sniffer.buffered_remainder(), expected_remainder);
+    assert_eq!(sniffer.buffered_len(), expected_remainder.len());
+}
+
+#[test]
 fn prologue_sniffer_preallocates_legacy_prefix_capacity() {
     let buffered = NegotiationPrologueSniffer::new().into_buffered();
     assert_eq!(buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
