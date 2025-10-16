@@ -10,23 +10,6 @@ use std::{
     ptr, slice,
 };
 
-trait SnifferTestExt {
-    fn observe_ok(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize);
-    fn observe_byte_ok(&mut self, byte: u8) -> NegotiationPrologue;
-}
-
-impl SnifferTestExt for NegotiationPrologueSniffer {
-    fn observe_ok(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
-        self.observe(chunk)
-            .expect("negotiation sniffer observation should not fail in tests")
-    }
-
-    fn observe_byte_ok(&mut self, byte: u8) -> NegotiationPrologue {
-        self.observe_byte(byte)
-            .expect("negotiation sniffer observation should not fail in tests")
-    }
-}
-
 #[test]
 fn buffered_prefix_too_small_converts_to_io_error_with_context() {
     let err = BufferedPrefixTooSmall::new(LEGACY_DAEMON_PREFIX_LEN, 4);
