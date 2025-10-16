@@ -154,12 +154,7 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();
 
-    let mut payload = Vec::new();
-    if len != 0 {
-        reserve_payload(&mut payload, len)?;
-        payload.resize(len, 0);
-        reader.read_exact(&mut payload)?;
-    }
+    let payload = read_payload(reader, len)?;
 
     MessageFrame::new(header.code(), payload)
 }
@@ -175,12 +170,7 @@ pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Resul
     let header = read_header(reader)?;
     let len = header.payload_len_usize();
 
-    buffer.clear();
-    if len != 0 {
-        reserve_payload(buffer, len)?;
-        buffer.resize(len, 0);
-        reader.read_exact(buffer)?;
-    }
+    read_payload_into(reader, buffer, len)?;
 
     Ok(header.code())
 }
@@ -229,6 +219,47 @@ fn reserve_payload(buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
         buffer
             .try_reserve_exact(additional)
             .map_err(map_allocation_error)?;
+    }
+
+    Ok(())
+}
+
+fn read_payload<R: Read>(reader: &mut R, len: usize) -> io::Result<Vec<u8>> {
+    let mut payload = Vec::new();
+    read_payload_into(reader, &mut payload, len)?;
+    Ok(payload)
+}
+
+fn read_payload_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
+    buffer.clear();
+
+    if len == 0 {
+        return Ok(());
+    }
+
+    reserve_payload(buffer, len)?;
+
+    buffer.resize(len, 0);
+
+    let mut read_total = 0;
+    while read_total < len {
+        match reader.read(&mut buffer[read_total..]) {
+            Ok(0) => {
+                buffer.truncate(read_total);
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(bytes_read) => {
+                read_total += bytes_read;
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => {
+                buffer.truncate(read_total);
+                return Err(err);
+            }
+        }
     }
 
     Ok(())
@@ -729,6 +760,22 @@ mod tests {
 
         let err = recv_msg(&mut io::Cursor::new(buffer)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_msg_into_truncates_buffer_after_short_payload() {
+        let header = MessageHeader::new(MessageCode::Client, 4)
+            .expect("header")
+            .encode();
+        let mut data = header.to_vec();
+        data.extend_from_slice(&[1, 2]);
+
+        let mut cursor = io::Cursor::new(data);
+        let mut buffer = vec![0xAA, 0xBB, 0xCC];
+        let err = recv_msg_into(&mut cursor, &mut buffer).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(buffer, vec![1, 2]);
     }
 
     #[test]
