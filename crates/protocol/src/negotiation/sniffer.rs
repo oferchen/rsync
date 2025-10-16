@@ -2,7 +2,8 @@ use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
-use crate::legacy::LEGACY_DAEMON_PREFIX_LEN;
+use crate::legacy::{LEGACY_DAEMON_PREFIX_LEN, parse_legacy_daemon_greeting_bytes};
+use crate::version::ProtocolVersion;
 
 use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector};
 
@@ -562,6 +563,25 @@ pub fn read_legacy_daemon_line<R: Read>(
     }
 
     Ok(())
+}
+
+/// Reads and parses the legacy daemon greeting after the negotiation prefix has been buffered.
+///
+/// The helper combines [`read_legacy_daemon_line`] with
+/// [`parse_legacy_daemon_greeting_bytes`](crate::parse_legacy_daemon_greeting_bytes) so callers
+/// can obtain the negotiated protocol version without manually wiring the intermediate buffer.
+/// It assumes that [`NegotiationPrologueSniffer::read_from`] has already classified the exchange
+/// as legacy ASCII and captured the canonical `@RSYNCD:` prefix. I/O failures are returned as
+/// [`io::Error`] values, while malformed greetings propagate
+/// [`NegotiationError`](crate::NegotiationError) via the same conversion used by the rest of the
+/// crate.
+pub fn read_and_parse_legacy_daemon_greeting<R: Read>(
+    sniffer: &mut NegotiationPrologueSniffer,
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> io::Result<ProtocolVersion> {
+    read_legacy_daemon_line(sniffer, reader, line)?;
+    parse_legacy_daemon_greeting_bytes(line).map_err(io::Error::from)
 }
 
 #[derive(Debug)]
