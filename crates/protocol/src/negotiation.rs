@@ -95,9 +95,9 @@ impl NegotiationPrologueSniffer {
     /// parser (or feed the initial binary byte back into the negotiation
     /// handler) can drain the buffer without relinquishing ownership of the
     /// sniffer. The internal storage is replaced with an empty vector whose
-    /// capacity matches the previous allocation (clamped to the canonical legacy
-    /// prefix length) so subsequent detections can continue reusing the
-    /// allocation in line with the workspace's buffer reuse guidance.
+    /// capacity is capped at the canonical legacy prefix length so subsequent
+    /// detections do not retain unbounded allocations while still satisfying the
+    /// workspace's buffer reuse guidance.
     #[must_use]
     pub fn take_buffered(&mut self) -> Vec<u8> {
         let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
