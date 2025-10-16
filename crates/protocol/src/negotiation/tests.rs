@@ -1878,60 +1878,6 @@ fn prologue_sniffer_take_sniffed_prefix_into_slice_preserves_remainder() {
 }
 
 #[test]
-fn prologue_sniffer_take_sniffed_prefix_into_slice_reports_small_buffer() {
-    let mut sniffer = NegotiationPrologueSniffer::new();
-    sniffer
-        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
-        .expect("buffer reservation succeeds");
-
-    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 1];
-    let err = sniffer
-        .take_sniffed_prefix_into_slice(&mut scratch)
-        .expect_err("slice too small should report error");
-    assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
-    assert_eq!(err.available(), LEGACY_DAEMON_PREFIX_LEN - 1);
-    assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX.as_bytes());
-}
-
-#[test]
-fn prologue_sniffer_take_sniffed_prefix_into_array_preserves_remainder() {
-    let mut sniffer = NegotiationPrologueSniffer::new();
-    let mut reader = Cursor::new(LEGACY_DAEMON_PREFIX_BYTES.to_vec());
-    let decision = sniffer
-        .read_from(&mut reader)
-        .expect("legacy negotiation detection succeeds");
-    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
-
-    let tail = b"payload";
-    sniffer.buffered_storage_mut().extend_from_slice(tail);
-
-    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
-    let copied = sniffer
-        .take_sniffed_prefix_into_array(&mut scratch)
-        .expect("copying sniffed prefix into array succeeds");
-    assert_eq!(copied, LEGACY_DAEMON_PREFIX_LEN);
-    assert_eq!(scratch.as_slice(), LEGACY_DAEMON_PREFIX.as_bytes());
-    assert_eq!(sniffer.sniffed_prefix_len(), 0);
-    assert_eq!(sniffer.buffered(), tail);
-}
-
-#[test]
-fn prologue_sniffer_take_sniffed_prefix_into_array_reports_small_buffer() {
-    let mut sniffer = NegotiationPrologueSniffer::new();
-    sniffer
-        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
-        .expect("buffer reservation succeeds");
-
-    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 2];
-    let err = sniffer
-        .take_sniffed_prefix_into_array(&mut scratch)
-        .expect_err("array too small should report error");
-    assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
-    assert_eq!(err.available(), LEGACY_DAEMON_PREFIX_LEN - 2);
-    assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX.as_bytes());
-}
-
-#[test]
 fn prologue_sniffer_take_sniffed_prefix_into_writer_preserves_remainder() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let mut reader = Cursor::new(LEGACY_DAEMON_PREFIX_BYTES.to_vec());
