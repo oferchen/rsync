@@ -259,17 +259,13 @@ impl<R> NegotiatedStreamParts<R> {
     {
         let Self {
             decision,
-            sniffed_prefix_len,
-            buffered_pos,
-            buffered,
+            buffer,
             inner,
         } = self;
 
         NegotiatedStreamParts {
             decision,
-            sniffed_prefix_len,
-            buffered_pos,
-            buffered,
+            buffer,
             inner: map(inner),
         }
     }
