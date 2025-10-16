@@ -218,6 +218,19 @@ fn protocol_version_converts_to_nonzero_wider_unsigned_primitives() {
 }
 
 #[test]
+fn protocol_version_lookup_by_supported_index() {
+    for (index, &expected) in ProtocolVersion::supported_versions().iter().enumerate() {
+        assert_eq!(ProtocolVersion::from_supported_index(index), Some(expected));
+    }
+
+    assert_eq!(
+        ProtocolVersion::from_supported_index(SUPPORTED_PROTOCOL_COUNT),
+        None,
+    );
+    assert_eq!(ProtocolVersion::from_supported_index(usize::MAX), None);
+}
+
+#[test]
 fn select_highest_mutual_accepts_wrapping_unsigned_advertisements() {
     let negotiated = select_highest_mutual([
         Wrapping::<u16>(u16::from(ProtocolVersion::NEWEST.as_u8())),

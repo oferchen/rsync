@@ -136,6 +136,17 @@ fn supported_protocol_bitmap_matches_helpers() {
 }
 
 #[test]
+fn supported_version_lookup_by_index_matches_slice() {
+    for (index, &version) in ProtocolVersion::supported_versions().iter().enumerate() {
+        assert_eq!(ProtocolVersion::from_supported_index(index), Some(version));
+    }
+
+    assert!(
+        ProtocolVersion::from_supported_index(rsync_protocol::SUPPORTED_PROTOCOL_COUNT).is_none()
+    );
+}
+
+#[test]
 fn protocol_version_offsets_track_supported_ordering() {
     for (ascending_index, version) in ProtocolVersion::supported_versions()
         .iter()
