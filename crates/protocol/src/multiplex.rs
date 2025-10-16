@@ -284,22 +284,44 @@ mod tests {
     }
 
     #[test]
-    fn send_msg_emits_upstream_compatible_envelope() {
-        let payload = b"abc";
-        let mut buffer = Vec::new();
-        send_msg(&mut buffer, MessageCode::Info, payload).expect("send succeeds");
+    fn send_msg_emits_upstream_compatible_envelope_for_common_tags() {
+        struct Sample {
+            code: MessageCode,
+            payload: &'static [u8],
+        }
 
-        assert_eq!(buffer.len(), HEADER_LEN + payload.len());
+        let samples = [
+            Sample {
+                code: MessageCode::Info,
+                payload: b"abc",
+            },
+            Sample {
+                code: MessageCode::Error,
+                payload: b"",
+            },
+            Sample {
+                code: MessageCode::Stats,
+                payload: &[0x01, 0x02, 0x03, 0x04],
+            },
+        ];
 
         // Upstream encodes multiplexed headers using the MPLEX_BASE constant of 7,
         // adds the message code, shifts the tag into the high byte, and stores the
         // payload length in little-endian order. See rsync 3.4.1's io.c:send_msg().
         const UPSTREAM_MPLEX_BASE: u8 = 7;
-        let tag = u32::from(UPSTREAM_MPLEX_BASE) + u32::from(MessageCode::Info.as_u8());
-        let expected_header = ((tag << 24) | payload.len() as u32).to_le_bytes();
 
-        assert_eq!(&buffer[..HEADER_LEN], &expected_header);
-        assert_eq!(&buffer[HEADER_LEN..], payload);
+        for sample in samples {
+            let mut buffer = Vec::new();
+            send_msg(&mut buffer, sample.code, sample.payload).expect("send succeeds");
+
+            assert_eq!(buffer.len(), HEADER_LEN + sample.payload.len());
+
+            let tag = u32::from(UPSTREAM_MPLEX_BASE) + u32::from(sample.code.as_u8());
+            let expected_header = ((tag << 24) | sample.payload.len() as u32).to_le_bytes();
+
+            assert_eq!(&buffer[..HEADER_LEN], &expected_header);
+            assert_eq!(&buffer[HEADER_LEN..], sample.payload);
+        }
     }
 
     #[test]
