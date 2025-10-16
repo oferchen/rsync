@@ -602,6 +602,13 @@ fn supported_range_bounds_match_upstream_constants() {
 }
 
 #[test]
+fn supported_version_bounds_match_constants() {
+    let (oldest, newest) = ProtocolVersion::supported_version_bounds();
+    assert_eq!(oldest, ProtocolVersion::OLDEST);
+    assert_eq!(newest, ProtocolVersion::NEWEST);
+}
+
+#[test]
 fn supported_protocol_range_constant_matches_bounds() {
     assert_eq!(
         *SUPPORTED_PROTOCOL_RANGE.start(),
@@ -626,6 +633,13 @@ fn supported_protocol_bounds_constant_matches_helpers() {
         SUPPORTED_PROTOCOL_BOUNDS,
         ProtocolVersion::supported_range_bounds()
     );
+}
+
+#[test]
+fn supported_version_range_matches_bounds() {
+    let range = ProtocolVersion::supported_version_range();
+    assert_eq!(range.start(), &ProtocolVersion::OLDEST);
+    assert_eq!(range.end(), &ProtocolVersion::NEWEST);
 }
 
 #[test]
