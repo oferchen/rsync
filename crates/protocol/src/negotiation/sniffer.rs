@@ -242,12 +242,7 @@ impl NegotiationPrologueSniffer {
             return Ok(0);
         }
 
-        if target.capacity() < prefix_len {
-            let additional = prefix_len.saturating_sub(target.len());
-            if additional > 0 {
-                target.try_reserve_exact(additional)?;
-            }
-        }
+        ensure_vec_capacity(target, prefix_len)?;
 
         target.clear();
         target.extend_from_slice(&self.buffered[..prefix_len]);
@@ -390,28 +385,7 @@ impl NegotiationPrologueSniffer {
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         let required = self.buffered.len();
 
-        if target.capacity() < required {
-            // `Vec::try_reserve_exact` interprets the requested value as additional
-            // elements beyond the current *length*, not the spare capacity. When the
-            // caller hands us a vector that already stores data, reserving the
-            // difference between the required length and the existing capacity would
-            // therefore undershoot the amount of space we need. The subsequent
-            // `extend_from_slice` would then have to grow the vector again, which in
-            // turn panics on allocation failure instead of surfacing a
-            // `TryReserveError` to the caller. Reserving relative to the vector's
-            // length guarantees the resulting capacity can hold the replayed prefix
-            // without further allocations. The `debug_assert!` documents the
-            // relationship enforced by the branch so release builds can rely on the
-            // subtraction without needing saturating arithmetic.
-            debug_assert!(
-                target.len() < required,
-                "destination length must be smaller than the buffered prefix when reserving"
-            );
-            let additional = required - target.len();
-            if additional > 0 {
-                target.try_reserve_exact(additional)?;
-            }
-        }
+        ensure_vec_capacity(target, required)?;
         target.clear();
         target.extend_from_slice(&self.buffered);
         let drained = target.len();
@@ -958,4 +932,26 @@ pub(crate) fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
         io::ErrorKind::OutOfMemory,
         LegacyBufferReserveError::new(err),
     )
+}
+
+#[inline]
+fn ensure_vec_capacity(target: &mut Vec<u8>, required: usize) -> Result<(), TryReserveError> {
+    if target.capacity() < required {
+        // `Vec::try_reserve_exact` interprets the requested value as additional
+        // elements beyond the current *length*, not the spare capacity. Reserving
+        // relative to the existing length therefore guarantees that the resulting
+        // capacity can hold `required` bytes without triggering a second
+        // allocation (which would panic on failure instead of surfacing a
+        // `TryReserveError`).
+        debug_assert!(
+            target.len() < required,
+            "destination length must be smaller than the required capacity when reserving"
+        );
+        let additional = required.saturating_sub(target.len());
+        if additional > 0 {
+            target.try_reserve_exact(additional)?;
+        }
+    }
+
+    Ok(())
 }
