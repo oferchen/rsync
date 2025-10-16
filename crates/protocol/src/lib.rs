@@ -93,9 +93,10 @@ pub use envelope::{
 pub use error::NegotiationError;
 pub use legacy::{
     LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
-    LegacyDaemonMessage, format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
-    parse_legacy_daemon_greeting_bytes, parse_legacy_daemon_message,
-    parse_legacy_daemon_message_bytes, parse_legacy_error_message,
+    LegacyDaemonGreeting, LegacyDaemonMessage, format_legacy_daemon_greeting,
+    parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_bytes,
+    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_details,
+    parse_legacy_daemon_message, parse_legacy_daemon_message_bytes, parse_legacy_error_message,
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
     parse_legacy_warning_message_bytes,
 };
@@ -103,7 +104,8 @@ pub use multiplex::{MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg}
 pub use negotiation::{
     BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
     NegotiationPrologueSniffer, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
-    detect_negotiation_prologue, read_and_parse_legacy_daemon_greeting, read_legacy_daemon_line,
+    detect_negotiation_prologue, read_and_parse_legacy_daemon_greeting,
+    read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
