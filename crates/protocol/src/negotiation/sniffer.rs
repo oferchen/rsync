@@ -89,6 +89,23 @@ impl NegotiationPrologueSniffer {
         &self.buffered[prefix_len..]
     }
 
+    /// Returns the sniffed negotiation prefix together with any buffered remainder.
+    ///
+    /// The first element of the tuple corresponds to the canonical prefix that must be replayed
+    /// when parsing the legacy daemon greeting or forwarding the initial binary byte. The second
+    /// slice exposes additional payload that arrived in the same read, mirroring the view provided
+    /// by [`buffered_remainder`](Self::buffered_remainder). The method avoids recomputing the
+    /// prefix length at the call site and keeps the borrow lifetime tied to the sniffer, making it
+    /// convenient for higher layers that need both slices simultaneously when staging the replay
+    /// buffers used during negotiation.
+    #[must_use]
+    pub fn buffered_split(&self) -> (&[u8], &[u8]) {
+        let prefix_len = self.sniffed_prefix_len();
+        debug_assert!(prefix_len <= self.buffered.len());
+
+        (&self.buffered[..prefix_len], &self.buffered[prefix_len..])
+    }
+
     /// Reports whether the negotiation style has been determined.
     ///
     /// The return value mirrors [`NegotiationPrologue::is_decided`] and becomes `true` as soon as

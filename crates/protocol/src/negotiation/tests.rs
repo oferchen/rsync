@@ -1222,6 +1222,60 @@ fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
 }
 
 #[test]
+fn prologue_sniffer_buffered_split_exposes_pending_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(b"@RS")
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 3);
+
+    let (prefix, remainder) = sniffer.buffered_split();
+    assert_eq!(prefix, b"@RS");
+    assert!(remainder.is_empty());
+}
+
+#[test]
+fn prologue_sniffer_buffered_split_returns_prefix_and_remainder_for_legacy() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(b"@RSYNCD:legacy tail")
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+
+    let trailing = b"legacy tail";
+    sniffer.buffered_storage_mut().extend_from_slice(trailing);
+
+    let (prefix, remainder) = sniffer.buffered_split();
+    assert_eq!(prefix, LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(remainder, trailing);
+}
+
+#[test]
+fn prologue_sniffer_buffered_split_returns_prefix_and_remainder_for_binary() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let payload = [0x00, 0x51, 0x72, 0x81];
+    let (decision, consumed) = sniffer
+        .observe(payload.as_slice())
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(consumed, 1);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(&payload[consumed..]);
+
+    let (prefix, remainder) = sniffer.buffered_split();
+    assert_eq!(prefix, &payload[..1]);
+    assert_eq!(remainder, &payload[1..]);
+}
+
+#[test]
 fn prologue_sniffer_sniffed_prefix_exposes_partial_legacy_bytes() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(b"@R").expect("buffer reservation succeeds");
