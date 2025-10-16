@@ -63,6 +63,13 @@ fn supported_protocol_exports_cover_range() {
 }
 
 #[test]
+fn legacy_daemon_prefix_constants_are_public() {
+    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX, "@RSYNCD:");
+    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_LEN, 8);
+    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_BYTES, b"@RSYNCD:");
+}
+
+#[test]
 fn log_code_round_trips_between_numeric_and_name() {
     for (index, &code) in LogCode::all().iter().enumerate() {
         let numeric = u8::from(code);

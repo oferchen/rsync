@@ -1,7 +1,25 @@
 use crate::error::NegotiationError;
 
-pub(crate) const LEGACY_DAEMON_PREFIX: &str = "@RSYNCD:";
-pub(crate) const LEGACY_DAEMON_PREFIX_LEN: usize = LEGACY_DAEMON_PREFIX.len();
+/// Canonical ASCII prefix that identifies the legacy `@RSYNCD:` negotiation style.
+///
+/// Upstream rsync emits this exact marker (including the trailing colon) before sending
+/// the daemon greeting when a peer is limited to protocols older than 30. Exposing the
+/// constant allows higher layers to reference the prefix without duplicating the literal,
+/// keeping diagnostics and buffer sizing in sync with the canonical value.
+pub const LEGACY_DAEMON_PREFIX: &str = "@RSYNCD:";
+
+/// Number of bytes in [`LEGACY_DAEMON_PREFIX`].
+///
+/// The length matches the canonical prefix observed on the wire and is exported so
+/// transports can size temporary buffers without recomputing it at runtime.
+pub const LEGACY_DAEMON_PREFIX_LEN: usize = LEGACY_DAEMON_PREFIX.len();
+
+/// Canonical byte representation of [`LEGACY_DAEMON_PREFIX`].
+///
+/// Legacy negotiation helpers frequently need to work with the ASCII prefix as raw bytes.
+/// Publishing the array keeps those call-sites allocation-free and avoids repeated
+/// conversions via [`str::as_bytes`].
+pub const LEGACY_DAEMON_PREFIX_BYTES: &[u8; LEGACY_DAEMON_PREFIX_LEN] = b"@RSYNCD:";
 
 mod bytes;
 mod greeting;
