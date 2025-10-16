@@ -36,6 +36,19 @@ fn supported_protocols_match_upstream_order() {
 }
 
 #[test]
+fn message_header_constants_match_upstream_definition() {
+    assert_eq!(rsync_protocol::MESSAGE_HEADER_LEN, 4);
+    assert_eq!(rsync_protocol::MAX_PAYLOAD_LENGTH, 0x00FF_FFFF);
+
+    let header = rsync_protocol::MessageHeader::new(
+        rsync_protocol::MessageCode::Info,
+        0,
+    )
+    .expect("zero-length payloads are valid");
+    assert_eq!(header.encode().len(), rsync_protocol::MESSAGE_HEADER_LEN);
+}
+
+#[test]
 fn supported_protocol_exports_cover_range() {
     assert_eq!(
         ProtocolVersion::supported_protocol_numbers(),
