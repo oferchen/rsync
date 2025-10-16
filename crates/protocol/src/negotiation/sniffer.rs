@@ -2,7 +2,7 @@ use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
-use crate::legacy::{LEGACY_DAEMON_PREFIX_LEN, parse_legacy_daemon_greeting_bytes};
+use crate::legacy::{parse_legacy_daemon_greeting_bytes, LEGACY_DAEMON_PREFIX_LEN};
 use crate::version::ProtocolVersion;
 
 use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector};
@@ -639,6 +639,10 @@ pub fn read_legacy_daemon_line<R: Read>(
     if let Some(newline_index) = line.iter().position(|&byte| byte == b'\n') {
         let remainder = line.split_off(newline_index + 1);
         if !remainder.is_empty() {
+            sniffer
+                .buffered
+                .try_reserve_exact(remainder.len())
+                .map_err(map_reserve_error_for_io)?;
             sniffer.buffered.extend_from_slice(&remainder);
         }
         return Ok(());
@@ -654,6 +658,7 @@ pub fn read_legacy_daemon_line<R: Read>(
                 ));
             }
             Ok(_) => {
+                line.try_reserve(1).map_err(map_reserve_error_for_io)?;
                 line.push(byte[0]);
                 if byte[0] == b'\n' {
                     break;
