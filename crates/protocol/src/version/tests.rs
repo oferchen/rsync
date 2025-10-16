@@ -437,6 +437,21 @@ fn converts_protocol_version_to_non_zero_u8() {
 }
 
 #[test]
+fn exposes_non_zero_u8_accessor() {
+    let newest = ProtocolVersion::NEWEST.as_non_zero_u8();
+    assert_eq!(
+        newest,
+        NonZeroU8::new(ProtocolVersion::NEWEST.as_u8()).expect("non-zero")
+    );
+
+    let oldest = ProtocolVersion::OLDEST.as_non_zero_u8();
+    assert_eq!(
+        oldest,
+        NonZeroU8::new(ProtocolVersion::OLDEST.as_u8()).expect("non-zero")
+    );
+}
+
+#[test]
 fn converts_protocol_version_to_u8() {
     let version = ProtocolVersion::try_from(32).expect("valid");
     let value: u8 = version.into();
