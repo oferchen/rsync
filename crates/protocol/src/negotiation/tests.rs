@@ -94,6 +94,32 @@ impl Read for RecordingReader {
     }
 }
 
+struct ChunkedReader {
+    inner: Cursor<Vec<u8>>,
+    chunk: usize,
+}
+
+impl ChunkedReader {
+    fn new(data: Vec<u8>, chunk: usize) -> Self {
+        assert!(chunk > 0, "chunk size must be non-zero to make progress");
+        Self {
+            inner: Cursor::new(data),
+            chunk,
+        }
+    }
+
+    fn into_inner(self) -> Cursor<Vec<u8>> {
+        self.inner
+    }
+}
+
+impl Read for ChunkedReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let limit = buf.len().min(self.chunk);
+        self.inner.read(&mut buf[..limit])
+    }
+}
+
 #[test]
 fn detect_negotiation_prologue_requires_data() {
     assert_eq!(
@@ -874,6 +900,29 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert!(!legacy.is_binary());
     assert!(legacy.is_decided());
     assert!(!legacy.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_read_from_handles_single_byte_chunks() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = ChunkedReader::new(b"@RSYNCD: 31.0\nrest".to_vec(), 1);
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("sniffer should tolerate single-byte reads");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(sniffer.legacy_prefix_complete());
+
+    let mut greeting = Vec::new();
+    read_legacy_daemon_line(&mut sniffer, &mut reader, &mut greeting)
+        .expect("complete legacy greeting should be collected");
+    assert_eq!(greeting, b"@RSYNCD: 31.0\n");
+
+    let mut cursor = reader.into_inner();
+    let mut remainder = Vec::new();
+    cursor.read_to_end(&mut remainder).expect("read remainder");
+    assert_eq!(remainder, b"rest");
 }
 
 #[test]
