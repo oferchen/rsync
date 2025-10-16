@@ -220,6 +220,34 @@ fn prologue_detector_default_matches_initial_state() {
 }
 
 #[test]
+fn prologue_detector_reports_decision_state_helpers() {
+    let mut detector = NegotiationPrologueDetector::new();
+
+    assert!(!detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
+    assert!(detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    let remainder = &LEGACY_DAEMON_PREFIX.as_bytes()[1..];
+    assert_eq!(
+        detector.observe(remainder),
+        NegotiationPrologue::LegacyAscii
+    );
+    assert!(detector.is_decided());
+    assert!(!detector.requires_more_data());
+
+    detector.reset();
+    assert!(!detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
+    assert!(detector.is_decided());
+    assert!(!detector.requires_more_data());
+}
+
+#[test]
 fn prologue_detector_detects_binary_immediately() {
     let mut detector = NegotiationPrologueDetector::default();
     assert_eq!(detector.observe(b"x"), NegotiationPrologue::Binary);
@@ -1433,6 +1461,24 @@ fn read_legacy_daemon_line_handles_interrupted_reads() {
 
     assert!(reader.was_interrupted());
     assert_eq!(line, b"@RSYNCD: 32.0\n");
+}
+
+#[test]
+fn read_legacy_daemon_line_preserves_bytes_consumed_during_detection() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(b"@RZYNCD: 31.0\n".to_vec());
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("negotiation sniffing should succeed");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(sniffer.buffered(), b"@RZYNCD:");
+
+    let mut line = Vec::new();
+    read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+        .expect("legacy greeting should include the bytes read during detection");
+
+    assert_eq!(line, b"@RZYNCD: 31.0\n");
 }
 
 #[test]

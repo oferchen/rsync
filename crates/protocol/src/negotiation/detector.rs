@@ -124,6 +124,37 @@ impl NegotiationPrologueDetector {
         self.decided
     }
 
+    /// Reports whether the negotiation style has been determined.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_decided`] but operates on the cached
+    /// decision maintained by the detector. Callers that only need to know whether the
+    /// initial byte has already selected the binary or legacy ASCII handshake can rely on
+    /// this predicate instead of matching on [`Self::decision`]. The method returns `false`
+    /// until the first byte is observed, mirroring upstream rsync's behavior where the
+    /// detection logic remains pending until the transport yields data.
+    #[must_use]
+    pub const fn is_decided(&self) -> bool {
+        matches!(self.decided, Some(decision) if decision.is_decided())
+    }
+
+    /// Reports whether additional bytes must be read before the negotiation prologue is
+    /// fully understood.
+    ///
+    /// Binary negotiations require only the leading byte, so the helper flips to `false`
+    /// immediately once the first non-`@` octet is observed. Legacy exchanges remain in the
+    /// "needs more" state until the canonical `@RSYNCD:` prefix has been buffered, allowing
+    /// higher layers to keep reading until the greeting parser can replay the captured
+    /// bytes. When no data has been observed yet the method also returns `true`, matching the
+    /// semantics of [`NegotiationPrologue::requires_more_data`].
+    #[must_use]
+    pub const fn requires_more_data(&self) -> bool {
+        match self.decided {
+            Some(NegotiationPrologue::LegacyAscii) => !self.prefix_complete,
+            Some(NegotiationPrologue::Binary) => false,
+            Some(NegotiationPrologue::NeedMoreData) | None => true,
+        }
+    }
+
     /// Reports whether the canonical legacy prefix (`@RSYNCD:`) has been fully
     /// observed (or ruled out due to a mismatch) after classifying the stream
     /// as [`NegotiationPrologue::LegacyAscii`].
