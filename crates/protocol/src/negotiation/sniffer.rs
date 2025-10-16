@@ -62,7 +62,7 @@ impl NegotiationPrologueSniffer {
     pub fn is_decided(&self) -> bool {
         self.detector
             .decision()
-            .map_or(false, NegotiationPrologue::is_decided)
+            .is_some_and(NegotiationPrologue::is_decided)
     }
 
     /// Returns `true` when additional bytes must be read before the handshake can progress.
@@ -272,7 +272,7 @@ impl NegotiationPrologueSniffer {
     pub fn is_legacy(&self) -> bool {
         self.detector
             .decision()
-            .map_or(false, NegotiationPrologue::is_legacy)
+            .is_some_and(NegotiationPrologue::is_legacy)
     }
 
     /// Returns `true` when the sniffer has determined that the peer selected the binary
@@ -286,7 +286,7 @@ impl NegotiationPrologueSniffer {
     pub fn is_binary(&self) -> bool {
         self.detector
             .decision()
-            .map_or(false, NegotiationPrologue::is_binary)
+            .is_some_and(NegotiationPrologue::is_binary)
     }
 
     /// Observes bytes that have already been read from the transport while tracking how
