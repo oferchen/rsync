@@ -124,6 +124,25 @@ impl NegotiationPrologue {
     pub const fn is_binary(self) -> bool {
         matches!(self, Self::Binary)
     }
+
+    /// Classifies a negotiation prologue using the very first byte observed on
+    /// the transport.
+    ///
+    /// Upstream rsync performs a single-byte peek: a leading `b'@'` selects the
+    /// legacy ASCII `@RSYNCD:` handshake, while any other value triggers the
+    /// binary negotiation introduced in protocol 30. The helper mirrors that
+    /// branch so call sites that already ensured at least one byte is buffered
+    /// can reuse the canonical mapping without duplicating the literal or
+    /// resorting to ad-hoc comparisons.
+    #[must_use = "determine the negotiation mode selected by the first byte"]
+    #[inline]
+    pub const fn from_initial_byte(byte: u8) -> Self {
+        if byte == b'@' {
+            Self::LegacyAscii
+        } else {
+            Self::Binary
+        }
+    }
 }
 
 impl fmt::Display for NegotiationPrologue {
@@ -148,15 +167,10 @@ impl fmt::Display for NegotiationPrologue {
 /// * Otherwise, the exchange uses the binary negotiation.
 #[must_use]
 pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
-    if buffer.is_empty() {
-        return NegotiationPrologue::NeedMoreData;
+    match buffer.first().copied() {
+        Some(byte) => NegotiationPrologue::from_initial_byte(byte),
+        None => NegotiationPrologue::NeedMoreData,
     }
-
-    if buffer[0] != b'@' {
-        return NegotiationPrologue::Binary;
-    }
-
-    NegotiationPrologue::LegacyAscii
 }
 
 /// Incrementally reads bytes from a [`Read`] implementation until the
@@ -678,13 +692,15 @@ impl NegotiationPrologueDetector {
 
         for &byte in chunk {
             if self.len == 0 {
-                if byte != b'@' {
-                    return self.decide(NegotiationPrologue::Binary);
+                let classification = NegotiationPrologue::from_initial_byte(byte);
+
+                if classification == NegotiationPrologue::Binary {
+                    return self.decide(classification);
                 }
 
                 self.buffer[0] = byte;
                 self.len = 1;
-                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+                decision = Some(self.decide(classification));
                 continue;
             }
 
@@ -969,6 +985,31 @@ mod tests {
         assert_eq!(legacy.to_string(), "legacy-ascii");
         assert_eq!(binary.to_string(), "binary");
         assert_eq!(undecided.to_string(), "need-more-data");
+    }
+
+    #[test]
+    fn negotiation_prologue_from_initial_byte_matches_binary_split() {
+        assert_eq!(
+            NegotiationPrologue::from_initial_byte(b'@'),
+            NegotiationPrologue::LegacyAscii
+        );
+
+        for &byte in &[0x00u8, b'R', b'\n', 0xFF] {
+            assert_eq!(
+                NegotiationPrologue::from_initial_byte(byte),
+                NegotiationPrologue::Binary
+            );
+        }
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_delegates_to_initial_byte_helper() {
+        for byte in 0u8..=u8::MAX {
+            assert_eq!(
+                detect_negotiation_prologue(&[byte]),
+                NegotiationPrologue::from_initial_byte(byte)
+            );
+        }
     }
 
     #[test]
