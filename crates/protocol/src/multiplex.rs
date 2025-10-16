@@ -235,23 +235,30 @@ fn write_all_vectored<W: Write + ?Sized>(
     mut payload: &[u8],
 ) -> io::Result<()> {
     while !header.is_empty() || !payload.is_empty() {
-        let written = if header.is_empty() {
-            let slice = IoSlice::new(payload);
-            writer.write_vectored(slice::from_ref(&slice))?
-        } else if payload.is_empty() {
-            let slice = IoSlice::new(header);
-            writer.write_vectored(slice::from_ref(&slice))?
-        } else {
-            let slices = [IoSlice::new(header), IoSlice::new(payload)];
-            writer.write_vectored(&slices)?
-        };
+        let written = loop {
+            let result = if header.is_empty() {
+                let slice = IoSlice::new(payload);
+                writer.write_vectored(slice::from_ref(&slice))
+            } else if payload.is_empty() {
+                let slice = IoSlice::new(header);
+                writer.write_vectored(slice::from_ref(&slice))
+            } else {
+                let slices = [IoSlice::new(header), IoSlice::new(payload)];
+                writer.write_vectored(&slices)
+            };
 
-        if written == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "failed to write multiplexed message",
-            ));
-        }
+            match result {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write multiplexed message",
+                    ));
+                }
+                Ok(written) => break written,
+                Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            }
+        };
 
         let mut remaining = written;
         if !header.is_empty() {
@@ -383,6 +390,73 @@ mod tests {
         assert_eq!(writer.vectored_calls, 1, "single vectored call expected");
 
         let header = MessageHeader::new(MessageCode::Warning, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+        assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_msg_retries_on_interrupted_vectored_writes() {
+        struct InterruptOnceWriter {
+            writes: Vec<u8>,
+            vectored_attempts: usize,
+            vectored_successes: usize,
+            interrupted: bool,
+        }
+
+        impl InterruptOnceWriter {
+            fn new() -> Self {
+                Self {
+                    writes: Vec::new(),
+                    vectored_attempts: 0,
+                    vectored_successes: 0,
+                    interrupted: false,
+                }
+            }
+        }
+
+        impl Write for InterruptOnceWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.writes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.vectored_attempts += 1;
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "simulated EINTR",
+                    ));
+                }
+
+                let mut written = 0;
+                for buf in bufs {
+                    self.writes.extend_from_slice(buf);
+                    written += buf.len();
+                }
+                self.vectored_successes += 1;
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = InterruptOnceWriter::new();
+        let payload = b"payload";
+        send_msg(&mut writer, MessageCode::Info, payload).expect("retry succeeds after EINTR");
+
+        assert!(writer.interrupted, "writer should have seen an interrupt");
+        assert_eq!(writer.vectored_attempts, 2, "exactly one retry expected");
+        assert_eq!(
+            writer.vectored_successes, 1,
+            "second attempt should succeed"
+        );
+
+        let header = MessageHeader::new(MessageCode::Info, payload.len() as u32).unwrap();
         let mut expected = Vec::from(header.encode());
         expected.extend_from_slice(payload);
         assert_eq!(writer.writes, expected);
