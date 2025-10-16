@@ -65,6 +65,6 @@ pub use negotiation::{
     detect_negotiation_prologue,
 };
 pub use version::{
-    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOLS,
-    SUPPORTED_PROTOCOL_COUNT, select_highest_mutual,
+    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOLS,
+    select_highest_mutual,
 };
