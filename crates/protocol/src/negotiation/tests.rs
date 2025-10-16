@@ -873,7 +873,9 @@ proptest! {
         let mut sniffer = NegotiationPrologueSniffer::new();
 
         for chunk in &chunks {
-            let (sniffer_decision, consumed) = sniffer.observe(chunk);
+            let (sniffer_decision, consumed) = sniffer
+                .observe(chunk)
+                .expect("buffer reservation succeeds");
             prop_assert!(consumed <= chunk.len());
 
             let detector_decision = if consumed != 0 {
@@ -966,7 +968,9 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert!(undecided.requires_more_data());
 
     let mut binary = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = binary.observe(&[0x00, 0x10, 0x20]);
+    let (decision, consumed) = binary
+        .observe(&[0x00, 0x10, 0x20])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
     assert!(binary.is_binary());
@@ -975,7 +979,9 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert!(!binary.requires_more_data());
 
     let mut partial_legacy = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = partial_legacy.observe(b"@R");
+    let (decision, consumed) = partial_legacy
+        .observe(b"@R")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert!(partial_legacy.is_legacy());
     assert!(!partial_legacy.is_binary());
@@ -984,7 +990,9 @@ fn prologue_sniffer_reports_binary_and_legacy_flags() {
     assert_eq!(consumed, 2);
 
     let mut legacy = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = legacy.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = legacy
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(legacy.is_legacy());
@@ -1040,7 +1048,9 @@ fn prologue_sniffer_sniffed_prefix_len_tracks_binary_reads() {
 #[test]
 fn prologue_sniffer_sniffed_prefix_returns_canonical_slice() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX_BYTES);
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("buffer reservation succeeds");
 
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
@@ -1059,7 +1069,9 @@ fn prologue_sniffer_sniffed_prefix_returns_canonical_slice() {
 fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let payload = [0x7Fu8, 0x10, 0x20];
-    let (decision, consumed) = sniffer.observe(&payload);
+    let (decision, consumed) = sniffer
+        .observe(&payload)
+        .expect("buffer reservation succeeds");
 
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
@@ -1077,7 +1089,7 @@ fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
 #[test]
 fn prologue_sniffer_sniffed_prefix_exposes_partial_legacy_bytes() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(b"@R");
+    let (decision, consumed) = sniffer.observe(b"@R").expect("buffer reservation succeeds");
 
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 2);
@@ -1135,12 +1147,14 @@ fn prologue_sniffer_reports_buffered_length() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     assert_eq!(sniffer.buffered_len(), 0);
 
-    let (decision, consumed) = sniffer.observe(b"@RS");
+    let (decision, consumed) = sniffer
+        .observe(b"@RS")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 3);
     assert_eq!(sniffer.buffered_len(), 3);
 
-    let (decision, consumed) = sniffer.observe(b"YN");
+    let (decision, consumed) = sniffer.observe(b"YN").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 2);
     assert_eq!(sniffer.buffered_len(), 5);
@@ -1155,7 +1169,9 @@ fn prologue_sniffer_reports_buffered_length() {
 fn prologue_sniffer_observe_consumes_only_required_bytes() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer.observe(b"@RS");
+    let (decision, consumed) = sniffer
+        .observe(b"@RS")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 3);
     assert_eq!(sniffer.buffered(), b"@RS");
@@ -1164,14 +1180,18 @@ fn prologue_sniffer_observe_consumes_only_required_bytes() {
         Some(LEGACY_DAEMON_PREFIX_LEN - 3)
     );
 
-    let (decision, consumed) = sniffer.observe(b"YNCD: remainder");
+    let (decision, consumed) = sniffer
+        .observe(b"YNCD: remainder")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN - 3);
     assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
     assert!(sniffer.legacy_prefix_complete());
     assert_eq!(sniffer.legacy_prefix_remaining(), None);
 
-    let (decision, consumed) = sniffer.observe(b" trailing data");
+    let (decision, consumed) = sniffer
+        .observe(b" trailing data")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, 0);
     assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
@@ -1181,14 +1201,18 @@ fn prologue_sniffer_observe_consumes_only_required_bytes() {
 fn prologue_sniffer_observe_handles_prefix_mismatches() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer.observe(b"@X remainder");
+    let (decision, consumed) = sniffer
+        .observe(b"@X remainder")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, 2);
     assert_eq!(sniffer.buffered(), b"@X");
     assert!(sniffer.legacy_prefix_complete());
     assert_eq!(sniffer.legacy_prefix_remaining(), None);
 
-    let (decision, consumed) = sniffer.observe(b"anything else");
+    let (decision, consumed) = sniffer
+        .observe(b"anything else")
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, 0);
     assert_eq!(sniffer.buffered(), b"@X");
@@ -1205,9 +1229,13 @@ fn prologue_sniffer_observe_byte_matches_slice_behavior() {
     let stream = b"@RSYNCD: 31.0\n";
 
     for &byte in stream {
-        let (expected, consumed) = slice_sniffer.observe(slice::from_ref(&byte));
+        let (expected, consumed) = slice_sniffer
+            .observe(slice::from_ref(&byte))
+            .expect("buffer reservation succeeds");
         assert!(consumed <= 1);
-        let observed = byte_sniffer.observe_byte(byte);
+        let observed = byte_sniffer
+            .observe_byte(byte)
+            .expect("buffer reservation succeeds");
         assert_eq!(observed, expected);
         assert_eq!(byte_sniffer.buffered(), slice_sniffer.buffered());
         assert_eq!(
@@ -1227,13 +1255,13 @@ fn prologue_sniffer_observe_byte_matches_slice_behavior() {
 fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer.observe(b"");
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 0);
     assert!(sniffer.buffered().is_empty());
     assert_eq!(sniffer.decision(), None);
 
-    let (decision, consumed) = sniffer.observe(b"");
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 0);
     assert!(sniffer.buffered().is_empty());
@@ -1244,12 +1272,16 @@ fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
 fn prologue_sniffer_observe_handles_binary_detection() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer.observe(&[0x42, 0x99, 0x00]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x42, 0x99, 0x00])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
     assert_eq!(sniffer.buffered(), &[0x42]);
 
-    let (decision, consumed) = sniffer.observe(&[0x00]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x00])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 0);
     assert_eq!(sniffer.buffered(), &[0x42]);
@@ -1328,7 +1360,9 @@ fn prologue_sniffer_read_from_preserves_bytes_after_malformed_prefix() {
 #[test]
 fn prologue_sniffer_take_buffered_drains_accumulated_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1348,7 +1382,9 @@ fn prologue_sniffer_take_buffered_drains_accumulated_prefix() {
 #[test]
 fn prologue_sniffer_take_buffered_into_drains_accumulated_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1372,7 +1408,9 @@ fn prologue_sniffer_take_buffered_into_drains_accumulated_prefix() {
 #[test]
 fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1392,7 +1430,9 @@ fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
 #[test]
 fn prologue_sniffer_take_buffered_into_array_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1412,7 +1452,9 @@ fn prologue_sniffer_take_buffered_into_array_copies_prefix() {
 #[test]
 fn prologue_sniffer_take_buffered_into_array_reports_small_buffer() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1556,7 +1598,9 @@ fn prologue_sniffer_reset_restores_canonical_capacity_after_shrink() {
 #[test]
 fn prologue_sniffer_take_buffered_into_slice_reports_small_buffer() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
 
@@ -1603,7 +1647,9 @@ fn map_reserve_error_for_io_marks_out_of_memory() {
 #[test]
 fn prologue_sniffer_take_buffered_returns_initial_binary_byte() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(&[0x80, 0x81, 0x82]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x80, 0x81, 0x82])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
 
@@ -1617,7 +1663,9 @@ fn prologue_sniffer_take_buffered_returns_initial_binary_byte() {
 #[test]
 fn prologue_sniffer_take_buffered_into_returns_initial_binary_byte() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(&[0x80, 0x81, 0x82]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x80, 0x81, 0x82])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
 
@@ -1635,7 +1683,9 @@ fn prologue_sniffer_take_buffered_into_returns_initial_binary_byte() {
 #[test]
 fn prologue_sniffer_take_buffered_into_slice_returns_initial_binary_byte() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(&[0x80, 0x81, 0x82]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x80, 0x81, 0x82])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
 
@@ -1654,7 +1704,9 @@ fn prologue_sniffer_take_buffered_into_slice_returns_initial_binary_byte() {
 #[test]
 fn read_legacy_daemon_line_collects_complete_greeting() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1672,7 +1724,9 @@ fn read_legacy_daemon_line_collects_complete_greeting() {
 #[test]
 fn read_legacy_daemon_line_handles_interrupted_reads() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
 
@@ -1706,7 +1760,9 @@ fn read_legacy_daemon_line_preserves_bytes_consumed_during_detection() {
 #[test]
 fn read_legacy_daemon_line_uses_buffered_newline_without_additional_io() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert!(sniffer.legacy_prefix_complete());
@@ -1730,7 +1786,7 @@ fn read_legacy_daemon_line_uses_buffered_newline_without_additional_io() {
 #[test]
 fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(b"@");
+    let (decision, consumed) = sniffer.observe(b"@").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 1);
     assert_eq!(
@@ -1752,7 +1808,9 @@ fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
 #[test]
 fn read_legacy_daemon_line_rejects_non_legacy_state() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(&[0x00]);
+    let (decision, consumed) = sniffer
+        .observe(&[0x00])
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::Binary);
     assert_eq!(consumed, 1);
 
@@ -1835,7 +1893,9 @@ fn read_and_parse_legacy_daemon_greeting_rejects_binary_negotiation() {
 #[test]
 fn read_legacy_daemon_line_errors_on_unexpected_eof() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
 
@@ -1889,7 +1949,9 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
     let partial_len = 3;
     let partial_prefix = &LEGACY_DAEMON_PREFIX.as_bytes()[..partial_len];
 
-    let (decision, consumed) = sniffer.observe(partial_prefix);
+    let (decision, consumed) = sniffer
+        .observe(partial_prefix)
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, partial_len);
     assert_eq!(sniffer.buffered(), partial_prefix);
@@ -1907,7 +1969,9 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
     assert!(sniffer.requires_more_data());
 
     let remaining_prefix = &LEGACY_DAEMON_PREFIX.as_bytes()[partial_len..];
-    let (clone_decision, clone_consumed) = cloned.observe(remaining_prefix);
+    let (clone_decision, clone_consumed) = cloned
+        .observe(remaining_prefix)
+        .expect("buffer reservation succeeds");
     assert_eq!(clone_decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(clone_consumed, remaining_prefix.len());
     assert_eq!(cloned.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
@@ -1927,7 +1991,9 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
 #[test]
 fn prologue_sniffer_take_buffered_into_reuses_destination_capacity() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, _) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, _) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
 
     let mut reused = Vec::with_capacity(64);
@@ -1948,7 +2014,9 @@ fn prologue_sniffer_take_buffered_into_reuses_destination_capacity() {
 #[test]
 fn prologue_sniffer_take_buffered_into_accounts_for_existing_length_when_growing() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
 

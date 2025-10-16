@@ -213,7 +213,9 @@ fn log_code_conversion_error_exposes_context() {
 fn negotiation_prologue_sniffer_reports_buffered_length() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX_BYTES);
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert_eq!(sniffer.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);

@@ -349,28 +349,33 @@ impl NegotiationPrologueSniffer {
     /// exchange uses the legacy ASCII handshake. Callers that need to know how many additional
     /// bytes are required can query [`legacy_prefix_remaining`](Self::legacy_prefix_remaining).
     /// Any remaining data in `chunk` is left untouched so higher layers can process it according
-    /// to the negotiated protocol.
-    #[must_use]
-    pub fn observe(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
+    /// to the negotiated protocol. If reserving capacity for the buffered prefix fails, the
+    /// allocation error is surfaced instead of panicking so higher layers can convert it into an
+    /// [`io::Error`].
+    #[must_use = "process the negotiation decision and potential allocation error"]
+    pub fn observe(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<(NegotiationPrologue, usize), TryReserveError> {
         let cached = self.detector.decision();
         let needs_more_prefix_bytes =
             cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
 
         if chunk.is_empty() {
             if needs_more_prefix_bytes {
-                return (NegotiationPrologue::NeedMoreData, 0);
+                return Ok((NegotiationPrologue::NeedMoreData, 0));
             }
 
-            return (cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0);
+            return Ok((cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0));
         }
 
         if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
-            return (decision, 0);
+            return Ok((decision, 0));
         }
 
         let planned = self.planned_prefix_bytes_for_observation(cached, chunk.len());
         if planned > 0 {
-            self.buffered.reserve(planned);
+            self.buffered.try_reserve(planned)?;
         }
 
         let mut consumed = 0;
@@ -383,18 +388,18 @@ impl NegotiationPrologueSniffer {
             let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
 
             if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
-                return (decision, consumed);
+                return Ok((decision, consumed));
             }
         }
 
         let final_decision = self.detector.decision();
         if final_decision.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision)) {
-            (NegotiationPrologue::NeedMoreData, consumed)
+            Ok((NegotiationPrologue::NeedMoreData, consumed))
         } else {
-            (
+            Ok((
                 final_decision.unwrap_or(NegotiationPrologue::NeedMoreData),
                 consumed,
-            )
+            ))
         }
     }
 
@@ -403,15 +408,16 @@ impl NegotiationPrologueSniffer {
     /// The helper mirrors [`observe`](Self::observe) but keeps the common
     /// "one-octet-at-a-time" call pattern used by upstream rsync ergonomic.
     /// Callers can therefore forward individual bytes without allocating a
-    /// temporary slice. The returned decision matches the value that would be
-    /// produced by [`observe`](Self::observe) while ensuring at most a single
-    /// byte is accounted for as consumed.
-    #[must_use]
+    /// temporary slice. The returned result mirrors [`observe`](Self::observe):
+    /// on success it yields the negotiation decision while ensuring at most a
+    /// single byte is accounted for as consumed, and any allocation failure is
+    /// surfaced instead of panicking.
+    #[must_use = "process the negotiation decision or surface allocation failures"]
     #[inline]
-    pub fn observe_byte(&mut self, byte: u8) -> NegotiationPrologue {
-        let (decision, consumed) = self.observe(slice::from_ref(&byte));
+    pub fn observe_byte(&mut self, byte: u8) -> Result<NegotiationPrologue, TryReserveError> {
+        let (decision, consumed) = self.observe(slice::from_ref(&byte))?;
         debug_assert!(consumed <= 1);
-        decision
+        Ok(decision)
     }
 
     /// Clears the buffered prefix and resets the negotiation detector so the
@@ -475,7 +481,8 @@ impl NegotiationPrologueSniffer {
                 }
                 Ok(read) => {
                     let observed = &scratch[..read];
-                    let (decision, consumed) = self.observe(observed);
+                    let (decision, consumed) =
+                        self.observe(observed).map_err(map_reserve_error_for_io)?;
                     debug_assert!(consumed <= observed.len());
 
                     if consumed < observed.len() {
