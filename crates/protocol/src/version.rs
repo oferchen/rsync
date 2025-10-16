@@ -318,7 +318,7 @@ where
     I: IntoIterator<Item = T>,
     T: ProtocolVersionAdvertisement,
 {
-    let mut seen_mask: u64 = 0;
+    let mut seen = [false; u8::MAX as usize + 1];
     let mut seen_any = false;
     let mut seen_max = ProtocolVersion::OLDEST.as_u8();
     let mut oldest_rejection: Option<u8> = None;
@@ -329,9 +329,9 @@ where
         match ProtocolVersion::from_peer_advertisement(advertised) {
             Ok(proto) => {
                 let value = proto.as_u8();
-                let bit = 1u64 << value;
-                if seen_mask & bit == 0 {
-                    seen_mask |= bit;
+                let index = usize::from(value);
+                if !seen[index] {
+                    seen[index] = true;
                     seen_any = true;
                     if value > seen_max {
                         seen_max = value;
@@ -350,7 +350,7 @@ where
     }
 
     for ours in SUPPORTED_PROTOCOLS {
-        if seen_mask & (1u64 << ours) != 0 {
+        if seen[usize::from(ours)] {
             return Ok(ProtocolVersion::new_const(ours));
         }
     }
@@ -365,7 +365,7 @@ where
         let mut versions = Vec::with_capacity(span);
 
         for version in start..=seen_max {
-            if seen_mask & (1u64 << version) != 0 {
+            if seen[usize::from(version)] {
                 versions.push(version);
             }
         }
