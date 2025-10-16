@@ -94,6 +94,23 @@ impl<R> NegotiatedStream<R> {
         self.inner
     }
 
+    /// Transforms the inner reader while preserving the buffered negotiation state.
+    ///
+    /// The helper allows callers to wrap the underlying transport (for example to
+    /// install additional instrumentation or apply timeout adapters) without
+    /// losing the bytes that were already sniffed during negotiation detection.
+    /// The replay cursor remains unchanged so subsequent reads continue exactly
+    /// where the caller left off. The mapping closure is responsible for
+    /// carrying over any relevant state on the inner reader (such as read
+    /// positions) before returning the replacement value.
+    #[must_use]
+    pub fn map_inner<F, T>(self, map: F) -> NegotiatedStream<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        self.into_parts().map_inner(map).into_stream()
+    }
+
     fn from_components(
         inner: R,
         decision: NegotiationPrologue,
@@ -249,6 +266,36 @@ impl<R> NegotiatedStreamParts<R> {
     #[must_use]
     pub fn into_inner(self) -> R {
         self.inner
+    }
+
+    /// Transforms the inner reader while keeping the sniffed negotiation state intact.
+    ///
+    /// This mirrors [`NegotiatedStream::map_inner`] but operates on the extracted
+    /// parts, allowing the caller to temporarily take ownership of the inner
+    /// reader, wrap it, and later rebuild the replaying stream without cloning
+    /// the buffered negotiation bytes. The supplied mapping closure is expected
+    /// to retain any pertinent state (for example, the current read position) on
+    /// the replacement reader before it is returned.
+    #[must_use]
+    pub fn map_inner<F, T>(self, map: F) -> NegotiatedStreamParts<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        let Self {
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+            inner,
+        } = self;
+
+        NegotiatedStreamParts {
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+            inner: map(inner),
+        }
     }
 
     /// Reassembles a [`NegotiatedStream`] from the extracted components.
@@ -411,5 +458,56 @@ mod tests {
             .read_to_end(&mut remainder)
             .expect("reconstructed stream yields the remaining bytes");
         assert_eq!(remainder, b"NCD: 29.0\nrest");
+    }
+
+    #[test]
+    fn map_inner_preserves_buffered_progress() {
+        let mut stream = sniff_bytes(&[0x00, 0x12, 0x34, 0x56]).expect("sniff succeeds");
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+
+        let mut prefix = [0u8; 1];
+        stream
+            .read_exact(&mut prefix)
+            .expect("read_exact delivers sniffed prefix");
+        assert_eq!(prefix, [0x00]);
+
+        let mut mapped = stream.map_inner(|cursor| {
+            let position = cursor.position();
+            let boxed = cursor.into_inner().into_boxed_slice();
+            let mut replacement = Cursor::new(boxed);
+            replacement.set_position(position);
+            replacement
+        });
+        assert_eq!(mapped.decision(), NegotiationPrologue::Binary);
+
+        let mut remainder = [0u8; 3];
+        mapped
+            .read_exact(&mut remainder)
+            .expect("replay continues from buffered position");
+        assert_eq!(&remainder, &[0x12, 0x34, 0x56]);
+    }
+
+    #[test]
+    fn parts_map_inner_allows_rewrapping_inner_reader() {
+        let data = b"@RSYNCD: 31.0\n#list";
+        let parts = sniff_bytes(data).expect("sniff succeeds").into_parts();
+        let remaining = parts.buffered_remaining();
+
+        let mapped_parts = parts.map_inner(|cursor| {
+            let position = cursor.position();
+            let boxed = cursor.into_inner().into_boxed_slice();
+            let mut replacement = Cursor::new(boxed);
+            replacement.set_position(position);
+            replacement
+        });
+        assert_eq!(mapped_parts.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(mapped_parts.buffered_remaining(), remaining);
+
+        let mut rebuilt = mapped_parts.into_stream();
+        let mut replay = Vec::new();
+        rebuilt
+            .read_to_end(&mut replay)
+            .expect("rebuilt stream yields original contents");
+        assert_eq!(replay, data);
     }
 }
