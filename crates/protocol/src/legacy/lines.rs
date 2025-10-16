@@ -46,6 +46,7 @@ pub enum LegacyDaemonMessage<'a> {
 /// variants and all remaining inputs yield [`LegacyDaemonMessage::Other`],
 /// allowing callers to gracefully handle extensions without guessing upstream's
 /// future strings.
+#[must_use = "the parsed legacy daemon message must be handled"]
 pub fn parse_legacy_daemon_message(
     line: &str,
 ) -> Result<LegacyDaemonMessage<'_>, NegotiationError> {

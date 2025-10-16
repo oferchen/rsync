@@ -9,6 +9,7 @@ use super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
 /// implementation accepts optional fractional suffixes (e.g. `.0`) but only the
 /// integer component participates in protocol negotiation. Any trailing carriage
 /// returns or line feeds are ignored.
+#[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let malformed = || malformed_legacy_greeting(trimmed);
