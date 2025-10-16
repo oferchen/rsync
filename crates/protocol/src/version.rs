@@ -25,8 +25,12 @@ pub struct ProtocolVersion(NonZeroU8);
 /// forwarding buffers. Exposing a small conversion trait keeps the public
 /// helper flexible without forcing callers to allocate temporary vectors,
 /// normalize wrappers, or clone data solely to satisfy the type signature.
+/// Implementations are provided for primitive integers, [`ProtocolVersion`],
+/// and both shared and mutable references so iterator adapters such as
+/// [`core::slice::iter`](core::slice::iter) and
+/// [`core::slice::iter_mut`](core::slice::iter_mut) can be forwarded directly.
 #[doc(hidden)]
-pub trait ProtocolVersionAdvertisement: Copy {
+pub trait ProtocolVersionAdvertisement {
     /// Returns the numeric representation expected by the negotiation logic.
     ///
     /// Implementations for integer types wider than `u8` saturate to
@@ -49,6 +53,14 @@ macro_rules! impl_protocol_version_advertisement {
             }
 
             impl ProtocolVersionAdvertisement for &$ty {
+                #[inline]
+                fn into_advertised_version(self) -> u8 {
+                    let convert = $into;
+                    convert(*self)
+                }
+            }
+
+            impl ProtocolVersionAdvertisement for &mut $ty {
                 #[inline]
                 fn into_advertised_version(self) -> u8 {
                     let convert = $into;
