@@ -82,6 +82,18 @@ impl NegotiationPrologueSniffer {
         &self.buffered
     }
 
+    /// Returns the number of bytes retained while sniffing the negotiation prologue.
+    ///
+    /// Higher layers that forward the captured prefix to the legacy ASCII parser often only
+    /// need to know how many bytes should be replayed without inspecting the raw slice. Providing
+    /// the length mirrors [`NegotiationPrologueDetector::buffered_len`] and keeps the sniffer's
+    /// API aligned with the lower-level helper while avoiding repeated `len()` calls at the call
+    /// site.
+    #[must_use]
+    pub fn buffered_len(&self) -> usize {
+        self.buffered.len()
+    }
+
     /// Consumes the sniffer and returns the owned buffer containing the bytes
     /// that were read while determining the negotiation style.
     #[must_use]
@@ -1105,6 +1117,7 @@ mod tests {
             .expect("legacy negotiation should succeed");
         assert_eq!(decision, NegotiationPrologue::LegacyAscii);
         assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(sniffer.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
 
         assert!(sniffer.legacy_prefix_complete());
         assert_eq!(sniffer.legacy_prefix_remaining(), None);
@@ -1114,6 +1127,27 @@ mod tests {
         let mut replay = sniffer.into_buffered();
         replay.extend_from_slice(&remaining);
         assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_reports_buffered_length() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        assert_eq!(sniffer.buffered_len(), 0);
+
+        let (decision, consumed) = sniffer.observe(b"@RS");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 3);
+        assert_eq!(sniffer.buffered_len(), 3);
+
+        let (decision, consumed) = sniffer.observe(b"YN");
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 2);
+        assert_eq!(sniffer.buffered_len(), 5);
+
+        let buffered = sniffer.take_buffered();
+        assert_eq!(buffered, b"@RSYN");
+        assert_eq!(sniffer.buffered_len(), 0);
+        assert_eq!(sniffer.buffered(), b"");
     }
 
     #[test]
