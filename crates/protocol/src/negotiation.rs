@@ -76,6 +76,22 @@ pub enum NegotiationPrologue {
 }
 
 impl NegotiationPrologue {
+    /// Returns a human-readable description of the negotiation style.
+    ///
+    /// The returned string mirrors the concise identifiers used throughout the
+    /// protocol crate when rendering diagnostics. Logging subsystems can use
+    /// the value directly without re-implementing the mapping from enum
+    /// variants to textual tags, keeping the terminology consistent across the
+    /// codebase.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NeedMoreData => "need-more-data",
+            Self::LegacyAscii => "legacy-ascii",
+            Self::Binary => "binary",
+        }
+    }
+
     /// Returns `true` when the negotiation style has been determined.
     ///
     /// Upstream rsync peeks at the initial byte(s) and proceeds immediately once the
@@ -107,6 +123,12 @@ impl NegotiationPrologue {
     #[inline]
     pub const fn is_binary(self) -> bool {
         matches!(self, Self::Binary)
+    }
+}
+
+impl fmt::Display for NegotiationPrologue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -918,6 +940,21 @@ mod tests {
             detect_negotiation_prologue(b""),
             NegotiationPrologue::NeedMoreData
         );
+    }
+
+    #[test]
+    fn negotiation_prologue_as_str_matches_display() {
+        let legacy = NegotiationPrologue::LegacyAscii;
+        let binary = NegotiationPrologue::Binary;
+        let undecided = NegotiationPrologue::NeedMoreData;
+
+        assert_eq!(legacy.as_str(), "legacy-ascii");
+        assert_eq!(binary.as_str(), "binary");
+        assert_eq!(undecided.as_str(), "need-more-data");
+
+        assert_eq!(legacy.to_string(), "legacy-ascii");
+        assert_eq!(binary.to_string(), "binary");
+        assert_eq!(undecided.to_string(), "need-more-data");
     }
 
     #[test]
