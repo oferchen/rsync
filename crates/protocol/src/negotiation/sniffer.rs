@@ -212,6 +212,48 @@ impl NegotiationPrologueSniffer {
         drained
     }
 
+    /// Drains only the sniffed negotiation prefix into an existing vector while preserving the
+    /// buffered remainder.
+    ///
+    /// The helper mirrors [`take_buffered_into`](Self::take_buffered_into) but restricts the
+    /// transfer to the canonical prefix captured during detection. This is useful when the caller
+    /// has already buffered additional payload that arrived in the same read and wishes to replay
+    /// just the negotiation marker without losing the trailing data. Callers must ensure the
+    /// negotiation prefix has been fully captured (for example by checking
+    /// [`requires_more_data`](Self::requires_more_data)) before invoking the helper. When invoked
+    /// while the prefix is still incomplete the method performs no work and returns `Ok(0)`. On
+    /// success the drained prefix is removed from the internal buffer so any previously buffered
+    /// remainder stays queued for subsequent processing.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into(
+        &mut self,
+        target: &mut Vec<u8>,
+    ) -> Result<usize, TryReserveError> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            target.clear();
+            return Ok(0);
+        }
+
+        if target.capacity() < prefix_len {
+            let additional = prefix_len.saturating_sub(target.len());
+            if additional > 0 {
+                target.try_reserve_exact(additional)?;
+            }
+        }
+
+        target.clear();
+        target.extend_from_slice(&self.buffered[..prefix_len]);
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        Ok(prefix_len)
+    }
+
     /// Drains the buffered bytes into an existing vector supplied by the caller.
     ///
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
