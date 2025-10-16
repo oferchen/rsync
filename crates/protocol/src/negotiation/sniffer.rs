@@ -257,38 +257,6 @@ impl NegotiationPrologueSniffer {
         Ok(prefix_len)
     }
 
-    /// Writes the sniffed negotiation prefix to a [`Write`] implementation while keeping the
-    /// buffered remainder intact.
-    ///
-    /// Callers that immediately forward the canonical `@RSYNCD:` marker into another transport
-    /// or logging sink can use this helper to avoid an intermediate allocation. The method mirrors
-    /// [`take_sniffed_prefix_into`](Self::take_sniffed_prefix_into) by returning the number of bytes
-    /// written and leaving the buffered remainder queued for subsequent processing. If the
-    /// negotiation prefix has not yet been fully captured (for example because additional bytes
-    /// still need to be read from the transport) the function is a no-op and returns `Ok(0)`. I/O
-    /// errors surface unchanged and the internal buffer remains untouched so the caller can retry or
-    /// report the failure.
-    #[must_use = "negotiation prefix length is required to replay the handshake"]
-    pub fn take_sniffed_prefix_into_writer<W: Write>(
-        &mut self,
-        target: &mut W,
-    ) -> io::Result<usize> {
-        if self.requires_more_data() {
-            return Ok(0);
-        }
-
-        let prefix_len = self.sniffed_prefix_len();
-        if prefix_len == 0 {
-            return Ok(0);
-        }
-
-        target.write_all(&self.buffered[..prefix_len])?;
-        self.buffered.drain(..prefix_len);
-        self.prefix_bytes_retained = 0;
-
-        Ok(prefix_len)
-    }
-
     /// Returns the sniffed negotiation prefix as an owned vector while preserving any buffered
     /// remainder.
     ///
