@@ -7,9 +7,6 @@ use crate::envelope::{
     EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader,
 };
 
-#[cfg(test)]
-use crate::envelope::MPLEX_BASE;
-
 /// A decoded multiplexed message consisting of the tag and payload bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageFrame {
