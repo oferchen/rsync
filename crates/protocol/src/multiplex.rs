@@ -130,6 +130,17 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
     write_all_vectored(writer, &header_bytes, payload)
 }
 
+/// Sends an already constructed [`MessageFrame`] over `writer`.
+///
+/// The helper mirrors [`send_msg`] but allows callers that already decoded or constructed a
+/// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
+/// The payload length has already been validated by [`MessageFrame::new`], so the function simply
+/// forwards to [`send_msg`] to reuse the upstream-compatible envelope encoding and vectored write
+/// behavior.
+pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
+    send_msg(writer, frame.code(), frame.payload())
+}
+
 /// Receives the next multiplexed message from `reader`.
 ///
 /// The function blocks until the full header and payload are read or an I/O
@@ -375,6 +386,34 @@ mod tests {
         let mut expected = Vec::from(header.encode());
         expected.extend_from_slice(payload);
         assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_frame_matches_send_msg_encoding() {
+        let payload = b"payload bytes".to_vec();
+        let frame = MessageFrame::new(MessageCode::Info, payload).expect("frame is valid");
+
+        let mut via_send_msg = Vec::new();
+        send_msg(&mut via_send_msg, frame.code(), frame.payload()).expect("send_msg succeeds");
+
+        let mut via_send_frame = Vec::new();
+        send_frame(&mut via_send_frame, &frame).expect("send_frame succeeds");
+
+        assert_eq!(via_send_frame, via_send_msg);
+    }
+
+    #[test]
+    fn send_frame_handles_empty_payloads() {
+        let frame = MessageFrame::new(MessageCode::Error, Vec::new()).expect("frame is valid");
+
+        let mut buffer = Vec::new();
+        send_frame(&mut buffer, &frame).expect("send_frame succeeds");
+
+        assert_eq!(buffer.len(), HEADER_LEN);
+        assert_eq!(
+            &buffer[..HEADER_LEN],
+            &MessageHeader::new(frame.code(), 0).unwrap().encode()
+        );
     }
 
     #[test]
