@@ -1441,6 +1441,24 @@ fn read_legacy_daemon_line_handles_interrupted_reads() {
 }
 
 #[test]
+fn read_legacy_daemon_line_preserves_bytes_consumed_during_detection() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(b"@RZYNCD: 31.0\n".to_vec());
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("negotiation sniffing should succeed");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(sniffer.buffered(), b"@RZYNCD:");
+
+    let mut line = Vec::new();
+    read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+        .expect("legacy greeting should include the bytes read during detection");
+
+    assert_eq!(line, b"@RZYNCD: 31.0\n");
+}
+
+#[test]
 fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(b"@");
