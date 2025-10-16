@@ -201,6 +201,7 @@ fn protocol_version_converts_to_wider_unsigned_primitives() {
         assert_eq!(u64::from(version), u64::from(expected));
         assert_eq!(u128::from(version), u128::from(expected));
         assert_eq!(usize::from(version), usize::from(expected));
+        assert_eq!(version.as_usize(), usize::from(expected));
     }
 }
 

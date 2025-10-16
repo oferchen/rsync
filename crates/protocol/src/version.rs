@@ -843,6 +843,29 @@ impl ProtocolVersion {
         self.0.get()
     }
 
+    /// Returns the numeric protocol value as a [`usize`].
+    ///
+    /// Upstream rsync frequently indexes tables using protocol numbers. Rust's
+    /// [`From`] conversions for integer types are not `const`, which makes it
+    /// awkward to perform the same calculation when constructing compile-time
+    /// lookup tables. Exposing a dedicated helper keeps higher layers in parity
+    /// while enabling array indexing and other arithmetic in constant contexts
+    /// without re-implementing the cast at each call site.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// const NEWEST_INDEX: usize = ProtocolVersion::NEWEST.as_usize();
+    /// assert_eq!(NEWEST_INDEX, ProtocolVersion::NEWEST.as_u8() as usize);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.as_u8() as usize
+    }
+
     /// Returns the non-zero byte representation used in protocol negotiation.
     ///
     /// Upstream rsync frequently stores negotiated protocol versions in
