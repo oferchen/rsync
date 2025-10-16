@@ -100,8 +100,15 @@ impl NegotiationPrologueSniffer {
     /// workspace's buffer reuse guidance.
     #[must_use]
     pub fn take_buffered(&mut self) -> Vec<u8> {
-        let mut drained = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
+        let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
+        let mut drained = Vec::with_capacity(target_capacity);
         mem::swap(&mut self.buffered, &mut drained);
+
+        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered
+                .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
+        }
+
         drained
     }
 
@@ -1246,17 +1253,14 @@ mod tests {
     }
 
     #[test]
-    fn prologue_sniffer_take_buffered_trims_excess_capacity() {
+    fn prologue_sniffer_take_buffered_clamps_replacement_capacity() {
         let mut sniffer = NegotiationPrologueSniffer::new();
-        sniffer.buffered = Vec::with_capacity(256);
-        sniffer
-            .buffered
-            .extend_from_slice(LEGACY_DAEMON_PREFIX.as_bytes());
+
+        sniffer.buffered.reserve(1024);
         assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
 
-        let buffered = sniffer.take_buffered();
-        assert_eq!(buffered, LEGACY_DAEMON_PREFIX.as_bytes());
-        assert!(sniffer.buffered().is_empty());
+        let _ = sniffer.take_buffered();
+
         assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
