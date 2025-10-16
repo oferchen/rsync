@@ -196,7 +196,7 @@ impl NegotiationPrologueSniffer {
     /// required while parsing malformed greetings. This mirrors the
     /// shrink-to-fit behavior provided by [`take_buffered`](Self::take_buffered)
     /// and keeps the helper suitable for long-lived connection pools.
-    #[must_use]
+    #[must_use = "the drained negotiation prefix must be replayed"]
     pub fn into_buffered(mut self) -> Vec<u8> {
         if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
             self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
@@ -214,7 +214,7 @@ impl NegotiationPrologueSniffer {
     /// capacity is capped at the canonical legacy prefix length so subsequent
     /// detections do not retain unbounded allocations while still satisfying the
     /// workspace's buffer reuse guidance.
-    #[must_use]
+    #[must_use = "the drained negotiation prefix must be replayed"]
     pub fn take_buffered(&mut self) -> Vec<u8> {
         let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
         let mut drained = Vec::with_capacity(target_capacity);
