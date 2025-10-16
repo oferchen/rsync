@@ -211,6 +211,10 @@ fn ensure_payload_length(len: usize) -> io::Result<u32> {
 
 fn reserve_payload(buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
     if buffer.capacity() < len {
+        // `Vec::try_reserve_exact` interprets the requested amount relative to the current length
+        // of the vector rather than its spare capacity. Using the difference between the target
+        // length and the existing length therefore guarantees that the resulting capacity can
+        // hold `len` bytes without resorting to temporary `unsafe` length adjustments.
         let additional = len.saturating_sub(buffer.len());
         debug_assert!(
             additional > 0,
