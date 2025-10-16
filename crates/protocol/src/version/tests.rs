@@ -335,6 +335,32 @@ fn supported_protocol_helpers_remain_consistent() {
 }
 
 #[test]
+fn supported_protocol_bitmap_matches_expected_bits() {
+    let bitmap = ProtocolVersion::supported_protocol_bitmap();
+    assert_eq!(bitmap, SUPPORTED_PROTOCOL_BITMAP);
+    assert_eq!(bitmap.count_ones() as usize, SUPPORTED_PROTOCOL_COUNT);
+
+    for &version in &SUPPORTED_PROTOCOLS {
+        let mask = 1u64 << version;
+        assert_ne!(bitmap & mask, 0, "bit for protocol {version} must be set");
+    }
+
+    let lower_mask = (1u64 << ProtocolVersion::OLDEST.as_u8()) - 1;
+    assert_eq!(
+        bitmap & lower_mask,
+        0,
+        "bitmap must not contain bits below oldest"
+    );
+
+    let upper_shift = usize::from(ProtocolVersion::NEWEST.as_u8()) + 1;
+    assert_eq!(
+        bitmap >> upper_shift,
+        0,
+        "bitmap must not contain bits above newest"
+    );
+}
+
+#[test]
 fn select_highest_mutual_accepts_wider_integer_advertisements() {
     let peers = [u16::from(ProtocolVersion::NEWEST.as_u8()), 0u16];
     let negotiated = select_highest_mutual(peers).expect("wider integers supported");
