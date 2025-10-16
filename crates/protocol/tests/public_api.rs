@@ -1,6 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use rsync_protocol::{ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual};
+use rsync_protocol::{
+    LogCode, ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
+};
 
 #[derive(Clone, Copy)]
 struct CustomAdvertised(u8);
@@ -56,4 +58,49 @@ fn supported_protocol_exports_cover_range() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
+}
+
+#[test]
+fn log_code_round_trips_between_numeric_and_name() {
+    for (index, &code) in LogCode::all().iter().enumerate() {
+        let numeric = u8::from(code);
+        assert_eq!(numeric, index as u8, "numeric order must match upstream table");
+
+        let parsed_from_numeric = LogCode::try_from(numeric).expect("numeric value should parse");
+        assert_eq!(parsed_from_numeric, code);
+
+        let name = code.name();
+        let parsed_from_name = name.parse::<LogCode>().expect("name should parse");
+        assert_eq!(parsed_from_name, code);
+
+        // Display uses the upstream mnemonic identifier verbatim.
+        assert_eq!(code.to_string(), name);
+    }
+}
+
+#[test]
+fn parse_log_code_error_reports_invalid_numeric_values() {
+    let err = LogCode::try_from(9).expect_err("value above table must fail");
+
+    assert!(matches!(err, ParseLogCodeError::InvalidValue(9)));
+    assert_eq!(err.invalid_value(), Some(9));
+    assert_eq!(err.invalid_name(), None);
+    assert_eq!(err.to_string(), "unknown log code value: 9");
+}
+
+#[test]
+fn parse_log_code_error_reports_invalid_names() {
+    let err = "NOTREAL".parse::<LogCode>().expect_err("unknown name must fail");
+
+    match &err {
+        ParseLogCodeError::InvalidName(name) => {
+            assert_eq!(name, "NOTREAL");
+        }
+        other => panic!("unexpected parse error variant: {other:?}"),
+    }
+
+    // The borrowed accessors continue to work even after pattern matching.
+    assert_eq!(err.invalid_name(), Some("NOTREAL"));
+    assert_eq!(err.invalid_value(), None);
+    assert_eq!(err.to_string(), "unknown log code name: \"NOTREAL\"");
 }
