@@ -7,7 +7,38 @@
 //! The crate is split into small modules that mirror upstream rsync's
 //! negotiation building blocks. Re-exported APIs allow higher layers to remain
 //! agnostic to the internal layout while benefitting from the reduced file
-//! sizes required by the workspace style guide.
+//! sizes required by the workspace style guide. The utilities exposed here cover
+//! both the initial protocol handshake and the multiplexed control stream used
+//! after a session has been negotiated.
+//!
+//! # Examples
+//!
+//! Determine whether a buffered prologue belongs to the legacy ASCII greeting or
+//! the binary negotiation. The helper behaves exactly like upstream rsync's
+//! `io.c:check_protok` logic by classifying the session based on the first byte.
+//!
+//! ```
+//! use rsync_protocol::{detect_negotiation_prologue, NegotiationPrologue};
+//!
+//! assert_eq!(
+//!     detect_negotiation_prologue(b"@RSYNCD: 30.0\n"),
+//!     NegotiationPrologue::LegacyAscii
+//! );
+//! assert_eq!(
+//!     detect_negotiation_prologue(&[0x00, 0x20, 0x00, 0x00]),
+//!     NegotiationPrologue::Binary
+//! );
+//! ```
+//!
+//! Once the negotiation style is known, the highest mutually supported protocol
+//! can be derived from the peer advertisement.
+//!
+//! ```
+//! use rsync_protocol::{select_highest_mutual, ProtocolVersion};
+//!
+//! let negotiated = select_highest_mutual([32, 31]).expect("mutual version exists");
+//! assert_eq!(negotiated, ProtocolVersion::NEWEST);
+//! ```
 
 mod envelope;
 mod error;
