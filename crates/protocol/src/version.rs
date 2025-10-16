@@ -829,7 +829,28 @@ impl ProtocolVersion {
     /// understands by clamping the negotiated value to its newest supported
     /// protocol. Versions older than [`ProtocolVersion::OLDEST`] remain
     /// unsupported.
+    /// # Examples
+    ///
+    /// Clamp future protocol advertisements down to the newest supported
+    /// version while rejecting values that predate the supported range.
+    ///
+    /// ```
+    /// use rsync_protocol::{NegotiationError, ProtocolVersion};
+    ///
+    /// let newest = ProtocolVersion::from_peer_advertisement(40)
+    ///     .expect("future versions clamp to the newest supported value");
+    /// assert_eq!(newest, ProtocolVersion::NEWEST);
+    ///
+    /// let too_old = ProtocolVersion::from_peer_advertisement(27)
+    ///     .expect_err("older protocols are rejected");
+    /// assert_eq!(too_old, NegotiationError::UnsupportedVersion(27));
+    ///
+    /// let zero = ProtocolVersion::from_peer_advertisement(0)
+    ///     .expect_err("protocol 0 is reserved for negotiation failures");
+    /// assert_eq!(zero, NegotiationError::UnsupportedVersion(0));
+    /// ```
     #[must_use = "the negotiated protocol version must be handled"]
+    #[inline]
     pub fn from_peer_advertisement(value: u8) -> Result<Self, NegotiationError> {
         if value < Self::OLDEST.as_u8() {
             return Err(NegotiationError::UnsupportedVersion(value));
