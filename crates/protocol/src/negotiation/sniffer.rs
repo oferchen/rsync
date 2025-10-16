@@ -423,7 +423,13 @@ impl NegotiationPrologueSniffer {
                 Ok(read) => {
                     let observed = &scratch[..read];
                     let (decision, consumed) = self.observe(observed);
-                    debug_assert_eq!(consumed, observed.len());
+                    debug_assert!(
+                        consumed <= observed.len(),
+                        "sniffer must not consume more bytes than were observed"
+                    );
+                    if consumed < observed.len() {
+                        self.buffered.extend_from_slice(&observed[consumed..]);
+                    }
                     let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
                     if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
                         return Ok(decision);
