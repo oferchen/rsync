@@ -110,6 +110,14 @@ fn select_highest_mutual_accepts_slice_iterators() {
 }
 
 #[test]
+fn select_highest_mutual_accepts_mut_slice_iterators() {
+    let mut peers = [31u8, 29, 32];
+    let negotiated = select_highest_mutual(peers.iter_mut()).expect("mut slice iter works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    assert_eq!(peers, [31u8, 29, 32]);
+}
+
+#[test]
 fn select_highest_mutual_accepts_protocol_version_references() {
     let peers = ProtocolVersion::supported_versions();
     let negotiated = select_highest_mutual(peers.iter()).expect("refs work");
