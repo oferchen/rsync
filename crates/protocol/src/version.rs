@@ -12,6 +12,7 @@ use crate::error::NegotiationError;
 
 const OLDEST_SUPPORTED_PROTOCOL: u8 = 28;
 const NEWEST_SUPPORTED_PROTOCOL: u8 = 32;
+const FIRST_BINARY_NEGOTIATION_PROTOCOL: u8 = 30;
 
 /// Inclusive range of protocol versions that upstream rsync 3.4.1 understands.
 const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> =
@@ -369,6 +370,21 @@ const _: () = {
         "supported protocol bounds tuple must end at the newest supported version",
     );
 
+    let binary_intro = ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.as_u8();
+    assert!(
+        ProtocolVersion::OLDEST.as_u8() <= binary_intro
+            && binary_intro <= ProtocolVersion::NEWEST.as_u8(),
+        "binary negotiation threshold must fall within the supported range",
+    );
+    assert!(
+        ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.uses_binary_negotiation(),
+        "binary negotiation threshold must classify as binary",
+    );
+    assert!(
+        ProtocolVersion::new_const(binary_intro - 1).uses_legacy_ascii_negotiation(),
+        "protocol immediately preceding binary threshold must use legacy negotiation",
+    );
+
     let upstream_oldest = *UPSTREAM_PROTOCOL_RANGE.start();
     let upstream_newest = *UPSTREAM_PROTOCOL_RANGE.end();
     assert!(
@@ -530,6 +546,11 @@ impl ProtocolVersion {
     /// The oldest protocol version supported by upstream rsync 3.4.1.
     pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(OLDEST_SUPPORTED_PROTOCOL);
 
+    /// Protocol version at which rsync switched from the legacy ASCII negotiation to the binary
+    /// handshake.
+    pub const BINARY_NEGOTIATION_INTRODUCED: ProtocolVersion =
+        ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
+
     /// Array of protocol versions supported by the Rust implementation,
     /// ordered from newest to oldest.
     pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT] =
@@ -588,6 +609,19 @@ impl ProtocolVersion {
         }
 
         (SUPPORTED_PROTOCOL_BITMAP & (1u64 << value)) != 0
+    }
+
+    /// Returns `true` when the protocol participates in the binary negotiation introduced with
+    /// protocol 30.
+    #[must_use]
+    pub const fn uses_binary_negotiation(self) -> bool {
+        self.as_u8() >= Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
+    }
+
+    /// Returns `true` when the protocol uses the legacy ASCII `@RSYNCD:` negotiation path.
+    #[must_use]
+    pub const fn uses_legacy_ascii_negotiation(self) -> bool {
+        self.as_u8() < Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
 
     /// Returns the numeric protocol identifiers supported by this
