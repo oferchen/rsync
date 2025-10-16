@@ -101,14 +101,15 @@ impl_protocol_version_advertisement!(
 
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
+        #[doc = "Number of protocol versions supported by the Rust implementation."]
+        pub const SUPPORTED_PROTOCOL_COUNT: usize = declare_supported_protocols!(@len $($ver),+);
+
         #[doc = "Protocol versions supported by the Rust implementation, ordered from"]
         #[doc = "newest to oldest as required by upstream rsync's negotiation logic."]
-        pub const SUPPORTED_PROTOCOLS: [u8; declare_supported_protocols!(@len $($ver),+)] = [
+        pub const SUPPORTED_PROTOCOLS: [u8; SUPPORTED_PROTOCOL_COUNT] = [
             $($ver),+
         ];
-        const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion;
-            declare_supported_protocols!(@len $($ver),+)
-        ] = [
+        const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT] = [
             $(ProtocolVersion::new_const($ver)),+
         ];
     };
@@ -132,6 +133,10 @@ const _: () = {
         "supported protocol list must not be empty"
     );
     assert!(
+        protocols.len() == SUPPORTED_PROTOCOL_COUNT,
+        "supported protocol count must match list length",
+    );
+    assert!(
         protocols[0] == ProtocolVersion::NEWEST.as_u8(),
         "newest supported protocol must lead the list",
     );
@@ -141,7 +146,7 @@ const _: () = {
     );
 
     let mut index = 1usize;
-    while index < protocols.len() {
+    while index < SUPPORTED_PROTOCOL_COUNT {
         assert!(
             protocols[index - 1] > protocols[index],
             "supported protocols must be strictly descending",
@@ -156,7 +161,7 @@ const _: () = {
 
     let versions = ProtocolVersion::SUPPORTED_VERSIONS;
     assert!(
-        versions.len() == protocols.len(),
+        versions.len() == SUPPORTED_PROTOCOL_COUNT,
         "cached ProtocolVersion list must mirror numeric protocols",
     );
 
@@ -186,7 +191,7 @@ impl ProtocolVersion {
 
     /// Array of protocol versions supported by the Rust implementation,
     /// ordered from newest to oldest.
-    pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOLS.len()] =
+    pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT] =
         SUPPORTED_PROTOCOL_VERSIONS;
 
     /// Returns a reference to the list of supported protocol versions in
@@ -213,7 +218,7 @@ impl ProtocolVersion {
     #[must_use]
     pub const fn is_supported_protocol_number(value: u8) -> bool {
         let mut index = 0usize;
-        while index < SUPPORTED_PROTOCOLS.len() {
+        while index < SUPPORTED_PROTOCOL_COUNT {
             if SUPPORTED_PROTOCOLS[index] == value {
                 return true;
             }
@@ -243,7 +248,7 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector.
     #[must_use]
-    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOLS.len() }> {
+    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOL_COUNT }> {
         SUPPORTED_PROTOCOLS.into_iter()
     }
 
@@ -280,7 +285,7 @@ impl ProtocolVersion {
     /// without borrowing the underlying array can rely on this helper to
     /// avoid manual slice handling while still matching upstream parity.
     #[must_use]
-    pub fn supported_versions_iter() -> IntoIter<ProtocolVersion, { SUPPORTED_PROTOCOLS.len() }> {
+    pub fn supported_versions_iter() -> IntoIter<ProtocolVersion, { SUPPORTED_PROTOCOL_COUNT }> {
         Self::SUPPORTED_VERSIONS.into_iter()
     }
 
