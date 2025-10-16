@@ -2,7 +2,7 @@ use core::slice;
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN};
 
-use super::NegotiationPrologue;
+use super::{BufferedPrefixTooSmall, NegotiationPrologue};
 
 /// Incremental detector for the negotiation prologue style.
 ///
@@ -240,6 +240,30 @@ impl NegotiationPrologueDetector {
     #[inline]
     pub fn buffered_prefix(&self) -> &[u8] {
         &self.buffer[..self.len]
+    }
+
+    /// Copies the buffered prefix into the caller-provided slice.
+    ///
+    /// Legacy negotiations require replaying the already-consumed bytes into the
+    /// greeting parser once enough data has been read from the transport. Higher
+    /// layers that reuse stack-allocated scratch space can avoid temporary
+    /// vectors by copying the buffered prefix into an existing slice instead of
+    /// borrowing it directly. When the destination slice is too small to hold
+    /// the buffered prefix, a [`BufferedPrefixTooSmall`] error is returned and no
+    /// data is written to the provided slice.
+    #[must_use]
+    pub fn copy_buffered_prefix_into(
+        &self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        let required = self.len;
+
+        if target.len() < required {
+            return Err(BufferedPrefixTooSmall::new(required, target.len()));
+        }
+
+        target[..required].copy_from_slice(&self.buffer[..required]);
+        Ok(required)
     }
 
     /// Returns the number of bytes retained in the prefix buffer.
