@@ -400,6 +400,18 @@ impl PartialEq<ProtocolVersion> for u8 {
     }
 }
 
+impl PartialEq<NonZeroU8> for ProtocolVersion {
+    fn eq(&self, other: &NonZeroU8) -> bool {
+        self.as_non_zero() == *other
+    }
+}
+
+impl PartialEq<ProtocolVersion> for NonZeroU8 {
+    fn eq(&self, other: &ProtocolVersion) -> bool {
+        *self == other.as_non_zero()
+    }
+}
+
 /// Selects the highest mutual protocol version between the Rust implementation and a peer.
 ///
 /// The caller provides the list of protocol versions advertised by the peer in any order.
