@@ -481,6 +481,43 @@ impl From<ProtocolVersion> for NonZeroU8 {
     }
 }
 
+macro_rules! impl_from_protocol_version_for_unsigned {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl From<ProtocolVersion> for $ty {
+                #[inline]
+                fn from(version: ProtocolVersion) -> Self {
+                    <$ty as From<u8>>::from(version.as_u8())
+                }
+            }
+        )+
+    };
+}
+
+impl_from_protocol_version_for_unsigned!(u16, u32, u64, u128, usize);
+
+macro_rules! impl_from_protocol_version_for_nonzero_unsigned {
+    ($($ty:ty => $base:ty),+ $(,)?) => {
+        $(
+            impl From<ProtocolVersion> for $ty {
+                #[inline]
+                fn from(version: ProtocolVersion) -> Self {
+                    <$ty>::new(<$base as From<u8>>::from(version.as_u8()))
+                        .expect("protocol versions are always non-zero")
+                }
+            }
+        )+
+    };
+}
+
+impl_from_protocol_version_for_nonzero_unsigned!(
+    NonZeroU16 => u16,
+    NonZeroU32 => u32,
+    NonZeroU64 => u64,
+    NonZeroU128 => u128,
+    NonZeroUsize => usize,
+);
+
 impl TryFrom<u8> for ProtocolVersion {
     type Error = NegotiationError;
 

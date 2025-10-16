@@ -190,6 +190,30 @@ fn select_highest_mutual_accepts_non_zero_signed_advertisements() {
 }
 
 #[test]
+fn protocol_version_converts_to_wider_unsigned_primitives() {
+    for version in ProtocolVersion::supported_versions_iter() {
+        let expected = version.as_u8();
+        assert_eq!(u16::from(version), u16::from(expected));
+        assert_eq!(u32::from(version), u32::from(expected));
+        assert_eq!(u64::from(version), u64::from(expected));
+        assert_eq!(u128::from(version), u128::from(expected));
+        assert_eq!(usize::from(version), usize::from(expected));
+    }
+}
+
+#[test]
+fn protocol_version_converts_to_nonzero_wider_unsigned_primitives() {
+    for version in ProtocolVersion::supported_versions_iter() {
+        let expected = version.as_u8();
+        assert_eq!(NonZeroU16::from(version).get(), u16::from(expected));
+        assert_eq!(NonZeroU32::from(version).get(), u32::from(expected));
+        assert_eq!(NonZeroU64::from(version).get(), u64::from(expected));
+        assert_eq!(NonZeroU128::from(version).get(), u128::from(expected));
+        assert_eq!(NonZeroUsize::from(version).get(), usize::from(expected));
+    }
+}
+
+#[test]
 fn select_highest_mutual_accepts_wrapping_unsigned_advertisements() {
     let negotiated = select_highest_mutual([
         Wrapping::<u16>(u16::from(ProtocolVersion::NEWEST.as_u8())),
