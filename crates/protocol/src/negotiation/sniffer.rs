@@ -349,15 +349,10 @@ impl NegotiationPrologueSniffer {
     /// exchange uses the legacy ASCII handshake. Callers that need to know how many additional
     /// bytes are required can query [`legacy_prefix_remaining`](Self::legacy_prefix_remaining).
     /// Any remaining data in `chunk` is left untouched so higher layers can process it according
-    /// to the negotiated protocol.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TryReserveError`] if the sniffer is unable to grow its internal buffer while
-    /// storing the observed bytes. This mirrors the allocation failure semantics used throughout
-    /// the crate so higher layers can surface out-of-memory conditions as I/O errors instead of
-    /// panicking.
-    #[must_use]
+    /// to the negotiated protocol. If reserving capacity for the buffered prefix fails, the
+    /// allocation error is surfaced instead of panicking so higher layers can convert it into an
+    /// [`io::Error`].
+    #[must_use = "process the negotiation decision and potential allocation error"]
     pub fn observe(
         &mut self,
         chunk: &[u8],
@@ -413,15 +408,11 @@ impl NegotiationPrologueSniffer {
     /// The helper mirrors [`observe`](Self::observe) but keeps the common
     /// "one-octet-at-a-time" call pattern used by upstream rsync ergonomic.
     /// Callers can therefore forward individual bytes without allocating a
-    /// temporary slice. The returned decision matches the value that would be
-    /// produced by [`observe`](Self::observe) while ensuring at most a single
-    /// byte is accounted for as consumed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TryReserveError`] if the sniffer cannot grow its buffer while storing the
-    /// byte.
-    #[must_use]
+    /// temporary slice. The returned result mirrors [`observe`](Self::observe):
+    /// on success it yields the negotiation decision while ensuring at most a
+    /// single byte is accounted for as consumed, and any allocation failure is
+    /// surfaced instead of panicking.
+    #[must_use = "process the negotiation decision or surface allocation failures"]
     #[inline]
     pub fn observe_byte(&mut self, byte: u8) -> Result<NegotiationPrologue, TryReserveError> {
         let (decision, consumed) = self.observe(slice::from_ref(&byte))?;
