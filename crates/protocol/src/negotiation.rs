@@ -95,13 +95,12 @@ impl NegotiationPrologueSniffer {
     /// parser (or feed the initial binary byte back into the negotiation
     /// handler) can drain the buffer without relinquishing ownership of the
     /// sniffer. The internal storage is replaced with an empty vector whose
-    /// capacity matches the previous allocation (clamped to the canonical legacy
-    /// prefix length) so subsequent detections can continue reusing the
-    /// allocation in line with the workspace's buffer reuse guidance.
+    /// capacity is capped at the canonical legacy prefix length so subsequent
+    /// detections do not retain unbounded allocations while still satisfying the
+    /// workspace's buffer reuse guidance.
     #[must_use]
     pub fn take_buffered(&mut self) -> Vec<u8> {
-        let capacity = self.buffered.capacity().max(LEGACY_DAEMON_PREFIX_LEN);
-        let mut drained = Vec::with_capacity(capacity);
+        let mut drained = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
         mem::swap(&mut self.buffered, &mut drained);
         drained
     }
@@ -1244,6 +1243,21 @@ mod tests {
         assert_eq!(buffered, [0x80]);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_trims_excess_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.buffered = Vec::with_capacity(256);
+        sniffer
+            .buffered
+            .extend_from_slice(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
+
+        let buffered = sniffer.take_buffered();
+        assert_eq!(buffered, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
     #[test]
