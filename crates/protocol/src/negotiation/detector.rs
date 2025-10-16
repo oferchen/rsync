@@ -137,6 +137,31 @@ impl NegotiationPrologueDetector {
         matches!(self.decided, Some(decision) if decision.is_decided())
     }
 
+    /// Reports whether the detector has determined that the peer selected the legacy
+    /// ASCII negotiation.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_legacy`] while accounting for the
+    /// possibility that a decision has not yet been cached. Higher layers that only need
+    /// a boolean view of the cached state can therefore rely on this method instead of
+    /// matching on [`Self::decision`]. The predicate remains `true` even when additional
+    /// prefix bytes still need to be buffered, matching upstream rsync's behavior where
+    /// the legacy decision is sticky once the initial `@` byte has been observed.
+    #[must_use = "check whether the detector classified the exchange as legacy ASCII"]
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self.decided, Some(decision) if decision.is_legacy())
+    }
+
+    /// Reports whether the detector has determined that the peer selected the binary
+    /// negotiation path.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_binary`] while tolerating undecided
+    /// states. It becomes `true` as soon as the first byte rules out the legacy ASCII
+    /// negotiation, allowing call sites to react immediately without awaiting further I/O.
+    #[must_use = "check whether the detector classified the exchange as binary"]
+    pub const fn is_binary(&self) -> bool {
+        matches!(self.decided, Some(decision) if decision.is_binary())
+    }
+
     /// Reports whether additional bytes must be read before the negotiation prologue is
     /// fully understood.
     ///
