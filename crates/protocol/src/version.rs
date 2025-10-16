@@ -1,6 +1,6 @@
-use core::array::IntoIter;
 use core::convert::TryFrom;
 use core::fmt;
+use core::iter::FusedIterator;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
@@ -377,6 +377,143 @@ const _: () = {
     );
 };
 
+/// Iterator over the numeric rsync protocol versions supported by this implementation.
+///
+/// The iterator yields the canonical newest-to-oldest ordering without cloning the
+/// underlying constant array, providing an allocation-free view that mirrors upstream
+/// rsync's tables. The type implements [`DoubleEndedIterator`] and
+/// [`ExactSizeIterator`], making it suitable for diagnostics that need to walk the list
+/// in either direction while retaining the precise remaining length.
+#[derive(Clone, Copy, Debug)]
+pub struct SupportedProtocolNumbersIter {
+    slice: &'static [u8],
+    front: usize,
+    back: usize,
+}
+
+impl SupportedProtocolNumbersIter {
+    pub(crate) const fn new(slice: &'static [u8]) -> Self {
+        Self {
+            slice,
+            front: 0,
+            back: slice.len(),
+        }
+    }
+
+    const fn remaining(&self) -> usize {
+        self.back.saturating_sub(self.front)
+    }
+}
+
+impl Iterator for SupportedProtocolNumbersIter {
+    type Item = u8;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+
+        let value = self.slice[self.front];
+        self.front += 1;
+        Some(value)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.remaining();
+        (remaining, Some(remaining))
+    }
+}
+
+impl DoubleEndedIterator for SupportedProtocolNumbersIter {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+
+        self.back -= 1;
+        Some(self.slice[self.back])
+    }
+}
+
+impl ExactSizeIterator for SupportedProtocolNumbersIter {
+    #[inline]
+    fn len(&self) -> usize {
+        self.remaining()
+    }
+}
+
+impl FusedIterator for SupportedProtocolNumbersIter {}
+
+/// Iterator over the strongly typed rsync protocol versions supported by this implementation.
+///
+/// The iterator mirrors [`SupportedProtocolNumbersIter`] but yields [`ProtocolVersion`] values
+/// directly, keeping higher layers type-safe without materialising intermediate arrays.
+#[derive(Clone, Copy, Debug)]
+pub struct SupportedVersionsIter {
+    slice: &'static [ProtocolVersion],
+    front: usize,
+    back: usize,
+}
+
+impl SupportedVersionsIter {
+    pub(crate) const fn new(slice: &'static [ProtocolVersion]) -> Self {
+        Self {
+            slice,
+            front: 0,
+            back: slice.len(),
+        }
+    }
+
+    const fn remaining(&self) -> usize {
+        self.back.saturating_sub(self.front)
+    }
+}
+
+impl Iterator for SupportedVersionsIter {
+    type Item = ProtocolVersion;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+
+        let value = self.slice[self.front];
+        self.front += 1;
+        Some(value)
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.remaining();
+        (remaining, Some(remaining))
+    }
+}
+
+impl DoubleEndedIterator for SupportedVersionsIter {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+
+        self.back -= 1;
+        Some(self.slice[self.back])
+    }
+}
+
+impl ExactSizeIterator for SupportedVersionsIter {
+    #[inline]
+    fn len(&self) -> usize {
+        self.remaining()
+    }
+}
+
+impl FusedIterator for SupportedVersionsIter {}
+
 impl ProtocolVersion {
     pub(crate) const fn new_const(value: u8) -> Self {
         match NonZeroU8::new(value) {
@@ -497,8 +634,8 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector.
     #[must_use]
-    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOL_COUNT }> {
-        SUPPORTED_PROTOCOLS.into_iter()
+    pub fn supported_protocol_numbers_iter() -> SupportedProtocolNumbersIter {
+        SupportedProtocolNumbersIter::new(Self::supported_protocol_numbers())
     }
 
     /// Returns the inclusive range of protocol versions supported by this implementation.
@@ -558,8 +695,8 @@ impl ProtocolVersion {
     /// without borrowing the underlying array can rely on this helper to
     /// avoid manual slice handling while still matching upstream parity.
     #[must_use]
-    pub fn supported_versions_iter() -> IntoIter<ProtocolVersion, { SUPPORTED_PROTOCOL_COUNT }> {
-        Self::SUPPORTED_VERSIONS.into_iter()
+    pub fn supported_versions_iter() -> SupportedVersionsIter {
+        SupportedVersionsIter::new(Self::supported_versions())
     }
 
     /// Attempts to construct a [`ProtocolVersion`] from a byte that is known to be within the

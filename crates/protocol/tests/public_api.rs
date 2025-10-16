@@ -4,8 +4,9 @@ use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
     MessageCode, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
     ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
-    select_highest_mutual,
+    SupportedProtocolNumbersIter, SupportedVersionsIter, select_highest_mutual,
 };
+use std::iter::FusedIterator;
 
 #[derive(Clone, Copy)]
 struct CustomAdvertised(u8);
@@ -72,6 +73,32 @@ fn supported_protocol_exports_cover_range() {
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
     assert_eq!(rsync_protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
+}
+
+#[test]
+fn supported_protocol_iter_types_expose_exact_size_and_double_ended_iteration() {
+    fn assert_traits<I>(mut iter: I)
+    where
+        I: ExactSizeIterator + DoubleEndedIterator + Clone + FusedIterator,
+    {
+        let clone = iter.clone();
+        assert_eq!(clone.len(), iter.len(), "cloned iterator must preserve len");
+        let expected = (
+            rsync_protocol::SUPPORTED_PROTOCOL_COUNT,
+            Some(rsync_protocol::SUPPORTED_PROTOCOL_COUNT),
+        );
+        assert_eq!(iter.size_hint(), expected);
+        assert!(iter.next().is_some(), "iterator must yield from the front");
+        assert!(
+            iter.next_back().is_some(),
+            "iterator must yield from the back"
+        );
+    }
+
+    assert_traits::<SupportedProtocolNumbersIter>(
+        ProtocolVersion::supported_protocol_numbers_iter(),
+    );
+    assert_traits::<SupportedVersionsIter>(ProtocolVersion::supported_versions_iter());
 }
 
 #[test]
