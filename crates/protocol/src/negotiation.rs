@@ -1,4 +1,4 @@
-use core::mem;
+use core::{mem, slice};
 use std::io::{self, Read};
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
@@ -202,6 +202,22 @@ impl NegotiationPrologueSniffer {
                 .unwrap_or(NegotiationPrologue::NeedMoreData),
             consumed,
         )
+    }
+
+    /// Observes a single byte that has already been read from the transport.
+    ///
+    /// The helper mirrors [`observe`](Self::observe) but keeps the common
+    /// "one-octet-at-a-time" call pattern used by upstream rsync ergonomic.
+    /// Callers can therefore forward individual bytes without allocating a
+    /// temporary slice. The returned decision matches the value that would be
+    /// produced by [`observe`](Self::observe) while ensuring at most a single
+    /// byte is accounted for as consumed.
+    #[must_use]
+    #[inline]
+    pub fn observe_byte(&mut self, byte: u8) -> NegotiationPrologue {
+        let (decision, consumed) = self.observe(slice::from_ref(&byte));
+        debug_assert!(consumed <= 1);
+        decision
     }
 
     /// Clears the buffered prefix and resets the negotiation detector so the
@@ -1299,6 +1315,32 @@ mod tests {
 
         let replay = sniffer.into_buffered();
         assert_eq!(replay, b"@X");
+    }
+
+    #[test]
+    fn prologue_sniffer_observe_byte_matches_slice_behavior() {
+        let mut slice_sniffer = NegotiationPrologueSniffer::new();
+        let mut byte_sniffer = NegotiationPrologueSniffer::new();
+
+        let stream = b"@RSYNCD: 31.0\n";
+
+        for &byte in stream {
+            let (expected, consumed) = slice_sniffer.observe(slice::from_ref(&byte));
+            assert!(consumed <= 1);
+            let observed = byte_sniffer.observe_byte(byte);
+            assert_eq!(observed, expected);
+            assert_eq!(byte_sniffer.buffered(), slice_sniffer.buffered());
+            assert_eq!(
+                byte_sniffer.legacy_prefix_remaining(),
+                slice_sniffer.legacy_prefix_remaining()
+            );
+        }
+
+        assert_eq!(byte_sniffer.decision(), slice_sniffer.decision());
+        assert_eq!(
+            byte_sniffer.legacy_prefix_complete(),
+            slice_sniffer.legacy_prefix_complete()
+        );
     }
 
     #[test]
