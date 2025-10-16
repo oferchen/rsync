@@ -302,9 +302,13 @@ impl NegotiationPrologueSniffer {
             // turn panics on allocation failure instead of surfacing a
             // `TryReserveError` to the caller. Reserving relative to the vector's
             // length guarantees the resulting capacity can hold the replayed prefix
-            // without further allocations.
+            // without further allocations. Using `saturating_sub` keeps the helper
+            // resilient if future call sites accidentally invoke it with a vector
+            // whose length already exceeds the buffered prefix; in that scenario we
+            // simply skip the reservation instead of panicking on an underflowing
+            // subtraction.
             debug_assert!(target.len() < required);
-            let additional = required - target.len();
+            let additional = required.saturating_sub(target.len());
             if additional > 0 {
                 target.try_reserve_exact(additional)?;
             }
