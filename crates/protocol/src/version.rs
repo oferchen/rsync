@@ -291,6 +291,12 @@ const _: () = {
         "oldest supported protocol must terminate the list",
     );
 
+    let newest = ProtocolVersion::NEWEST.as_u8() as u32;
+    assert!(
+        newest < u64::BITS,
+        "supported protocol bitmap must accommodate newest protocol",
+    );
+
     let mut index = 1usize;
     while index < SUPPORTED_PROTOCOL_COUNT {
         assert!(
@@ -421,24 +427,29 @@ impl ProtocolVersion {
     ///
     /// The helper mirrors the [`ProtocolVersion::is_supported`] guard but
     /// operates on the raw byte without attempting to construct a
-    /// [`ProtocolVersion`]. This is useful in const contexts where callers need
-    /// to validate literals or table entries that embed protocol numbers
-    /// directly without triggering a runtime negotiation.
+    /// [`ProtocolVersion`]. Callers that only need a membership check can rely
+    /// on this helper to obtain the answer in constant time using the
+    /// precomputed [`SUPPORTED_PROTOCOL_BITMAP`] instead of scanning the
+    /// canonical list. This is particularly useful in const contexts where
+    /// callers validate table entries that embed protocol numbers directly
+    /// without triggering a runtime negotiation.
     #[must_use]
     pub const fn is_supported_protocol_number(value: u8) -> bool {
         if value < Self::OLDEST.as_u8() || value > Self::NEWEST.as_u8() {
             return false;
         }
 
-        let mut index = 0usize;
-        while index < SUPPORTED_PROTOCOL_COUNT {
-            if SUPPORTED_PROTOCOLS[index] == value {
-                return true;
-            }
-            index += 1;
+        // Guard against shifts that would exceed the width of the bitmap when
+        // future protocol versions extend beyond the `u64` range. The runtime
+        // check mirrors the compile-time assertion found in the static guard
+        // below, but keeping the condition here ensures callers receive a
+        // deterministic `false` instead of triggering a panic should the
+        // invariant ever be violated in a release build.
+        if value as u32 >= u64::BITS {
+            return false;
         }
 
-        false
+        (SUPPORTED_PROTOCOL_BITMAP & (1u64 << value)) != 0
     }
 
     /// Returns the numeric protocol identifiers supported by this
