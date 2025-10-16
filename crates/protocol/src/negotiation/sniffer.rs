@@ -456,7 +456,13 @@ impl NegotiationPrologueSniffer {
                     debug_assert!(consumed <= observed.len());
 
                     if consumed < observed.len() {
-                        self.buffered.extend_from_slice(&observed[consumed..]);
+                        let remainder = &observed[consumed..];
+                        if !remainder.is_empty() {
+                            self.buffered
+                                .try_reserve_exact(remainder.len())
+                                .map_err(map_reserve_error_for_io)?;
+                            self.buffered.extend_from_slice(remainder);
+                        }
                     }
                     let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
                     if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
