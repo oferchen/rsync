@@ -9,8 +9,23 @@ use core::ops::RangeInclusive;
 
 use crate::error::NegotiationError;
 
+const OLDEST_SUPPORTED_PROTOCOL: u8 = 28;
+const NEWEST_SUPPORTED_PROTOCOL: u8 = 32;
+
 /// Inclusive range of protocol versions that upstream rsync 3.4.1 understands.
-const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> = 28..=32;
+const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> =
+    OLDEST_SUPPORTED_PROTOCOL..=NEWEST_SUPPORTED_PROTOCOL;
+
+/// Inclusive range of protocol versions supported by the Rust implementation.
+///
+/// Upstream rsync communicates the supported span in several diagnostics and
+/// negotiation helpers. Exposing the same range ensures higher layers can
+/// render parity messages without hard-coding protocol boundaries. The value is
+/// kept in sync with [`ProtocolVersion::OLDEST`] and
+/// [`ProtocolVersion::NEWEST`], so the compile-time guards later in this file
+/// will fail if the literals ever drift.
+pub const SUPPORTED_PROTOCOL_RANGE: RangeInclusive<u8> =
+    OLDEST_SUPPORTED_PROTOCOL..=NEWEST_SUPPORTED_PROTOCOL;
 
 /// A single negotiated rsync protocol version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -184,10 +199,10 @@ impl ProtocolVersion {
     }
 
     /// The newest protocol version supported by upstream rsync 3.4.1.
-    pub const NEWEST: ProtocolVersion = ProtocolVersion::new_const(32);
+    pub const NEWEST: ProtocolVersion = ProtocolVersion::new_const(NEWEST_SUPPORTED_PROTOCOL);
 
     /// The oldest protocol version supported by upstream rsync 3.4.1.
-    pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(28);
+    pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(OLDEST_SUPPORTED_PROTOCOL);
 
     /// Array of protocol versions supported by the Rust implementation,
     /// ordered from newest to oldest.
