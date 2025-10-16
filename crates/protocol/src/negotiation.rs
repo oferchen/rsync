@@ -217,10 +217,25 @@ impl NegotiationPrologueSniffer {
             }
         }
 
-        let mut byte = [0u8; 1];
+        let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
 
         loop {
-            match reader.read(&mut byte) {
+            let cached = self.detector.decision();
+            let needs_more_prefix_bytes = cached == Some(NegotiationPrologue::LegacyAscii)
+                && !self.detector.legacy_prefix_complete();
+            if let Some(decision) = cached {
+                if !needs_more_prefix_bytes {
+                    return Ok(decision);
+                }
+            }
+
+            let bytes_to_read = if needs_more_prefix_bytes {
+                LEGACY_DAEMON_PREFIX_LEN - self.detector.buffered_len()
+            } else {
+                1
+            };
+
+            match reader.read(&mut scratch[..bytes_to_read]) {
                 Ok(0) => {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -228,7 +243,7 @@ impl NegotiationPrologueSniffer {
                     ));
                 }
                 Ok(read) => {
-                    let observed = &byte[..read];
+                    let observed = &scratch[..read];
                     let (decision, consumed) = self.observe(observed);
                     debug_assert_eq!(consumed, observed.len());
                     let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
@@ -541,6 +556,34 @@ mod tests {
                     io::ErrorKind::Interrupted,
                     "simulated EINTR during negotiation sniff",
                 ));
+            }
+
+            self.inner.read(buf)
+        }
+    }
+
+    struct RecordingReader {
+        inner: Cursor<Vec<u8>>,
+        calls: Vec<usize>,
+    }
+
+    impl RecordingReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                inner: Cursor::new(data),
+                calls: Vec::new(),
+            }
+        }
+
+        fn calls(&self) -> &[usize] {
+            &self.calls
+        }
+    }
+
+    impl Read for RecordingReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !buf.is_empty() {
+                self.calls.push(buf.len());
             }
 
             self.inner.read(buf)
@@ -1332,6 +1375,25 @@ mod tests {
         let mut remaining = Vec::new();
         cursor.read_to_end(&mut remaining).expect("read remainder");
         assert_eq!(remaining, b" 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_limits_legacy_reads_to_required_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = RecordingReader::new(b"@RSYNCD: 31.0\n".to_vec());
+
+        let decision = sniffer
+            .read_from(&mut reader)
+            .expect("legacy negotiation should succeed");
+
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(
+            reader.calls(),
+            &[1, LEGACY_DAEMON_PREFIX_LEN - 1],
+            "sniffer should request the first byte and then the remaining prefix",
+        );
+        assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.legacy_prefix_complete());
     }
 
     #[test]
