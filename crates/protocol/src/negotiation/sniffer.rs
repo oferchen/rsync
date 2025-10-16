@@ -559,6 +559,14 @@ pub fn read_legacy_daemon_line<R: Read>(
         .take_buffered_into(line)
         .map_err(map_reserve_error_for_io)?;
 
+    if let Some(newline_index) = line.iter().position(|&byte| byte == b'\n') {
+        let remainder = line.split_off(newline_index + 1);
+        if !remainder.is_empty() {
+            sniffer.buffered.extend_from_slice(&remainder);
+        }
+        return Ok(());
+    }
+
     let mut byte = [0u8; 1];
     loop {
         match reader.read(&mut byte) {

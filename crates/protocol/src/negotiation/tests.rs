@@ -1606,6 +1606,30 @@ fn read_legacy_daemon_line_preserves_bytes_consumed_during_detection() {
 }
 
 #[test]
+fn read_legacy_daemon_line_uses_buffered_newline_without_additional_io() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(b" 28.0\nNEXT");
+
+    let mut reader = Cursor::new(b"unused".to_vec());
+    let mut line = Vec::new();
+
+    read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+        .expect("buffered newline should avoid extra reads");
+
+    assert_eq!(line, b"@RSYNCD: 28.0\n");
+    assert_eq!(reader.position(), 0);
+    assert_eq!(sniffer.buffered(), b"NEXT");
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
 fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(b"@");
