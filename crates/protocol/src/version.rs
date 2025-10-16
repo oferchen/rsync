@@ -1210,6 +1210,10 @@ where
                 }
 
                 let bit = 1u64 << value;
+                if value == ProtocolVersion::NEWEST.as_u8() {
+                    return Ok(ProtocolVersion::NEWEST);
+                }
+
                 if seen_bitmap & bit == 0 {
                     seen_bitmap |= bit;
                     if value > seen_max {
