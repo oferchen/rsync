@@ -967,6 +967,27 @@ fn prologue_sniffer_read_from_handles_single_byte_chunks() {
 }
 
 #[test]
+fn prologue_sniffer_sniffed_prefix_len_tracks_binary_reads() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut cursor = Cursor::new(vec![0x42, 0x10, 0x20]);
+
+    let decision = sniffer
+        .read_from(&mut cursor)
+        .expect("binary negotiation should succeed");
+
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(sniffer.sniffed_prefix_len(), 1);
+    assert_eq!(sniffer.buffered_len(), 1);
+    assert_eq!(cursor.position(), 1);
+
+    let mut remainder = Vec::new();
+    cursor
+        .read_to_end(&mut remainder)
+        .expect("remaining payload should stay unread");
+    assert_eq!(remainder, vec![0x10, 0x20]);
+}
+
+#[test]
 fn prologue_sniffer_preallocates_legacy_prefix_capacity() {
     let buffered = NegotiationPrologueSniffer::new().into_buffered();
     assert_eq!(buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
@@ -1195,6 +1216,8 @@ fn prologue_sniffer_read_from_preserves_bytes_after_malformed_prefix() {
     assert!(sniffer.legacy_prefix_complete());
     assert_eq!(sniffer.legacy_prefix_remaining(), None);
     assert_eq!(sniffer.buffered(), malformed_banner.as_slice());
+    assert_eq!(sniffer.sniffed_prefix_len(), 2);
+    assert_eq!(sniffer.buffered_len(), malformed_banner.len());
     assert_eq!(cursor.position(), malformed_banner.len() as u64);
 
     let mut replay = Vec::new();
