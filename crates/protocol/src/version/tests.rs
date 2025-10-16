@@ -571,6 +571,36 @@ fn offset_from_newest_matches_descending_index() {
 }
 
 #[test]
+fn next_newer_walks_towards_newest_within_bounds() {
+    let mut current = ProtocolVersion::OLDEST;
+    let mut expected = ProtocolVersion::OLDEST.as_u8();
+
+    while let Some(next) = current.next_newer() {
+        expected += 1;
+        assert_eq!(next.as_u8(), expected);
+        current = next;
+    }
+
+    assert_eq!(current, ProtocolVersion::NEWEST);
+    assert!(ProtocolVersion::NEWEST.next_newer().is_none());
+}
+
+#[test]
+fn next_older_walks_towards_oldest_within_bounds() {
+    let mut current = ProtocolVersion::NEWEST;
+    let mut expected = ProtocolVersion::NEWEST.as_u8();
+
+    while let Some(next) = current.next_older() {
+        expected -= 1;
+        assert_eq!(next.as_u8(), expected);
+        current = next;
+    }
+
+    assert_eq!(current, ProtocolVersion::OLDEST);
+    assert!(ProtocolVersion::OLDEST.next_older().is_none());
+}
+
+#[test]
 fn supported_versions_iter_reports_length() {
     let mut iter = ProtocolVersion::supported_versions_iter();
 
