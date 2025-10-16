@@ -237,6 +237,19 @@ impl ProtocolVersion {
         Self::OLDEST.as_u8()..=Self::NEWEST.as_u8()
     }
 
+    /// Returns the inclusive supported range as a tuple of `(oldest, newest)`.
+    ///
+    /// Higher layers frequently need to mention both bounds in diagnostics
+    /// without necessarily constructing a [`RangeInclusive`]. Centralizing the
+    /// numeric pair keeps those call sites in sync with the canonical
+    /// [`ProtocolVersion::OLDEST`] and [`ProtocolVersion::NEWEST`] constants,
+    /// avoiding duplicate literals that could drift if upstream changes the
+    /// supported span.
+    #[must_use]
+    pub const fn supported_range_bounds() -> (u8, u8) {
+        (Self::OLDEST.as_u8(), Self::NEWEST.as_u8())
+    }
+
     /// Returns an iterator over the supported protocol versions in
     /// newest-to-oldest order.
     ///
