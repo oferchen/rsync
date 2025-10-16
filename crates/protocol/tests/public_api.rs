@@ -1,7 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LogCode, ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
+    LogCode, ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement,
+    select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -58,13 +59,17 @@ fn supported_protocol_exports_cover_range() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
+    assert_eq!(rsync_protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
 }
 
 #[test]
 fn log_code_round_trips_between_numeric_and_name() {
     for (index, &code) in LogCode::all().iter().enumerate() {
         let numeric = u8::from(code);
-        assert_eq!(numeric, index as u8, "numeric order must match upstream table");
+        assert_eq!(
+            numeric, index as u8,
+            "numeric order must match upstream table"
+        );
 
         let parsed_from_numeric = LogCode::try_from(numeric).expect("numeric value should parse");
         assert_eq!(parsed_from_numeric, code);
@@ -90,7 +95,9 @@ fn parse_log_code_error_reports_invalid_numeric_values() {
 
 #[test]
 fn parse_log_code_error_reports_invalid_names() {
-    let err = "NOTREAL".parse::<LogCode>().expect_err("unknown name must fail");
+    let err = "NOTREAL"
+        .parse::<LogCode>()
+        .expect_err("unknown name must fail");
 
     match &err {
         ParseLogCodeError::InvalidName(name) => {
