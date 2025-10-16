@@ -248,13 +248,18 @@ impl NegotiationPrologueSniffer {
     /// buffer whose capacity is clamped to the canonical legacy prefix length so repeated
     /// connections continue to benefit from buffer reuse. If growing the destination buffer
     /// fails, the allocation error is forwarded to the caller instead of panicking so the
-    /// transport layer can surface the failure as an I/O error.
+    /// transport layer can surface the failure as an I/O error. To avoid surprising the
+    /// caller, the existing contents of `target` are only cleared after the reservation
+    /// succeeds, mirroring upstream's failure semantics where buffers remain untouched when
+    /// memory is exhausted.
     #[must_use = "negotiation prefix length is required to replay the handshake"]
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        target.clear();
-        if target.capacity() < self.buffered.len() {
-            target.try_reserve_exact(self.buffered.len() - target.capacity())?;
+        let required = self.buffered.len();
+
+        if target.capacity() < required {
+            target.try_reserve_exact(required - target.capacity())?;
         }
+        target.clear();
         target.extend_from_slice(&self.buffered);
         let drained = target.len();
         self.reset_buffer_for_reuse();
