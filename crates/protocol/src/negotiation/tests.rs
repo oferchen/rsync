@@ -1,7 +1,9 @@
 use super::sniffer::map_reserve_error_for_io;
 use super::*;
 use crate::NegotiationError;
-use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
+use crate::legacy::{
+    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
+};
 use proptest::prelude::*;
 use std::{
     collections::TryReserveError,
@@ -985,6 +987,54 @@ fn prologue_sniffer_sniffed_prefix_len_tracks_binary_reads() {
         .read_to_end(&mut remainder)
         .expect("remaining payload should stay unread");
     assert_eq!(remainder, vec![0x10, 0x20]);
+}
+
+#[test]
+fn prologue_sniffer_sniffed_prefix_returns_canonical_slice() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX_BYTES);
+
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX_BYTES);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(b" trailing payload");
+
+    assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+}
+
+#[test]
+fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let payload = [0x7Fu8, 0x10, 0x20];
+    let (decision, consumed) = sniffer.observe(&payload);
+
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(consumed, 1);
+    assert_eq!(sniffer.sniffed_prefix(), &payload[..1]);
+    assert_eq!(sniffer.sniffed_prefix_len(), 1);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(&payload[1..]);
+
+    assert_eq!(sniffer.sniffed_prefix(), &payload[..1]);
+    assert_eq!(sniffer.sniffed_prefix_len(), 1);
+}
+
+#[test]
+fn prologue_sniffer_sniffed_prefix_exposes_partial_legacy_bytes() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(b"@R");
+
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 2);
+    assert_eq!(sniffer.sniffed_prefix(), b"@R");
+    assert_eq!(sniffer.sniffed_prefix_len(), 2);
 }
 
 #[test]
