@@ -757,10 +757,9 @@ impl Default for NegotiationPrologueDetector {
 }
 
 fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Other,
-        format!("failed to reserve memory for legacy negotiation buffer: {err}"),
-    )
+    io::Error::other(format!(
+        "failed to reserve memory for legacy negotiation buffer: {err}"
+    ))
 }
 
 #[cfg(test)]
