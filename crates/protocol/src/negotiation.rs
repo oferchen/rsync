@@ -46,6 +46,12 @@ impl fmt::Display for BufferedPrefixTooSmall {
 
 impl std::error::Error for BufferedPrefixTooSmall {}
 
+impl From<BufferedPrefixTooSmall> for io::Error {
+    fn from(err: BufferedPrefixTooSmall) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 /// Classification of the negotiation prologue received from a peer.
 ///
 /// Upstream rsync distinguishes between two negotiation styles:
@@ -796,6 +802,26 @@ mod tests {
     use crate::legacy::LEGACY_DAEMON_PREFIX;
     use proptest::prelude::*;
     use std::io::{self, Cursor, Read};
+
+    #[test]
+    fn buffered_prefix_too_small_converts_to_io_error_with_context() {
+        let err = BufferedPrefixTooSmall::new(LEGACY_DAEMON_PREFIX_LEN, 4);
+        let message = err.to_string();
+        let required = err.required();
+        let available = err.available();
+
+        let io_err: io::Error = err.into();
+
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(io_err.to_string(), message);
+
+        let source = io_err
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<BufferedPrefixTooSmall>())
+            .expect("io::Error must retain BufferedPrefixTooSmall source");
+        assert_eq!(source.required(), required);
+        assert_eq!(source.available(), available);
+    }
 
     struct InterruptedOnceReader {
         inner: Cursor<Vec<u8>>,
