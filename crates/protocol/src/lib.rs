@@ -61,8 +61,8 @@ pub use legacy::{
 };
 pub use multiplex::{MessageFrame, recv_msg, recv_msg_into, send_msg};
 pub use negotiation::{
-    NegotiationPrologue, NegotiationPrologueDetector, NegotiationPrologueSniffer,
-    detect_negotiation_prologue,
+    BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
+    NegotiationPrologueSniffer, detect_negotiation_prologue,
 };
 pub use version::{
     ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOLS,
