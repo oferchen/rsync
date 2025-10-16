@@ -625,6 +625,40 @@ impl ProtocolVersion {
         (Self::NEWEST.as_u8() - self.as_u8()) as usize
     }
 
+    /// Returns the next newer protocol version within the supported range, if any.
+    ///
+    /// Upstream rsync frequently iterates across protocol numbers while
+    /// comparing capabilities. Providing a strongly typed successor keeps those
+    /// loops ergonomic without forcing callers to perform manual bounds checks
+    /// or convert the version back into a raw integer. When the current value
+    /// already equals [`ProtocolVersion::NEWEST`], the method yields `None` to
+    /// mirror the behavior of reaching the end of the range.
+    #[must_use]
+    pub const fn next_newer(self) -> Option<Self> {
+        if self.as_u8() >= Self::NEWEST.as_u8() {
+            None
+        } else {
+            Some(Self::new_const(self.as_u8() + 1))
+        }
+    }
+
+    /// Returns the next older protocol version within the supported range, if any.
+    ///
+    /// The helper mirrors [`ProtocolVersion::next_newer`] but walks towards the
+    /// lower bound. Callers that need to inspect predecessor versions can rely
+    /// on the function to remain inside the negotiated span without manually
+    /// checking for underflow. When invoked on [`ProtocolVersion::OLDEST`] the
+    /// method returns `None`, signalling that there is no older supported
+    /// protocol.
+    #[must_use]
+    pub const fn next_older(self) -> Option<Self> {
+        if self.as_u8() <= Self::OLDEST.as_u8() {
+            None
+        } else {
+            Some(Self::new_const(self.as_u8() - 1))
+        }
+    }
+
     /// Returns the raw numeric value represented by this version.
     #[must_use]
     #[inline]
