@@ -420,6 +420,21 @@ impl NegotiationPrologueSniffer {
         Ok(decision)
     }
 
+    #[cfg(test)]
+    pub(crate) fn observe_ok(
+        &mut self,
+        chunk: &[u8],
+    ) -> (NegotiationPrologue, usize) {
+        self.observe(chunk)
+            .expect("negotiation observation should not fail in tests")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_byte_ok(&mut self, byte: u8) -> NegotiationPrologue {
+        self.observe_byte(byte)
+            .expect("negotiation observation should not fail in tests")
+    }
+
     /// Clears the buffered prefix and resets the negotiation detector so the
     /// sniffer can be reused for another connection attempt.
     ///
