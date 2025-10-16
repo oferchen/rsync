@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, IoSliceMut, Read};
 
 use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer};
 
@@ -161,6 +161,19 @@ impl<R: Read> Read for NegotiatedStream<R> {
         }
 
         self.inner.read(buf)
+    }
+
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+        if bufs.is_empty() {
+            return Ok(0);
+        }
+
+        let copied = self.buffer.copy_into_vectored(bufs);
+        if copied > 0 {
+            return Ok(copied);
+        }
+
+        self.inner.read_vectored(bufs)
     }
 }
 
@@ -338,6 +351,34 @@ impl NegotiationBuffer {
         to_copy
     }
 
+    fn copy_into_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> usize {
+        if bufs.is_empty() || !self.has_remaining() {
+            return 0;
+        }
+
+        let available = &self.buffered[self.buffered_pos..];
+        let mut copied = 0;
+
+        for buf in bufs.iter_mut() {
+            if copied == available.len() {
+                break;
+            }
+
+            let target = buf.as_mut();
+            if target.is_empty() {
+                continue;
+            }
+
+            let remaining = available.len() - copied;
+            let to_copy = remaining.min(target.len());
+            target[..to_copy].copy_from_slice(&available[copied..copied + to_copy]);
+            copied += to_copy;
+        }
+
+        self.buffered_pos += copied;
+        copied
+    }
+
     fn consume(&mut self, amt: usize) -> usize {
         if !self.has_remaining() {
             return amt;
@@ -401,7 +442,7 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
 mod tests {
     use super::*;
 
-    use std::io::{self, BufRead, Cursor, Read};
+    use std::io::{self, BufRead, Cursor, IoSliceMut, Read};
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
         let cursor = Cursor::new(data.to_vec());
@@ -466,6 +507,60 @@ mod tests {
             stream.fill_buf().expect("fill_buf after partial consume"),
             b".0\nhello"
         );
+    }
+
+    #[test]
+    fn sniffed_stream_supports_vectored_reads_from_buffer() {
+        let data = b"@RSYNCD: 31.0\nrest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut head = [0u8; 4];
+        let mut tail = [0u8; 8];
+        let mut bufs = [IoSliceMut::new(&mut head), IoSliceMut::new(&mut tail)];
+
+        let read = stream
+            .read_vectored(&mut bufs)
+            .expect("vectored read drains buffered prefix");
+        assert_eq!(read, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(&head, b"@RSY");
+
+        let tail_prefix = read.saturating_sub(head.len());
+        assert_eq!(&tail[..tail_prefix], b"NCD:");
+
+        let mut remainder = Vec::new();
+        stream
+            .read_to_end(&mut remainder)
+            .expect("remaining bytes are readable");
+        assert_eq!(remainder, &data[read..]);
+    }
+
+    #[test]
+    fn vectored_reads_delegate_to_inner_after_buffer_is_drained() {
+        let data = b"\x00rest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut prefix_buf = [0u8; 1];
+        let mut bufs = [IoSliceMut::new(&mut prefix_buf)];
+        let read = stream
+            .read_vectored(&mut bufs)
+            .expect("vectored read captures sniffed prefix");
+        assert_eq!(read, 1);
+        assert_eq!(prefix_buf, [0x00]);
+
+        let mut first = [0u8; 2];
+        let mut second = [0u8; 8];
+        let mut remainder_bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+        let remainder_read = stream
+            .read_vectored(&mut remainder_bufs)
+            .expect("vectored read forwards to inner reader");
+
+        let mut remainder = Vec::new();
+        remainder.extend_from_slice(&first[..first.len().min(remainder_read)]);
+        if remainder_read > first.len() {
+            let extra = (remainder_read - first.len()).min(second.len());
+            remainder.extend_from_slice(&second[..extra]);
+        }
+        assert_eq!(remainder, b"rest");
     }
 
     #[test]
