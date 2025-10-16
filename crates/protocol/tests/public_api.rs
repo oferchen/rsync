@@ -43,8 +43,7 @@ fn supported_protocol_exports_cover_range() {
         &rsync_protocol::SUPPORTED_PROTOCOLS,
     );
     assert!(
-        ProtocolVersion::supported_protocol_numbers_iter()
-            .eq(rsync_protocol::SUPPORTED_PROTOCOLS)
+        ProtocolVersion::supported_protocol_numbers_iter().eq(rsync_protocol::SUPPORTED_PROTOCOLS)
     );
 
     let exported_range = rsync_protocol::SUPPORTED_PROTOCOL_RANGE.clone();

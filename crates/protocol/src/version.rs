@@ -1,6 +1,7 @@
 use core::array::IntoIter;
 use core::convert::TryFrom;
 use core::fmt;
+use core::iter::FusedIterator;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
@@ -261,7 +262,9 @@ impl ProtocolVersion {
     /// Upstream rsync frequently passes around the raw `u8` identifiers when
     /// negotiating with a peer. Providing a slice view avoids forcing callers
     /// to depend on the exported [`SUPPORTED_PROTOCOLS`] array directly while
-    /// still guaranteeing byte-for-byte parity with upstream's ordering.
+    /// still guaranteeing byte-for-byte parity with upstream's ordering. The
+    /// iterator borrows the canonical list so repeated calls reuse the same
+    /// backing storage instead of copying the table for every traversal.
     #[must_use]
     pub const fn supported_protocol_numbers() -> &'static [u8] {
         &SUPPORTED_PROTOCOLS
@@ -287,8 +290,9 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector.
     #[must_use]
-    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOL_COUNT }> {
-        SUPPORTED_PROTOCOLS.into_iter()
+    pub fn supported_protocol_numbers_iter()
+    -> impl DoubleEndedIterator<Item = u8> + ExactSizeIterator + FusedIterator + Clone {
+        SUPPORTED_PROTOCOLS.iter().copied()
     }
 
     /// Returns the inclusive range of protocol versions supported by this implementation.
