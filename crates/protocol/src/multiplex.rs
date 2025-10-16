@@ -290,7 +290,7 @@ fn write_all_vectored<W: Write + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
+    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};
     use std::convert::TryFrom as _;
 
     #[test]
@@ -327,18 +327,16 @@ mod tests {
             },
         ];
 
-        // Upstream encodes multiplexed headers using the MPLEX_BASE constant of 7,
-        // adds the message code, shifts the tag into the high byte, and stores the
-        // payload length in little-endian order. See rsync 3.4.1's io.c:send_msg().
-        const UPSTREAM_MPLEX_BASE: u8 = 7;
-
         for sample in samples {
             let mut buffer = Vec::new();
             send_msg(&mut buffer, sample.code, sample.payload).expect("send succeeds");
 
             assert_eq!(buffer.len(), HEADER_LEN + sample.payload.len());
 
-            let tag = u32::from(UPSTREAM_MPLEX_BASE) + u32::from(sample.code.as_u8());
+            // Upstream encodes multiplexed headers using the MPLEX_BASE constant, adds the message
+            // code, shifts the tag into the high byte, and stores the payload length in
+            // little-endian order. See rsync 3.4.1's io.c:send_msg().
+            let tag = u32::from(MPLEX_BASE) + u32::from(sample.code.as_u8());
             let expected_header = ((tag << 24) | sample.payload.len() as u32).to_le_bytes();
 
             assert_eq!(&buffer[..HEADER_LEN], &expected_header);
@@ -650,7 +648,7 @@ mod tests {
     #[test]
     fn recv_msg_rejects_unknown_message_codes() {
         let unknown_code = 11u8;
-        let tag = u32::from(7u8) + u32::from(unknown_code); // MPLEX_BASE + unknown code
+        let tag = u32::from(MPLEX_BASE) + u32::from(unknown_code); // MPLEX_BASE + unknown code
         let raw = (tag << 24).to_le_bytes();
         let err = recv_msg(&mut io::Cursor::new(raw)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -658,7 +656,7 @@ mod tests {
 
     #[test]
     fn recv_msg_rejects_headers_without_mplex_base() {
-        let tag_without_base = 6u32 << 24; // upstream MPLEX_BASE is 7
+        let tag_without_base = u32::from(MPLEX_BASE - 1) << 24;
         let err = recv_msg(&mut io::Cursor::new(tag_without_base.to_le_bytes())).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(
