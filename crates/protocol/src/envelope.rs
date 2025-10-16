@@ -279,6 +279,50 @@ impl fmt::Display for ParseMessageCodeError {
 
 impl std::error::Error for ParseMessageCodeError {}
 
+/// Errors that arise when converting between [`LogCode`] and [`MessageCode`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogCodeConversionError {
+    /// The [`LogCode`] has no multiplexed [`MessageCode`] equivalent.
+    NoMessageEquivalent(LogCode),
+    /// The [`MessageCode`] does not map to a [`LogCode`].
+    NoLogEquivalent(MessageCode),
+}
+
+impl LogCodeConversionError {
+    /// Returns the [`LogCode`] that could not be converted, when available.
+    #[must_use]
+    pub const fn log_code(self) -> Option<LogCode> {
+        match self {
+            Self::NoMessageEquivalent(log) => Some(log),
+            Self::NoLogEquivalent(_) => None,
+        }
+    }
+
+    /// Returns the [`MessageCode`] that could not be converted, when available.
+    #[must_use]
+    pub const fn message_code(self) -> Option<MessageCode> {
+        match self {
+            Self::NoMessageEquivalent(_) => None,
+            Self::NoLogEquivalent(code) => Some(code),
+        }
+    }
+}
+
+impl fmt::Display for LogCodeConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoMessageEquivalent(log) => {
+                write!(f, "log code {log} has no multiplexed message equivalent",)
+            }
+            Self::NoLogEquivalent(code) => {
+                write!(f, "message code {code} has no log code equivalent")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LogCodeConversionError {}
+
 impl MessageCode {
     /// Alias constant representing the legacy `MSG_FLUSH` identifier.
     ///
@@ -493,6 +537,24 @@ impl FromStr for MessageCode {
 impl From<MessageCode> for u8 {
     fn from(value: MessageCode) -> Self {
         value.as_u8()
+    }
+}
+
+impl TryFrom<LogCode> for MessageCode {
+    type Error = LogCodeConversionError;
+
+    fn try_from(value: LogCode) -> Result<Self, LogCodeConversionError> {
+        MessageCode::from_log_code(value).ok_or(LogCodeConversionError::NoMessageEquivalent(value))
+    }
+}
+
+impl TryFrom<MessageCode> for LogCode {
+    type Error = LogCodeConversionError;
+
+    fn try_from(value: MessageCode) -> Result<Self, LogCodeConversionError> {
+        value
+            .log_code()
+            .ok_or(LogCodeConversionError::NoLogEquivalent(value))
     }
 }
 
@@ -1045,5 +1107,41 @@ mod tests {
     #[test]
     fn message_code_from_log_code_rejects_none_variant() {
         assert_eq!(MessageCode::from_log_code(LogCode::None), None);
+    }
+
+    #[test]
+    fn try_from_log_code_maps_logging_variants() {
+        for &log in LogCode::all() {
+            match MessageCode::try_from(log) {
+                Ok(code) => assert_eq!(code.log_code(), Some(log)),
+                Err(err) => {
+                    assert_eq!(log, LogCode::None);
+                    assert_eq!(err.log_code(), Some(log));
+                    assert!(err.message_code().is_none());
+                    assert_eq!(
+                        err.to_string(),
+                        "log code FNONE has no multiplexed message equivalent"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn try_from_message_code_requires_logging_equivalent() {
+        for &code in MessageCode::all() {
+            match LogCode::try_from(code) {
+                Ok(log) => assert_eq!(MessageCode::from_log_code(log), Some(code)),
+                Err(err) => {
+                    assert!(code.log_code().is_none());
+                    assert_eq!(err.message_code(), Some(code));
+                    assert!(err.log_code().is_none());
+                    assert_eq!(
+                        err.to_string(),
+                        format!("message code {code} has no log code equivalent")
+                    );
+                }
+            }
+        }
     }
 }

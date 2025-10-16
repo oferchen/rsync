@@ -1,8 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LogCode, ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement,
-    select_highest_mutual,
+    LogCode, LogCodeConversionError, MessageCode, ParseLogCodeError, ProtocolVersion,
+    ProtocolVersionAdvertisement, select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -127,4 +127,15 @@ fn parse_log_code_error_reports_invalid_names() {
     assert_eq!(err.invalid_name(), Some("NOTREAL"));
     assert_eq!(err.invalid_value(), None);
     assert_eq!(err.to_string(), "unknown log code name: \"NOTREAL\"");
+}
+
+#[test]
+fn log_code_conversion_error_exposes_context() {
+    let err = LogCodeConversionError::NoLogEquivalent(MessageCode::Data);
+    assert_eq!(err.log_code(), None);
+    assert_eq!(err.message_code(), Some(MessageCode::Data));
+    assert_eq!(
+        err.to_string(),
+        "message code MSG_DATA has no log code equivalent"
+    );
 }
