@@ -31,3 +31,26 @@ fn supported_protocol_exports_remain_consistent() {
 fn supported_protocols_match_upstream_order() {
     assert_eq!(rsync_protocol::SUPPORTED_PROTOCOLS, [32, 31, 30, 29, 28]);
 }
+
+#[test]
+fn supported_protocol_exports_cover_range() {
+    assert_eq!(
+        ProtocolVersion::supported_protocol_numbers(),
+        &rsync_protocol::SUPPORTED_PROTOCOLS,
+    );
+    assert_eq!(
+        ProtocolVersion::supported_protocol_numbers_array(),
+        &rsync_protocol::SUPPORTED_PROTOCOLS,
+    );
+    assert!(
+        ProtocolVersion::supported_protocol_numbers_iter()
+            .eq(rsync_protocol::SUPPORTED_PROTOCOLS)
+    );
+
+    let exported_range = rsync_protocol::SUPPORTED_PROTOCOL_RANGE.clone();
+    assert_eq!(ProtocolVersion::supported_range(), exported_range.clone());
+
+    let (oldest, newest) = ProtocolVersion::supported_range_bounds();
+    assert_eq!(oldest, *exported_range.start());
+    assert_eq!(newest, *exported_range.end());
+}
