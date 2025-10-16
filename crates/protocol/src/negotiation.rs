@@ -1,4 +1,5 @@
 use core::{fmt, mem, slice};
+use std::collections::TryReserveError;
 use std::io::{self, Read};
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
@@ -223,16 +224,20 @@ impl NegotiationPrologueSniffer {
     /// that were replayed into `target`, keeping the API consistent with the I/O traits used
     /// throughout the transport layer. After the transfer the sniffer retains an empty
     /// buffer whose capacity is clamped to the canonical legacy prefix length so repeated
-    /// connections continue to benefit from buffer reuse.
+    /// connections continue to benefit from buffer reuse. If growing the destination buffer
+    /// fails, the allocation error is forwarded to the caller instead of panicking so the
+    /// transport layer can surface the failure as an I/O error.
     #[must_use = "negotiation prefix length is required to replay the handshake"]
-    pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> usize {
+    pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         target.clear();
-        target.reserve_exact(self.buffered.len());
+        if target.capacity() < self.buffered.len() {
+            target.try_reserve_exact(self.buffered.len() - target.capacity())?;
+        }
         target.extend_from_slice(&self.buffered);
         let drained = target.len();
         self.reset_buffer_for_reuse();
 
-        drained
+        Ok(drained)
     }
 
     /// Drains the buffered bytes into the caller-provided slice without allocating.
@@ -1646,7 +1651,9 @@ mod tests {
         assert!(sniffer.legacy_prefix_complete());
 
         let mut reused = b"placeholder".to_vec();
-        let drained = sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer
+            .take_buffered_into(&mut reused)
+            .expect("should copy buffered prefix");
 
         assert_eq!(reused, LEGACY_DAEMON_PREFIX.as_bytes());
         assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
@@ -1729,7 +1736,9 @@ mod tests {
         assert_eq!(consumed, 1);
 
         let mut reused = Vec::with_capacity(16);
-        let drained = sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer
+            .take_buffered_into(&mut reused)
+            .expect("should copy buffered byte");
 
         assert_eq!(reused, [0x80]);
         assert_eq!(drained, 1);
@@ -1757,7 +1766,9 @@ mod tests {
         assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
 
         let mut reused = Vec::new();
-        let drained = sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer
+            .take_buffered_into(&mut reused)
+            .expect("should copy buffered prefix");
 
         assert!(reused.is_empty());
         assert_eq!(drained, 0);
@@ -1775,7 +1786,9 @@ mod tests {
         let ptr = reused.as_ptr();
         let capacity_before = reused.capacity();
 
-        let drained = sniffer.take_buffered_into(&mut reused);
+        let drained = sniffer
+            .take_buffered_into(&mut reused)
+            .expect("should reuse existing allocation");
 
         assert_eq!(reused, LEGACY_DAEMON_PREFIX.as_bytes());
         assert_eq!(reused.as_ptr(), ptr);
