@@ -401,7 +401,7 @@ where
     I: IntoIterator<Item = T>,
     T: ProtocolVersionAdvertisement,
 {
-    let mut seen = [false; u8::MAX as usize + 1];
+    let mut seen = [false; ProtocolVersion::NEWEST.as_u8() as usize + 1];
     let mut seen_any = false;
     let mut seen_max = ProtocolVersion::OLDEST.as_u8();
     let mut oldest_rejection: Option<u8> = None;
