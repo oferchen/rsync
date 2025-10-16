@@ -372,6 +372,13 @@ fn supported_range_matches_upstream_bounds() {
 }
 
 #[test]
+fn supported_range_bounds_match_upstream_constants() {
+    let (oldest, newest) = ProtocolVersion::supported_range_bounds();
+    assert_eq!(oldest, ProtocolVersion::OLDEST.as_u8());
+    assert_eq!(newest, ProtocolVersion::NEWEST.as_u8());
+}
+
+#[test]
 fn detects_supported_versions() {
     for version in SUPPORTED_PROTOCOLS {
         assert!(ProtocolVersion::is_supported(version));
