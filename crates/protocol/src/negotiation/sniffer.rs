@@ -254,6 +254,58 @@ impl NegotiationPrologueSniffer {
         Ok(prefix_len)
     }
 
+    /// Copies the sniffed negotiation prefix into a caller-provided slice while preserving any
+    /// buffered remainder.
+    ///
+    /// The helper mirrors [`take_sniffed_prefix_into`](Self::take_sniffed_prefix_into) but avoids
+    /// heap allocations when the caller already owns stack-allocated scratch space. When the
+    /// prefix is still incomplete (for example because more bytes need to be read to finish the
+    /// canonical `@RSYNCD:` marker) the method performs no work and returns `Ok(0)`. If the slice
+    /// is too small to hold the fully sniffed prefix a [`BufferedPrefixTooSmall`] error is
+    /// returned and neither the caller's buffer nor the internal state are modified, mirroring the
+    /// failure semantics of [`take_buffered_into_slice`](Self::take_buffered_into_slice).
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into_slice(
+        &mut self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            return Ok(0);
+        }
+
+        if target.len() < prefix_len {
+            return Err(BufferedPrefixTooSmall::new(prefix_len, target.len()));
+        }
+
+        target[..prefix_len].copy_from_slice(&self.buffered[..prefix_len]);
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        Ok(prefix_len)
+    }
+
+    /// Copies the sniffed negotiation prefix into a caller-provided array while preserving any
+    /// buffered remainder.
+    ///
+    /// This convenience wrapper mirrors
+    /// [`take_sniffed_prefix_into_slice`](Self::take_sniffed_prefix_into_slice) but accepts a
+    /// fixed-size array directly so call sites that keep a stack-allocated
+    /// `LEGACY_DAEMON_PREFIX_LEN` scratch buffer can avoid manual slice conversions. On success the
+    /// prefix bytes are removed from the internal buffer while the buffered remainder stays queued
+    /// for later processing.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into_array<const N: usize>(
+        &mut self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        self.take_sniffed_prefix_into_slice(target.as_mut_slice())
+    }
+
     /// Returns the sniffed negotiation prefix as an owned vector while preserving any buffered
     /// remainder.
     ///
