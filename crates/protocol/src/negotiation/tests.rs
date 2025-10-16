@@ -1624,6 +1624,32 @@ fn prologue_sniffer_take_buffered_into_drains_accumulated_prefix() {
 }
 
 #[test]
+fn prologue_sniffer_take_buffered_into_includes_remainder_bytes() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" trailing payload";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut reused = Vec::new();
+    let drained = sniffer
+        .take_buffered_into(&mut reused)
+        .expect("buffer transfer should succeed");
+
+    let mut expected = LEGACY_DAEMON_PREFIX.as_bytes().to_vec();
+    expected.extend_from_slice(remainder);
+    assert_eq!(reused, expected);
+    assert_eq!(drained, expected.len());
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer
@@ -1735,6 +1761,32 @@ fn prologue_sniffer_take_buffered_into_writer_returns_initial_binary_byte() {
     assert_eq!(written, 1);
     assert_eq!(sink, [0x42]);
     assert!(sniffer.buffered().is_empty());
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_into_writer_includes_remainder_bytes() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" module list";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut sink = Vec::new();
+    let written = sniffer
+        .take_buffered_into_writer(&mut sink)
+        .expect("writer should receive buffered bytes");
+
+    let mut expected = LEGACY_DAEMON_PREFIX.as_bytes().to_vec();
+    expected.extend_from_slice(remainder);
+    assert_eq!(sink, expected);
+    assert_eq!(written, expected.len());
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 }
 
 struct FailingWriter {
