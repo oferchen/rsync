@@ -202,6 +202,27 @@ impl ProtocolVersion {
         &Self::SUPPORTED_VERSIONS
     }
 
+    /// Reports whether the provided numeric protocol identifier is supported
+    /// by this implementation.
+    ///
+    /// The helper mirrors the [`ProtocolVersion::is_supported`] guard but
+    /// operates on the raw byte without attempting to construct a
+    /// [`ProtocolVersion`]. This is useful in const contexts where callers need
+    /// to validate literals or table entries that embed protocol numbers
+    /// directly without triggering a runtime negotiation.
+    #[must_use]
+    pub const fn is_supported_protocol_number(value: u8) -> bool {
+        let mut index = 0usize;
+        while index < SUPPORTED_PROTOCOLS.len() {
+            if SUPPORTED_PROTOCOLS[index] == value {
+                return true;
+            }
+            index += 1;
+        }
+
+        false
+    }
+
     /// Returns the numeric protocol identifiers supported by this
     /// implementation in newest-to-oldest order.
     ///

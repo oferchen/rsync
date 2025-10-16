@@ -339,6 +339,16 @@ fn supported_versions_method_matches_constant_slice() {
 }
 
 #[test]
+fn supported_protocol_number_guard_matches_constants() {
+    for &value in &SUPPORTED_PROTOCOLS {
+        assert!(ProtocolVersion::is_supported_protocol_number(value));
+    }
+
+    assert!(!ProtocolVersion::is_supported_protocol_number(ProtocolVersion::OLDEST.as_u8() - 1));
+    assert!(!ProtocolVersion::is_supported_protocol_number(ProtocolVersion::NEWEST.as_u8() + 1));
+}
+
+#[test]
 fn supported_protocol_numbers_matches_constant_slice() {
     assert_eq!(
         ProtocolVersion::supported_protocol_numbers(),
