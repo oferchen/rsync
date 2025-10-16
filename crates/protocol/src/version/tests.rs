@@ -1,5 +1,6 @@
 use super::*;
 use core::convert::TryFrom;
+use core::iter::FusedIterator;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
@@ -622,6 +623,29 @@ fn supported_versions_iter_reports_length() {
 }
 
 #[test]
+fn supported_versions_iter_supports_double_ended_iteration() {
+    let mut iter = ProtocolVersion::supported_versions_iter();
+
+    assert_eq!(iter.next_back(), Some(ProtocolVersion::OLDEST));
+    assert_eq!(iter.next(), Some(ProtocolVersion::NEWEST));
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT.saturating_sub(2));
+    assert_eq!(
+        iter.size_hint(),
+        (
+            SUPPORTED_PROTOCOL_COUNT.saturating_sub(2),
+            Some(SUPPORTED_PROTOCOL_COUNT.saturating_sub(2)),
+        )
+    );
+}
+
+#[test]
+fn supported_versions_iter_is_fused() {
+    fn assert_fused<I: FusedIterator>(_iter: I) {}
+
+    assert_fused(ProtocolVersion::supported_versions_iter());
+}
+
+#[test]
 fn supported_protocol_numbers_iter_reports_length() {
     let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
 
@@ -640,6 +664,29 @@ fn supported_protocol_numbers_iter_reports_length() {
             Some(SUPPORTED_PROTOCOL_COUNT - 1)
         )
     );
+}
+
+#[test]
+fn supported_protocol_numbers_iter_supports_double_ended_iteration() {
+    let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
+
+    assert_eq!(iter.next_back(), Some(ProtocolVersion::OLDEST.as_u8()));
+    assert_eq!(iter.next(), Some(ProtocolVersion::NEWEST.as_u8()));
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT.saturating_sub(2));
+    assert_eq!(
+        iter.size_hint(),
+        (
+            SUPPORTED_PROTOCOL_COUNT.saturating_sub(2),
+            Some(SUPPORTED_PROTOCOL_COUNT.saturating_sub(2)),
+        )
+    );
+}
+
+#[test]
+fn supported_protocol_numbers_iter_is_fused() {
+    fn assert_fused<I: FusedIterator>(_iter: I) {}
+
+    assert_fused(ProtocolVersion::supported_protocol_numbers_iter());
 }
 
 #[test]

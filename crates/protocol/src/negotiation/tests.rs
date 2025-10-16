@@ -1,9 +1,7 @@
 use super::sniffer::map_reserve_error_for_io;
 use super::*;
 use crate::NegotiationError;
-use crate::legacy::{
-    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
-};
+use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN};
 use proptest::prelude::*;
 use std::{
     collections::TryReserveError,
