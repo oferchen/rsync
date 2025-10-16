@@ -404,7 +404,8 @@ fn supported_protocol_numbers_iter_is_sorted_descending() {
 
 #[test]
 fn supported_range_matches_upstream_bounds() {
-    assert_eq!(ProtocolVersion::supported_range(), UPSTREAM_PROTOCOL_RANGE);
+    assert_eq!(ProtocolVersion::supported_range(), SUPPORTED_PROTOCOL_RANGE);
+    assert_eq!(SUPPORTED_PROTOCOL_RANGE, UPSTREAM_PROTOCOL_RANGE);
 }
 
 #[test]
@@ -412,6 +413,18 @@ fn supported_range_bounds_match_upstream_constants() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, ProtocolVersion::OLDEST.as_u8());
     assert_eq!(newest, ProtocolVersion::NEWEST.as_u8());
+}
+
+#[test]
+fn supported_protocol_range_constant_matches_bounds() {
+    assert_eq!(
+        *SUPPORTED_PROTOCOL_RANGE.start(),
+        ProtocolVersion::OLDEST.as_u8()
+    );
+    assert_eq!(
+        *SUPPORTED_PROTOCOL_RANGE.end(),
+        ProtocolVersion::NEWEST.as_u8()
+    );
 }
 
 #[test]
