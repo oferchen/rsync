@@ -1,11 +1,13 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
-    MessageCode, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
-    ParseLogCodeError, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
-    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
-    SupportedProtocolNumbersIter, SupportedVersionsIter, select_highest_mutual,
+    LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LogCode,
+    LogCodeConversionError, MessageCode, NegotiationError, NegotiationPrologue,
+    NegotiationPrologueSniffer, ParseLogCodeError, ParseNegotiationPrologueError,
+    ParseNegotiationPrologueErrorKind, ProtocolVersion, ProtocolVersionAdvertisement,
+    SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter, SupportedVersionsIter,
+    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_details,
+    read_and_parse_legacy_daemon_greeting_details, select_highest_mutual,
 };
 use std::iter::FusedIterator;
 
@@ -176,6 +178,35 @@ fn legacy_daemon_prefix_constants_are_public() {
     assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX, "@RSYNCD:");
     assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_LEN, 8);
     assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_BYTES, b"@RSYNCD:");
+}
+
+#[test]
+fn legacy_daemon_greeting_details_are_exposed() {
+    let greeting: LegacyDaemonGreeting =
+        parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md4 md5\n")
+            .expect("greeting should parse");
+    assert_eq!(
+        greeting.protocol(),
+        ProtocolVersion::from_supported(31).unwrap()
+    );
+    assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    assert!(greeting.has_subprotocol());
+
+    let bytes: LegacyDaemonGreeting = parse_legacy_daemon_greeting_bytes_details(b"@RSYNCD: 29\n")
+        .expect("byte parser should parse");
+    assert_eq!(bytes.protocol().as_u8(), 29);
+    assert!(!bytes.has_subprotocol());
+
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = std::io::Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+    let mut line = Vec::new();
+    sniffer
+        .read_from(&mut reader)
+        .expect("sniffing succeeds for legacy greeting");
+    let parsed =
+        read_and_parse_legacy_daemon_greeting_details(&mut sniffer, &mut reader, &mut line)
+            .expect("read parser should succeed");
+    assert_eq!(parsed.protocol().as_u8(), 31);
 }
 
 #[test]
