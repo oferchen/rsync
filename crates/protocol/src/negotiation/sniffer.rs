@@ -318,6 +318,91 @@ impl NegotiationPrologueSniffer {
         drained
     }
 
+    /// Copies the sniffed negotiation prefix into a caller-provided slice while preserving the
+    /// buffered remainder.
+    ///
+    /// The helper mirrors [`take_sniffed_prefix_into`](Self::take_sniffed_prefix_into) but avoids
+    /// allocating a new vector when the caller already owns stack-allocated storage. When the
+    /// negotiation decision is still pending—or when the canonical prefix has not been fully
+    /// buffered yet—the method behaves like upstream rsync by leaving both the destination slice
+    /// and the sniffer untouched while reporting that zero bytes were copied. If the slice is too
+    /// small to hold the sniffed prefix a [`BufferedPrefixTooSmall`] error is returned and the
+    /// internal buffer remains intact so the caller can retry after provisioning additional space.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into_slice(
+        &mut self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            return Ok(0);
+        }
+
+        if target.len() < prefix_len {
+            return Err(BufferedPrefixTooSmall::new(prefix_len, target.len()));
+        }
+
+        target[..prefix_len].copy_from_slice(&self.buffered[..prefix_len]);
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        Ok(prefix_len)
+    }
+
+    /// Copies the sniffed negotiation prefix into a caller-provided array while preserving any
+    /// buffered remainder.
+    ///
+    /// This convenience wrapper mirrors
+    /// [`take_sniffed_prefix_into_slice`](Self::take_sniffed_prefix_into_slice) but accepts a
+    /// [`[u8; N]`](array) directly. Callers that keep a stack-allocated
+    /// `LEGACY_DAEMON_PREFIX_LEN` scratch buffer can therefore pass it without converting to a
+    /// slice. When the array is too small to hold the sniffed prefix the method returns a
+    /// [`BufferedPrefixTooSmall`] error and leaves the internal buffer unchanged so the operation
+    /// can be retried with a larger workspace.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into_array<const N: usize>(
+        &mut self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        self.take_sniffed_prefix_into_slice(target.as_mut_slice())
+    }
+
+    /// Writes the sniffed negotiation prefix to the provided [`Write`] implementation while
+    /// preserving any buffered remainder.
+    ///
+    /// The helper mirrors [`take_sniffed_prefix_into`](Self::take_sniffed_prefix_into) but hands
+    /// the captured prefix directly to an I/O sink supplied by the caller. When the negotiation
+    /// decision is still pending the method forwards an empty prefix without mutating either the
+    /// writer or the internal buffer, matching upstream rsync's behavior where the greeting parser
+    /// only runs after the canonical marker has been buffered. On success the drained prefix is
+    /// removed from the internal buffer while any additional payload that arrived in the same read
+    /// remains queued for subsequent processing. If the writer reports an error the buffered prefix
+    /// is left untouched so the caller can retry or surface the failure to higher layers.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_sniffed_prefix_into_writer<W: Write>(
+        &mut self,
+        target: &mut W,
+    ) -> io::Result<usize> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            return Ok(0);
+        }
+
+        target.write_all(&self.buffered[..prefix_len])?;
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        Ok(prefix_len)
+    }
+
     /// Drains the buffered bytes into an existing vector supplied by the caller.
     ///
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
