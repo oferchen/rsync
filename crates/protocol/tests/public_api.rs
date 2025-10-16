@@ -2,8 +2,8 @@
 
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
-    MessageCode, NegotiationPrologue, NegotiationPrologueSniffer, ParseLogCodeError,
-    ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
+    MessageCode, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
+    ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -160,4 +160,14 @@ fn negotiation_prologue_sniffer_reports_buffered_length() {
 
     assert_eq!(sniffer.buffered_len(), 0);
     assert!(sniffer.buffered().is_empty());
+}
+
+#[test]
+fn negotiation_error_accessors_are_public() {
+    let err = NegotiationError::NoMutualProtocol {
+        peer_versions: vec![30, 31],
+    };
+    assert_eq!(err.peer_versions(), Some(&[30, 31][..]));
+    assert_eq!(err.unsupported_version(), None);
+    assert_eq!(err.malformed_legacy_greeting(), None);
 }
