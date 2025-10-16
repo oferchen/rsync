@@ -468,6 +468,19 @@ fn compares_directly_with_u8() {
 }
 
 #[test]
+fn compares_directly_with_non_zero_u8() {
+    let version = ProtocolVersion::try_from(31).expect("valid");
+    let non_zero = NonZeroU8::new(31).expect("non-zero");
+
+    assert_eq!(version, non_zero);
+    assert_eq!(non_zero, version);
+
+    let different = NonZeroU8::new(ProtocolVersion::OLDEST.as_u8()).expect("non-zero");
+    assert_ne!(version, different);
+    assert_ne!(different, version);
+}
+
+#[test]
 fn supported_versions_are_sorted_descending() {
     let mut sorted = SUPPORTED_PROTOCOLS;
     sorted.sort_by(|a, b| b.cmp(a));
