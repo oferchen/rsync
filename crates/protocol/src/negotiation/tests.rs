@@ -737,6 +737,50 @@ fn prologue_detector_copy_buffered_prefix_into_reports_small_buffer() {
 }
 
 #[test]
+fn prologue_detector_copy_buffered_prefix_into_array_copies_bytes() {
+    let mut detector = NegotiationPrologueDetector::new();
+    assert_eq!(detector.observe(b"@RSYN"), NegotiationPrologue::LegacyAscii);
+
+    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+    let copied = detector
+        .copy_buffered_prefix_into_array(&mut scratch)
+        .expect("array should capture buffered prefix");
+
+    assert_eq!(copied, 5);
+    assert_eq!(&scratch[..copied], b"@RSYN");
+    assert!(scratch[copied..].iter().all(|&byte| byte == 0));
+
+    let mut binary = NegotiationPrologueDetector::new();
+    assert_eq!(binary.observe(&[0x00]), NegotiationPrologue::Binary);
+
+    let mut untouched = [0xCC; LEGACY_DAEMON_PREFIX_LEN];
+    let copied = binary
+        .copy_buffered_prefix_into_array(&mut untouched)
+        .expect("binary detection should copy zero bytes");
+
+    assert_eq!(copied, 0);
+    assert!(untouched.iter().all(|&byte| byte == 0xCC));
+}
+
+#[test]
+fn prologue_detector_copy_buffered_prefix_into_array_reports_small_buffer() {
+    let mut detector = NegotiationPrologueDetector::new();
+    assert_eq!(
+        detector.observe(b"@RSYNCD"),
+        NegotiationPrologue::LegacyAscii
+    );
+
+    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 2];
+    let err = detector
+        .copy_buffered_prefix_into_array(&mut scratch)
+        .expect_err("array that is too small must error");
+
+    assert_eq!(err.required(), detector.buffered_len());
+    assert_eq!(err.available(), scratch.len());
+    assert_eq!(detector.buffered_prefix(), b"@RSYNCD");
+}
+
+#[test]
 fn buffered_prefix_captures_full_marker_when_present_in_single_chunk() {
     let mut detector = NegotiationPrologueDetector::new();
     assert_eq!(
