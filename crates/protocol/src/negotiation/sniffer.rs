@@ -2,7 +2,10 @@ use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
-use crate::legacy::{LEGACY_DAEMON_PREFIX_LEN, parse_legacy_daemon_greeting_bytes};
+use crate::legacy::{
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, parse_legacy_daemon_greeting_bytes,
+    parse_legacy_daemon_greeting_bytes_details,
+};
 use crate::version::ProtocolVersion;
 
 use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector};
@@ -817,6 +820,21 @@ pub fn read_and_parse_legacy_daemon_greeting<R: Read>(
 ) -> io::Result<ProtocolVersion> {
     read_legacy_daemon_line(sniffer, reader, line)?;
     parse_legacy_daemon_greeting_bytes(line).map_err(io::Error::from)
+}
+
+/// Reads and parses the legacy daemon greeting, returning a detailed view.
+///
+/// This variant exposes the advertised protocol number, subprotocol suffix, and
+/// digest list in addition to the negotiated protocol version. The returned
+/// value borrows the buffer supplied in `line`, allowing callers to retain the
+/// parsed metadata without allocating.
+pub fn read_and_parse_legacy_daemon_greeting_details<'a, R: Read>(
+    sniffer: &mut NegotiationPrologueSniffer,
+    reader: &mut R,
+    line: &'a mut Vec<u8>,
+) -> io::Result<LegacyDaemonGreeting<'a>> {
+    read_legacy_daemon_line(sniffer, reader, line)?;
+    parse_legacy_daemon_greeting_bytes_details(line).map_err(io::Error::from)
 }
 
 #[derive(Debug)]

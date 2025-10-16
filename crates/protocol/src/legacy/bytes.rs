@@ -2,7 +2,9 @@ use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
 
 use super::{
-    greeting::parse_legacy_daemon_greeting,
+    greeting::{
+        LegacyDaemonGreeting, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
+    },
     lines::{
         LegacyDaemonMessage, parse_legacy_daemon_message, parse_legacy_error_message,
         parse_legacy_warning_message,
@@ -74,6 +76,14 @@ pub fn parse_legacy_daemon_greeting_bytes(
     parse_lossy_ascii_bytes(line, parse_legacy_daemon_greeting)
 }
 
+/// Parses a legacy daemon greeting and returns the detailed representation.
+#[must_use = "legacy daemon greeting parsing errors must be handled"]
+pub fn parse_legacy_daemon_greeting_bytes_details(
+    line: &[u8],
+) -> Result<LegacyDaemonGreeting<'_>, NegotiationError> {
+    parse_lossy_ascii_bytes(line, parse_legacy_daemon_greeting_details)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +117,19 @@ mod tests {
                 module: Some("module"),
             }
         );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_greeting_bytes_details_captures_digest_list() {
+        let greeting = parse_legacy_daemon_greeting_bytes_details(b"@RSYNCD: 31.0 md4 md5\n")
+            .expect("digest list should parse");
+
+        assert_eq!(
+            greeting.protocol(),
+            ProtocolVersion::from_supported(31).unwrap()
+        );
+        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        assert!(greeting.has_subprotocol());
     }
 
     #[test]
