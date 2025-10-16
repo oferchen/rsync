@@ -140,12 +140,7 @@ impl NegotiationPrologueSniffer {
     /// that triggered the decision (typically `1`).
     #[must_use]
     pub fn sniffed_prefix_len(&self) -> usize {
-        match self.detector.decision() {
-            Some(NegotiationPrologue::Binary) => self.buffered.len().min(1),
-            Some(NegotiationPrologue::LegacyAscii)
-            | Some(NegotiationPrologue::NeedMoreData)
-            | None => self.prefix_bytes_retained.min(self.buffered.len()),
-        }
+        self.prefix_bytes_retained.min(self.buffered.len())
     }
 
     /// Returns the bytes that were required to classify the negotiation prologue.
@@ -322,6 +317,27 @@ impl NegotiationPrologueSniffer {
         self.reset_buffer_for_reuse();
 
         Ok(written)
+    }
+
+    /// Drops the sniffed negotiation prefix while retaining any buffered remainder.
+    ///
+    /// Upstream rsync forwards the bytes captured during detection into the next stage of the
+    /// handshake before continuing with the session. Callers that already consumed or copied the
+    /// prefix can invoke this helper to remove it from the internal buffer without disturbing the
+    /// payload that followed in the same read. The method returns the number of bytes discarded so
+    /// transport layers can account for the replayed prefix. Invoking the helper on an empty buffer
+    /// or after the prefix has already been dropped is a no-op.
+    #[must_use]
+    pub fn discard_sniffed_prefix(&mut self) -> usize {
+        let prefix_len = self.sniffed_prefix_len();
+        if prefix_len == 0 {
+            return 0;
+        }
+
+        self.buffered.drain(..prefix_len);
+        self.prefix_bytes_retained = 0;
+
+        prefix_len
     }
 
     /// Reports the cached negotiation decision, if any.
@@ -620,7 +636,8 @@ impl NegotiationPrologueSniffer {
                     .min(self.buffered.len())
                     .min(LEGACY_DAEMON_PREFIX_LEN)
             }
-            Some(NegotiationPrologue::Binary) | None => 0,
+            Some(NegotiationPrologue::Binary) => self.buffered.len().min(1),
+            None => 0,
         };
     }
 }
