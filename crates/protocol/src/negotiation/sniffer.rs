@@ -2,7 +2,7 @@ use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
-use crate::legacy::{parse_legacy_daemon_greeting_bytes, LEGACY_DAEMON_PREFIX_LEN};
+use crate::legacy::{LEGACY_DAEMON_PREFIX_LEN, parse_legacy_daemon_greeting_bytes};
 use crate::version::ProtocolVersion;
 
 use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector};
