@@ -200,6 +200,32 @@ impl ProtocolVersion {
         Self::SUPPORTED_VERSIONS.into_iter()
     }
 
+    /// Attempts to construct a [`ProtocolVersion`] from a byte that is known to be within the
+    /// range supported by upstream rsync 3.4.1.
+    ///
+    /// The helper accepts the raw numeric value emitted on the wire and returns `Some` when the
+    /// version falls inside the inclusive range [`ProtocolVersion::OLDEST`]..=[`ProtocolVersion::NEWEST`].
+    /// Values outside that span yield `None`. Unlike [`TryFrom<u8>`], the function is `const`, making
+    /// it suitable for compile-time validation in tables that embed protocol numbers directly.
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// const MAYBE_NEWEST: Option<ProtocolVersion> = ProtocolVersion::from_supported(32);
+    /// assert_eq!(MAYBE_NEWEST, Some(ProtocolVersion::NEWEST));
+    ///
+    /// const UNKNOWN: Option<ProtocolVersion> = ProtocolVersion::from_supported(27);
+    /// assert!(UNKNOWN.is_none());
+    /// ```
+    #[must_use]
+    pub const fn from_supported(value: u8) -> Option<Self> {
+        if value >= Self::OLDEST.as_u8() && value <= Self::NEWEST.as_u8() {
+            Some(Self::new_const(value))
+        } else {
+            None
+        }
+    }
+
     /// Reports whether the provided version is supported by this
     /// implementation. This helper mirrors the upstream negotiation guard and
     /// allows callers to perform quick validation before attempting a
@@ -207,14 +233,7 @@ impl ProtocolVersion {
     #[must_use]
     #[inline]
     pub const fn is_supported(value: u8) -> bool {
-        let mut index = 0;
-        while index < SUPPORTED_PROTOCOLS.len() {
-            if SUPPORTED_PROTOCOLS[index] == value {
-                return true;
-            }
-            index += 1;
-        }
-        false
+        Self::from_supported(value).is_some()
     }
 
     /// Returns the raw numeric value represented by this version.
@@ -267,14 +286,12 @@ impl TryFrom<u8> for ProtocolVersion {
     type Error = NegotiationError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if UPSTREAM_PROTOCOL_RANGE.contains(&value) {
-            match NonZeroU8::new(value) {
-                Some(non_zero) => Ok(Self(non_zero)),
-                None => Err(NegotiationError::UnsupportedVersion(value)),
-            }
-        } else {
-            Err(NegotiationError::UnsupportedVersion(value))
+        if !UPSTREAM_PROTOCOL_RANGE.contains(&value) {
+            return Err(NegotiationError::UnsupportedVersion(value));
         }
+
+        // The upstream-supported range excludes zero, ensuring the constructor cannot fail here.
+        Ok(Self::from_supported(value).expect("values within the upstream range are supported"))
     }
 }
 
