@@ -739,6 +739,24 @@ impl ProtocolVersion {
         SupportedVersionsIter::new(Self::supported_versions())
     }
 
+    /// Returns the protocol version at the given index within the canonical newest-to-oldest list
+    /// of supported versions.
+    ///
+    /// The helper keeps higher layers from duplicating index-to-version lookup logic when they
+    /// store data keyed by the ordering exposed through [`SUPPORTED_PROTOCOLS`]. Returning an
+    /// [`Option`] mirrors the slice indexing semantics used throughout the standard library:
+    /// out-of-range indices yield `None` instead of panicking. Because the method is `const`, lookup
+    /// tables can perform compile-time validation of their indices when built from the canonical
+    /// ordering.
+    #[must_use]
+    pub const fn from_supported_index(index: usize) -> Option<Self> {
+        if index < SUPPORTED_PROTOCOL_COUNT {
+            Some(Self::SUPPORTED_VERSIONS[index])
+        } else {
+            None
+        }
+    }
+
     /// Attempts to construct a [`ProtocolVersion`] from a byte that is known to be within the
     /// range supported by upstream rsync 3.4.1.
     ///
