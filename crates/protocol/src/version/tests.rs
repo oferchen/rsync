@@ -128,6 +128,31 @@ fn select_highest_mutual_accepts_protocol_version_references() {
 }
 
 #[test]
+fn named_version_constants_match_supported_protocols() {
+    let expected = [
+        ProtocolVersion::V32,
+        ProtocolVersion::V31,
+        ProtocolVersion::V30,
+        ProtocolVersion::V29,
+        ProtocolVersion::V28,
+    ];
+
+    assert_eq!(
+        expected,
+        *ProtocolVersion::supported_versions_array(),
+        "named constants must match the canonical supported ordering",
+    );
+
+    let expected_numbers: Vec<u8> = expected.iter().map(|version| version.as_u8()).collect();
+    assert_eq!(
+        expected_numbers,
+        ProtocolVersion::supported_protocol_numbers(),
+        "named constants must mirror the exported numeric list",
+    );
+    assert_eq!(expected.len(), SUPPORTED_PROTOCOL_COUNT);
+}
+
+#[test]
 fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
     let peers = [
         NonZeroU8::new(32).expect("non-zero"),
