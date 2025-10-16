@@ -1080,6 +1080,7 @@ fn prologue_sniffer_sniffed_prefix_returns_canonical_slice() {
 
     assert_eq!(sniffer.sniffed_prefix(), LEGACY_DAEMON_PREFIX_BYTES);
     assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.buffered_remainder(), b" trailing payload");
 }
 
 #[test]
@@ -1094,6 +1095,7 @@ fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
     assert_eq!(consumed, 1);
     assert_eq!(sniffer.sniffed_prefix(), &payload[..1]);
     assert_eq!(sniffer.sniffed_prefix_len(), 1);
+    assert!(sniffer.buffered_remainder().is_empty());
 
     sniffer
         .buffered_storage_mut()
@@ -1101,6 +1103,7 @@ fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
 
     assert_eq!(sniffer.sniffed_prefix(), &payload[..1]);
     assert_eq!(sniffer.sniffed_prefix_len(), 1);
+    assert_eq!(sniffer.buffered_remainder(), &payload[1..]);
 }
 
 #[test]
@@ -1112,6 +1115,36 @@ fn prologue_sniffer_sniffed_prefix_exposes_partial_legacy_bytes() {
     assert_eq!(consumed, 2);
     assert_eq!(sniffer.sniffed_prefix(), b"@R");
     assert_eq!(sniffer.sniffed_prefix_len(), 2);
+}
+
+#[test]
+fn prologue_sniffer_buffered_remainder_survives_draining() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("buffer reservation succeeds");
+
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    let mut drained = Vec::new();
+    let drained_len = sniffer
+        .take_buffered_into(&mut drained)
+        .expect("draining buffered prefix succeeds");
+
+    assert_eq!(drained_len, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(drained, LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert!(sniffer.sniffed_prefix().is_empty());
+    assert!(sniffer.buffered_remainder().is_empty());
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(b"residual payload");
+
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert!(sniffer.sniffed_prefix().is_empty());
+    assert_eq!(sniffer.buffered_remainder(), b"residual payload");
 }
 
 #[test]
@@ -1543,14 +1576,14 @@ struct FailingWriter {
 impl FailingWriter {
     fn new() -> Self {
         Self {
-            error: io::Error::new(io::ErrorKind::Other, "simulated write failure"),
+            error: io::Error::other("simulated write failure"),
         }
     }
 }
 
 impl Write for FailingWriter {
     fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-        Err(io::Error::new(self.error.kind(), self.error.to_string()))
+        Err(io::Error::other(self.error.to_string()))
     }
 
     fn flush(&mut self) -> io::Result<()> {
