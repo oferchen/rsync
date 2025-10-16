@@ -270,9 +270,7 @@ impl NegotiationPrologueSniffer {
     /// as soon as the leading `@` byte is observed.
     #[must_use]
     pub fn is_legacy(&self) -> bool {
-        self.detector
-            .decision()
-            .is_some_and(NegotiationPrologue::is_legacy)
+        self.detector.is_legacy()
     }
 
     /// Returns `true` when the sniffer has determined that the peer selected the binary
@@ -284,9 +282,7 @@ impl NegotiationPrologueSniffer {
     /// I/O.
     #[must_use]
     pub fn is_binary(&self) -> bool {
-        self.detector
-            .decision()
-            .is_some_and(NegotiationPrologue::is_binary)
+        self.detector.is_binary()
     }
 
     /// Observes bytes that have already been read from the transport while tracking how

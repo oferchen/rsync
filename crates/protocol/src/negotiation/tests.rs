@@ -225,10 +225,14 @@ fn prologue_detector_reports_decision_state_helpers() {
 
     assert!(!detector.is_decided());
     assert!(detector.requires_more_data());
+    assert!(!detector.is_legacy());
+    assert!(!detector.is_binary());
 
     assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
     assert!(detector.is_decided());
     assert!(detector.requires_more_data());
+    assert!(detector.is_legacy());
+    assert!(!detector.is_binary());
 
     let remainder = &LEGACY_DAEMON_PREFIX.as_bytes()[1..];
     assert_eq!(
@@ -237,14 +241,20 @@ fn prologue_detector_reports_decision_state_helpers() {
     );
     assert!(detector.is_decided());
     assert!(!detector.requires_more_data());
+    assert!(detector.is_legacy());
+    assert!(!detector.is_binary());
 
     detector.reset();
     assert!(!detector.is_decided());
     assert!(detector.requires_more_data());
+    assert!(!detector.is_legacy());
+    assert!(!detector.is_binary());
 
     assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
     assert!(detector.is_decided());
     assert!(!detector.requires_more_data());
+    assert!(!detector.is_legacy());
+    assert!(detector.is_binary());
 }
 
 #[test]
