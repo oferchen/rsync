@@ -396,11 +396,12 @@ fn prologue_detector_handles_empty_chunk_while_waiting_for_prefix_completion() {
     );
 
     // Feeding an empty chunk while still collecting the canonical legacy
-    // prefix must replay the cached decision without mutating the
-    // buffered bytes. Upstream's detector simply waits for additional data
-    // while treating the exchange as legacy after the leading '@' is
-    // observed.
-    assert_eq!(detector.observe(b""), NegotiationPrologue::LegacyAscii);
+    // prefix signals that additional bytes are required without mutating the
+    // buffered prefix. The cached decision remains available via accessors so
+    // higher layers can keep treating the exchange as legacy while waiting for
+    // more input.
+    assert_eq!(detector.observe(b""), NegotiationPrologue::NeedMoreData);
+    assert!(detector.is_legacy());
     assert_eq!(detector.buffered_prefix(), b"@");
     assert_eq!(
         detector.legacy_prefix_remaining(),
@@ -615,9 +616,11 @@ fn buffered_prefix_tracks_bytes_consumed_for_legacy_detection() {
     assert_eq!(detector.observe(b"YNCD"), NegotiationPrologue::LegacyAscii);
     assert_eq!(detector.buffered_prefix(), b"@RSYNCD");
 
-    // Feeding an empty chunk after the decision simply replays the cached
-    // classification and leaves the buffered prefix intact.
-    assert_eq!(detector.observe(b""), NegotiationPrologue::LegacyAscii);
+    // Feeding an empty chunk after the decision reports that additional input
+    // is required while keeping the cached legacy classification available via
+    // the detector's helpers.
+    assert_eq!(detector.observe(b""), NegotiationPrologue::NeedMoreData);
+    assert!(detector.is_legacy());
     assert_eq!(detector.buffered_prefix(), b"@RSYNCD");
 }
 
@@ -730,15 +733,29 @@ fn assert_detector_matches_across_partitions(data: &[u8]) {
             let _ = detector.observe(&data[first_end..second_end]);
             let result = detector.observe(&data[second_end..]);
 
-            assert_eq!(
-                result, expected,
-                "segmented detection mismatch for {:?} with splits ({}, {})",
-                data, first_end, second_end
-            );
+            if expected == NegotiationPrologue::LegacyAscii
+                && result == NegotiationPrologue::NeedMoreData
+            {
+                assert!(
+                    detector.is_legacy(),
+                    "detector should cache legacy decision for {:?}",
+                    data
+                );
+                assert!(detector.requires_more_data());
+            } else {
+                assert_eq!(
+                    result, expected,
+                    "segmented detection mismatch for {:?} with splits ({}, {})",
+                    data, first_end, second_end
+                );
+            }
 
             match expected {
                 NegotiationPrologue::NeedMoreData => {
                     assert_eq!(detector.decision(), None);
+                }
+                NegotiationPrologue::LegacyAscii => {
+                    assert!(detector.is_legacy());
                 }
                 decision => {
                     assert_eq!(detector.decision(), Some(decision));
@@ -1089,9 +1106,7 @@ fn prologue_sniffer_sniffed_prefix_handles_binary_negotiation() {
 #[test]
 fn prologue_sniffer_sniffed_prefix_exposes_partial_legacy_bytes() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer
-        .observe(b"@R")
-        .expect("buffer reservation succeeds");
+    let (decision, consumed) = sniffer.observe(b"@R").expect("buffer reservation succeeds");
 
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 2);
@@ -1156,9 +1171,7 @@ fn prologue_sniffer_reports_buffered_length() {
     assert_eq!(consumed, 3);
     assert_eq!(sniffer.buffered_len(), 3);
 
-    let (decision, consumed) = sniffer
-        .observe(b"YN")
-        .expect("buffer reservation succeeds");
+    let (decision, consumed) = sniffer.observe(b"YN").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 2);
     assert_eq!(sniffer.buffered_len(), 5);
@@ -1259,17 +1272,13 @@ fn prologue_sniffer_observe_byte_matches_slice_behavior() {
 fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
-    let (decision, consumed) = sniffer
-        .observe(b"")
-        .expect("buffer reservation succeeds");
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 0);
     assert!(sniffer.buffered().is_empty());
     assert_eq!(sniffer.decision(), None);
 
-    let (decision, consumed) = sniffer
-        .observe(b"")
-        .expect("buffer reservation succeeds");
+    let (decision, consumed) = sniffer.observe(b"").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 0);
     assert!(sniffer.buffered().is_empty());
@@ -1794,9 +1803,7 @@ fn read_legacy_daemon_line_uses_buffered_newline_without_additional_io() {
 #[test]
 fn read_legacy_daemon_line_rejects_incomplete_legacy_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    let (decision, consumed) = sniffer
-        .observe(b"@")
-        .expect("buffer reservation succeeds");
+    let (decision, consumed) = sniffer.observe(b"@").expect("buffer reservation succeeds");
     assert_eq!(decision, NegotiationPrologue::NeedMoreData);
     assert_eq!(consumed, 1);
     assert_eq!(

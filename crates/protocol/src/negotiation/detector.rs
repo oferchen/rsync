@@ -35,20 +35,33 @@ impl NegotiationPrologueDetector {
     /// Observes the next chunk of bytes from the transport and reports the
     /// negotiation style chosen so far.
     ///
-    /// Once a non-`NeedMoreData` classification is returned, subsequent calls
-    /// will keep producing the same value without inspecting further input.
+    /// Once the detector has observed enough bytes to classify the exchange, the
+    /// decision is cached. Further calls that provide additional data replay the
+    /// cached classification without re-reading earlier input. When the legacy
+    /// ASCII path has been selected but more prefix bytes are still required and
+    /// the caller supplies an empty chunk, the method returns
+    /// [`NegotiationPrologue::NeedMoreData`] to signal that more I/O is
+    /// necessary; the cached decision remains available via
+    /// [`Self::decision`] and [`Self::is_legacy`].
     #[must_use]
     pub fn observe(&mut self, chunk: &[u8]) -> NegotiationPrologue {
+        let needs_more_prefix_bytes = matches!(
+            self.decided,
+            Some(NegotiationPrologue::LegacyAscii) if !self.prefix_complete
+        );
+
         if let Some(decided) = self.decided {
-            let needs_more_prefix_bytes =
-                decided == NegotiationPrologue::LegacyAscii && !self.prefix_complete;
             if !needs_more_prefix_bytes {
                 return decided;
             }
         }
 
         if chunk.is_empty() {
-            return self.decided.unwrap_or(NegotiationPrologue::NeedMoreData);
+            return if needs_more_prefix_bytes {
+                NegotiationPrologue::NeedMoreData
+            } else {
+                self.decided.unwrap_or(NegotiationPrologue::NeedMoreData)
+            };
         }
 
         let prefix = LEGACY_DAEMON_PREFIX_BYTES.as_slice();
