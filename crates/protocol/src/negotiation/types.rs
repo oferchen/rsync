@@ -29,6 +29,20 @@ impl BufferedPrefixTooSmall {
     pub const fn available(self) -> usize {
         self.available
     }
+
+    /// Returns how many additional bytes are required to hold the buffered prefix.
+    ///
+    /// When callers supply a scratch buffer that is too small to receive the sniffed
+    /// negotiation prefix, upstream rsync reports the exact deficit so operators can
+    /// size their allocations appropriately. Mirroring that behavior keeps diagnostics
+    /// consistent across implementations and allows higher layers to surface actionable
+    /// guidance without reimplementing the subtraction logic. The value is saturated at
+    /// zero to tolerate defensive checks that may construct the error even when the
+    /// provided capacity already exceeds the requirement.
+    #[must_use]
+    pub const fn missing(self) -> usize {
+        self.required.saturating_sub(self.available)
+    }
 }
 
 impl fmt::Display for BufferedPrefixTooSmall {
