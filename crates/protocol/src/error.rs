@@ -1,6 +1,7 @@
 use core::fmt;
 
 use crate::version::ProtocolVersion;
+use std::io;
 
 /// Errors that can occur while attempting to negotiate a protocol version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +48,12 @@ impl fmt::Display for NegotiationError {
 
 impl std::error::Error for NegotiationError {}
 
+impl From<NegotiationError> for io::Error {
+    fn from(err: NegotiationError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +95,19 @@ mod tests {
             err.to_string(),
             "malformed legacy rsync daemon greeting: \"@RSYNCD: ???\""
         );
+    }
+
+    #[test]
+    fn converts_to_io_error_preserving_kind_and_source() {
+        let err = NegotiationError::UnsupportedVersion(27);
+        let io_err: io::Error = err.clone().into();
+
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+
+        let source = io_err
+            .get_ref()
+            .and_then(|src| src.downcast_ref::<NegotiationError>())
+            .expect("io::Error must carry NegotiationError source");
+        assert_eq!(source, &err);
     }
 }
