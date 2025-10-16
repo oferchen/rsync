@@ -12,6 +12,7 @@ binary so documentation never overstates parity.
 | Protocol | Legacy ASCII daemon greeting parsing (`@RSYNCD:`) | Implemented | Structured parsers cover banners, authentication prompts, and error/warning lines with exhaustive tests. | `crates/protocol/src/legacy/` |
 | Protocol | Multiplexed message envelope (MSG_* tags, vectored writes) | Implemented | Envelope encoding/decoding mirrors upstream layouts and is fuzz/property tested. | `crates/protocol/src/envelope.rs`, `crates/protocol/src/multiplex.rs` |
 | Protocol | Negotiation prologue sniffing (legacy vs binary) | Implemented | `NegotiationPrologueDetector` and sniffer utilities reconstruct buffered prefixes for replay. | `crates/protocol/src/negotiation/` |
+| Transport | Negotiation stream wrappers with prefix replay | Implemented | `NegotiatedStream` preserves the sniffed bytes, exposes `Read`/`BufRead`, and returns the underlying reader for continued use. | `crates/transport/src/negotiation.rs` |
 | Workspace | CLI front-end (`bin/rsync`) | Missing | No CLI crate or binary exists yet; command-line parsing and help parity are outstanding. | _n/a_ |
 | Workspace | Daemon server (`bin/rsyncd`) | Missing | Daemon crate, config parser, and transport loop have not been implemented. | _n/a_ |
 | Workspace | Core transfer/engine/meta/filter/compress crates | Missing | No crates beyond `protocol` exist; delta transfer, metadata application, and compression remain to be written. | _n/a_ |
