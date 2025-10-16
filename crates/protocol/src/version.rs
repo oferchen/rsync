@@ -235,6 +235,18 @@ impl ProtocolVersion {
         &Self::SUPPORTED_VERSIONS
     }
 
+    /// Returns the cached list of supported protocol versions as a fixed-size array reference.
+    ///
+    /// Some compile-time contexts require access to the concrete array type instead of a slice,
+    /// mirroring helpers such as [`ProtocolVersion::supported_protocol_numbers_array`]. Exposing
+    /// the array keeps those call sites in sync with the canonical
+    /// [`ProtocolVersion::SUPPORTED_VERSIONS`] cache while avoiding duplicate literals.
+    #[must_use]
+    pub const fn supported_versions_array() -> &'static [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT]
+    {
+        &Self::SUPPORTED_VERSIONS
+    }
+
     /// Reports whether the provided numeric protocol identifier is supported
     /// by this implementation.
     ///
