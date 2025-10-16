@@ -1854,9 +1854,7 @@ fn prologue_sniffer_take_sniffed_prefix_preserves_remainder() {
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
 
     let remainder = b"module data";
-    sniffer
-        .buffered_storage_mut()
-        .extend_from_slice(remainder);
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
     let remainder_snapshot = sniffer.buffered_remainder().to_vec();
 
     let prefix = sniffer.take_sniffed_prefix();
@@ -1871,9 +1869,7 @@ fn prologue_sniffer_take_sniffed_prefix_preserves_remainder() {
 #[test]
 fn prologue_sniffer_take_sniffed_prefix_is_noop_when_prefix_incomplete() {
     let mut sniffer = NegotiationPrologueSniffer::new();
-    sniffer
-        .observe(b"@R")
-        .expect("buffer reservation succeeds");
+    sniffer.observe(b"@R").expect("buffer reservation succeeds");
     assert!(sniffer.requires_more_data());
 
     let before = sniffer.buffered().to_vec();
