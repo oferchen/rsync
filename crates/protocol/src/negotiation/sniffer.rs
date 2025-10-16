@@ -473,6 +473,123 @@ impl NegotiationPrologueSniffer {
         Ok(written)
     }
 
+    /// Drains the buffered remainder while retaining the sniffed negotiation prefix.
+    ///
+    /// Callers that have not yet replayed the canonical prefix—such as when the
+    /// legacy greeting still needs to be parsed—can use this helper to forward
+    /// the bytes that arrived in the same read without disturbing the detection
+    /// buffer. The returned vector owns the drained remainder, allowing higher
+    /// layers to stage it for subsequent protocol handling. When no remainder is
+    /// available the method returns an empty vector.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    pub fn take_buffered_remainder(&mut self) -> Vec<u8> {
+        let prefix_len = self.sniffed_prefix_len();
+        if self.buffered.len() <= prefix_len {
+            return Vec::new();
+        }
+
+        let remainder = self.buffered.split_off(prefix_len);
+        self.update_prefix_retention();
+
+        remainder
+    }
+
+    /// Drains the buffered remainder into an existing vector supplied by the caller.
+    ///
+    /// The helper mirrors [`take_buffered_remainder`](Self::take_buffered_remainder)
+    /// but avoids allocating when the caller already owns reusable storage. The
+    /// canonical detection prefix is retained so the caller can still replay it
+    /// into the legacy greeting parser. The destination vector is cleared before
+    /// the remainder is appended to it. The returned length corresponds to the
+    /// number of bytes drained into `target`.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    pub fn take_buffered_remainder_into(
+        &mut self,
+        target: &mut Vec<u8>,
+    ) -> Result<usize, TryReserveError> {
+        let prefix_len = self.sniffed_prefix_len();
+        if self.buffered.len() <= prefix_len {
+            target.clear();
+            return Ok(0);
+        }
+
+        let remainder_len = self.buffered.len() - prefix_len;
+        ensure_vec_capacity(target, remainder_len)?;
+        target.clear();
+        target.extend_from_slice(&self.buffered[prefix_len..]);
+        self.buffered.truncate(prefix_len);
+        self.update_prefix_retention();
+
+        Ok(remainder_len)
+    }
+
+    /// Drains the buffered remainder into the provided slice while retaining the sniffed prefix.
+    ///
+    /// This mirrors [`take_buffered_remainder_into`](Self::take_buffered_remainder_into) but
+    /// writes directly into stack-allocated storage. If the slice is too small to
+    /// hold the remainder a [`BufferedPrefixTooSmall`] error is returned and the
+    /// sniffer state remains unchanged so the caller can retry with a larger
+    /// workspace.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    pub fn take_buffered_remainder_into_slice(
+        &mut self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        let prefix_len = self.sniffed_prefix_len();
+        if self.buffered.len() <= prefix_len {
+            return Ok(0);
+        }
+
+        let remainder_len = self.buffered.len() - prefix_len;
+        if target.len() < remainder_len {
+            return Err(BufferedPrefixTooSmall::new(remainder_len, target.len()));
+        }
+
+        target[..remainder_len].copy_from_slice(&self.buffered[prefix_len..]);
+        self.buffered.truncate(prefix_len);
+        self.update_prefix_retention();
+
+        Ok(remainder_len)
+    }
+
+    /// Drains the buffered remainder into a caller-provided array while retaining the sniffed prefix.
+    ///
+    /// This convenience wrapper mirrors
+    /// [`take_buffered_remainder_into_slice`](Self::take_buffered_remainder_into_slice)
+    /// but accepts an array directly.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    pub fn take_buffered_remainder_into_array<const N: usize>(
+        &mut self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        self.take_buffered_remainder_into_slice(target.as_mut_slice())
+    }
+
+    /// Drains the buffered remainder into the provided [`Write`] implementation while
+    /// retaining the sniffed negotiation prefix.
+    ///
+    /// The helper mirrors [`take_buffered_remainder_into`](Self::take_buffered_remainder_into)
+    /// but forwards the bytes directly to an I/O sink. On success the canonical
+    /// detection prefix remains buffered so callers can still replay it into the
+    /// legacy greeting parser.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    pub fn take_buffered_remainder_into_writer<W: Write>(
+        &mut self,
+        target: &mut W,
+    ) -> io::Result<usize> {
+        let prefix_len = self.sniffed_prefix_len();
+        if self.buffered.len() <= prefix_len {
+            return Ok(0);
+        }
+
+        let remainder_len = self.buffered.len() - prefix_len;
+        target.write_all(&self.buffered[prefix_len..])?;
+        self.buffered.truncate(prefix_len);
+        self.update_prefix_retention();
+
+        Ok(remainder_len)
+    }
+
     /// Drops the sniffed negotiation prefix while retaining any buffered remainder.
     ///
     /// Upstream rsync forwards the bytes captured during detection into the next stage of the
