@@ -1,4 +1,5 @@
 use super::*;
+use core::convert::TryFrom;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
@@ -733,6 +734,57 @@ fn converts_protocol_version_to_u8() {
     let version = ProtocolVersion::try_from(32).expect("valid");
     let value: u8 = version.into();
     assert_eq!(value, 32);
+}
+
+#[test]
+fn converts_protocol_version_to_signed_integers() {
+    let newest = ProtocolVersion::NEWEST;
+    let oldest = ProtocolVersion::OLDEST;
+
+    let newest_i8: i8 = newest.into();
+    assert_eq!(newest_i8, i8::try_from(newest.as_u8()).expect("fits in i8"));
+
+    let newest_i16: i16 = newest.into();
+    assert_eq!(newest_i16, i16::from(newest.as_u8()));
+
+    let oldest_i32: i32 = oldest.into();
+    assert_eq!(oldest_i32, i32::from(oldest.as_u8()));
+
+    let newest_i64: i64 = newest.into();
+    assert_eq!(newest_i64, i64::from(newest.as_u8()));
+
+    let oldest_i128: i128 = oldest.into();
+    assert_eq!(oldest_i128, i128::from(oldest.as_u8()));
+
+    let newest_isize: isize = newest.into();
+    assert_eq!(newest_isize, isize::from(newest.as_u8()));
+}
+
+#[test]
+fn converts_protocol_version_to_non_zero_signed_integers() {
+    let newest = ProtocolVersion::NEWEST;
+    let oldest = ProtocolVersion::OLDEST;
+
+    let newest_i8: NonZeroI8 = newest.into();
+    assert_eq!(
+        newest_i8.get(),
+        i8::try_from(newest.as_u8()).expect("fits in i8")
+    );
+
+    let newest_i16: NonZeroI16 = newest.into();
+    assert_eq!(newest_i16.get(), i16::from(newest.as_u8()));
+
+    let oldest_i32: NonZeroI32 = oldest.into();
+    assert_eq!(oldest_i32.get(), i32::from(oldest.as_u8()));
+
+    let newest_i64: NonZeroI64 = newest.into();
+    assert_eq!(newest_i64.get(), i64::from(newest.as_u8()));
+
+    let oldest_i128: NonZeroI128 = oldest.into();
+    assert_eq!(oldest_i128.get(), i128::from(oldest.as_u8()));
+
+    let newest_isize: NonZeroIsize = newest.into();
+    assert_eq!(newest_isize.get(), isize::from(newest.as_u8()));
 }
 
 #[test]
