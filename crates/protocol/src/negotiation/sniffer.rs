@@ -730,13 +730,15 @@ pub fn read_legacy_daemon_line<R: Read>(
         .map_err(map_reserve_error_for_io)?;
 
     if let Some(newline_index) = line.iter().position(|&byte| byte == b'\n') {
-        let remainder = line.split_off(newline_index + 1);
-        if !remainder.is_empty() {
+        let remainder_start = newline_index + 1;
+        let remainder_len = line.len() - remainder_start;
+        let drain = line.drain(remainder_start..);
+        if remainder_len > 0 {
             sniffer
                 .buffered
-                .try_reserve_exact(remainder.len())
+                .try_reserve_exact(remainder_len)
                 .map_err(map_reserve_error_for_io)?;
-            sniffer.buffered.extend_from_slice(&remainder);
+            sniffer.buffered.extend(drain);
         }
         return Ok(());
     }
