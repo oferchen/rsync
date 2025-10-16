@@ -20,6 +20,48 @@ pub enum NegotiationError {
     },
 }
 
+impl NegotiationError {
+    /// Returns the peer-advertised protocol versions that failed to overlap with our
+    /// supported set.
+    ///
+    /// Upstream rsync surfaces the rejected versions when no mutual protocol exists so users can
+    /// reason about the mismatch. Exposing the slice keeps higher layers from cloning the vector
+    /// simply to inspect the diagnostic context while retaining ownership of the error value.
+    #[must_use]
+    pub fn peer_versions(&self) -> Option<&[u8]> {
+        match self {
+            Self::NoMutualProtocol { peer_versions } => Some(peer_versions.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Returns the unsupported protocol version advertised by the peer, if any.
+    ///
+    /// When upstream rsync aborts the negotiation due to an out-of-range version it surfaces the
+    /// offending byte directly in the diagnostic. The accessor allows callers to recover that
+    /// value without pattern matching on [`NegotiationError::UnsupportedVersion`].
+    #[must_use]
+    pub const fn unsupported_version(&self) -> Option<u8> {
+        match self {
+            Self::UnsupportedVersion(version) => Some(*version),
+            _ => None,
+        }
+    }
+
+    /// Returns the malformed legacy greeting that triggered a parsing failure, if available.
+    ///
+    /// Daemon negotiations frequently log the offending banner to aid debugging. Providing a
+    /// borrowed view keeps the same capability in higher layers without forcing them to clone the
+    /// string owned by the error value.
+    #[must_use]
+    pub fn malformed_legacy_greeting(&self) -> Option<&str> {
+        match self {
+            Self::MalformedLegacyGreeting { input } => Some(input.as_str()),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for NegotiationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -95,6 +137,28 @@ mod tests {
             err.to_string(),
             "malformed legacy rsync daemon greeting: \"@RSYNCD: ???\""
         );
+    }
+
+    #[test]
+    fn accessors_expose_variant_context() {
+        let no_mutual = NegotiationError::NoMutualProtocol {
+            peer_versions: vec![29, 30],
+        };
+        assert_eq!(no_mutual.peer_versions(), Some(&[29, 30][..]));
+        assert_eq!(no_mutual.unsupported_version(), None);
+        assert_eq!(no_mutual.malformed_legacy_greeting(), None);
+
+        let unsupported = NegotiationError::UnsupportedVersion(27);
+        assert_eq!(unsupported.peer_versions(), None);
+        assert_eq!(unsupported.unsupported_version(), Some(27));
+        assert_eq!(unsupported.malformed_legacy_greeting(), None);
+
+        let malformed = NegotiationError::MalformedLegacyGreeting {
+            input: "@RSYNCD: ???".to_owned(),
+        };
+        assert_eq!(malformed.peer_versions(), None);
+        assert_eq!(malformed.unsupported_version(), None);
+        assert_eq!(malformed.malformed_legacy_greeting(), Some("@RSYNCD: ???"));
     }
 
     #[test]
