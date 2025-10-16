@@ -131,13 +131,7 @@ impl<R> NegotiatedStream<R> {
             inner,
         } = parts;
 
-        Self::from_components(
-            inner,
-            decision,
-            sniffed_prefix_len,
-            buffered_pos,
-            buffered,
-        )
+        Self::from_components(inner, decision, sniffed_prefix_len, buffered_pos, buffered)
     }
 }
 
