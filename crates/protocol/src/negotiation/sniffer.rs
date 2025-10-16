@@ -350,6 +350,11 @@ impl NegotiationPrologueSniffer {
             return (decision, 0);
         }
 
+        let planned = self.planned_prefix_bytes_for_observation(cached, chunk.len());
+        if planned > 0 {
+            self.buffered.reserve(planned);
+        }
+
         let mut consumed = 0;
 
         for &byte in chunk {
@@ -532,6 +537,29 @@ impl NegotiationPrologueSniffer {
             let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
             if required > 0 {
                 self.buffered.reserve_exact(required);
+            }
+        }
+    }
+
+    #[inline]
+    fn planned_prefix_bytes_for_observation(
+        &self,
+        cached: Option<NegotiationPrologue>,
+        chunk_len: usize,
+    ) -> usize {
+        if chunk_len == 0 {
+            return 0;
+        }
+
+        let buffered_prefix = self.detector.buffered_len();
+        match cached {
+            Some(NegotiationPrologue::Binary) => 0,
+            Some(NegotiationPrologue::LegacyAscii) => {
+                chunk_len.min(LEGACY_DAEMON_PREFIX_LEN.saturating_sub(buffered_prefix))
+            }
+            Some(NegotiationPrologue::NeedMoreData) | None => {
+                let remaining = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(buffered_prefix).max(1);
+                chunk_len.min(remaining)
             }
         }
     }
