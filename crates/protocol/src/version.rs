@@ -296,6 +296,10 @@ impl ProtocolVersion {
     /// directly without triggering a runtime negotiation.
     #[must_use]
     pub const fn is_supported_protocol_number(value: u8) -> bool {
+        if value < Self::OLDEST.as_u8() || value > Self::NEWEST.as_u8() {
+            return false;
+        }
+
         let mut index = 0usize;
         while index < SUPPORTED_PROTOCOL_COUNT {
             if SUPPORTED_PROTOCOLS[index] == value {
