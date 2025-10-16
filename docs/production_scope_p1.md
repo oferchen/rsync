@@ -12,9 +12,7 @@ This document freezes the mandatory scope that must reach green status before th
 - `rsync://` TCP daemon transport
 
 ## Core Command-Line Flags
-- `-a`
-- `-v`
-- `-P`
+- `-avP` (including the aggregation of `-a`, `-v`, and progress `-P` exactly as upstream renders it)
 - `--delete`
 - `--exclude`, `--include`, `--filter`
 - `--partial`
