@@ -2061,6 +2061,31 @@ fn prologue_sniffer_take_sniffed_prefix_into_handles_binary_negotiation() {
 }
 
 #[test]
+fn prologue_sniffer_take_sniffed_prefix_into_clears_destination_after_drain() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let mut prefix = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
+    let drained = sniffer
+        .take_sniffed_prefix_into(&mut prefix)
+        .expect("initial prefix drain succeeds");
+    assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(prefix, LEGACY_DAEMON_PREFIX.as_bytes());
+
+    prefix.extend_from_slice(b"stale");
+    let drained_again = sniffer
+        .take_sniffed_prefix_into(&mut prefix)
+        .expect("subsequent drain should be a no-op");
+    assert_eq!(drained_again, 0);
+    assert!(prefix.is_empty());
+}
+
+#[test]
 fn prologue_sniffer_take_sniffed_prefix_into_slice_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let payload = LEGACY_DAEMON_PREFIX.as_bytes();
