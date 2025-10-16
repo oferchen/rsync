@@ -369,14 +369,13 @@ impl NegotiationPrologueSniffer {
     /// beyond that size—for instance when an attacker sent a very large
     /// malformed banner before the session was aborted—the capacity is trimmed
     /// back to the prefix length to avoid carrying an unnecessarily large
-    /// allocation into subsequent connections.
+    /// allocation into subsequent connections. Conversely, if an earlier
+    /// operation shrank the allocation below the canonical size, the buffer is
+    /// grown back to the prefix length so future legacy negotiations do not
+    /// trigger repeated incremental reallocations while replaying the prefix.
     pub fn reset(&mut self) {
         self.detector.reset();
-        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
-            self.buffered = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
-        } else {
-            self.buffered.clear();
-        }
+        self.reset_buffer_for_reuse();
     }
 
     /// Reads from `reader` until the negotiation style can be determined.
@@ -472,15 +471,10 @@ impl NegotiationPrologueSniffer {
     }
 
     fn reset_buffer_for_reuse(&mut self) {
-        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+        if self.buffered.capacity() != LEGACY_DAEMON_PREFIX_LEN {
             self.buffered = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
-            return;
-        }
-
-        self.buffered.clear();
-        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
-            self.buffered
-                .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
+        } else {
+            self.buffered.clear();
         }
     }
 }
@@ -2125,6 +2119,21 @@ mod tests {
         assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
 
         sniffer.reset();
+        assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_reset_restores_canonical_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // Simulate an external pool swapping in a smaller allocation.
+        sniffer.buffered = Vec::with_capacity(2);
+        sniffer.buffered.extend_from_slice(b"@@");
+        assert!(sniffer.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN);
+
+        sniffer.reset();
+
         assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), None);
