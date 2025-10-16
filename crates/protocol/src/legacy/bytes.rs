@@ -133,6 +133,42 @@ mod tests {
 
             prop_assert_eq!(actual, expected);
         }
+
+        #[test]
+        fn prop_parse_legacy_error_message_bytes_matches_str_parser(
+            tail in payload_strategy(),
+            newline in newline_strategy(),
+        ) {
+            let mut bytes = b"@ERROR:".to_vec();
+            bytes.extend_from_slice(&tail);
+            bytes.extend_from_slice(&newline);
+
+            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
+            let expected = parse_legacy_error_message(&text).map(str::to_owned);
+            let actual = parse_legacy_error_message_bytes(&bytes)
+                .expect("ASCII payloads should parse successfully")
+                .map(str::to_owned);
+
+            prop_assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn prop_parse_legacy_warning_message_bytes_matches_str_parser(
+            tail in payload_strategy(),
+            newline in newline_strategy(),
+        ) {
+            let mut bytes = b"@WARNING:".to_vec();
+            bytes.extend_from_slice(&tail);
+            bytes.extend_from_slice(&newline);
+
+            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
+            let expected = parse_legacy_warning_message(&text).map(str::to_owned);
+            let actual = parse_legacy_warning_message_bytes(&bytes)
+                .expect("ASCII payloads should parse successfully")
+                .map(str::to_owned);
+
+            prop_assert_eq!(actual, expected);
+        }
     }
 
     #[test]
