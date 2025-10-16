@@ -340,21 +340,28 @@ impl NegotiationPrologueDetector {
             }
 
             if self.len < LEGACY_DAEMON_PREFIX_LEN {
+                let expected = prefix[self.len];
                 self.buffer[self.len] = byte;
                 self.len += 1;
+
+                if byte != expected {
+                    self.prefix_complete = true;
+                    decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+                    break;
+                }
+
+                if self.len == LEGACY_DAEMON_PREFIX_LEN {
+                    self.prefix_complete = true;
+                    decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+                    break;
+                }
+
+                continue;
             }
 
-            if self.buffer[..self.len] != prefix[..self.len] {
-                self.prefix_complete = true;
-                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
-                break;
-            }
-
-            if self.len >= LEGACY_DAEMON_PREFIX_LEN {
-                self.prefix_complete = true;
-                decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
-                break;
-            }
+            self.prefix_complete = true;
+            decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
+            break;
         }
 
         if let Some(decision) = decision {
