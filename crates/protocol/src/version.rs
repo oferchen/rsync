@@ -3,7 +3,7 @@ use core::convert::TryFrom;
 use core::fmt;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
-    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
 };
 use core::ops::RangeInclusive;
 
@@ -100,6 +100,12 @@ impl_protocol_version_advertisement!(
     NonZeroU64 => |value: NonZeroU64| value.get().min(u64::from(u8::MAX)) as u8,
     NonZeroU128 => |value: NonZeroU128| value.get().min(u128::from(u8::MAX)) as u8,
     NonZeroUsize => |value: NonZeroUsize| value.get().min(usize::from(u8::MAX)) as u8,
+    Wrapping<u8> => |value: Wrapping<u8>| value.0,
+    Wrapping<u16> => |value: Wrapping<u16>| value.0.min(u16::from(u8::MAX)) as u8,
+    Wrapping<u32> => |value: Wrapping<u32>| value.0.min(u32::from(u8::MAX)) as u8,
+    Wrapping<u64> => |value: Wrapping<u64>| value.0.min(u64::from(u8::MAX)) as u8,
+    Wrapping<u128> => |value: Wrapping<u128>| value.0.min(u128::from(u8::MAX)) as u8,
+    Wrapping<usize> => |value: Wrapping<usize>| value.0.min(usize::from(u8::MAX)) as u8,
     i8 => |value: i8| value.clamp(0, i8::MAX) as u8,
     i16 => |value: i16| value.clamp(0, i16::from(u8::MAX)) as u8,
     i32 => |value: i32| value.clamp(0, i32::from(u8::MAX)) as u8,
@@ -112,6 +118,12 @@ impl_protocol_version_advertisement!(
     NonZeroI64 => |value: NonZeroI64| value.get().clamp(0, i64::from(u8::MAX)) as u8,
     NonZeroI128 => |value: NonZeroI128| value.get().clamp(0, i128::from(u8::MAX)) as u8,
     NonZeroIsize => |value: NonZeroIsize| value.get().clamp(0, isize::from(u8::MAX)) as u8,
+    Wrapping<i8> => |value: Wrapping<i8>| value.0.clamp(0, i8::MAX) as u8,
+    Wrapping<i16> => |value: Wrapping<i16>| value.0.clamp(0, i16::from(u8::MAX)) as u8,
+    Wrapping<i32> => |value: Wrapping<i32>| value.0.clamp(0, i32::from(u8::MAX)) as u8,
+    Wrapping<i64> => |value: Wrapping<i64>| value.0.clamp(0, i64::from(u8::MAX)) as u8,
+    Wrapping<i128> => |value: Wrapping<i128>| value.0.clamp(0, i128::from(u8::MAX)) as u8,
+    Wrapping<isize> => |value: Wrapping<isize>| value.0.clamp(0, isize::from(u8::MAX)) as u8,
 );
 
 macro_rules! declare_supported_protocols {
