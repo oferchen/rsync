@@ -49,16 +49,16 @@ impl<R> NegotiatedStream<R> {
         self.buffer.buffered()
     }
 
-    /// Returns the length of the sniffed negotiation prefix.
-    #[must_use]
-    pub const fn sniffed_prefix_len(&self) -> usize {
-        self.buffer.sniffed_prefix_len()
-    }
-
     /// Returns the total number of buffered bytes staged for replay.
     #[must_use]
     pub fn buffered_len(&self) -> usize {
         self.buffer.buffered_len()
+    }
+
+    /// Returns the length of the sniffed negotiation prefix.
+    #[must_use]
+    pub const fn sniffed_prefix_len(&self) -> usize {
+        self.buffer.sniffed_prefix_len()
     }
 
     /// Returns the remaining number of buffered bytes that have not yet been read.
@@ -212,6 +212,12 @@ impl<R> NegotiatedStreamParts<R> {
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
         self.buffer.buffered()
+    }
+
+    /// Returns the total number of bytes captured during sniffing.
+    #[must_use]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.buffered_len()
     }
 
     /// Returns how many buffered bytes remain unread.
@@ -413,6 +419,8 @@ mod tests {
         let mut stream = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
         assert_eq!(stream.decision(), NegotiationPrologue::Binary);
         assert_eq!(stream.sniffed_prefix(), &[0x00]);
+        assert_eq!(stream.sniffed_prefix_len(), 1);
+        assert_eq!(stream.buffered_len(), 1);
         assert!(stream.buffered_remainder().is_empty());
 
         let mut buf = [0u8; 3];
@@ -435,6 +443,8 @@ mod tests {
         let mut stream = sniff_bytes(legacy).expect("sniff succeeds");
         assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
         assert_eq!(stream.sniffed_prefix(), b"@RSYNCD:");
+        assert_eq!(stream.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(stream.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
         assert!(stream.buffered_remainder().is_empty());
 
         let mut replay = Vec::new();
@@ -476,6 +486,7 @@ mod tests {
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
         assert_eq!(parts.sniffed_prefix(), b"\x00");
         assert!(parts.buffered_remainder().is_empty());
+        assert_eq!(parts.buffered_len(), parts.sniffed_prefix_len());
         assert_eq!(parts.buffered_remaining(), parts.sniffed_prefix_len());
     }
 
@@ -495,6 +506,7 @@ mod tests {
             parts.buffered_remaining(),
             LEGACY_DAEMON_PREFIX_LEN - prefix_chunk.len()
         );
+        assert_eq!(parts.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
 
         let mut rehydrated = NegotiatedStream::from_parts(parts);
         assert_eq!(
