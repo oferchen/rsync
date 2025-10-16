@@ -45,6 +45,27 @@ fn supported_protocols_match_upstream_order() {
 }
 
 #[test]
+fn named_protocol_version_constants_are_exposed() {
+    assert_eq!(ProtocolVersion::V32.as_u8(), 32);
+    assert_eq!(ProtocolVersion::V31.as_u8(), 31);
+    assert_eq!(ProtocolVersion::V30.as_u8(), 30);
+    assert_eq!(ProtocolVersion::V29.as_u8(), 29);
+    assert_eq!(ProtocolVersion::V28.as_u8(), 28);
+
+    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::V28, ProtocolVersion::OLDEST);
+
+    let expected = [
+        ProtocolVersion::V32,
+        ProtocolVersion::V31,
+        ProtocolVersion::V30,
+        ProtocolVersion::V29,
+        ProtocolVersion::V28,
+    ];
+    assert_eq!(expected, *ProtocolVersion::supported_versions_array());
+}
+
+#[test]
 fn message_header_constants_match_upstream_definition() {
     assert_eq!(rsync_protocol::MESSAGE_HEADER_LEN, 4);
     assert_eq!(rsync_protocol::MAX_PAYLOAD_LENGTH, 0x00FF_FFFF);

@@ -551,6 +551,21 @@ impl ProtocolVersion {
     pub const BINARY_NEGOTIATION_INTRODUCED: ProtocolVersion =
         ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
 
+    /// Protocol version 32, the newest revision advertised by upstream rsync 3.4.1.
+    pub const V32: ProtocolVersion = ProtocolVersion::NEWEST;
+
+    /// Protocol version 31, used by upstream rsync 3.1.x releases.
+    pub const V31: ProtocolVersion = ProtocolVersion::new_const(31);
+
+    /// Protocol version 30, the first release that adopted the binary negotiation handshake.
+    pub const V30: ProtocolVersion = ProtocolVersion::new_const(30);
+
+    /// Protocol version 29, the newest legacy `@RSYNCD:` ASCII negotiation revision.
+    pub const V29: ProtocolVersion = ProtocolVersion::new_const(29);
+
+    /// Protocol version 28, the oldest revision still supported for interoperability.
+    pub const V28: ProtocolVersion = ProtocolVersion::OLDEST;
+
     /// Array of protocol versions supported by the Rust implementation,
     /// ordered from newest to oldest.
     pub const SUPPORTED_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT] =
