@@ -6,5 +6,6 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.85"
 authors = ["rsync rust port contributors"]
 license = "GPL-3.0-or-later"
