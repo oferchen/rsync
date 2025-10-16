@@ -42,6 +42,10 @@ fn supported_protocol_exports_cover_range() {
         ProtocolVersion::supported_protocol_numbers_array(),
         &rsync_protocol::SUPPORTED_PROTOCOLS,
     );
+    assert_eq!(
+        ProtocolVersion::supported_versions_array(),
+        &ProtocolVersion::SUPPORTED_VERSIONS,
+    );
     assert!(
         ProtocolVersion::supported_protocol_numbers_iter().eq(rsync_protocol::SUPPORTED_PROTOCOLS)
     );
