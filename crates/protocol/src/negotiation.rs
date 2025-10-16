@@ -138,8 +138,18 @@ impl NegotiationPrologueSniffer {
 
     /// Consumes the sniffer and returns the owned buffer containing the bytes
     /// that were read while determining the negotiation style.
+    ///
+    /// The returned allocation is trimmed to the canonical legacy prefix
+    /// length so callers never inherit oversized buffers that may have been
+    /// required while parsing malformed greetings. This mirrors the
+    /// shrink-to-fit behavior provided by [`take_buffered`](Self::take_buffered)
+    /// and keeps the helper suitable for long-lived connection pools.
     #[must_use]
-    pub fn into_buffered(self) -> Vec<u8> {
+    pub fn into_buffered(mut self) -> Vec<u8> {
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+        }
+
         self.buffered
     }
 
@@ -1336,8 +1346,24 @@ mod tests {
     #[test]
     fn prologue_sniffer_preallocates_legacy_prefix_capacity() {
         let buffered = NegotiationPrologueSniffer::new().into_buffered();
-        assert!(buffered.capacity() >= LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
         assert!(buffered.is_empty());
+    }
+
+    #[test]
+    fn prologue_sniffer_into_buffered_trims_oversized_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.buffered = Vec::with_capacity(256);
+        sniffer
+            .buffered
+            .extend_from_slice(LEGACY_DAEMON_PREFIX.as_bytes());
+
+        assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
+
+        let replay = sniffer.into_buffered();
+
+        assert_eq!(replay, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(replay.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
     #[test]
