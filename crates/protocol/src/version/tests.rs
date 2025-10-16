@@ -1,7 +1,7 @@
 use super::*;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
-    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
 };
 use proptest::prelude::*;
 
@@ -187,6 +187,90 @@ fn select_highest_mutual_accepts_non_zero_signed_advertisements() {
     let future = NonZeroI128::new(200).expect("non-zero");
     let negotiated = select_highest_mutual([future]).expect("future values clamp");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_wrapping_unsigned_advertisements() {
+    let negotiated = select_highest_mutual([
+        Wrapping::<u16>(u16::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<u16>(u16::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping u16 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<u32>(u32::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<u32>(u32::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping u32 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<u64>(u64::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<u64>(u64::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping u64 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<u128>(u128::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<u128>(u128::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping u128 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<usize>(usize::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<usize>(usize::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping usize works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let future = Wrapping::<u128>(200);
+    let negotiated = select_highest_mutual([future]).expect("wrapping future clamps");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn select_highest_mutual_accepts_wrapping_signed_advertisements() {
+    let negotiated = select_highest_mutual([
+        Wrapping::<i16>(i16::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<i16>(i16::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping i16 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<i32>(i32::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<i32>(i32::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping i32 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<i64>(i64::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<i64>(i64::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping i64 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<i128>(i128::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<i128>(i128::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping i128 works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negotiated = select_highest_mutual([
+        Wrapping::<isize>(isize::from(ProtocolVersion::NEWEST.as_u8())),
+        Wrapping::<isize>(isize::from(ProtocolVersion::OLDEST.as_u8())),
+    ])
+    .expect("wrapping isize works");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+
+    let negative = Wrapping::<i64>(-12);
+    let err = select_highest_mutual([negative]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(0));
 }
 
 #[test]
