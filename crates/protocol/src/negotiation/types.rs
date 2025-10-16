@@ -214,6 +214,14 @@ impl NegotiationPrologue {
     }
 }
 
+impl Default for NegotiationPrologue {
+    /// Returns [`NegotiationPrologue::NeedMoreData`], matching the undecided state upstream
+    /// rsync uses before the first byte is observed.
+    fn default() -> Self {
+        Self::NeedMoreData
+    }
+}
+
 impl fmt::Display for NegotiationPrologue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
