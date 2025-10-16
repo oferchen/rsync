@@ -53,6 +53,7 @@ pub use envelope::{
 };
 pub use error::NegotiationError;
 pub use legacy::{
+    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonMessage, format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
     parse_legacy_daemon_greeting_bytes, parse_legacy_daemon_message,
     parse_legacy_daemon_message_bytes, parse_legacy_error_message,

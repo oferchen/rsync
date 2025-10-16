@@ -2,7 +2,7 @@ use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
-use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
+use crate::legacy::{LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN};
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -600,7 +600,7 @@ impl NegotiationPrologueDetector {
             return self.decided.unwrap_or(NegotiationPrologue::NeedMoreData);
         }
 
-        let prefix = LEGACY_DAEMON_PREFIX.as_bytes();
+        let prefix = LEGACY_DAEMON_PREFIX_BYTES.as_slice();
         let mut decision = None;
 
         for &byte in chunk {
@@ -784,6 +784,7 @@ fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::legacy::LEGACY_DAEMON_PREFIX;
     use proptest::prelude::*;
     use std::io::{self, Cursor, Read};
 
