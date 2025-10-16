@@ -1,5 +1,6 @@
 use super::sniffer::map_reserve_error_for_io;
 use super::*;
+use crate::NegotiationError;
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
 use proptest::prelude::*;
 use std::{
@@ -1524,6 +1525,74 @@ fn read_legacy_daemon_line_rejects_non_legacy_state() {
     let mut line = Vec::new();
     let err = read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
         .expect_err("binary negotiation must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    assert!(line.is_empty());
+}
+
+#[test]
+fn read_and_parse_legacy_daemon_greeting_succeeds() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec());
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("legacy negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+
+    let mut line = Vec::new();
+    let version = read_and_parse_legacy_daemon_greeting(&mut sniffer, &mut reader, &mut line)
+        .expect("legacy greeting should parse");
+
+    assert_eq!(version.as_u8(), 31);
+    assert_eq!(line, b"@RSYNCD: 31.0\n");
+
+    let mut remainder = Vec::new();
+    reader.read_to_end(&mut remainder).expect("read remainder");
+    assert_eq!(remainder, b"rest");
+}
+
+#[test]
+fn read_and_parse_legacy_daemon_greeting_reports_parse_errors() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(b"@RSYNCD: ???\n".to_vec());
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("legacy negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+
+    let mut line = Vec::new();
+    let err = read_and_parse_legacy_daemon_greeting(&mut sniffer, &mut reader, &mut line)
+        .expect_err("malformed greeting should fail");
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    let source = err
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<NegotiationError>())
+        .expect("io::Error must retain NegotiationError source");
+    assert_eq!(
+        source,
+        &NegotiationError::MalformedLegacyGreeting {
+            input: "@RSYNCD: ???".to_owned()
+        }
+    );
+    assert_eq!(line, b"@RSYNCD: ???\n");
+}
+
+#[test]
+fn read_and_parse_legacy_daemon_greeting_rejects_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(vec![0x00, 0x42, 0x43]);
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("binary negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+
+    let mut line = Vec::new();
+    let err = read_and_parse_legacy_daemon_greeting(&mut sniffer, &mut reader, &mut line)
+        .expect_err("binary negotiation should reject legacy greeting parser");
+
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     assert!(line.is_empty());
 }
