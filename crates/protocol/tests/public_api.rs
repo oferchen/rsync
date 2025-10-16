@@ -8,6 +8,9 @@ use rsync_protocol::{
 };
 use std::iter::FusedIterator;
 
+const NEWEST_AS_USIZE: usize = ProtocolVersion::NEWEST.as_usize();
+const OLDEST_AS_USIZE: usize = ProtocolVersion::OLDEST.as_usize();
+
 #[derive(Clone, Copy)]
 struct CustomAdvertised(u8);
 
@@ -138,6 +141,16 @@ fn protocol_version_offsets_track_supported_ordering() {
 
     for (descending_index, version) in ProtocolVersion::supported_versions().iter().enumerate() {
         assert_eq!(version.offset_from_newest(), descending_index);
+    }
+}
+
+#[test]
+fn protocol_version_as_usize_exposes_const_index() {
+    assert_eq!(NEWEST_AS_USIZE, ProtocolVersion::NEWEST.as_u8() as usize);
+    assert_eq!(OLDEST_AS_USIZE, ProtocolVersion::OLDEST.as_u8() as usize);
+
+    for version in ProtocolVersion::supported_versions_iter() {
+        assert_eq!(version.as_usize(), version.as_u8() as usize);
     }
 }
 
