@@ -30,12 +30,11 @@ impl fmt::Display for NegotiationError {
                 )
             }
             Self::UnsupportedVersion(version) => {
+                let (oldest, newest) = crate::version::ProtocolVersion::supported_range_bounds();
                 write!(
                     f,
                     "peer advertised unsupported rsync protocol version {} (valid range {}-{})",
-                    version,
-                    crate::version::ProtocolVersion::OLDEST.as_u8(),
-                    crate::version::ProtocolVersion::NEWEST.as_u8()
+                    version, oldest, newest,
                 )
             }
             Self::MalformedLegacyGreeting { input } => {
