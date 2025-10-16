@@ -8,6 +8,7 @@ use std::{
     error::Error as _,
     io::{self, Cursor, Read, Write},
     ptr, slice,
+    str::FromStr,
 };
 
 #[test]
@@ -156,6 +157,45 @@ fn negotiation_prologue_from_initial_byte_matches_binary_split() {
             NegotiationPrologue::Binary
         );
     }
+}
+
+#[test]
+fn negotiation_prologue_from_str_parses_known_identifiers() {
+    assert_eq!(
+        NegotiationPrologue::from_str("need-more-data").expect("known identifier"),
+        NegotiationPrologue::NeedMoreData
+    );
+    assert_eq!(
+        NegotiationPrologue::from_str("legacy-ascii").expect("known identifier"),
+        NegotiationPrologue::LegacyAscii
+    );
+    assert_eq!(
+        NegotiationPrologue::from_str("binary").expect("known identifier"),
+        NegotiationPrologue::Binary
+    );
+}
+
+#[test]
+fn negotiation_prologue_from_str_trims_ascii_whitespace() {
+    let parsed = NegotiationPrologue::from_str("  legacy-ascii  ").expect("whitespace tolerated");
+    assert!(parsed.is_legacy());
+}
+
+#[test]
+fn negotiation_prologue_from_str_rejects_unknown_identifiers() {
+    let err = NegotiationPrologue::from_str("legacy").expect_err("unknown value must fail");
+    assert_eq!(err.kind(), ParseNegotiationPrologueErrorKind::Invalid);
+    assert_eq!(
+        err.to_string(),
+        "unrecognized negotiation prologue identifier (expected need-more-data, legacy-ascii, or binary)"
+    );
+}
+
+#[test]
+fn negotiation_prologue_from_str_rejects_empty_inputs() {
+    let err = NegotiationPrologue::from_str("   ").expect_err("empty value must fail");
+    assert_eq!(err.kind(), ParseNegotiationPrologueErrorKind::Empty);
+    assert_eq!(err.to_string(), "negotiation prologue identifier is empty");
 }
 
 #[test]
