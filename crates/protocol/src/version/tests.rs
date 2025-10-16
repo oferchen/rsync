@@ -106,6 +106,38 @@ fn select_highest_mutual_handles_unsorted_peer_versions() {
 }
 
 #[test]
+fn select_highest_mutual_short_circuits_after_newest() {
+    #[derive(Default)]
+    struct PanicAfterNewest {
+        state: u8,
+    }
+
+    impl Iterator for PanicAfterNewest {
+        type Item = u8;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self.state {
+                0 => {
+                    self.state = 1;
+                    Some(ProtocolVersion::OLDEST.as_u8().saturating_sub(1))
+                }
+                1 => {
+                    self.state = 2;
+                    Some(ProtocolVersion::NEWEST.as_u8())
+                }
+                _ => panic!(
+                    "select_highest_mutual should return immediately after seeing the newest protocol"
+                ),
+            }
+        }
+    }
+
+    let negotiated = select_highest_mutual(PanicAfterNewest::default())
+        .expect("must select newest without exhausting iterator");
+    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
 fn select_highest_mutual_accepts_slice_iterators() {
     let peers = [31u8, 29, 32];
     let negotiated = select_highest_mutual(peers.iter()).expect("slice iter works");
