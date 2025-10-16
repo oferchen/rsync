@@ -46,6 +46,19 @@ impl<'a> LegacyDaemonGreeting<'a> {
         }
     }
 
+    /// Returns the optional subprotocol suffix without normalizing missing values to zero.
+    ///
+    /// Upstream rsync distinguishes between greetings that included an explicit fractional
+    /// component (for example `@RSYNCD: 31.0`) and those that omitted it entirely. The Rust
+    /// implementation previously required callers to pair [`Self::has_subprotocol`] with
+    /// [`Self::subprotocol`] to retain that distinction. Exposing the raw optional value keeps the
+    /// API expressive while preserving the zero-default helper used by code paths that only need the
+    /// numeric suffix.
+    #[must_use]
+    pub const fn subprotocol_raw(self) -> Option<u32> {
+        self.subprotocol
+    }
+
     /// Reports whether the greeting explicitly supplied a subprotocol suffix.
     #[must_use]
     pub const fn has_subprotocol(self) -> bool {
@@ -197,6 +210,21 @@ mod tests {
     fn parses_legacy_daemon_greeting_with_minor_version() {
         let parsed = parse_legacy_daemon_greeting("@RSYNCD: 31.0\r\n").expect("valid greeting");
         assert_eq!(parsed.as_u8(), 31);
+    }
+
+    #[test]
+    fn legacy_daemon_greeting_exposes_optional_subprotocol() {
+        let with_fractional = parse_legacy_daemon_greeting_details("@RSYNCD: 30.5\n")
+            .expect("fractional component must parse");
+        assert_eq!(with_fractional.subprotocol_raw(), Some(5));
+        assert!(with_fractional.has_subprotocol());
+        assert_eq!(with_fractional.subprotocol(), 5);
+
+        let without_fractional =
+            parse_legacy_daemon_greeting_details("@RSYNCD: 29\n").expect("suffix-less greeting");
+        assert_eq!(without_fractional.subprotocol_raw(), None);
+        assert!(!without_fractional.has_subprotocol());
+        assert_eq!(without_fractional.subprotocol(), 0);
     }
 
     #[test]
