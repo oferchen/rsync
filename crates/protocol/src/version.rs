@@ -525,6 +525,30 @@ impl ProtocolVersion {
         SUPPORTED_PROTOCOL_BOUNDS
     }
 
+    /// Returns the oldest and newest supported protocol versions as strongly typed values.
+    ///
+    /// Higher layers that operate on [`ProtocolVersion`] values instead of raw bytes can
+    /// use this helper to remain in sync with the canonical bounds without re-encoding the
+    /// numeric range. The pair mirrors the information exposed by
+    /// [`ProtocolVersion::supported_range_bounds`] while preserving type safety for code that
+    /// stores negotiated versions in strongly typed structures.
+    #[must_use]
+    pub const fn supported_version_bounds() -> (ProtocolVersion, ProtocolVersion) {
+        (Self::OLDEST, Self::NEWEST)
+    }
+
+    /// Returns the inclusive range of supported protocol versions using strongly typed values.
+    ///
+    /// The range mirrors [`ProtocolVersion::supported_range`] but yields
+    /// [`ProtocolVersion`] instances so callers can iterate without converting between the raw
+    /// byte representation and the wrapper type. This is particularly useful when constructing
+    /// lookup tables keyed by [`ProtocolVersion`] or when rendering diagnostics that already work
+    /// with the strongly typed representation.
+    #[must_use]
+    pub fn supported_version_range() -> RangeInclusive<ProtocolVersion> {
+        Self::OLDEST..=Self::NEWEST
+    }
+
     /// Returns an iterator over the supported protocol versions in
     /// newest-to-oldest order.
     ///
