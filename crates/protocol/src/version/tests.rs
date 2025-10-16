@@ -420,6 +420,10 @@ fn supported_versions_method_matches_constant_slice() {
         ProtocolVersion::supported_versions(),
         ProtocolVersion::SUPPORTED_VERSIONS.as_slice()
     );
+    assert_eq!(
+        ProtocolVersion::supported_versions_array(),
+        &ProtocolVersion::SUPPORTED_VERSIONS,
+    );
 }
 
 #[test]
@@ -447,6 +451,11 @@ fn supported_protocol_count_matches_helpers() {
         SUPPORTED_PROTOCOL_COUNT,
         ProtocolVersion::supported_versions().len(),
         "count constant must match cached ProtocolVersion list",
+    );
+    assert_eq!(
+        SUPPORTED_PROTOCOL_COUNT,
+        ProtocolVersion::supported_versions_array().len(),
+        "count constant must match cached ProtocolVersion array",
     );
 }
 
