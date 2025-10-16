@@ -1081,6 +1081,29 @@ fn prologue_sniffer_limits_legacy_reads_to_required_bytes() {
 }
 
 #[test]
+fn prologue_sniffer_read_from_preserves_bytes_after_malformed_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let malformed_banner = b"@XFAIL!\n".to_vec();
+    let mut cursor = Cursor::new(malformed_banner.clone());
+
+    let decision = sniffer
+        .read_from(&mut cursor)
+        .expect("malformed legacy negotiation should still classify as legacy");
+
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert!(sniffer.legacy_prefix_complete());
+    assert_eq!(sniffer.legacy_prefix_remaining(), None);
+    assert_eq!(sniffer.buffered(), malformed_banner.as_slice());
+    assert_eq!(cursor.position(), malformed_banner.len() as u64);
+
+    let mut replay = Vec::new();
+    sniffer
+        .take_buffered_into(&mut replay)
+        .expect("replaying malformed prefix should succeed");
+    assert_eq!(replay, malformed_banner);
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_drains_accumulated_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
