@@ -281,6 +281,25 @@ impl NegotiationPrologueDetector {
         Ok(required)
     }
 
+    /// Copies the buffered prefix into a caller-provided array without allocation.
+    ///
+    /// This convenience wrapper mirrors
+    /// [`copy_buffered_prefix_into`](Self::copy_buffered_prefix_into) but accepts a
+    /// fixed-size array directly. Callers that keep a stack-allocated
+    /// `LEGACY_DAEMON_PREFIX_LEN` scratch buffer can therefore avoid the
+    /// additional `.as_mut_slice()` boilerplate while still receiving the copied
+    /// byte count. When the array cannot hold the buffered prefix a
+    /// [`BufferedPrefixTooSmall`] error is returned and no bytes are written,
+    /// matching upstream rsync's behavior where short buffers are reported to
+    /// the caller without mutating the destination.
+    #[must_use = "process the copy result or handle the insufficient capacity error"]
+    pub fn copy_buffered_prefix_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        self.copy_buffered_prefix_into(target.as_mut_slice())
+    }
+
     /// Returns the number of bytes retained in the prefix buffer.
     ///
     /// The detector only stores bytes while it is still determining whether
