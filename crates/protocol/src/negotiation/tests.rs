@@ -220,6 +220,34 @@ fn prologue_detector_default_matches_initial_state() {
 }
 
 #[test]
+fn prologue_detector_reports_decision_state_helpers() {
+    let mut detector = NegotiationPrologueDetector::new();
+
+    assert!(!detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
+    assert!(detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    let remainder = &LEGACY_DAEMON_PREFIX.as_bytes()[1..];
+    assert_eq!(
+        detector.observe(remainder),
+        NegotiationPrologue::LegacyAscii
+    );
+    assert!(detector.is_decided());
+    assert!(!detector.requires_more_data());
+
+    detector.reset();
+    assert!(!detector.is_decided());
+    assert!(detector.requires_more_data());
+
+    assert_eq!(detector.observe(&[0x00]), NegotiationPrologue::Binary);
+    assert!(detector.is_decided());
+    assert!(!detector.requires_more_data());
+}
+
+#[test]
 fn prologue_detector_detects_binary_immediately() {
     let mut detector = NegotiationPrologueDetector::default();
     assert_eq!(detector.observe(b"x"), NegotiationPrologue::Binary);
