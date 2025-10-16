@@ -251,7 +251,7 @@ impl NegotiationPrologueDetector {
     /// borrowing it directly. When the destination slice is too small to hold
     /// the buffered prefix, a [`BufferedPrefixTooSmall`] error is returned and no
     /// data is written to the provided slice.
-    #[must_use = "handle the legacy negotiation prefix copy result"]
+    #[must_use = "process the copy result so the buffered prefix can be replayed or the size error handled"]
     pub fn copy_buffered_prefix_into(
         &self,
         target: &mut [u8],
