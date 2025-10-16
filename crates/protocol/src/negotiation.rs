@@ -1107,6 +1107,23 @@ mod tests {
     }
 
     #[test]
+    fn prologue_sniffer_observe_returns_need_more_data_for_empty_chunk() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let (decision, consumed) = sniffer.observe(b"");
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(consumed, 0);
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+
+        let (decision, consumed) = sniffer.observe(b"");
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(consumed, 0);
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
     fn prologue_sniffer_observe_handles_binary_detection() {
         let mut sniffer = NegotiationPrologueSniffer::new();
 
