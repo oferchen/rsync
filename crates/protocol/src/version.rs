@@ -293,6 +293,22 @@ impl ProtocolVersion {
         self.0.get()
     }
 
+    /// Returns the non-zero byte representation used in protocol negotiation.
+    ///
+    /// Upstream rsync frequently stores negotiated protocol versions in
+    /// `uint8` fields that rely on the non-zero invariant to distinguish
+    /// between "no version negotiated" (`0`) and a real protocol value. The
+    /// Rust implementation mirrors that convention by wrapping the negotiated
+    /// byte in [`core::num::NonZeroU8`]. Exposing the pre-validated wrapper lets
+    /// higher layers avoid reconstructing it manually when interacting with
+    /// caches, lookup tables, or serialization helpers that expect the invariant
+    /// to hold.
+    #[must_use]
+    #[inline]
+    pub const fn as_non_zero(self) -> NonZeroU8 {
+        self.0
+    }
+
     /// Converts a peer-advertised version into the negotiated protocol version.
     ///
     /// Upstream rsync tolerates peers that advertise a protocol newer than it
@@ -328,7 +344,7 @@ impl From<ProtocolVersion> for u8 {
 impl From<ProtocolVersion> for NonZeroU8 {
     #[inline]
     fn from(version: ProtocolVersion) -> Self {
-        version.0
+        version.as_non_zero()
     }
 }
 
