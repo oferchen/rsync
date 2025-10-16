@@ -1,5 +1,6 @@
 use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
+use core::fmt::{self, Write as FmtWrite};
 
 use super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
 
@@ -185,26 +186,61 @@ fn parse_ascii_digits_to_u32(digits: &str) -> u32 {
     value
 }
 
-/// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
+/// Writes the legacy ASCII daemon greeting into the supplied [`fmt::Write`] sink.
 ///
 /// Upstream daemons send a line such as `@RSYNCD: 32.0\n` when speaking to
-/// older clients. The Rust implementation mirrors that exact layout so callers
-/// can emit byte-identical banners during negotiation and round-trip the value
-/// through [`parse_legacy_daemon_greeting`].
+/// older clients. The helper mirrors that layout without allocating, enabling
+/// callers to render the greeting directly into stack buffers or
+/// pre-allocated `String`s. The newline terminator is appended automatically to
+/// match upstream rsync's behaviour.
+pub fn write_legacy_daemon_greeting<W: FmtWrite>(
+    writer: &mut W,
+    version: ProtocolVersion,
+) -> fmt::Result {
+    writer.write_str(LEGACY_DAEMON_PREFIX)?;
+    writer.write_char(' ')?;
+
+    let mut value = version.as_u8();
+    let mut digits = [0u8; 3];
+    let mut len = 0usize;
+
+    loop {
+        debug_assert!(
+            len < digits.len(),
+            "protocol version must fit in three decimal digits"
+        );
+        digits[len] = value % 10;
+        len += 1;
+        value /= 10;
+
+        if value == 0 {
+            break;
+        }
+    }
+
+    for index in (0..len).rev() {
+        writer.write_char(char::from(b'0' + digits[index]))?;
+    }
+
+    writer.write_str(".0\n")
+}
+
+/// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
+///
+/// This convenience wrapper allocates a [`String`] and delegates to
+/// [`write_legacy_daemon_greeting`] so existing call sites can retain their API
+/// while newer code paths format directly into reusable buffers.
 #[must_use]
 pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
-    let mut banner = String::with_capacity(16);
-    banner.push_str(LEGACY_DAEMON_PREFIX);
-    banner.push(' ');
-    let digits = version.as_u8().to_string();
-    banner.push_str(&digits);
-    banner.push_str(".0\n");
+    let mut banner = String::with_capacity(LEGACY_DAEMON_PREFIX.len() + 6);
+    write_legacy_daemon_greeting(&mut banner, version).expect("writing to a String cannot fail");
     banner
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::fmt;
 
     #[test]
     fn parses_legacy_daemon_greeting_with_minor_version() {
@@ -388,5 +424,47 @@ mod tests {
                 .unwrap_or_else(|err| panic!("failed to parse {rendered:?}: {err}"));
             assert_eq!(parsed, version);
         }
+    }
+
+    #[test]
+    fn write_legacy_daemon_greeting_matches_formatter() {
+        for &version in ProtocolVersion::supported_versions() {
+            let mut rendered = String::new();
+            write_legacy_daemon_greeting(&mut rendered, version).expect("writing to String");
+            assert_eq!(rendered, format_legacy_daemon_greeting(version));
+        }
+    }
+
+    #[test]
+    fn write_legacy_daemon_greeting_propagates_errors() {
+        struct FailingWriter {
+            remaining: usize,
+        }
+
+        impl fmt::Write for FailingWriter {
+            fn write_str(&mut self, s: &str) -> fmt::Result {
+                if self.remaining < s.len() {
+                    self.remaining = 0;
+                    return Err(fmt::Error);
+                }
+                self.remaining -= s.len();
+                Ok(())
+            }
+
+            fn write_char(&mut self, ch: char) -> fmt::Result {
+                let needed = ch.len_utf8();
+                if self.remaining < needed {
+                    self.remaining = 0;
+                    return Err(fmt::Error);
+                }
+                self.remaining -= needed;
+                Ok(())
+            }
+        }
+
+        let mut writer = FailingWriter {
+            remaining: LEGACY_DAEMON_PREFIX.len(),
+        };
+        assert!(write_legacy_daemon_greeting(&mut writer, ProtocolVersion::NEWEST).is_err());
     }
 }
