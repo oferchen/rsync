@@ -446,6 +446,22 @@ impl PartialEq<ProtocolVersion> for NonZeroU8 {
 /// value, matching upstream tolerance for future releases. Duplicate peer entries and
 /// out-of-order announcements are tolerated. If no mutual protocol exists,
 /// [`NegotiationError::NoMutualProtocol`] is returned with the filtered peer list for context.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::{select_highest_mutual, ProtocolVersion};
+///
+/// let negotiated = select_highest_mutual([
+///     ProtocolVersion::NEWEST,
+///     ProtocolVersion::from_supported(31).expect("31 is within the supported range"),
+/// ])
+/// .expect("newest protocol should be accepted");
+/// assert_eq!(negotiated, ProtocolVersion::NEWEST);
+///
+/// let err = select_highest_mutual([27u8]).unwrap_err();
+/// assert!(matches!(err, rsync_protocol::NegotiationError::UnsupportedVersion(27)));
+/// ```
 #[must_use = "the negotiation outcome must be checked"]
 pub fn select_highest_mutual<I, T>(peer_versions: I) -> Result<ProtocolVersion, NegotiationError>
 where
