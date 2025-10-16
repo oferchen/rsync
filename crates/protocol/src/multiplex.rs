@@ -216,7 +216,11 @@ fn ensure_payload_length(len: usize) -> io::Result<u32> {
 
 fn reserve_payload(buffer: &mut Vec<u8>, len: usize) -> io::Result<()> {
     if buffer.capacity() < len {
-        let additional = len - buffer.capacity();
+        let additional = len.saturating_sub(buffer.len());
+        debug_assert!(
+            additional > 0,
+            "reserve_payload called without additional elements"
+        );
         buffer
             .try_reserve_exact(additional)
             .map_err(map_allocation_error)?;
@@ -393,6 +397,38 @@ mod tests {
         let mut expected = Vec::from(header.encode());
         expected.extend_from_slice(payload);
         assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn reserve_payload_extends_capacity_for_empty_buffers() {
+        let mut buffer = Vec::with_capacity(4);
+        assert!(buffer.capacity() < 10);
+
+        reserve_payload(&mut buffer, 10).expect("reserve succeeds");
+
+        assert!(
+            buffer.capacity() >= 10,
+            "capacity {} should be at least required length",
+            buffer.capacity()
+        );
+        assert_eq!(buffer.len(), 0, "reserve must not mutate length");
+    }
+
+    #[test]
+    fn reserve_payload_extends_relative_to_current_length() {
+        let mut buffer = Vec::with_capacity(8);
+        buffer.extend_from_slice(&[0u8; 3]);
+        assert_eq!(buffer.len(), 3);
+        assert!(buffer.capacity() < 12);
+
+        reserve_payload(&mut buffer, 12).expect("reserve succeeds");
+
+        assert!(
+            buffer.capacity() >= 12,
+            "capacity {} should be at least required length",
+            buffer.capacity()
+        );
+        assert_eq!(buffer.len(), 3, "reserve must not mutate length");
     }
 
     #[test]
