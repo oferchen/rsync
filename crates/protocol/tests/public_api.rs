@@ -190,6 +190,7 @@ fn negotiation_prologue_sniffer_reports_buffered_length() {
     assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
     assert_eq!(sniffer.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
     assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX_BYTES);
 
     let mut replay = [0u8; LEGACY_DAEMON_PREFIX_LEN];
@@ -200,6 +201,7 @@ fn negotiation_prologue_sniffer_reports_buffered_length() {
     assert_eq!(&replay, LEGACY_DAEMON_PREFIX_BYTES);
 
     assert_eq!(sniffer.buffered_len(), 0);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
     assert!(sniffer.buffered().is_empty());
 }
 
