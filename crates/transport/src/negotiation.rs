@@ -100,7 +100,6 @@ impl<R> NegotiatedStream<R> {
         sniffed_prefix_len: usize,
         buffered_pos: usize,
         buffered: Vec<u8>,
-        buffered_pos: usize,
     ) -> Self {
         let clamped_prefix_len = sniffed_prefix_len.min(buffered.len());
         let clamped_buffered_pos = buffered_pos.min(buffered.len());
@@ -132,7 +131,7 @@ impl<R> NegotiatedStream<R> {
             inner,
         } = parts;
 
-        Self::from_components(inner, decision, sniffed_prefix_len, buffered, buffered_pos)
+        Self::from_components(inner, decision, sniffed_prefix_len, buffered_pos, buffered)
     }
 }
 
@@ -260,7 +259,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// without cloning the sniffed bytes.
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
-        NegotiatedStream::with_state(
+        NegotiatedStream::from_components(
             self.inner,
             self.decision,
             self.sniffed_prefix_len,
@@ -299,7 +298,6 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
         sniffed_prefix_len,
         0,
         buffered,
-        0,
     ))
 }
 
