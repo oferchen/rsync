@@ -1,3 +1,4 @@
+use core::mem;
 use std::io::{self, Read};
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN};
@@ -86,6 +87,26 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn into_buffered(self) -> Vec<u8> {
         self.buffered
+    }
+
+    /// Drains the buffered bytes while keeping the sniffer available for reuse.
+    ///
+    /// Callers that need to replay the captured prefix into the legacy greeting
+    /// parser (or feed the initial binary byte back into the negotiation
+    /// handler) can drain the buffer without relinquishing ownership of the
+    /// sniffer. The internal storage is replaced with an empty vector whose
+    /// capacity matches the previous allocation (clamped to the canonical legacy
+    /// prefix length) so subsequent detections can continue reusing the
+    /// allocation in line with the workspace's buffer reuse guidance.
+    #[must_use]
+    pub fn take_buffered(&mut self) -> Vec<u8> {
+        let capacity = self
+            .buffered
+            .capacity()
+            .max(LEGACY_DAEMON_PREFIX_LEN);
+        let mut drained = Vec::with_capacity(capacity);
+        mem::swap(&mut self.buffered, &mut drained);
+        drained
     }
 
     /// Reports the cached negotiation decision, if any.
@@ -1182,6 +1203,38 @@ mod tests {
         let mut remaining = Vec::new();
         cursor.read_to_end(&mut remaining).expect("read remainder");
         assert_eq!(remaining, b" 31.0\n");
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_drains_accumulated_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+        assert!(sniffer.legacy_prefix_complete());
+
+        let buffered = sniffer.take_buffered();
+        assert_eq!(buffered, LEGACY_DAEMON_PREFIX.as_bytes());
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+        assert_eq!(sniffer.legacy_prefix_remaining(), None);
+
+        sniffer.reset();
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_returns_initial_binary_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(&[0x80, 0x81, 0x82]);
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+
+        let buffered = sniffer.take_buffered();
+        assert_eq!(buffered, [0x80]);
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
     }
 
     #[test]
