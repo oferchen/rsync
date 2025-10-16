@@ -1,21 +1,78 @@
-# Production Scope P1 — Release Readiness Gate
+# Production Scope P1 (Ship Bar)
 
-The following criteria must be **green** before this project can be considered "production ready." Each item is testable and maps to upstream rsync 3.4.1 behavior (protocol 32) to guarantee functional identity.
+This document freezes the mandatory scope that must reach green status before the Rust rsync implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project.
 
 ## Platforms
 - Linux x86_64
 - Linux aarch64
 
-## Functionality
-- Client and daemon operation supporting protocols 32 through 28 over both SSH stdio transport and `rsync://` TCP connections.
-- Core flag coverage: `-avP`, `--delete`, `--exclude`, `--include`, `--filter`, `--partial`, `--inplace`, `--checksum`, `-z`, `--bwlimit`, `--numeric-ids`, `--owner`, `--group`, `--perms`, `--times`.
-- File type handling: regular files, directories, symlinks, hard links, device nodes, FIFOs, sparse files.
-- Metadata fidelity: uid, gid, permissions, nanosecond mtime, symlink targets, extended attributes, and POSIX ACLs when compiled with support.
-- Daemon parity with upstream `rsyncd.conf`: modules, `auth users`, `secrets`, `hosts allow` / `hosts deny`, `read only`, `uid`, `gid`, `numeric ids`, `chroot`, `timeout`, `refuse options`.
-- User-visible messages, help output, version banners, and error text match upstream byte-for-byte.
-- Interoperability passes against upstream rsync 3.0.9, 3.1.3, and 3.4.1 over loopback.
+## Transports & Roles
+- Client and daemon support for protocols 32 through 28
+- SSH stdio transport
+- `rsync://` TCP daemon transport
+
+## Core Command-Line Flags
+- `-a`
+- `-v`
+- `-P`
+- `--delete`
+- `--exclude`, `--include`, `--filter`
+- `--partial`
+- `--inplace`
+- `--checksum`
+- `-z`
+- `--bwlimit`
+- `--numeric-ids`
+- `--owner`
+- `--group`
+- `--perms`
+- `--times`
+
+## Filesystem Objects & Data Handling
+- Regular files
+- Directories
+- Symbolic links
+- Hard links
+- Device nodes
+- FIFOs
+- Sparse file handling
+
+## Metadata Fidelity
+- UID and GID
+- Permission bits
+- Nanosecond-resolution modification times
+- Symlink targets
+- Extended attributes (when compiled in)
+- POSIX ACLs (when compiled in)
+
+## Daemon Configuration Parity
+- Module definitions
+- `auth users`
+- `secrets file` (0600 permissions enforced)
+- `hosts allow` / `hosts deny`
+- `read only`
+- `uid` / `gid`
+- `numeric ids`
+- `chroot`
+- `timeout`
+- `refuse options`
+
+## User-Facing Messages
+- `--help` output
+- `--version` output (including `3.4.1-rust` branding and compiled feature list)
+- Error and progress messages with byte-for-byte parity
+
+## Interoperability
+- Upstream rsync releases 3.0.9, 3.1.3, and 3.4.1 over loopback `rsync://`
+- Matching stdout, stderr, exit codes, and resulting filesystem state
 
 ## Quality Gates
-- Code coverage (lines and blocks) ≥ 95% via `cargo llvm-cov`.
-- Packaging artifacts produced and validated: `.deb`, `.rpm`, systemd unit, and CycloneDX SBOM.
+- Test coverage ≥ 95% (lines and blocks)
+- CI jobs green across lint, tests, packaging, and parity checks
+
+## Packaging & Artifacts
+- Debian package via `cargo-deb`
+- RPM package via `cargo-rpm`
+- Systemd `rsyncd.service` unit
+- CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 
