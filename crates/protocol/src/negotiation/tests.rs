@@ -1894,6 +1894,136 @@ fn prologue_sniffer_take_buffered_into_writer_includes_remainder_bytes() {
     assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 }
 
+#[test]
+fn prologue_sniffer_take_buffered_remainder_returns_trailing_bytes() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" version payload";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let drained = sniffer.take_buffered_remainder();
+    assert_eq!(drained, remainder);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    assert_eq!(sniffer.buffered_remainder(), b"");
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_handles_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(vec![0x7F, 0xAA, 0xBB, 0xCC]);
+
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("binary negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+    let drained = sniffer.take_buffered_remainder();
+    assert_eq!(drained, [0xAA, 0xBB, 0xCC]);
+    assert_eq!(sniffer.buffered(), [0x7F]);
+    assert!(sniffer.is_binary());
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_reuses_destination() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(b" hello\n");
+
+    let mut reused = b"seed".to_vec();
+    let drained = sniffer
+        .take_buffered_remainder_into(&mut reused)
+        .expect("destination should grow for remainder");
+
+    assert_eq!(reused, b" hello\n");
+    assert_eq!(drained, reused.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.buffered_remainder(), b"");
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_slice_copies_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(b" trailer");
+
+    let mut scratch = [0u8; 8];
+    let copied = sniffer
+        .take_buffered_remainder_into_slice(&mut scratch)
+        .expect("slice should fit remainder");
+
+    assert_eq!(copied, b" trailer".len());
+    assert_eq!(&scratch[..copied], b" trailer");
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_slice_reports_small_buffer() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    sniffer.buffered_storage_mut().extend_from_slice(b" tail");
+
+    let mut scratch = [0u8; 3];
+    let err = sniffer
+        .take_buffered_remainder_into_slice(&mut scratch)
+        .expect_err("slice without capacity should error");
+
+    assert_eq!(err.required(), b" tail".len());
+    assert_eq!(err.available(), scratch.len());
+    assert_eq!(sniffer.buffered_remainder(), b" tail");
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_writer_transfers_tail() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    sniffer.buffered_storage_mut().extend_from_slice(b" extra");
+
+    let mut sink = Vec::new();
+    let written = sniffer
+        .take_buffered_remainder_into_writer(&mut sink)
+        .expect("remainder should be written to sink");
+
+    assert_eq!(sink, b" extra");
+    assert_eq!(written, sink.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.buffered_remainder(), b"");
+}
+
 struct FailingWriter {
     error: io::Error,
 }
