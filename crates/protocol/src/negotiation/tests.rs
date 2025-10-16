@@ -159,6 +159,26 @@ fn negotiation_prologue_from_initial_byte_matches_binary_split() {
 }
 
 #[test]
+fn negotiation_prologue_detector_default_matches_new() {
+    let from_new = NegotiationPrologueDetector::new();
+    let from_default = NegotiationPrologueDetector::default();
+
+    assert_eq!(from_default.decision(), from_new.decision());
+    assert_eq!(from_default.buffered_len(), from_new.buffered_len());
+    assert_eq!(
+        from_default.requires_more_data(),
+        from_new.requires_more_data()
+    );
+    assert_eq!(from_default.is_decided(), from_new.is_decided());
+    assert_eq!(from_default.is_legacy(), from_new.is_legacy());
+    assert_eq!(from_default.is_binary(), from_new.is_binary());
+    assert_eq!(
+        from_default.legacy_prefix_complete(),
+        from_new.legacy_prefix_complete()
+    );
+}
+
+#[test]
 fn detect_negotiation_prologue_delegates_to_initial_byte_helper() {
     for byte in 0u8..=u8::MAX {
         assert_eq!(

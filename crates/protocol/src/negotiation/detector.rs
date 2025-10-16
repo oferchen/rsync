@@ -22,6 +22,10 @@ pub struct NegotiationPrologueDetector {
 
 impl NegotiationPrologueDetector {
     /// Creates a fresh detector that has not yet observed any bytes.
+    ///
+    /// This constructor is equivalent to [`Self::default()`] but remains available
+    /// as a `const` so compile-time contexts—such as other `const fn` initialisers—
+    /// can instantiate detectors without going through trait dispatch.
     #[must_use]
     pub const fn new() -> Self {
         Self {
