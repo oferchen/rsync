@@ -787,6 +787,30 @@ fn from_supported_rejects_values_outside_range() {
 }
 
 #[test]
+fn from_supported_matches_supported_protocol_list() {
+    let supported = ProtocolVersion::supported_protocol_numbers();
+
+    for value in 0..=u8::MAX {
+        let parsed = ProtocolVersion::from_supported(value);
+        let expected = supported.contains(&value);
+
+        assert_eq!(
+            parsed.is_some(),
+            expected,
+            "value {value} should match membership"
+        );
+
+        if let Some(version) = parsed {
+            assert_eq!(
+                version.as_u8(),
+                value,
+                "returned version must preserve numeric value"
+            );
+        }
+    }
+}
+
+#[test]
 fn converts_from_non_zero_u8() {
     let value = NonZeroU8::new(31).expect("non-zero");
     let version = ProtocolVersion::try_from(value).expect("valid");
