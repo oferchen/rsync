@@ -548,6 +548,29 @@ fn supported_protocol_numbers_iter_is_sorted_descending() {
 }
 
 #[test]
+fn offset_from_oldest_counts_up_across_supported_versions() {
+    for (expected_offset, &version) in ProtocolVersion::supported_versions()
+        .iter()
+        .rev()
+        .enumerate()
+    {
+        assert_eq!(version.offset_from_oldest(), expected_offset);
+    }
+}
+
+#[test]
+fn offset_from_newest_matches_descending_index() {
+    for (index, &version) in ProtocolVersion::supported_versions().iter().enumerate() {
+        assert_eq!(version.offset_from_newest(), index);
+        assert_eq!(
+            version.offset_from_oldest() + version.offset_from_newest(),
+            SUPPORTED_PROTOCOL_COUNT - 1,
+            "offsets should mirror the supported protocol span",
+        );
+    }
+}
+
+#[test]
 fn supported_versions_iter_reports_length() {
     let mut iter = ProtocolVersion::supported_versions_iter();
 
