@@ -52,6 +52,11 @@ fn message_header_constants_match_upstream_definition() {
 }
 
 #[test]
+fn multiplex_base_constant_matches_upstream_definition() {
+    assert_eq!(rsync_protocol::MPLEX_BASE, 7);
+}
+
+#[test]
 fn supported_protocol_exports_cover_range() {
     assert_eq!(
         ProtocolVersion::supported_protocol_numbers(),
