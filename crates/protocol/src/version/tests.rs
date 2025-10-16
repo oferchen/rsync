@@ -496,6 +496,48 @@ fn supported_protocol_numbers_iter_is_sorted_descending() {
 }
 
 #[test]
+fn supported_versions_iter_reports_length() {
+    let mut iter = ProtocolVersion::supported_versions_iter();
+
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT);
+    assert_eq!(
+        iter.size_hint(),
+        (SUPPORTED_PROTOCOL_COUNT, Some(SUPPORTED_PROTOCOL_COUNT))
+    );
+
+    assert_eq!(iter.next(), Some(ProtocolVersion::NEWEST));
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT - 1);
+    assert_eq!(
+        iter.size_hint(),
+        (
+            SUPPORTED_PROTOCOL_COUNT - 1,
+            Some(SUPPORTED_PROTOCOL_COUNT - 1)
+        )
+    );
+}
+
+#[test]
+fn supported_protocol_numbers_iter_reports_length() {
+    let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
+
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT);
+    assert_eq!(
+        iter.size_hint(),
+        (SUPPORTED_PROTOCOL_COUNT, Some(SUPPORTED_PROTOCOL_COUNT))
+    );
+
+    assert_eq!(iter.next(), Some(ProtocolVersion::NEWEST.as_u8()));
+    assert_eq!(iter.len(), SUPPORTED_PROTOCOL_COUNT - 1);
+    assert_eq!(
+        iter.size_hint(),
+        (
+            SUPPORTED_PROTOCOL_COUNT - 1,
+            Some(SUPPORTED_PROTOCOL_COUNT - 1)
+        )
+    );
+}
+
+#[test]
 fn supported_range_matches_upstream_bounds() {
     assert_eq!(ProtocolVersion::supported_range(), SUPPORTED_PROTOCOL_RANGE);
     assert_eq!(SUPPORTED_PROTOCOL_RANGE, UPSTREAM_PROTOCOL_RANGE);
