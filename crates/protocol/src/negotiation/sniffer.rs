@@ -198,7 +198,7 @@ impl NegotiationPrologueSniffer {
     /// capacity is capped at the canonical legacy prefix length so subsequent
     /// detections do not retain unbounded allocations while still satisfying the
     /// workspace's buffer reuse guidance.
-    #[must_use = "the drained negotiation prefix must be replayed"]
+    #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered(&mut self) -> Vec<u8> {
         let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
         let mut drained = Vec::with_capacity(target_capacity);
@@ -418,22 +418,23 @@ impl NegotiationPrologueSniffer {
         Ok(prefix_len)
     }
 
-    /// Drains the buffered bytes into an existing vector supplied by the caller.
+    /// Drains the buffered bytes (including any remainder beyond the detection prefix) into an
+    /// existing vector supplied by the caller.
     ///
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
     /// caller already owns a reusable buffer. The destination vector is cleared before the
-    /// captured prefix is copied into it, ensuring the slice matches the bytes that were
-    /// consumed during negotiation sniffing. The returned length mirrors the number of bytes
-    /// that were replayed into `target`, keeping the API consistent with the I/O traits used
-    /// throughout the transport layer. After the transfer the sniffer retains an empty
-    /// buffer whose capacity is clamped to the canonical legacy prefix length so repeated
-    /// connections continue to benefit from buffer reuse. If growing the destination buffer
-    /// fails, the allocation error is forwarded to the caller instead of panicking so the
-    /// transport layer can surface the failure as an I/O error. To avoid surprising the
-    /// caller, the existing contents of `target` are only cleared after the reservation
-    /// succeeds, mirroring upstream's failure semantics where buffers remain untouched when
-    /// memory is exhausted.
-    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    /// buffered bytes (prefix plus any trailing payload captured in the same read) are copied
+    /// into it, ensuring the slice matches the data consumed during negotiation sniffing. The
+    /// returned length mirrors the number of bytes that were replayed into `target`, keeping
+    /// the API consistent with the I/O traits used throughout the transport layer. After the
+    /// transfer the sniffer retains an empty buffer whose capacity is clamped to the canonical
+    /// legacy prefix length so repeated connections continue to benefit from buffer reuse. If
+    /// growing the destination buffer fails, the allocation error is forwarded to the caller
+    /// instead of panicking so the transport layer can surface the failure as an I/O error. To
+    /// avoid surprising the caller, the existing contents of `target` are only cleared after
+    /// the reservation succeeds, mirroring upstream's failure semantics where buffers remain
+    /// untouched when memory is exhausted.
+    #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         let required = self.buffered.len();
 
@@ -446,14 +447,16 @@ impl NegotiationPrologueSniffer {
         Ok(drained)
     }
 
-    /// Drains the buffered bytes into the caller-provided slice without allocating.
+    /// Drains the buffered bytes (prefix and any captured remainder) into the caller-provided
+    /// slice without allocating.
     ///
-    /// The helper mirrors [`take_buffered_into`] but writes the captured prefix directly into
+    /// The helper mirrors [`take_buffered_into`] but writes the buffered bytes directly into
     /// `target`, allowing callers with stack-allocated storage to replay the negotiation prologue
-    /// without constructing a temporary [`Vec`]. When `target` is too small to hold the buffered
-    /// prefix a [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains
-    /// untouched so the caller can retry after resizing their storage.
-    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    /// and forward any remainder captured in the same read without constructing a temporary
+    /// [`Vec`]. When `target` is too small to hold the buffered contents a
+    /// [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains untouched so the
+    /// caller can retry after resizing their storage.
+    #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into_slice(
         &mut self,
         target: &mut [u8],
@@ -476,9 +479,10 @@ impl NegotiationPrologueSniffer {
     /// [`[u8; N]`](array) directly. Callers that keep a stack-allocated
     /// `LEGACY_DAEMON_PREFIX_LEN` scratch buffer can therefore pass it without converting to a
     /// slice at every call site. Just like the slice variant the helper returns the number of
-    /// bytes copied and leaves the internal buffer untouched when the array is too small so the
-    /// operation can be retried after provisioning a larger workspace.
-    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    /// bytes copied (prefix plus any buffered remainder) and leaves the internal buffer
+    /// untouched when the array is too small so the operation can be retried after provisioning a
+    /// larger workspace.
+    #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into_array<const N: usize>(
         &mut self,
         target: &mut [u8; N],
@@ -489,13 +493,13 @@ impl NegotiationPrologueSniffer {
     /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
     ///
     /// The helper mirrors [`take_buffered_into_slice`](Self::take_buffered_into_slice) but hands
-    /// the captured prefix directly to a writer supplied by the caller. This is particularly
-    /// useful for transports that forward the sniffed bytes into an in-flight I/O buffer or a
-    /// [`Vec<u8>`](Vec) managed by a pooling layer. When writing succeeds the sniffer is reset for
-    /// reuse while preserving the canonical capacity used for the legacy prefix. Should the writer
-    /// report an error, the buffered bytes remain intact so the caller can retry or surface the
-    /// failure.
-    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    /// the buffered bytes directly to a writer supplied by the caller. This is particularly useful
+    /// for transports that forward the sniffed prefix and any trailing payload into an in-flight
+    /// I/O buffer or a [`Vec<u8>`](Vec) managed by a pooling layer. When writing succeeds the
+    /// sniffer is reset for reuse while preserving the canonical capacity used for the legacy
+    /// prefix. Should the writer report an error, the buffered bytes remain intact so the caller can
+    /// retry or surface the failure.
+    #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
         target.write_all(&self.buffered)?;
         let written = self.buffered.len();
