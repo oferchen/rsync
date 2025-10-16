@@ -437,6 +437,16 @@ fn converts_protocol_version_to_non_zero_u8() {
 }
 
 #[test]
+fn exposes_non_zero_protocol_byte() {
+    let version = ProtocolVersion::try_from(30).expect("valid");
+    let non_zero = version.as_non_zero();
+    assert_eq!(non_zero.get(), 30);
+
+    let via_from: NonZeroU8 = version.into();
+    assert_eq!(via_from, non_zero);
+}
+
+#[test]
 fn converts_protocol_version_to_u8() {
     let version = ProtocolVersion::try_from(32).expect("valid");
     let value: u8 = version.into();
