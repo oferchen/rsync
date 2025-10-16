@@ -1,0 +1,495 @@
+use core::{mem, slice};
+use std::collections::TryReserveError;
+use std::io::{self, Read, Write};
+
+use crate::legacy::LEGACY_DAEMON_PREFIX_LEN;
+
+use super::{BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector};
+
+/// Incrementally reads bytes from a [`Read`] implementation until the
+/// negotiation style can be determined.
+///
+/// Upstream rsync only needs to observe the very first octet to decide between
+/// the legacy ASCII negotiation (`@RSYNCD:`) and the modern binary handshake.
+/// Real transports, however, may deliver that byte in small fragments or after
+/// transient `EINTR` interruptions. This helper mirrors upstream behavior while
+/// providing a higher level interface that owns the buffered prefix so callers
+/// can replay the bytes into the legacy greeting parser without reallocating.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer};
+/// use std::io::Cursor;
+///
+/// let mut sniffer = NegotiationPrologueSniffer::new();
+/// let mut reader = Cursor::new(&b"@RSYNCD: 31.0\n"[..]);
+/// let decision = sniffer
+///     .read_from(&mut reader)
+///     .expect("legacy negotiation detection succeeds");
+///
+/// assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+/// assert_eq!(sniffer.buffered(), b"@RSYNCD:");
+/// ```
+#[derive(Debug)]
+pub struct NegotiationPrologueSniffer {
+    detector: NegotiationPrologueDetector,
+    buffered: Vec<u8>,
+}
+
+impl NegotiationPrologueSniffer {
+    /// Creates a sniffer with an empty buffer and undecided negotiation state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the buffered bytes that were consumed while detecting the
+    /// negotiation style.
+    #[must_use]
+    pub fn buffered(&self) -> &[u8] {
+        &self.buffered
+    }
+
+    /// Returns the number of bytes retained while sniffing the negotiation prologue.
+    ///
+    /// Higher layers that forward the captured prefix to the legacy ASCII parser often only
+    /// need to know how many bytes should be replayed without inspecting the raw slice. Providing
+    /// the length mirrors [`NegotiationPrologueDetector::buffered_len`] and keeps the sniffer's
+    /// API aligned with the lower-level helper while avoiding repeated `len()` calls at the call
+    /// site.
+    #[must_use]
+    pub fn buffered_len(&self) -> usize {
+        self.buffered.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffered_storage(&self) -> &Vec<u8> {
+        &self.buffered
+    }
+
+    #[cfg(test)]
+    pub(crate) fn buffered_storage_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.buffered
+    }
+
+    /// Consumes the sniffer and returns the owned buffer containing the bytes
+    /// that were read while determining the negotiation style.
+    ///
+    /// The returned allocation is trimmed to the canonical legacy prefix
+    /// length so callers never inherit oversized buffers that may have been
+    /// required while parsing malformed greetings. This mirrors the
+    /// shrink-to-fit behavior provided by [`take_buffered`](Self::take_buffered)
+    /// and keeps the helper suitable for long-lived connection pools.
+    #[must_use = "the drained negotiation prefix must be replayed"]
+    pub fn into_buffered(mut self) -> Vec<u8> {
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+        }
+
+        self.buffered
+    }
+
+    /// Drains the buffered bytes while keeping the sniffer available for reuse.
+    ///
+    /// Callers that need to replay the captured prefix into the legacy greeting
+    /// parser (or feed the initial binary byte back into the negotiation
+    /// handler) can drain the buffer without relinquishing ownership of the
+    /// sniffer. The internal storage is replaced with an empty vector whose
+    /// capacity is capped at the canonical legacy prefix length so subsequent
+    /// detections do not retain unbounded allocations while still satisfying the
+    /// workspace's buffer reuse guidance.
+    #[must_use = "the drained negotiation prefix must be replayed"]
+    pub fn take_buffered(&mut self) -> Vec<u8> {
+        let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
+        let mut drained = Vec::with_capacity(target_capacity);
+        mem::swap(&mut self.buffered, &mut drained);
+        self.reset_buffer_for_reuse();
+
+        // Defensively cap the returned capacity at the canonical prefix length so callers never
+        // retain an excessively large allocation even if the sniffer previously observed a
+        // malformed banner that forced the buffer to grow. The buffered length never exceeds the
+        // prefix length, making the shrink operation a no-op for successful detections while
+        // mirroring upstream's fixed-size peek storage.
+        drained.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+
+        drained
+    }
+
+    /// Drains the buffered bytes into an existing vector supplied by the caller.
+    ///
+    /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
+    /// caller already owns a reusable buffer. The destination vector is cleared before the
+    /// captured prefix is copied into it, ensuring the slice matches the bytes that were
+    /// consumed during negotiation sniffing. The returned length mirrors the number of bytes
+    /// that were replayed into `target`, keeping the API consistent with the I/O traits used
+    /// throughout the transport layer. After the transfer the sniffer retains an empty
+    /// buffer whose capacity is clamped to the canonical legacy prefix length so repeated
+    /// connections continue to benefit from buffer reuse. If growing the destination buffer
+    /// fails, the allocation error is forwarded to the caller instead of panicking so the
+    /// transport layer can surface the failure as an I/O error. To avoid surprising the
+    /// caller, the existing contents of `target` are only cleared after the reservation
+    /// succeeds, mirroring upstream's failure semantics where buffers remain untouched when
+    /// memory is exhausted.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        let required = self.buffered.len();
+
+        if target.capacity() < required {
+            // `Vec::try_reserve_exact` interprets the requested value as additional
+            // elements beyond the current *length*, not the spare capacity. When the
+            // caller hands us a vector that already stores data, reserving the
+            // difference between the required length and the existing capacity would
+            // therefore undershoot the amount of space we need. The subsequent
+            // `extend_from_slice` would then have to grow the vector again, which in
+            // turn panics on allocation failure instead of surfacing a
+            // `TryReserveError` to the caller. Reserving relative to the vector's
+            // length guarantees the resulting capacity can hold the replayed prefix
+            // without further allocations. Using `saturating_sub` keeps the helper
+            // resilient if future call sites accidentally invoke it with a vector
+            // whose length already exceeds the buffered prefix; in that scenario we
+            // simply skip the reservation instead of panicking on an underflowing
+            // subtraction.
+            debug_assert!(target.len() < required);
+            let additional = required.saturating_sub(target.len());
+            if additional > 0 {
+                target.try_reserve_exact(additional)?;
+            }
+        }
+        target.clear();
+        target.extend_from_slice(&self.buffered);
+        let drained = target.len();
+        self.reset_buffer_for_reuse();
+
+        Ok(drained)
+    }
+
+    /// Drains the buffered bytes into the caller-provided slice without allocating.
+    ///
+    /// The helper mirrors [`take_buffered_into`] but writes the captured prefix directly into
+    /// `target`, allowing callers with stack-allocated storage to replay the negotiation prologue
+    /// without constructing a temporary [`Vec`]. When `target` is too small to hold the buffered
+    /// prefix a [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains
+    /// untouched so the caller can retry after resizing their storage.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into_slice(
+        &mut self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        let required = self.buffered.len();
+        if target.len() < required {
+            return Err(BufferedPrefixTooSmall::new(required, target.len()));
+        }
+
+        target[..required].copy_from_slice(&self.buffered);
+        self.reset_buffer_for_reuse();
+
+        Ok(required)
+    }
+
+    /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
+    ///
+    /// The helper mirrors [`take_buffered_into_slice`](Self::take_buffered_into_slice) but hands
+    /// the captured prefix directly to a writer supplied by the caller. This is particularly
+    /// useful for transports that forward the sniffed bytes into an in-flight I/O buffer or a
+    /// [`Vec<u8>`](Vec) managed by a pooling layer. When writing succeeds the sniffer is reset for
+    /// reuse while preserving the canonical capacity used for the legacy prefix. Should the writer
+    /// report an error, the buffered bytes remain intact so the caller can retry or surface the
+    /// failure.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
+        target.write_all(&self.buffered)?;
+        let written = self.buffered.len();
+        self.reset_buffer_for_reuse();
+
+        Ok(written)
+    }
+
+    /// Reports the cached negotiation decision, if any.
+    #[must_use]
+    pub fn decision(&self) -> Option<NegotiationPrologue> {
+        self.detector.decision()
+    }
+
+    /// Observes bytes that have already been read from the transport while tracking how
+    /// many of them were required to determine the negotiation style.
+    ///
+    /// Callers that perform buffered reads or speculative peeks can forward the captured
+    /// bytes to this helper instead of re-reading from the underlying transport. The sniffer
+    /// mirrors [`NegotiationPrologueDetector::observe`] by consuming bytes until a definitive
+    /// decision is available or the canonical legacy prefix (`@RSYNCD:`) has been fully
+    /// buffered. Until that prefix has been captured, the returned decision is
+    /// [`NegotiationPrologue::NeedMoreData`] even if the detector has already determined that the
+    /// exchange uses the legacy ASCII handshake. Callers that need to know how many additional
+    /// bytes are required can query [`legacy_prefix_remaining`](Self::legacy_prefix_remaining).
+    /// Any remaining data in `chunk` is left untouched so higher layers can process it according
+    /// to the negotiated protocol.
+    #[must_use]
+    pub fn observe(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
+        let cached = self.detector.decision();
+        let needs_more_prefix_bytes =
+            cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
+
+        if chunk.is_empty() {
+            if needs_more_prefix_bytes {
+                return (NegotiationPrologue::NeedMoreData, 0);
+            }
+
+            return (cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0);
+        }
+
+        if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
+            return (decision, 0);
+        }
+
+        let mut consumed = 0;
+
+        for &byte in chunk {
+            self.buffered.push(byte);
+            consumed += 1;
+
+            let decision = self.detector.observe_byte(byte);
+            let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
+
+            if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
+                return (decision, consumed);
+            }
+        }
+
+        let final_decision = self.detector.decision();
+        if final_decision.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision)) {
+            (NegotiationPrologue::NeedMoreData, consumed)
+        } else {
+            (
+                final_decision.unwrap_or(NegotiationPrologue::NeedMoreData),
+                consumed,
+            )
+        }
+    }
+
+    /// Observes a single byte that has already been read from the transport.
+    ///
+    /// The helper mirrors [`observe`](Self::observe) but keeps the common
+    /// "one-octet-at-a-time" call pattern used by upstream rsync ergonomic.
+    /// Callers can therefore forward individual bytes without allocating a
+    /// temporary slice. The returned decision matches the value that would be
+    /// produced by [`observe`](Self::observe) while ensuring at most a single
+    /// byte is accounted for as consumed.
+    #[must_use]
+    #[inline]
+    pub fn observe_byte(&mut self, byte: u8) -> NegotiationPrologue {
+        let (decision, consumed) = self.observe(slice::from_ref(&byte));
+        debug_assert!(consumed <= 1);
+        decision
+    }
+
+    /// Clears the buffered prefix and resets the negotiation detector so the
+    /// sniffer can be reused for another connection attempt.
+    ///
+    /// The internal buffer retains its allocation when it already matches the
+    /// canonical legacy prefix length so that back-to-back legacy negotiations
+    /// do not pay repeated allocations. If the buffer had previously grown
+    /// beyond that size—for instance when an attacker sent a very large
+    /// malformed banner before the session was aborted—the capacity is trimmed
+    /// back to the prefix length to avoid carrying an unnecessarily large
+    /// allocation into subsequent connections. Conversely, if an earlier
+    /// operation shrank the allocation below the canonical size, the buffer is
+    /// grown back to the prefix length so future legacy negotiations do not
+    /// trigger repeated incremental reallocations while replaying the prefix.
+    pub fn reset(&mut self) {
+        self.detector.reset();
+        self.reset_buffer_for_reuse();
+    }
+
+    /// Reads from `reader` until the negotiation style can be determined.
+    ///
+    /// Bytes consumed during detection are appended to the internal buffer so
+    /// callers can replay them into the legacy greeting parser if necessary.
+    /// Once a decision has been cached, subsequent calls return immediately
+    /// without performing additional I/O **unless** the exchange has been
+    /// classified as legacy ASCII and the canonical `@RSYNCD:` prefix still
+    /// needs to be buffered. This mirrors upstream rsync, which keeps reading
+    /// until the marker has been captured so the greeting parser can reuse the
+    /// already consumed bytes.
+    pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
+        match self.detector.decision() {
+            Some(decision) if !self.needs_more_legacy_prefix_bytes(decision) => {
+                return Ok(decision);
+            }
+            _ => {}
+        }
+
+        let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+
+        loop {
+            let cached = self.detector.decision();
+            let needs_more_prefix_bytes =
+                cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
+            if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
+                return Ok(decision);
+            }
+
+            let bytes_to_read = if needs_more_prefix_bytes {
+                LEGACY_DAEMON_PREFIX_LEN - self.detector.buffered_len()
+            } else {
+                1
+            };
+
+            match reader.read(&mut scratch[..bytes_to_read]) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed before rsync negotiation prologue was determined",
+                    ));
+                }
+                Ok(read) => {
+                    let observed = &scratch[..read];
+                    let (decision, consumed) = self.observe(observed);
+                    debug_assert_eq!(consumed, observed.len());
+                    let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
+                    if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
+                        return Ok(decision);
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Reports whether the canonical legacy prefix (`@RSYNCD:`) has already
+    /// been fully observed.
+    ///
+    /// Legacy ASCII negotiations reuse the bytes captured during detection when
+    /// parsing the daemon greeting. Higher layers therefore need to know when
+    /// the marker has been buffered or ruled out so they can decide whether to
+    /// keep reading from the transport before handing the accumulated bytes to
+    /// the legacy greeting parser. The helper simply forwards to
+    /// [`NegotiationPrologueDetector::legacy_prefix_complete`], keeping the
+    /// sniffer's API in sync with the lower-level detector without exposing the
+    /// internal field directly.
+    #[must_use]
+    pub fn legacy_prefix_complete(&self) -> bool {
+        self.detector.legacy_prefix_complete()
+    }
+
+    /// Reports how many additional bytes are still required to finish buffering
+    /// the canonical legacy prefix.
+    ///
+    /// When the detector has already classified the stream as legacy ASCII but
+    /// the full `@RSYNCD:` prefix has not yet been captured, callers can use the
+    /// returned count to decide whether another read is necessary before
+    /// replaying the buffered bytes into the legacy greeting parser. Once the
+    /// prefix has been fully observed—or when the exchange is binary—the helper
+    /// yields `None`, mirroring
+    /// [`NegotiationPrologueDetector::legacy_prefix_remaining`].
+    #[must_use]
+    pub fn legacy_prefix_remaining(&self) -> Option<usize> {
+        self.detector.legacy_prefix_remaining()
+    }
+
+    #[inline]
+    fn needs_more_legacy_prefix_bytes(&self, decision: NegotiationPrologue) -> bool {
+        decision == NegotiationPrologue::LegacyAscii && !self.detector.legacy_prefix_complete()
+    }
+
+    fn reset_buffer_for_reuse(&mut self) {
+        // Clearing always happens first so subsequent capacity adjustments observe the canonical
+        // empty-length state expected by `shrink_to` and `reserve_exact`.
+        self.buffered.clear();
+
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            // Trim oversized allocations that may have been introduced when parsing malformed
+            // banners. `shrink_to` keeps the existing buffer when possible so we only fall back to
+            // a new allocation if the allocator cannot downsize in place.
+            self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+        }
+
+        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
+            // Grow undersized buffers back to the canonical prefix length. This mirrors upstream
+            // rsync's fixed-size stack storage and avoids repeated incremental reallocations when
+            // the sniffer is reused across connections. Reserving space for the full prefix in one
+            // step guarantees the resulting capacity can store `@RSYNCD:` without further
+            // allocations even when the previous buffer had already shrunk below the target size.
+            let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
+            if required > 0 {
+                self.buffered.reserve_exact(required);
+            }
+        }
+    }
+}
+
+impl Default for NegotiationPrologueSniffer {
+    fn default() -> Self {
+        Self {
+            detector: NegotiationPrologueDetector::new(),
+            buffered: Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN),
+        }
+    }
+}
+
+/// Reads the complete legacy daemon line after the `@RSYNCD:` prefix has been buffered.
+///
+/// The sniffer must already have classified the exchange as legacy ASCII and captured the
+/// canonical prefix. The buffered bytes are drained into `line`, after which additional data is
+/// read from `reader` until a newline (`\n`) byte is encountered. Short reads and `EINTR`
+/// interruptions are retried automatically. If the stream closes before a newline is observed,
+/// [`io::ErrorKind::UnexpectedEof`] is returned. Invoking the helper before the negotiation style is
+/// known (or when the peer is speaking the binary protocol) yields
+/// [`io::ErrorKind::InvalidInput`].
+pub fn read_legacy_daemon_line<R: Read>(
+    sniffer: &mut NegotiationPrologueSniffer,
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> io::Result<()> {
+    match sniffer.decision() {
+        Some(NegotiationPrologue::LegacyAscii) => {
+            if !sniffer.legacy_prefix_complete() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix is incomplete",
+                ));
+            }
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "legacy negotiation has not been detected",
+            ));
+        }
+    }
+
+    line.clear();
+    sniffer
+        .take_buffered_into(line)
+        .map_err(map_reserve_error_for_io)?;
+
+    let mut byte = [0u8; 1];
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF while reading legacy rsync daemon line",
+                ));
+            }
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::OutOfMemory,
+        format!("failed to reserve memory for legacy negotiation buffer: {err}"),
+    )
+}
