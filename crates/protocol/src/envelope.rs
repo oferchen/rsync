@@ -561,10 +561,10 @@ impl TryFrom<MessageCode> for LogCode {
 /// Failures encountered while parsing or constructing multiplexed message headers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EnvelopeError {
-    /// Fewer than [`HEADER_LEN`] bytes were provided when attempting to decode a
+    /// Fewer than [`HEADER_LEN`] bytes were provided when attempting to encode or decode a
     /// header.
     TruncatedHeader {
-        /// Number of bytes that were available when decoding began.
+        /// Number of bytes that were available when the operation began.
         actual: usize,
     },
     /// The high tag byte did not include the required [`MPLEX_BASE`] offset.
@@ -654,6 +654,25 @@ impl MessageHeader {
         raw.to_le_bytes()
     }
 
+    /// Encodes this header into the caller-provided slice without allocating.
+    ///
+    /// The helper mirrors upstream rsync's practice of writing directly into
+    /// stack-allocated buffers when constructing multiplexed messages. Callers
+    /// that already own suitably sized scratch space can avoid the temporary
+    /// array returned by [`MessageHeader::encode`] by reusing this method
+    /// instead. When the destination slice is smaller than [`HEADER_LEN`], an
+    /// [`EnvelopeError::TruncatedHeader`] error is returned and no bytes are
+    /// written.
+    pub fn encode_into_slice(self, out: &mut [u8]) -> Result<(), EnvelopeError> {
+        if out.len() < HEADER_LEN {
+            return Err(EnvelopeError::TruncatedHeader { actual: out.len() });
+        }
+
+        let encoded = self.encode();
+        out[..HEADER_LEN].copy_from_slice(&encoded);
+        Ok(())
+    }
+
     /// Returns the decoded message code.
     #[must_use]
     #[inline]
@@ -710,6 +729,37 @@ mod tests {
 
         assert_eq!(HEADER.code(), MessageCode::Info);
         assert_eq!(HEADER.payload_len(), 42);
+    }
+
+    #[test]
+    fn encode_into_slice_writes_bytes_without_touching_tail() {
+        let header =
+            MessageHeader::new(MessageCode::Info, 0x0055_AA11).expect("payload fits within header");
+        let mut buffer = [0xFFu8; HEADER_LEN + 3];
+
+        header
+            .encode_into_slice(&mut buffer)
+            .expect("buffer large enough for header");
+
+        assert_eq!(&buffer[..HEADER_LEN], &header.encode());
+        assert_eq!(buffer[HEADER_LEN..], [0xFFu8; 3]);
+    }
+
+    #[test]
+    fn encode_into_slice_rejects_short_buffers() {
+        let header = MessageHeader::new(MessageCode::Info, 7).expect("valid header");
+        let mut buffer = [0u8; HEADER_LEN - 1];
+
+        let err = header
+            .encode_into_slice(&mut buffer)
+            .expect_err("insufficient buffer should error");
+
+        assert_eq!(
+            err,
+            EnvelopeError::TruncatedHeader {
+                actual: HEADER_LEN - 1
+            }
+        );
     }
 
     #[test]
