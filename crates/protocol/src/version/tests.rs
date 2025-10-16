@@ -3,6 +3,7 @@ use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
 };
+use core::str::FromStr;
 use proptest::prelude::*;
 
 fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, NegotiationError> {
@@ -725,6 +726,48 @@ fn supported_versions_are_sorted_descending() {
 fn protocol_version_display_matches_numeric_value() {
     let version = ProtocolVersion::try_from(32).expect("valid");
     assert_eq!(version.to_string(), "32");
+}
+
+#[test]
+fn protocol_version_from_str_accepts_supported_values() {
+    assert_eq!(
+        ProtocolVersion::from_str("32").expect("32 is supported"),
+        ProtocolVersion::NEWEST
+    );
+    assert_eq!(
+        ProtocolVersion::from_str(" 29 ")
+            .expect("whitespace should be ignored")
+            .as_u8(),
+        29
+    );
+    assert_eq!(
+        ProtocolVersion::from_str("+30")
+            .expect("leading plus is accepted")
+            .as_u8(),
+        30
+    );
+}
+
+#[test]
+fn protocol_version_from_str_reports_error_kinds() {
+    let empty = ProtocolVersion::from_str("").unwrap_err();
+    assert_eq!(empty.kind(), ParseProtocolVersionErrorKind::Empty);
+
+    let invalid = ProtocolVersion::from_str("abc").unwrap_err();
+    assert_eq!(invalid.kind(), ParseProtocolVersionErrorKind::InvalidDigit);
+
+    let negative = ProtocolVersion::from_str("-31").unwrap_err();
+    assert_eq!(negative.kind(), ParseProtocolVersionErrorKind::Negative);
+
+    let overflow = ProtocolVersion::from_str("256").unwrap_err();
+    assert_eq!(overflow.kind(), ParseProtocolVersionErrorKind::Overflow);
+
+    let unsupported = ProtocolVersion::from_str("27").unwrap_err();
+    assert_eq!(
+        unsupported.kind(),
+        ParseProtocolVersionErrorKind::UnsupportedRange(27)
+    );
+    assert_eq!(unsupported.unsupported_value(), Some(27));
 }
 
 #[test]

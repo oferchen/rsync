@@ -7,6 +7,7 @@ use core::num::{
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
 };
 use core::ops::RangeInclusive;
+use core::str::FromStr;
 
 use crate::error::NegotiationError;
 
@@ -39,7 +40,92 @@ pub const SUPPORTED_PROTOCOL_RANGE: RangeInclusive<u8> =
 pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
     (OLDEST_SUPPORTED_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL);
 
+/// Errors that can occur while parsing a protocol version from a string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParseProtocolVersionErrorKind {
+    /// The provided string was empty after trimming ASCII whitespace.
+    Empty,
+    /// The provided string contained non-digit characters.
+    InvalidDigit,
+    /// The provided string encoded a negative value.
+    Negative,
+    /// The provided string encoded an integer larger than `u8::MAX`.
+    Overflow,
+    /// The parsed integer fell outside upstream rsync's supported range.
+    UnsupportedRange(u8),
+}
+
+/// Error type returned when parsing a [`ProtocolVersion`] from text fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseProtocolVersionError {
+    kind: ParseProtocolVersionErrorKind,
+}
+
+impl ParseProtocolVersionError {
+    const fn new(kind: ParseProtocolVersionErrorKind) -> Self {
+        Self { kind }
+    }
+
+    /// Returns the classification describing why parsing failed.
+    #[must_use]
+    pub const fn kind(self) -> ParseProtocolVersionErrorKind {
+        self.kind
+    }
+
+    /// Returns the unsupported protocol byte that triggered
+    /// [`ParseProtocolVersionErrorKind::UnsupportedRange`], if any.
+    #[must_use]
+    pub const fn unsupported_value(self) -> Option<u8> {
+        match self.kind {
+            ParseProtocolVersionErrorKind::UnsupportedRange(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ParseProtocolVersionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind {
+            ParseProtocolVersionErrorKind::Empty => f.write_str("protocol version string is empty"),
+            ParseProtocolVersionErrorKind::InvalidDigit => {
+                f.write_str("protocol version must be an unsigned integer")
+            }
+            ParseProtocolVersionErrorKind::Negative => {
+                f.write_str("protocol version cannot be negative")
+            }
+            ParseProtocolVersionErrorKind::Overflow => {
+                f.write_str("protocol version value exceeds u8::MAX")
+            }
+            ParseProtocolVersionErrorKind::UnsupportedRange(value) => {
+                let (oldest, newest) = ProtocolVersion::supported_range_bounds();
+                write!(
+                    f,
+                    "protocol version {} is outside the supported range {}-{}",
+                    value, oldest, newest
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseProtocolVersionError {}
+
 /// A single negotiated rsync protocol version.
+///
+/// # Examples
+///
+/// Parse a version string using the `FromStr` implementation. The helper trims leading and trailing
+/// ASCII whitespace and accepts an optional leading `+`, mirroring the tolerance found in upstream
+/// rsync's option parser.
+///
+/// ```
+/// use std::str::FromStr;
+/// use rsync_protocol::ProtocolVersion;
+///
+/// let version = ProtocolVersion::from_str(" 31 ")?;
+/// assert_eq!(version.as_u8(), 31);
+/// # Ok::<_, rsync_protocol::ParseProtocolVersionError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
 
@@ -540,6 +626,56 @@ impl TryFrom<NonZeroU8> for ProtocolVersion {
 
     fn try_from(value: NonZeroU8) -> Result<Self, Self::Error> {
         <ProtocolVersion as TryFrom<u8>>::try_from(value.get())
+    }
+}
+
+impl FromStr for ProtocolVersion {
+    type Err = ParseProtocolVersionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim_matches(|c: char| c.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return Err(ParseProtocolVersionError::new(
+                ParseProtocolVersionErrorKind::Empty,
+            ));
+        }
+
+        let mut digits = trimmed;
+        if let Some(rest) = digits.strip_prefix('+') {
+            digits = rest;
+        }
+
+        if let Some(rest) = digits.strip_prefix('-') {
+            if rest.chars().all(|ch| ch.is_ascii_digit()) {
+                return Err(ParseProtocolVersionError::new(
+                    ParseProtocolVersionErrorKind::Negative,
+                ));
+            }
+            return Err(ParseProtocolVersionError::new(
+                ParseProtocolVersionErrorKind::InvalidDigit,
+            ));
+        }
+
+        if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+            return Err(ParseProtocolVersionError::new(
+                ParseProtocolVersionErrorKind::InvalidDigit,
+            ));
+        }
+
+        let value: u16 = digits
+            .parse()
+            .map_err(|_| ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Overflow))?;
+
+        if value > u16::from(u8::MAX) {
+            return Err(ParseProtocolVersionError::new(
+                ParseProtocolVersionErrorKind::Overflow,
+            ));
+        }
+
+        let byte = value as u8;
+        ProtocolVersion::from_supported(byte).ok_or_else(|| {
+            ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(byte))
+        })
     }
 }
 
