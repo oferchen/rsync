@@ -209,9 +209,11 @@ mod tests {
 
     #[test]
     fn formatted_legacy_greeting_round_trips_through_parser() {
-        let version = ProtocolVersion::try_from(29).expect("valid version");
-        let rendered = format_legacy_daemon_greeting(version);
-        let parsed = parse_legacy_daemon_greeting(&rendered).expect("parseable banner");
-        assert_eq!(parsed, version);
+        for &version in ProtocolVersion::supported_versions() {
+            let rendered = format_legacy_daemon_greeting(version);
+            let parsed = parse_legacy_daemon_greeting(&rendered)
+                .unwrap_or_else(|err| panic!("failed to parse {rendered:?}: {err}"));
+            assert_eq!(parsed, version);
+        }
     }
 }
