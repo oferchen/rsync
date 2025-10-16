@@ -497,10 +497,27 @@ impl NegotiationPrologueSniffer {
     }
 
     fn reset_buffer_for_reuse(&mut self) {
-        if self.buffered.capacity() != LEGACY_DAEMON_PREFIX_LEN {
-            self.buffered = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
-        } else {
-            self.buffered.clear();
+        // Clearing always happens first so subsequent capacity adjustments observe the canonical
+        // empty-length state expected by `shrink_to` and `reserve_exact`.
+        self.buffered.clear();
+
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            // Trim oversized allocations that may have been introduced when parsing malformed
+            // banners. `shrink_to` keeps the existing buffer when possible so we only fall back to
+            // a new allocation if the allocator cannot downsize in place.
+            self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+        }
+
+        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
+            // Grow undersized buffers back to the canonical prefix length. This mirrors upstream
+            // rsync's fixed-size stack storage and avoids repeated incremental reallocations when
+            // the sniffer is reused across connections. Reserving space for the full prefix in one
+            // step guarantees the resulting capacity can store `@RSYNCD:` without further
+            // allocations even when the previous buffer had already shrunk below the target size.
+            let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
+            if required > 0 {
+                self.buffered.reserve_exact(required);
+            }
         }
     }
 }
@@ -806,7 +823,10 @@ mod tests {
     use super::*;
     use crate::legacy::LEGACY_DAEMON_PREFIX;
     use proptest::prelude::*;
-    use std::io::{self, Cursor, Read};
+    use std::{
+        io::{self, Cursor, Read},
+        ptr,
+    };
 
     #[test]
     fn buffered_prefix_too_small_converts_to_io_error_with_context() {
@@ -2200,6 +2220,24 @@ mod tests {
         sniffer.reset();
         assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
         assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), None);
+    }
+
+    #[test]
+    fn prologue_sniffer_reset_reuses_canonical_allocation() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let ptr_before = sniffer.buffered.as_ptr();
+        let capacity_before = sniffer.buffered.capacity();
+        assert_eq!(capacity_before, LEGACY_DAEMON_PREFIX_LEN);
+
+        sniffer
+            .buffered
+            .extend_from_slice(&LEGACY_DAEMON_PREFIX.as_bytes()[..LEGACY_DAEMON_PREFIX_LEN - 2]);
+        sniffer.reset();
+
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.buffered.capacity(), capacity_before);
+        assert!(ptr::eq(sniffer.buffered.as_ptr(), ptr_before));
         assert_eq!(sniffer.decision(), None);
     }
 
