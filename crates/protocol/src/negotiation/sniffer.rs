@@ -640,7 +640,9 @@ impl NegotiationPrologueSniffer {
             // allocations even when the previous buffer had already shrunk below the target size.
             let required = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(self.buffered.len());
             if required > 0 {
-                self.buffered.reserve_exact(required);
+                // Allocation failures surface through the later `try_reserve` calls that precede
+                // actual writes; preallocation here is a best-effort optimisation.
+                let _ = self.buffered.try_reserve_exact(required);
             }
         }
     }
