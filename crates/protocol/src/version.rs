@@ -120,6 +120,56 @@ macro_rules! declare_supported_protocols {
 
 declare_supported_protocols!(32, 31, 30, 29, 28);
 
+// Compile-time guard that mirrors the runtime assertions covered by the unit
+// tests. Keeping the invariants in a `const` block ensures the workspace cannot
+// accidentally reorder, duplicate, or drift the advertised protocol list even
+// when tests are skipped. The loop bodies intentionally avoid iterator adapters
+// to remain usable in const evaluation.
+const _: () = {
+    let protocols = SUPPORTED_PROTOCOLS;
+    assert!(
+        !protocols.is_empty(),
+        "supported protocol list must not be empty"
+    );
+    assert!(
+        protocols[0] == ProtocolVersion::NEWEST.as_u8(),
+        "newest supported protocol must lead the list",
+    );
+    assert!(
+        protocols[protocols.len() - 1] == ProtocolVersion::OLDEST.as_u8(),
+        "oldest supported protocol must terminate the list",
+    );
+
+    let mut index = 1usize;
+    while index < protocols.len() {
+        assert!(
+            protocols[index - 1] > protocols[index],
+            "supported protocols must be strictly descending",
+        );
+        assert!(
+            ProtocolVersion::OLDEST.as_u8() <= protocols[index]
+                && protocols[index] <= ProtocolVersion::NEWEST.as_u8(),
+            "each supported protocol must fall within the upstream range",
+        );
+        index += 1;
+    }
+
+    let versions = ProtocolVersion::SUPPORTED_VERSIONS;
+    assert!(
+        versions.len() == protocols.len(),
+        "cached ProtocolVersion list must mirror numeric protocols",
+    );
+
+    let mut index = 0usize;
+    while index < versions.len() {
+        assert!(
+            versions[index].as_u8() == protocols[index],
+            "cached ProtocolVersion must match numeric protocol at each index",
+        );
+        index += 1;
+    }
+};
+
 impl ProtocolVersion {
     pub(crate) const fn new_const(value: u8) -> Self {
         match NonZeroU8::new(value) {
