@@ -14,9 +14,14 @@ use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationP
 pub struct NegotiatedStream<R> {
     inner: R,
     decision: NegotiationPrologue,
+    buffer: NegotiationBuffer,
+}
+
+#[derive(Debug)]
+struct NegotiationBuffer {
     sniffed_prefix_len: usize,
-    buffered: Vec<u8>,
     buffered_pos: usize,
+    buffered: Vec<u8>,
 }
 
 impl<R> NegotiatedStream<R> {
@@ -29,39 +34,37 @@ impl<R> NegotiatedStream<R> {
     /// Returns the bytes that were required to classify the negotiation prologue.
     #[must_use]
     pub fn sniffed_prefix(&self) -> &[u8] {
-        let prefix_len = self.sniffed_prefix_len.min(self.buffered.len());
-        &self.buffered[..prefix_len]
+        self.buffer.sniffed_prefix()
     }
 
     /// Returns the bytes buffered beyond the sniffed negotiation prefix.
     #[must_use]
     pub fn buffered_remainder(&self) -> &[u8] {
-        let prefix_len = self.sniffed_prefix_len.min(self.buffered.len());
-        &self.buffered[prefix_len..]
+        self.buffer.buffered_remainder()
     }
 
     /// Returns the bytes captured during negotiation sniffing, including the prefix and remainder.
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
-        &self.buffered
+        self.buffer.buffered()
     }
 
     /// Returns the length of the sniffed negotiation prefix.
     #[must_use]
     pub const fn sniffed_prefix_len(&self) -> usize {
-        self.sniffed_prefix_len
+        self.buffer.sniffed_prefix_len()
     }
 
     /// Returns the total number of buffered bytes staged for replay.
     #[must_use]
     pub fn buffered_len(&self) -> usize {
-        self.buffered.len()
+        self.buffer.buffered_len()
     }
 
     /// Returns the remaining number of buffered bytes that have not yet been read.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
-        self.buffered.len().saturating_sub(self.buffered_pos)
+        self.buffer.buffered_remaining()
     }
 
     /// Releases the wrapper and returns its components.
@@ -69,9 +72,7 @@ impl<R> NegotiatedStream<R> {
     pub fn into_parts(self) -> NegotiatedStreamParts<R> {
         NegotiatedStreamParts {
             decision: self.decision,
-            sniffed_prefix_len: self.sniffed_prefix_len,
-            buffered_pos: self.buffered_pos,
-            buffered: self.buffered,
+            buffer: self.buffer,
             inner: self.inner,
         }
     }
@@ -94,22 +95,25 @@ impl<R> NegotiatedStream<R> {
         self.inner
     }
 
-    fn from_components(
+    fn from_raw_components(
         inner: R,
         decision: NegotiationPrologue,
         sniffed_prefix_len: usize,
         buffered_pos: usize,
         buffered: Vec<u8>,
     ) -> Self {
-        let clamped_prefix_len = sniffed_prefix_len.min(buffered.len());
-        let clamped_buffered_pos = buffered_pos.min(buffered.len());
-
         Self {
             inner,
             decision,
-            sniffed_prefix_len: clamped_prefix_len,
-            buffered_pos: clamped_buffered_pos,
-            buffered,
+            buffer: NegotiationBuffer::new(sniffed_prefix_len, buffered_pos, buffered),
+        }
+    }
+
+    fn from_buffer(inner: R, decision: NegotiationPrologue, buffer: NegotiationBuffer) -> Self {
+        Self {
+            inner,
+            decision,
+            buffer,
         }
     }
 
@@ -123,15 +127,8 @@ impl<R> NegotiatedStream<R> {
     /// payload.
     #[must_use]
     pub fn from_parts(parts: NegotiatedStreamParts<R>) -> Self {
-        let NegotiatedStreamParts {
-            decision,
-            sniffed_prefix_len,
-            buffered_pos,
-            buffered,
-            inner,
-        } = parts;
-
-        Self::from_components(inner, decision, sniffed_prefix_len, buffered_pos, buffered)
+        let (decision, buffer, inner) = parts.into_components();
+        Self::from_buffer(inner, decision, buffer)
     }
 }
 
@@ -141,14 +138,9 @@ impl<R: Read> Read for NegotiatedStream<R> {
             return Ok(0);
         }
 
-        if self.buffered_pos < self.buffered.len() {
-            let available = &self.buffered[self.buffered_pos..];
-            let to_copy = available.len().min(buf.len());
-            buf[..to_copy].copy_from_slice(&available[..to_copy]);
-            self.buffered_pos += to_copy;
-            if to_copy > 0 {
-                return Ok(to_copy);
-            }
+        let copied = self.buffer.copy_into(buf);
+        if copied > 0 {
+            return Ok(copied);
         }
 
         self.inner.read(buf)
@@ -157,30 +149,18 @@ impl<R: Read> Read for NegotiatedStream<R> {
 
 impl<R: BufRead> BufRead for NegotiatedStream<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        if self.buffered_pos < self.buffered.len() {
-            return Ok(&self.buffered[self.buffered_pos..]);
+        if self.buffer.has_remaining() {
+            return Ok(self.buffer.remaining_slice());
         }
 
         self.inner.fill_buf()
     }
 
     fn consume(&mut self, amt: usize) {
-        if self.buffered_pos < self.buffered.len() {
-            let available = self.buffered.len() - self.buffered_pos;
-            if amt < available {
-                self.buffered_pos += amt;
-                return;
-            }
-            self.buffered_pos = self.buffered.len();
-            let remainder = amt - available;
-            if remainder == 0 {
-                return;
-            }
+        let remainder = self.buffer.consume(amt);
+        if remainder > 0 {
             BufRead::consume(&mut self.inner, remainder);
-            return;
         }
-
-        BufRead::consume(&mut self.inner, amt);
     }
 }
 
@@ -188,9 +168,7 @@ impl<R: BufRead> BufRead for NegotiatedStream<R> {
 #[derive(Debug)]
 pub struct NegotiatedStreamParts<R> {
     decision: NegotiationPrologue,
-    sniffed_prefix_len: usize,
-    buffered_pos: usize,
-    buffered: Vec<u8>,
+    buffer: NegotiationBuffer,
     inner: R,
 }
 
@@ -204,33 +182,31 @@ impl<R> NegotiatedStreamParts<R> {
     /// Returns the captured negotiation prefix.
     #[must_use]
     pub fn sniffed_prefix(&self) -> &[u8] {
-        let prefix_len = self.sniffed_prefix_len.min(self.buffered.len());
-        &self.buffered[..prefix_len]
+        self.buffer.sniffed_prefix()
     }
 
     /// Returns the buffered remainder.
     #[must_use]
     pub fn buffered_remainder(&self) -> &[u8] {
-        let prefix_len = self.sniffed_prefix_len.min(self.buffered.len());
-        &self.buffered[prefix_len..]
+        self.buffer.buffered_remainder()
     }
 
     /// Returns the buffered bytes captured during sniffing.
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
-        &self.buffered
+        self.buffer.buffered()
     }
 
     /// Returns how many buffered bytes remain unread.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
-        self.buffered.len().saturating_sub(self.buffered_pos)
+        self.buffer.buffered_remaining()
     }
 
     /// Returns the length of the sniffed negotiation prefix.
     #[must_use]
     pub const fn sniffed_prefix_len(&self) -> usize {
-        self.sniffed_prefix_len
+        self.buffer.sniffed_prefix_len()
     }
 
     /// Returns the inner reader.
@@ -259,13 +235,90 @@ impl<R> NegotiatedStreamParts<R> {
     /// without cloning the sniffed bytes.
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
-        NegotiatedStream::from_components(
-            self.inner,
-            self.decision,
-            self.sniffed_prefix_len,
-            self.buffered_pos,
-            self.buffered,
-        )
+        NegotiatedStream::from_buffer(self.inner, self.decision, self.buffer)
+    }
+}
+
+impl NegotiationBuffer {
+    fn new(sniffed_prefix_len: usize, buffered_pos: usize, buffered: Vec<u8>) -> Self {
+        let clamped_prefix_len = sniffed_prefix_len.min(buffered.len());
+        let clamped_pos = buffered_pos.min(buffered.len());
+
+        Self {
+            sniffed_prefix_len: clamped_prefix_len,
+            buffered_pos: clamped_pos,
+            buffered,
+        }
+    }
+
+    fn sniffed_prefix(&self) -> &[u8] {
+        &self.buffered[..self.sniffed_prefix_len]
+    }
+
+    fn buffered_remainder(&self) -> &[u8] {
+        &self.buffered[self.sniffed_prefix_len..]
+    }
+
+    fn buffered(&self) -> &[u8] {
+        &self.buffered
+    }
+
+    const fn sniffed_prefix_len(&self) -> usize {
+        self.sniffed_prefix_len
+    }
+
+    fn buffered_len(&self) -> usize {
+        self.buffered.len()
+    }
+
+    fn buffered_remaining(&self) -> usize {
+        self.buffered.len().saturating_sub(self.buffered_pos)
+    }
+
+    fn has_remaining(&self) -> bool {
+        self.buffered_pos < self.buffered.len()
+    }
+
+    fn remaining_slice(&self) -> &[u8] {
+        &self.buffered[self.buffered_pos..]
+    }
+
+    fn copy_into(&mut self, buf: &mut [u8]) -> usize {
+        if buf.is_empty() || !self.has_remaining() {
+            return 0;
+        }
+
+        let available = &self.buffered[self.buffered_pos..];
+        let to_copy = available.len().min(buf.len());
+        buf[..to_copy].copy_from_slice(&available[..to_copy]);
+        self.buffered_pos += to_copy;
+        to_copy
+    }
+
+    fn consume(&mut self, amt: usize) -> usize {
+        if !self.has_remaining() {
+            return amt;
+        }
+
+        let available = self.buffered_remaining();
+        if amt < available {
+            self.buffered_pos += amt;
+            0
+        } else {
+            self.buffered_pos = self.buffered.len();
+            amt - available
+        }
+    }
+}
+
+impl<R> NegotiatedStreamParts<R> {
+    fn into_components(self) -> (NegotiationPrologue, NegotiationBuffer, R) {
+        let Self {
+            decision,
+            buffer,
+            inner,
+        } = self;
+        (decision, buffer, inner)
     }
 }
 
@@ -292,7 +345,7 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
     debug_assert!(sniffed_prefix_len <= LEGACY_DAEMON_PREFIX_LEN);
     debug_assert!(sniffed_prefix_len <= buffered.len());
 
-    Ok(NegotiatedStream::from_components(
+    Ok(NegotiatedStream::from_raw_components(
         reader,
         decision,
         sniffed_prefix_len,
