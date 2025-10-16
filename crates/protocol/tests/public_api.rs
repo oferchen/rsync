@@ -1,10 +1,9 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LogCode, LogCodeConversionError, MessageCode, NegotiationPrologue,
-    NegotiationPrologueSniffer, ParseLogCodeError, ProtocolVersion,
-    ProtocolVersionAdvertisement, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
-    select_highest_mutual,
+    LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LogCode, LogCodeConversionError,
+    MessageCode, NegotiationPrologue, NegotiationPrologueSniffer, ParseLogCodeError,
+    ProtocolVersion, ProtocolVersionAdvertisement, select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
