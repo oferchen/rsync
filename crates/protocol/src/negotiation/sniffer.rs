@@ -187,6 +187,23 @@ impl NegotiationPrologueSniffer {
         Ok(required)
     }
 
+    /// Drains the buffered bytes into an array supplied by the caller without allocating.
+    ///
+    /// This is a convenience wrapper around
+    /// [`take_buffered_into_slice`](Self::take_buffered_into_slice) that accepts a
+    /// [`[u8; N]`](array) directly. Callers that keep a stack-allocated
+    /// `LEGACY_DAEMON_PREFIX_LEN` scratch buffer can therefore pass it without converting to a
+    /// slice at every call site. Just like the slice variant the helper returns the number of
+    /// bytes copied and leaves the internal buffer untouched when the array is too small so the
+    /// operation can be retried after provisioning a larger workspace.
+    #[must_use = "negotiation prefix length is required to replay the handshake"]
+    pub fn take_buffered_into_array<const N: usize>(
+        &mut self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        self.take_buffered_into_slice(target.as_mut_slice())
+    }
+
     /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
     ///
     /// The helper mirrors [`take_buffered_into_slice`](Self::take_buffered_into_slice) but hands

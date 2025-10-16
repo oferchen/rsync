@@ -1079,6 +1079,46 @@ fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
 }
 
 #[test]
+fn prologue_sniffer_take_buffered_into_array_copies_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+    let copied = sniffer
+        .take_buffered_into_array(&mut scratch)
+        .expect("array should fit negotiation prefix");
+
+    assert_eq!(copied, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(&scratch[..copied], LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    assert_eq!(sniffer.legacy_prefix_remaining(), None);
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_into_array_reports_small_buffer() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 1];
+    let err = sniffer
+        .take_buffered_into_array(&mut scratch)
+        .expect_err("array without enough capacity should error");
+
+    assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(err.available(), scratch.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    assert_eq!(sniffer.legacy_prefix_remaining(), None);
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_writer_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let mut reader = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
