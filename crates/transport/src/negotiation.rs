@@ -98,13 +98,15 @@ impl<R> NegotiatedStream<R> {
         inner: R,
         decision: NegotiationPrologue,
         sniffed_prefix_len: usize,
+        buffered_pos: usize,
         buffered: Vec<u8>,
     ) -> Self {
+        debug_assert!(buffered_pos <= buffered.len());
         Self {
             inner,
             decision,
             sniffed_prefix_len,
-            buffered_pos: 0,
+            buffered_pos,
             buffered,
         }
     }
@@ -225,6 +227,23 @@ impl<R> NegotiatedStreamParts<R> {
     pub fn into_inner(self) -> R {
         self.inner
     }
+
+    /// Reassembles a [`NegotiatedStream`] from the extracted components.
+    ///
+    /// Callers can temporarily inspect or adjust the buffered negotiation
+    /// state (for example, updating transport-level settings on the inner
+    /// reader) and then continue consuming data through the replaying wrapper
+    /// without cloning the sniffed bytes.
+    #[must_use]
+    pub fn into_stream(self) -> NegotiatedStream<R> {
+        NegotiatedStream::with_state(
+            self.inner,
+            self.decision,
+            self.sniffed_prefix_len,
+            self.buffered_pos,
+            self.buffered,
+        )
+    }
 }
 
 /// Sniffs the negotiation prologue from the provided reader.
@@ -254,6 +273,7 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
         reader,
         decision,
         sniffed_prefix_len,
+        0,
         buffered,
     ))
 }
@@ -338,5 +358,31 @@ mod tests {
         assert_eq!(parts.sniffed_prefix(), b"\x00");
         assert!(parts.buffered_remainder().is_empty());
         assert_eq!(parts.buffered_remaining(), parts.sniffed_prefix_len());
+    }
+
+    #[test]
+    fn parts_round_trip_preserves_consumed_state() {
+        let data = b"@RSYNCD: 32.0\nhello";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut prefix = [0u8; 4];
+        stream
+            .read_exact(&mut prefix)
+            .expect("reading from buffered prefix succeeds");
+        assert_eq!(&prefix, b"@RSY");
+
+        let parts = stream.into_parts();
+        let remaining = parts.buffered_remaining();
+        assert_eq!(
+            remaining,
+            parts.sniffed_prefix_len().saturating_sub(prefix.len())
+        );
+
+        let mut stream = parts.into_stream();
+        let mut replay = Vec::new();
+        stream
+            .read_to_end(&mut replay)
+            .expect("reassembled stream replays remaining bytes");
+        assert_eq!(replay, &data[prefix.len()..]);
     }
 }
