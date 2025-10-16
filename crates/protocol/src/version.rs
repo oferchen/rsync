@@ -1,7 +1,6 @@
 use core::array::IntoIter;
 use core::convert::TryFrom;
 use core::fmt;
-use core::iter::FusedIterator;
 use core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
@@ -487,9 +486,8 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector.
     #[must_use]
-    pub fn supported_protocol_numbers_iter()
-    -> impl DoubleEndedIterator<Item = u8> + ExactSizeIterator + FusedIterator + Clone {
-        SUPPORTED_PROTOCOLS.iter().copied()
+    pub fn supported_protocol_numbers_iter() -> IntoIter<u8, { SUPPORTED_PROTOCOL_COUNT }> {
+        SUPPORTED_PROTOCOLS.into_iter()
     }
 
     /// Returns the inclusive range of protocol versions supported by this implementation.
