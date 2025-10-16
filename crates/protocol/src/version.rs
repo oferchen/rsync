@@ -28,6 +28,17 @@ const UPSTREAM_PROTOCOL_RANGE: RangeInclusive<u8> =
 pub const SUPPORTED_PROTOCOL_RANGE: RangeInclusive<u8> =
     OLDEST_SUPPORTED_PROTOCOL..=NEWEST_SUPPORTED_PROTOCOL;
 
+/// Inclusive `(oldest, newest)` tuple describing the protocol span supported by the Rust
+/// implementation.
+///
+/// Upstream rsync surfaces the lowest and highest negotiated versions in many diagnostics. Exporting
+/// the tuple keeps higher layers from duplicating the literal bounds while guaranteeing parity with
+/// [`SUPPORTED_PROTOCOL_RANGE`]. The helper mirrors the information exposed by
+/// [`ProtocolVersion::supported_range_bounds`] without requiring callers to depend on the
+/// [`ProtocolVersion`] type.
+pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
+    (OLDEST_SUPPORTED_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL);
+
 /// A single negotiated rsync protocol version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
@@ -315,7 +326,7 @@ impl ProtocolVersion {
     /// numeric literals.
     #[must_use]
     pub const fn supported_range() -> RangeInclusive<u8> {
-        Self::OLDEST.as_u8()..=Self::NEWEST.as_u8()
+        SUPPORTED_PROTOCOL_RANGE
     }
 
     /// Returns the inclusive supported range as a tuple of `(oldest, newest)`.
@@ -328,7 +339,7 @@ impl ProtocolVersion {
     /// supported span.
     #[must_use]
     pub const fn supported_range_bounds() -> (u8, u8) {
-        (Self::OLDEST.as_u8(), Self::NEWEST.as_u8())
+        SUPPORTED_PROTOCOL_BOUNDS
     }
 
     /// Returns an iterator over the supported protocol versions in

@@ -59,6 +59,7 @@ fn supported_protocol_exports_cover_range() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
+    assert_eq!(rsync_protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
 }
 
 #[test]

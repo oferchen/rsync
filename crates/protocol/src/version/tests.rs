@@ -521,6 +521,21 @@ fn supported_protocol_range_constant_matches_bounds() {
 }
 
 #[test]
+fn supported_protocol_bounds_constant_matches_helpers() {
+    assert_eq!(
+        SUPPORTED_PROTOCOL_BOUNDS,
+        (
+            ProtocolVersion::OLDEST.as_u8(),
+            ProtocolVersion::NEWEST.as_u8()
+        )
+    );
+    assert_eq!(
+        SUPPORTED_PROTOCOL_BOUNDS,
+        ProtocolVersion::supported_range_bounds()
+    );
+}
+
+#[test]
 fn detects_supported_versions() {
     for version in SUPPORTED_PROTOCOLS {
         assert!(ProtocolVersion::is_supported(version));
