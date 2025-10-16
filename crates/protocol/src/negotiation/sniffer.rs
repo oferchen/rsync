@@ -51,6 +51,37 @@ impl NegotiationPrologueSniffer {
         &self.buffered
     }
 
+    /// Reports whether the negotiation style has been determined.
+    ///
+    /// The return value mirrors [`NegotiationPrologue::is_decided`] and becomes `true` as soon as
+    /// the initial byte rules out the undecided state. For legacy negotiations this happens when
+    /// the leading `@` byte is observed even if additional prefix bytes still need to be buffered
+    /// before the greeting parser can run. Callers that need to know whether more I/O is required
+    /// can pair this with [`requires_more_data`](Self::requires_more_data).
+    #[must_use]
+    pub fn is_decided(&self) -> bool {
+        self.detector
+            .decision()
+            .map_or(false, NegotiationPrologue::is_decided)
+    }
+
+    /// Returns `true` when additional bytes must be read before the handshake can progress.
+    ///
+    /// New connections start in a pending state, so the method initially returns `true`. Once the
+    /// first byte arrives, binary negotiations are considered complete and the function flips to
+    /// `false`. For legacy exchanges it keeps returning `true` until the canonical `@RSYNCD:` prefix
+    /// has been fully buffered, mirroring the behavior of [`read_from`](Self::read_from) which keeps
+    /// pulling data until the legacy marker can be replayed.
+    #[must_use]
+    pub fn requires_more_data(&self) -> bool {
+        match self.detector.decision() {
+            Some(NegotiationPrologue::LegacyAscii) => !self.detector.legacy_prefix_complete(),
+            Some(NegotiationPrologue::Binary) => false,
+            Some(NegotiationPrologue::NeedMoreData) => true,
+            None => true,
+        }
+    }
+
     /// Returns the number of bytes retained while sniffing the negotiation prologue.
     ///
     /// Higher layers that forward the captured prefix to the legacy ASCII parser often only
