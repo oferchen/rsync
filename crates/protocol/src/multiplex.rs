@@ -4,7 +4,7 @@ use std::io::{self, IoSlice, Read, Write};
 use std::slice;
 
 use crate::envelope::{
-    EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader, MPLEX_BASE,
+    EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader,
 };
 
 /// A decoded multiplexed message consisting of the tag and payload bytes.
@@ -292,7 +292,7 @@ fn write_all_vectored<W: Write + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
+    use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};
     use std::collections::VecDeque;
     use std::convert::TryFrom as _;
 
