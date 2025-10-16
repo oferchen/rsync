@@ -62,7 +62,7 @@ pub use legacy::{
 pub use multiplex::{MessageFrame, recv_msg, recv_msg_into, send_msg};
 pub use negotiation::{
     BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
-    NegotiationPrologueSniffer, detect_negotiation_prologue,
+    NegotiationPrologueSniffer, detect_negotiation_prologue, read_legacy_daemon_line,
 };
 pub use version::{
     ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_COUNT,

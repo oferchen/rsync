@@ -476,6 +476,65 @@ impl Default for NegotiationPrologueSniffer {
     }
 }
 
+/// Reads the complete legacy daemon line after the `@RSYNCD:` prefix has been buffered.
+///
+/// The sniffer must already have classified the exchange as legacy ASCII and captured the
+/// canonical prefix. The buffered bytes are drained into `line`, after which additional data is
+/// read from `reader` until a newline (`\n`) byte is encountered. Short reads and `EINTR`
+/// interruptions are retried automatically. If the stream closes before a newline is observed,
+/// [`io::ErrorKind::UnexpectedEof`] is returned. Invoking the helper before the negotiation style is
+/// known (or when the peer is speaking the binary protocol) yields
+/// [`io::ErrorKind::InvalidInput`].
+pub fn read_legacy_daemon_line<R: Read>(
+    sniffer: &mut NegotiationPrologueSniffer,
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> io::Result<()> {
+    match sniffer.decision() {
+        Some(NegotiationPrologue::LegacyAscii) => {
+            if !sniffer.legacy_prefix_complete() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix is incomplete",
+                ));
+            }
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "legacy negotiation has not been detected",
+            ));
+        }
+    }
+
+    line.clear();
+    sniffer
+        .take_buffered_into(line)
+        .map_err(map_reserve_error_for_io)?;
+
+    let mut byte = [0u8; 1];
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "EOF while reading legacy rsync daemon line",
+                ));
+            }
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(())
+}
+
 /// Incremental detector for the negotiation prologue style.
 ///
 /// The binary vs. legacy ASCII decision in upstream rsync is based on the very
@@ -695,6 +754,13 @@ impl Default for NegotiationPrologueDetector {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn map_reserve_error_for_io(err: TryReserveError) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Other,
+        format!("failed to reserve memory for legacy negotiation buffer: {err}"),
+    )
 }
 
 #[cfg(test)]
@@ -1780,6 +1846,71 @@ mod tests {
         assert!(scratch[1..].iter().all(|&byte| byte == 0xAA));
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_collects_complete_greeting() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+        assert!(sniffer.legacy_prefix_complete());
+
+        let mut remainder = Cursor::new(b" 31.0\n".to_vec());
+        let mut line = Vec::new();
+        read_legacy_daemon_line(&mut sniffer, &mut remainder, &mut line)
+            .expect("complete greeting should be collected");
+
+        assert_eq!(line, b"@RSYNCD: 31.0\n");
+        assert!(sniffer.buffered().is_empty());
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_handles_interrupted_reads() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut reader = InterruptedOnceReader::new(b" 32.0\n".to_vec());
+        let mut line = Vec::new();
+        read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+            .expect("interrupted read should be retried");
+
+        assert!(reader.was_interrupted());
+        assert_eq!(line, b"@RSYNCD: 32.0\n");
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_rejects_non_legacy_state() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(&[0x00]);
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+
+        let mut reader = Cursor::new(b"anything\n".to_vec());
+        let mut line = Vec::new();
+        let err = read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+            .expect_err("binary negotiation must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(line.is_empty());
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_errors_on_unexpected_eof() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut reader = Cursor::new(b" incomplete".to_vec());
+        let mut line = Vec::new();
+        let err = read_legacy_daemon_line(&mut sniffer, &mut reader, &mut line)
+            .expect_err("missing newline should error");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(line.starts_with(LEGACY_DAEMON_PREFIX.as_bytes()));
+        assert_eq!(&line[LEGACY_DAEMON_PREFIX_LEN..], b" incomplete");
     }
 
     #[test]
