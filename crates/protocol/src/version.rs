@@ -670,7 +670,7 @@ impl ProtocolVersion {
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
     /// exported slice into an owned vector. The helper is `const`, enabling compile-time
     /// initialisation of static tables that embed the iterator for later use.
-    #[must_use]
+    #[must_use = "consume the iterator to inspect the supported protocol numbers"]
     pub const fn supported_protocol_numbers_iter() -> SupportedProtocolNumbersIter {
         SupportedProtocolNumbersIter::new(Self::supported_protocol_numbers())
     }
@@ -734,7 +734,7 @@ impl ProtocolVersion {
     /// avoid manual slice handling while still matching upstream parity. The
     /// method is `const`, keeping it usable in compile-time contexts that
     /// assemble static lookup structures.
-    #[must_use]
+    #[must_use = "consume the iterator to inspect the supported protocol versions"]
     pub const fn supported_versions_iter() -> SupportedVersionsIter {
         SupportedVersionsIter::new(Self::supported_versions())
     }
