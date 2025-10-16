@@ -68,6 +68,41 @@ pub enum NegotiationPrologue {
     Binary,
 }
 
+impl NegotiationPrologue {
+    /// Returns `true` when the negotiation style has been determined.
+    ///
+    /// Upstream rsync peeks at the initial byte(s) and proceeds immediately once the
+    /// transport yields a decision. Centralizing the predicate keeps higher layers from
+    /// duplicating `matches!` checks and mirrors the explicit boolean helpers commonly
+    /// found in the C implementation.
+    #[must_use]
+    #[inline]
+    pub const fn is_decided(self) -> bool {
+        !matches!(self, Self::NeedMoreData)
+    }
+
+    /// Reports whether additional bytes must be read before the negotiation style is known.
+    #[must_use]
+    #[inline]
+    pub const fn requires_more_data(self) -> bool {
+        matches!(self, Self::NeedMoreData)
+    }
+
+    /// Returns `true` when the peer is using the legacy ASCII `@RSYNCD:` negotiation.
+    #[must_use]
+    #[inline]
+    pub const fn is_legacy(self) -> bool {
+        matches!(self, Self::LegacyAscii)
+    }
+
+    /// Returns `true` when the peer is using the binary negotiation introduced in protocol 30.
+    #[must_use]
+    #[inline]
+    pub const fn is_binary(self) -> bool {
+        matches!(self, Self::Binary)
+    }
+}
+
 /// Determines whether the peer is performing the legacy ASCII negotiation or
 /// the modern binary handshake.
 ///
@@ -738,6 +773,30 @@ mod tests {
             detect_negotiation_prologue(&[0x00, 0x20, 0x00, 0x00]),
             NegotiationPrologue::Binary
         );
+    }
+
+    #[test]
+    fn negotiation_prologue_helpers_report_decision_state() {
+        assert!(NegotiationPrologue::NeedMoreData.requires_more_data());
+        assert!(!NegotiationPrologue::NeedMoreData.is_decided());
+
+        assert!(NegotiationPrologue::LegacyAscii.is_decided());
+        assert!(!NegotiationPrologue::LegacyAscii.requires_more_data());
+
+        assert!(NegotiationPrologue::Binary.is_decided());
+        assert!(!NegotiationPrologue::Binary.requires_more_data());
+    }
+
+    #[test]
+    fn negotiation_prologue_helpers_classify_modes() {
+        assert!(NegotiationPrologue::LegacyAscii.is_legacy());
+        assert!(!NegotiationPrologue::LegacyAscii.is_binary());
+
+        assert!(NegotiationPrologue::Binary.is_binary());
+        assert!(!NegotiationPrologue::Binary.is_legacy());
+
+        assert!(!NegotiationPrologue::NeedMoreData.is_binary());
+        assert!(!NegotiationPrologue::NeedMoreData.is_legacy());
     }
 
     #[test]
