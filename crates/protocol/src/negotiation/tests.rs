@@ -1241,6 +1241,44 @@ fn prologue_sniffer_take_buffered_into_writer_preserves_buffer_on_error() {
 }
 
 #[test]
+fn prologue_sniffer_reset_trims_oversized_buffer_capacity() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let oversized = LEGACY_DAEMON_PREFIX_LEN * 4;
+    *sniffer.buffered_storage_mut() = Vec::with_capacity(oversized);
+    assert!(
+        sniffer.buffered_storage().capacity() >= oversized,
+        "allocator must provide at least the requested oversize capacity"
+    );
+
+    sniffer.reset();
+
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), None);
+    assert!(
+        sniffer.buffered_storage().capacity() <= LEGACY_DAEMON_PREFIX_LEN,
+        "reset should shrink oversize buffers back to the canonical prefix capacity"
+    );
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_reset_restores_canonical_capacity_after_shrink() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    sniffer.buffered_storage_mut().shrink_to_fit();
+    assert_eq!(sniffer.buffered_storage().capacity(), 0);
+
+    sniffer.reset();
+
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), None);
+    assert!(
+        sniffer.buffered_storage().capacity() >= LEGACY_DAEMON_PREFIX_LEN,
+        "reset should grow undersized buffers to the canonical prefix capacity"
+    );
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_slice_reports_small_buffer() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(LEGACY_DAEMON_PREFIX.as_bytes());
