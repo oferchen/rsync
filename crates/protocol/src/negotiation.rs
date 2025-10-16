@@ -297,8 +297,8 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn observe(&mut self, chunk: &[u8]) -> (NegotiationPrologue, usize) {
         let cached = self.detector.decision();
-        let needs_more_prefix_bytes = cached == Some(NegotiationPrologue::LegacyAscii)
-            && !self.detector.legacy_prefix_complete();
+        let needs_more_prefix_bytes =
+            cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
 
         if chunk.is_empty() || (cached.is_some() && !needs_more_prefix_bytes) {
             return (cached.unwrap_or(NegotiationPrologue::NeedMoreData), 0);
@@ -311,8 +311,7 @@ impl NegotiationPrologueSniffer {
             consumed += 1;
 
             let decision = self.detector.observe_byte(byte);
-            let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
-                && !self.detector.legacy_prefix_complete();
+            let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
 
             if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
                 return (decision, consumed);
@@ -374,10 +373,7 @@ impl NegotiationPrologueSniffer {
     /// already consumed bytes.
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
         match self.detector.decision() {
-            Some(decision)
-                if decision != NegotiationPrologue::LegacyAscii
-                    || self.detector.legacy_prefix_complete() =>
-            {
+            Some(decision) if !self.needs_more_legacy_prefix_bytes(decision) => {
                 return Ok(decision);
             }
             _ => {}
@@ -387,8 +383,8 @@ impl NegotiationPrologueSniffer {
 
         loop {
             let cached = self.detector.decision();
-            let needs_more_prefix_bytes = cached == Some(NegotiationPrologue::LegacyAscii)
-                && !self.detector.legacy_prefix_complete();
+            let needs_more_prefix_bytes =
+                cached.is_some_and(|decision| self.needs_more_legacy_prefix_bytes(decision));
             if let Some(decision) = cached.filter(|_| !needs_more_prefix_bytes) {
                 return Ok(decision);
             }
@@ -410,8 +406,7 @@ impl NegotiationPrologueSniffer {
                     let observed = &scratch[..read];
                     let (decision, consumed) = self.observe(observed);
                     debug_assert_eq!(consumed, observed.len());
-                    let needs_more_prefix_bytes = decision == NegotiationPrologue::LegacyAscii
-                        && !self.detector.legacy_prefix_complete();
+                    let needs_more_prefix_bytes = self.needs_more_legacy_prefix_bytes(decision);
                     if decision != NegotiationPrologue::NeedMoreData && !needs_more_prefix_bytes {
                         return Ok(decision);
                     }
@@ -451,6 +446,11 @@ impl NegotiationPrologueSniffer {
     #[must_use]
     pub fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()
+    }
+
+    #[inline]
+    fn needs_more_legacy_prefix_bytes(&self, decision: NegotiationPrologue) -> bool {
+        decision == NegotiationPrologue::LegacyAscii && !self.detector.legacy_prefix_complete()
     }
 
     fn reset_buffer_for_reuse(&mut self) {
