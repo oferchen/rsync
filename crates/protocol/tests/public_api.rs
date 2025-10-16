@@ -26,3 +26,8 @@ fn supported_protocol_exports_remain_consistent() {
         rsync_protocol::SUPPORTED_PROTOCOLS.len(),
     );
 }
+
+#[test]
+fn supported_protocols_match_upstream_order() {
+    assert_eq!(rsync_protocol::SUPPORTED_PROTOCOLS, [32, 31, 30, 29, 28]);
+}
