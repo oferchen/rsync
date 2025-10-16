@@ -2532,3 +2532,57 @@ fn prologue_sniffer_retries_after_interrupted_read() {
     cursor.read_to_end(&mut remainder).expect("read remainder");
     assert_eq!(remainder, b" 31.0\n");
 }
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_writer_requires_complete_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let partial = &LEGACY_DAEMON_PREFIX_BYTES[..LEGACY_DAEMON_PREFIX_LEN - 1];
+    let (decision, consumed) = sniffer
+        .observe(partial)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, partial.len());
+    assert!(sniffer.requires_more_data());
+
+    let mut sink = Vec::new();
+    let written = sniffer
+        .take_sniffed_prefix_into_writer(&mut sink)
+        .expect("writing incomplete prefix should be a no-op");
+    assert_eq!(written, 0);
+    assert!(sink.is_empty());
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_writer_drains_prefix_and_preserves_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" 31.0\n";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+    let mut expected = LEGACY_DAEMON_PREFIX_BYTES.to_vec();
+    expected.extend_from_slice(remainder);
+    assert_eq!(sniffer.buffered(), expected.as_slice());
+
+    let mut sink = Vec::new();
+    let written = sniffer
+        .take_sniffed_prefix_into_writer(&mut sink)
+        .expect("writing sniffed prefix succeeds");
+    assert_eq!(written, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(sink, LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(sniffer.buffered(), remainder);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+
+    let written_again = sniffer
+        .take_sniffed_prefix_into_writer(&mut sink)
+        .expect("subsequent call must be a no-op");
+    assert_eq!(written_again, 0);
+    assert_eq!(sniffer.buffered(), remainder);
+}
