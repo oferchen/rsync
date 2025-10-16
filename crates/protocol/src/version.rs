@@ -1180,8 +1180,7 @@ where
     I: IntoIterator<Item = T>,
     T: ProtocolVersionAdvertisement,
 {
-    let mut seen = [false; ProtocolVersion::NEWEST.as_u8() as usize + 1];
-    let mut seen_any = false;
+    let mut seen_bitmap: u64 = 0;
     let mut seen_max = ProtocolVersion::OLDEST.as_u8();
     let mut oldest_rejection: Option<u8> = None;
 
@@ -1191,10 +1190,13 @@ where
         match ProtocolVersion::from_peer_advertisement(advertised) {
             Ok(proto) => {
                 let value = proto.as_u8();
-                let index = usize::from(value);
-                if !seen[index] {
-                    seen[index] = true;
-                    seen_any = true;
+                if value as u32 >= u64::BITS {
+                    continue;
+                }
+
+                let bit = 1u64 << value;
+                if seen_bitmap & bit == 0 {
+                    seen_bitmap |= bit;
                     if value > seen_max {
                         seen_max = value;
                     }
@@ -1212,7 +1214,11 @@ where
     }
 
     for ours in SUPPORTED_PROTOCOLS {
-        if seen[usize::from(ours)] {
+        if ours as u32 >= u64::BITS {
+            continue;
+        }
+
+        if seen_bitmap & (1u64 << ours) != 0 {
             return Ok(ProtocolVersion::new_const(ours));
         }
     }
@@ -1221,13 +1227,17 @@ where
         return Err(NegotiationError::UnsupportedVersion(value));
     }
 
-    let peer_versions = if seen_any {
+    let peer_versions = if seen_bitmap != 0 {
         let start = ProtocolVersion::OLDEST.as_u8();
         let span = usize::from(seen_max.saturating_sub(start)) + 1;
         let mut versions = Vec::with_capacity(span);
 
         for version in start..=seen_max {
-            if seen[usize::from(version)] {
+            if version as u32 >= u64::BITS {
+                continue;
+            }
+
+            if seen_bitmap & (1u64 << version) != 0 {
                 versions.push(version);
             }
         }
