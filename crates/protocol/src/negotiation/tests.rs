@@ -1967,6 +1967,72 @@ fn prologue_sniffer_take_sniffed_prefix_into_handles_binary_negotiation() {
 }
 
 #[test]
+fn prologue_sniffer_take_sniffed_prefix_into_slice_copies_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let payload = LEGACY_DAEMON_PREFIX.as_bytes();
+    let (decision, consumed) = sniffer
+        .observe(payload)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    let remainder = b"module";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut scratch = [0xAA; LEGACY_DAEMON_PREFIX_LEN];
+    let drained = sniffer
+        .take_sniffed_prefix_into_slice(&mut scratch)
+        .expect("slice large enough to hold prefix");
+
+    assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(scratch, *LEGACY_DAEMON_PREFIX_BYTES);
+    assert_eq!(sniffer.buffered(), remainder);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_slice_reports_small_buffer() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+
+    let mut scratch = [0u8; LEGACY_DAEMON_PREFIX_LEN - 1];
+    let err = sniffer
+        .take_sniffed_prefix_into_slice(&mut scratch)
+        .expect_err("insufficient slice should error");
+
+    assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(err.available(), scratch.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_array_copies_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(&[0x7F, 0x80])
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(consumed, 1);
+
+    let remainder = [0x90, 0x91];
+    sniffer.buffered_storage_mut().extend_from_slice(&remainder);
+
+    let mut scratch = [0xFFu8; LEGACY_DAEMON_PREFIX_LEN];
+    let drained = sniffer
+        .take_sniffed_prefix_into_array(&mut scratch)
+        .expect("array large enough for binary prefix");
+
+    assert_eq!(drained, 1);
+    assert_eq!(scratch[0], 0x7F);
+    assert!(scratch[1..].iter().all(|&byte| byte == 0xFF));
+    assert_eq!(sniffer.buffered(), &remainder);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+}
+
+#[test]
 fn prologue_sniffer_take_sniffed_prefix_into_is_noop_when_prefix_incomplete() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer.observe(b"@R").expect("buffer reservation succeeds");
