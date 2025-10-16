@@ -1,7 +1,7 @@
 use super::*;
 use core::num::{
-    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU16,
-    NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
+    NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
 };
 use proptest::prelude::*;
 
@@ -451,6 +451,17 @@ fn exposes_non_zero_protocol_byte() {
 
     let via_from: NonZeroU8 = version.into();
     assert_eq!(via_from, non_zero);
+}
+
+#[test]
+fn compares_protocol_version_with_non_zero_u8() {
+    let newest = NonZeroU8::new(ProtocolVersion::NEWEST.as_u8()).expect("non-zero");
+    assert_eq!(ProtocolVersion::NEWEST, newest);
+    assert_eq!(newest, ProtocolVersion::NEWEST);
+
+    let oldest = NonZeroU8::new(ProtocolVersion::OLDEST.as_u8()).expect("non-zero");
+    assert_ne!(ProtocolVersion::NEWEST, oldest);
+    assert_ne!(oldest, ProtocolVersion::NEWEST);
 }
 
 #[test]
