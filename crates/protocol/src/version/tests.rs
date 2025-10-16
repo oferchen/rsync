@@ -393,6 +393,22 @@ fn rejects_out_of_range_non_zero_u8() {
 }
 
 #[test]
+fn from_supported_accepts_values_within_range() {
+    let newest = ProtocolVersion::from_supported(ProtocolVersion::NEWEST.as_u8());
+    assert_eq!(newest, Some(ProtocolVersion::NEWEST));
+
+    let oldest = ProtocolVersion::from_supported(ProtocolVersion::OLDEST.as_u8());
+    assert_eq!(oldest, Some(ProtocolVersion::OLDEST));
+}
+
+#[test]
+fn from_supported_rejects_values_outside_range() {
+    assert_eq!(ProtocolVersion::from_supported(0), None);
+    assert_eq!(ProtocolVersion::from_supported(27), None);
+    assert_eq!(ProtocolVersion::from_supported(33), None);
+}
+
+#[test]
 fn converts_from_non_zero_u8() {
     let value = NonZeroU8::new(31).expect("non-zero");
     let version = ProtocolVersion::try_from(value).expect("valid");
