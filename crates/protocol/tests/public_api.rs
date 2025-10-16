@@ -18,3 +18,11 @@ fn custom_advertised_types_can_participate_in_negotiation() {
     let negotiated = select_highest_mutual(peers).expect("should negotiate successfully");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
+
+#[test]
+fn supported_protocol_exports_remain_consistent() {
+    assert_eq!(
+        rsync_protocol::SUPPORTED_PROTOCOL_COUNT,
+        rsync_protocol::SUPPORTED_PROTOCOLS.len(),
+    );
+}
