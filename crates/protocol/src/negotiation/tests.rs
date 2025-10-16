@@ -1721,6 +1721,75 @@ fn prologue_sniffer_take_buffered_into_writer_preserves_buffer_on_error() {
 }
 
 #[test]
+fn prologue_sniffer_take_sniffed_prefix_into_preserves_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let payload = LEGACY_DAEMON_PREFIX.as_bytes();
+    let (decision, consumed) = sniffer
+        .observe(payload)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    let remainder = b"module data";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut prefix = Vec::new();
+    let drained = sniffer
+        .take_sniffed_prefix_into(&mut prefix)
+        .expect("draining prefix should not allocate");
+    assert_eq!(drained, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(prefix, payload);
+    assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    assert_eq!(sniffer.buffered(), remainder);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    assert!(!sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_handles_binary_negotiation() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(&[0x7F, 0x00, 0x01])
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    assert_eq!(consumed, 1);
+
+    sniffer
+        .buffered_storage_mut()
+        .extend_from_slice(&[0xAA, 0x55]);
+
+    let mut prefix = Vec::new();
+    let drained = sniffer
+        .take_sniffed_prefix_into(&mut prefix)
+        .expect("binary prefix extraction should succeed");
+    assert_eq!(drained, 1);
+    assert_eq!(prefix, &[0x7F]);
+    assert!(sniffer.sniffed_prefix().is_empty());
+    assert_eq!(sniffer.buffered(), &[0xAA, 0x55]);
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    assert!(!sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_sniffed_prefix_into_is_noop_when_prefix_incomplete() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer.observe(b"@R").expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, 2);
+    assert!(sniffer.requires_more_data());
+
+    let mut prefix = Vec::new();
+    prefix.extend_from_slice(b"previous");
+    let drained = sniffer
+        .take_sniffed_prefix_into(&mut prefix)
+        .expect("draining incomplete prefix should not allocate");
+    assert_eq!(drained, 0);
+    assert_eq!(prefix, b"previous");
+    assert_eq!(sniffer.buffered(), b"@R");
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
 fn prologue_sniffer_reset_trims_oversized_buffer_capacity() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let oversized = LEGACY_DAEMON_PREFIX_LEN * 4;
