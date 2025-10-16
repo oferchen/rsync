@@ -140,6 +140,22 @@ pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
 /// transient `EINTR` interruptions. This helper mirrors upstream behavior while
 /// providing a higher level interface that owns the buffered prefix so callers
 /// can replay the bytes into the legacy greeting parser without reallocating.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer};
+/// use std::io::Cursor;
+///
+/// let mut sniffer = NegotiationPrologueSniffer::new();
+/// let mut reader = Cursor::new(&b"@RSYNCD: 31.0\n"[..]);
+/// let decision = sniffer
+///     .read_from(&mut reader)
+///     .expect("legacy negotiation detection succeeds");
+///
+/// assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+/// assert_eq!(sniffer.buffered(), b"@RSYNCD:");
+/// ```
 #[derive(Debug)]
 pub struct NegotiationPrologueSniffer {
     detector: NegotiationPrologueDetector,
