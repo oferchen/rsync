@@ -48,8 +48,8 @@ mod negotiation;
 mod version;
 
 pub use envelope::{
-    EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, MAX_PAYLOAD_LENGTH, MessageCode,
-    MessageHeader, ParseLogCodeError, ParseMessageCodeError,
+    EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, LogCodeConversionError,
+    MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader, ParseLogCodeError, ParseMessageCodeError,
 };
 pub use error::NegotiationError;
 pub use legacy::{

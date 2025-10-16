@@ -1,8 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LogCode, ParseLogCodeError, ProtocolVersion, ProtocolVersionAdvertisement,
-    select_highest_mutual,
+    LogCode, LogCodeConversionError, MessageCode, ParseLogCodeError, ProtocolVersion,
+    ProtocolVersionAdvertisement, select_highest_mutual,
 };
 
 #[derive(Clone, Copy)]
@@ -40,11 +40,8 @@ fn message_header_constants_match_upstream_definition() {
     assert_eq!(rsync_protocol::MESSAGE_HEADER_LEN, 4);
     assert_eq!(rsync_protocol::MAX_PAYLOAD_LENGTH, 0x00FF_FFFF);
 
-    let header = rsync_protocol::MessageHeader::new(
-        rsync_protocol::MessageCode::Info,
-        0,
-    )
-    .expect("zero-length payloads are valid");
+    let header = rsync_protocol::MessageHeader::new(rsync_protocol::MessageCode::Info, 0)
+        .expect("zero-length payloads are valid");
     assert_eq!(header.encode().len(), rsync_protocol::MESSAGE_HEADER_LEN);
 }
 
@@ -130,4 +127,15 @@ fn parse_log_code_error_reports_invalid_names() {
     assert_eq!(err.invalid_name(), Some("NOTREAL"));
     assert_eq!(err.invalid_value(), None);
     assert_eq!(err.to_string(), "unknown log code name: \"NOTREAL\"");
+}
+
+#[test]
+fn log_code_conversion_error_exposes_context() {
+    let err = LogCodeConversionError::NoLogEquivalent(MessageCode::Data);
+    assert_eq!(err.log_code(), None);
+    assert_eq!(err.message_code(), Some(MessageCode::Data));
+    assert_eq!(
+        err.to_string(),
+        "message code MSG_DATA has no log code equivalent"
+    );
 }
