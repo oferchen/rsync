@@ -632,9 +632,10 @@ impl ProtocolVersion {
     /// especially when emitting diagnostics that mention every supported version. Exposing an
     /// iterator keeps those call sites allocation-free and mirrors the semantics provided by
     /// [`ProtocolVersion::supported_versions_iter`] without requiring callers to convert the
-    /// exported slice into an owned vector.
+    /// exported slice into an owned vector. The helper is `const`, enabling compile-time
+    /// initialisation of static tables that embed the iterator for later use.
     #[must_use]
-    pub fn supported_protocol_numbers_iter() -> SupportedProtocolNumbersIter {
+    pub const fn supported_protocol_numbers_iter() -> SupportedProtocolNumbersIter {
         SupportedProtocolNumbersIter::new(Self::supported_protocol_numbers())
     }
 
@@ -680,9 +681,10 @@ impl ProtocolVersion {
     /// [`ProtocolVersion`] instances so callers can iterate without converting between the raw
     /// byte representation and the wrapper type. This is particularly useful when constructing
     /// lookup tables keyed by [`ProtocolVersion`] or when rendering diagnostics that already work
-    /// with the strongly typed representation.
+    /// with the strongly typed representation. Because the helper is `const`, compile-time table
+    /// initialisers can borrow the range directly.
     #[must_use]
-    pub fn supported_version_range() -> RangeInclusive<ProtocolVersion> {
+    pub const fn supported_version_range() -> RangeInclusive<ProtocolVersion> {
         Self::OLDEST..=Self::NEWEST
     }
 
@@ -693,9 +695,11 @@ impl ProtocolVersion {
     /// constants, mirroring the ordering exposed by
     /// [`SUPPORTED_PROTOCOLS`]. Higher layers that only need to iterate
     /// without borrowing the underlying array can rely on this helper to
-    /// avoid manual slice handling while still matching upstream parity.
+    /// avoid manual slice handling while still matching upstream parity. The
+    /// method is `const`, keeping it usable in compile-time contexts that
+    /// assemble static lookup structures.
     #[must_use]
-    pub fn supported_versions_iter() -> SupportedVersionsIter {
+    pub const fn supported_versions_iter() -> SupportedVersionsIter {
         SupportedVersionsIter::new(Self::supported_versions())
     }
 
