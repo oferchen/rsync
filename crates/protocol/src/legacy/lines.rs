@@ -11,7 +11,7 @@ use super::{
 /// the ASCII-based negotiation path. These lines reuse the same prefix as the
 /// version greeting, so higher level code benefits from a typed representation
 /// to avoid stringly-typed comparisons while still mirroring upstream behavior.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LegacyDaemonMessage<'a> {
     /// A protocol version announcement such as `@RSYNCD: 30.0`.
     Version(ProtocolVersion),
@@ -134,6 +134,31 @@ fn parse_prefixed_payload<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn assert_copy<T: Copy>() {}
+    fn assert_hash<T: Hash>() {}
+
+    fn hash_value<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn legacy_daemon_message_supports_copy_and_hash() {
+        assert_copy::<LegacyDaemonMessage<'static>>();
+        assert_hash::<LegacyDaemonMessage<'static>>();
+
+        let sample = LegacyDaemonMessage::AuthRequired {
+            module: Some("module"),
+        };
+        let copied = sample;
+
+        assert_eq!(sample, copied);
+        assert_eq!(hash_value(&sample), hash_value(&copied));
+    }
 
     #[test]
     fn parse_legacy_daemon_message_accepts_ok_keyword() {
