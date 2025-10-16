@@ -100,9 +100,15 @@ impl NegotiationPrologueSniffer {
     /// allocation in line with the workspace's buffer reuse guidance.
     #[must_use]
     pub fn take_buffered(&mut self) -> Vec<u8> {
-        let capacity = self.buffered.capacity().max(LEGACY_DAEMON_PREFIX_LEN);
-        let mut drained = Vec::with_capacity(capacity);
+        let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
+        let mut drained = Vec::with_capacity(target_capacity);
         mem::swap(&mut self.buffered, &mut drained);
+
+        if self.buffered.capacity() < LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered
+                .reserve_exact(LEGACY_DAEMON_PREFIX_LEN - self.buffered.capacity());
+        }
+
         drained
     }
 
@@ -1244,6 +1250,18 @@ mod tests {
         assert_eq!(buffered, [0x80]);
         assert!(sniffer.buffered().is_empty());
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn prologue_sniffer_take_buffered_clamps_replacement_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        sniffer.buffered.reserve(1024);
+        assert!(sniffer.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN);
+
+        let _ = sniffer.take_buffered();
+
+        assert_eq!(sniffer.buffered.capacity(), LEGACY_DAEMON_PREFIX_LEN);
     }
 
     #[test]

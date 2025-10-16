@@ -205,17 +205,19 @@ fn supported_protocol_helpers_remain_consistent() {
     let numbers_slice = ProtocolVersion::supported_protocol_numbers();
     assert_eq!(numbers_slice, &SUPPORTED_PROTOCOLS);
 
-    let numbers_from_iter: Vec<u8> =
-        ProtocolVersion::supported_protocol_numbers_iter().collect();
+    let numbers_from_iter: Vec<u8> = ProtocolVersion::supported_protocol_numbers_iter().collect();
     assert_eq!(numbers_from_iter, SUPPORTED_PROTOCOLS);
 
     let versions_slice = ProtocolVersion::supported_versions();
-    let versions_slice_numbers: Vec<u8> =
-        versions_slice.iter().map(|version| version.as_u8()).collect();
+    let versions_slice_numbers: Vec<u8> = versions_slice
+        .iter()
+        .map(|version| version.as_u8())
+        .collect();
     assert_eq!(versions_slice_numbers, SUPPORTED_PROTOCOLS);
 
-    let versions_from_iter: Vec<u8> =
-        ProtocolVersion::supported_versions_iter().map(|version| version.as_u8()).collect();
+    let versions_from_iter: Vec<u8> = ProtocolVersion::supported_versions_iter()
+        .map(|version| version.as_u8())
+        .collect();
     assert_eq!(versions_from_iter, SUPPORTED_PROTOCOLS);
 
     let range = ProtocolVersion::supported_range();
