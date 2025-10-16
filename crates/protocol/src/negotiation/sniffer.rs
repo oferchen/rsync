@@ -423,10 +423,8 @@ impl NegotiationPrologueSniffer {
                 Ok(read) => {
                     let observed = &scratch[..read];
                     let (decision, consumed) = self.observe(observed);
-                    debug_assert!(
-                        consumed <= observed.len(),
-                        "sniffer must not consume more bytes than were observed"
-                    );
+                    debug_assert!(consumed <= observed.len());
+
                     if consumed < observed.len() {
                         self.buffered.extend_from_slice(&observed[consumed..]);
                     }
