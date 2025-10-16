@@ -787,22 +787,26 @@ fn from_supported_rejects_values_outside_range() {
 }
 
 #[test]
-fn from_supported_matches_bitmap_guard() {
-    for value in ProtocolVersion::OLDEST.as_u8()..=ProtocolVersion::NEWEST.as_u8() {
-        assert_eq!(
-            ProtocolVersion::from_supported(value).is_some(),
-            ProtocolVersion::is_supported_protocol_number(value)
-        );
-    }
-}
+fn from_supported_matches_supported_protocol_list() {
+    let supported = ProtocolVersion::supported_protocol_numbers();
 
-#[test]
-fn is_supported_matches_bitmap_guard() {
-    for value in ProtocolVersion::OLDEST.as_u8()..=ProtocolVersion::NEWEST.as_u8() {
+    for value in 0..=u8::MAX {
+        let parsed = ProtocolVersion::from_supported(value);
+        let expected = supported.contains(&value);
+
         assert_eq!(
-            ProtocolVersion::is_supported(value),
-            ProtocolVersion::is_supported_protocol_number(value)
+            parsed.is_some(),
+            expected,
+            "value {value} should match membership"
         );
+
+        if let Some(version) = parsed {
+            assert_eq!(
+                version.as_u8(),
+                value,
+                "returned version must preserve numeric value"
+            );
+        }
     }
 }
 
