@@ -124,6 +124,15 @@ impl RollingChecksum {
         self.update(block);
     }
 
+    /// Returns the current window length as a 32-bit value while validating invariants.
+    fn window_len_u32(&self) -> Result<u32, RollingError> {
+        if self.len == 0 {
+            return Err(RollingError::EmptyWindow);
+        }
+
+        u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })
+    }
+
     /// Performs the rolling checksum update by removing `outgoing` and appending `incoming`.
     ///
     /// # Errors
@@ -132,12 +141,7 @@ impl RollingChecksum {
     /// block and [`RollingError::WindowTooLarge`] when the window length exceeds what the
     /// upstream algorithm supports (32 bits).
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
-        if self.len == 0 {
-            return Err(RollingError::EmptyWindow);
-        }
-
-        let window_len =
-            u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })?;
+        let window_len = self.window_len_u32()?;
 
         let out = u32::from(outgoing);
         let inn = u32::from(incoming);
@@ -178,12 +182,7 @@ impl RollingChecksum {
             return Ok(());
         }
 
-        if self.len == 0 {
-            return Err(RollingError::EmptyWindow);
-        }
-
-        let window_len =
-            u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })?;
+        let window_len = self.window_len_u32()?;
 
         let mut s1 = self.s1;
         let mut s2 = self.s2;
@@ -392,6 +391,16 @@ mod tests {
     }
 
     #[test]
+    fn roll_many_errors_for_empty_window() {
+        let mut checksum = RollingChecksum::new();
+        let err = checksum
+            .roll_many(b"a", b"b")
+            .expect_err("rolling on empty window must fail");
+        assert_eq!(err, RollingError::EmptyWindow);
+        assert_eq!(checksum.digest(), RollingDigest::new(0, 0, 0));
+    }
+
+    #[test]
     fn roll_errors_for_window_exceeding_u32() {
         let mut checksum = RollingChecksum::new();
         checksum.s1 = 1;
@@ -400,6 +409,21 @@ mod tests {
 
         let err = checksum.roll(0, 0).expect_err("oversized window must fail");
         assert!(matches!(err, RollingError::WindowTooLarge { .. }));
+    }
+
+    #[test]
+    fn roll_many_errors_for_window_exceeding_u32() {
+        let mut checksum = RollingChecksum::new();
+        checksum.s1 = 1;
+        checksum.s2 = 1;
+        checksum.len = (u32::MAX as usize) + 1;
+
+        let original = checksum.clone();
+        let err = checksum
+            .roll_many(b"a", b"b")
+            .expect_err("oversized window must fail");
+        assert!(matches!(err, RollingError::WindowTooLarge { .. }));
+        assert_eq!(checksum, original);
     }
 
     #[test]
