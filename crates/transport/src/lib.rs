@@ -2,13 +2,65 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 
-//! Transport-level helpers for the Rust rsync reimplementation.
+//! # Overview
 //!
-//! The crate currently focuses on negotiation sniffing, providing wrappers that
-//! preserve the bytes consumed while detecting whether a connection speaks the
-//! legacy ASCII or binary handshake. Future modules will extend this facade to
-//! cover the SSH stdio transport and the `rsync://` daemon loop while keeping
-//! higher layers agnostic to the underlying I/O implementation details.
+//! `rsync_transport` houses the transport adapters used by the Rust `rsync`
+//! implementation. The crate currently focuses on handshake detection and
+//! exposes wrappers that preserve bytes consumed while deciding between legacy
+//! ASCII and binary negotiations.
+//!
+//! # Design
+//!
+//! The public modules mirror upstream rsync's layering:
+//!
+//! - [`negotiation`] implements [`sniff_negotiation_stream`] and
+//!   [`NegotiatedStream`], which classify the prologue without losing buffered
+//!   data.
+//! - [`binary`] and [`daemon`] wrap the protocol helpers to perform client and
+//!   daemon handshakes.
+//! - [`session`] builds on top of both flows to expose a high-level session
+//!   negotiation entry point.
+//!
+//! Each module is structured as a facade over the `rsync_protocol` crate, making
+//! it possible to slot different transports (SSH stdio vs TCP daemon) behind the
+//! same interface.
+//!
+//! # Invariants
+//!
+//! - Sniffed bytes are replayed exactly once; they are never duplicated or
+//!   dropped when the negotiated stream is read.
+//! - Legacy ASCII negotiations require the canonical `@RSYNCD:` prefix before
+//!   exposing banner parsing APIs.
+//! - `NegotiatedStream::try_map_inner` always preserves the original stream on
+//!   failure, preventing state loss.
+//!
+//! # Errors
+//!
+//! Transport helpers surface [`std::io::Error`] values directly. When mapping
+//! streams fails, [`TryMapInnerError`] retains the original value so callers can
+//! recover without repeating the negotiation phase.
+//!
+//! # Examples
+//!
+//! Detect the negotiation style from an in-memory stream and read the replayed
+//! prefix.
+//!
+//! ```
+//! use rsync_transport::sniff_negotiation_stream;
+//! use std::io::Cursor;
+//!
+//! let cursor = Cursor::new(&b"@RSYNCD: 31.0\n"[..]);
+//! let negotiated = sniff_negotiation_stream(cursor).expect("sniffing succeeds");
+//!
+//! assert!(negotiated.buffered().starts_with(b"@RSYNCD:"));
+//! assert!(negotiated.decision().is_legacy());
+//! ```
+//!
+//! # See also
+//!
+//! - [`rsync_protocol`] for the negotiation parsers that back these adapters.
+//! - [`rsync_core`] for the message helpers used when transport-level errors are
+//!   reported to the user.
 
 mod binary;
 mod daemon;
