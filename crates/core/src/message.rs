@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
-use std::fmt;
+use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, Write as IoWrite};
 use std::path::Path;
 use std::str;
@@ -354,6 +354,33 @@ impl Message {
         }
 
         Ok(())
+    }
+
+    /// Renders the message followed by a newline into an arbitrary [`fmt::Write`] implementor.
+    ///
+    /// This helper mirrors [`Self::render_line_to_writer`] but operates on string-based writers.
+    /// It avoids cloning intermediate [`String`] values by streaming the payload directly into the
+    /// provided formatter, making it convenient for unit tests and diagnostic buffers that operate
+    /// on UTF-8 text rather than byte streams.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let mut rendered = String::new();
+    /// Message::error(42, "permission denied")
+    ///     .with_role(Role::Generator)
+    ///     .with_source(message_source!())
+    ///     .render_line_to(&mut rendered)
+    ///     .unwrap();
+    ///
+    /// assert!(rendered.ends_with('\n'));
+    /// assert!(rendered.contains("[generator=3.4.1-rust]"));
+    /// ```
+    pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
+        self.render_to(writer)?;
+        FmtWrite::write_char(writer, '\n')
     }
 
     /// Writes the rendered message into an [`io::Write`] implementor.
@@ -832,6 +859,18 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn render_line_to_appends_newline() {
+        let message = Message::warning("soft limit reached");
+
+        let mut rendered = String::new();
+        message
+            .render_line_to(&mut rendered)
+            .expect("rendering into a string never fails");
+
+        assert_eq!(rendered, format!("{}\n", message));
     }
 
     #[test]
