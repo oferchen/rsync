@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
 use std::path::Path;
@@ -804,7 +804,7 @@ fn normalize_path(path: &Path) -> String {
     let mut normalized = String::new();
 
     if let Some(prefix) = prefix {
-        normalized.push_str(&prefix.to_string_lossy().replace('\\', "/"));
+        append_normalized_os_str(&mut normalized, prefix.as_os_str());
     }
 
     if is_absolute && !normalized.ends_with('/') {
@@ -819,7 +819,7 @@ fn normalize_path(path: &Path) -> String {
             normalized.push('/');
         }
 
-        normalized.push_str(&segment.to_string_lossy().replace('\\', "/"));
+        append_normalized_os_str(&mut normalized, segment);
     }
 
     if normalized.is_empty() {
@@ -832,6 +832,25 @@ fn normalize_path(path: &Path) -> String {
 fn encode_unsigned_decimal(value: u64, buf: &mut [u8]) -> &str {
     let start = encode_unsigned_decimal_into(value, buf);
     str::from_utf8(&buf[start..]).expect("decimal digits are valid ASCII")
+}
+
+/// Appends an [`OsStr`] to the destination string while normalising separators.
+///
+/// Windows paths frequently use backslashes while downstream consumers expect
+/// the canonical forward-slash representation that upstream rsync emits. This
+/// helper avoids allocating intermediate [`String`] values by copying the
+/// decoded [`OsStr`] directly into the target buffer and rewriting any
+/// backslashes in-place. The behaviour matches [`Path::to_string_lossy`],
+/// ensuring unpaired surrogate pairs or other lossy conversions degrade in the
+/// same manner as upstream.
+fn append_normalized_os_str(target: &mut String, value: &OsStr) {
+    let lossy = value.to_string_lossy();
+
+    if lossy.as_ref().bytes().any(|byte| byte == b'\\') {
+        target.extend(lossy.chars().map(|ch| if ch == '\\' { '/' } else { ch }));
+    } else {
+        target.push_str(lossy.as_ref());
+    }
 }
 
 fn encode_signed_decimal(value: i64, buf: &mut [u8]) -> &str {
@@ -885,6 +904,7 @@ mod tests {
     use super::*;
     use crate::{rsync_error, rsync_info, rsync_warning};
     use std::collections::HashSet;
+    use std::ffi::OsStr;
     use std::io::{self, IoSlice};
 
     #[track_caller]
@@ -1405,5 +1425,21 @@ mod tests {
         assert_eq!(message.code(), None);
         assert_eq!(message.text(), "protocol 32 negotiated");
         assert!(message.source().is_some());
+    }
+
+    #[test]
+    fn append_normalized_os_str_rewrites_backslashes() {
+        let mut rendered = String::from("prefix/");
+        append_normalized_os_str(&mut rendered, OsStr::new(r"dir\file.txt"));
+
+        assert_eq!(rendered, "prefix/dir/file.txt");
+    }
+
+    #[test]
+    fn append_normalized_os_str_preserves_existing_forward_slashes() {
+        let mut rendered = String::new();
+        append_normalized_os_str(&mut rendered, OsStr::new("dir/sub"));
+
+        assert_eq!(rendered, "dir/sub");
     }
 }
