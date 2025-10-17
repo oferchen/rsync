@@ -498,24 +498,45 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        writer.write_str("rsync ")?;
-        writer.write_str(self.severity.as_str())?;
-        writer.write_str(": ")?;
-        writer.write_str(&self.text)?;
+        struct Adapter<'a, W>(&'a mut W);
 
-        if let Some(code) = self.code {
-            write!(writer, " (code {code})")?;
+        impl<W: fmt::Write> IoWrite for Adapter<'_, W> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                let text = str::from_utf8(buf)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+                self.0
+                    .write_str(text)
+                    .map_err(|_| io::Error::other("formatter error"))?;
+
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                let mut written = 0usize;
+
+                for buf in bufs {
+                    self.write(buf.as_ref())?;
+                    written += buf.len();
+                }
+
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
+                self.0
+                    .write_fmt(fmt)
+                    .map_err(|_| io::Error::other("formatter error"))
+            }
         }
 
-        if let Some(source) = &self.source {
-            write!(writer, " at {source}")?;
-        }
-
-        if let Some(role) = self.role {
-            write!(writer, " [{}={VERSION_SUFFIX}]", role.as_str())?;
-        }
-
-        Ok(())
+        let mut adapter = Adapter(writer);
+        self.render_to_writer_inner(&mut adapter, false)
+            .map_err(|_| fmt::Error)
     }
 
     /// Renders the message followed by a newline into an arbitrary [`fmt::Write`] implementor.
