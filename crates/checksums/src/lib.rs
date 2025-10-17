@@ -36,6 +36,8 @@
 //! lengths that overflow `u32`, or mismatched slice lengths) and implements
 //! [`std::error::Error`] so the failure can be forwarded to user-facing
 //! diagnostics.
+//! [`RollingSliceError`] signals that a digest could not be reconstructed from a
+//! byte slice because the input length differed from the expected four bytes.
 //!
 //! # Examples
 //!
@@ -80,4 +82,4 @@
 mod rolling;
 pub mod strong;
 
-pub use rolling::{RollingChecksum, RollingDigest, RollingError};
+pub use rolling::{RollingChecksum, RollingDigest, RollingError, RollingSliceError};
