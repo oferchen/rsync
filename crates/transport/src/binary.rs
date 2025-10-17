@@ -1,5 +1,5 @@
 use crate::negotiation::{
-    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
 use core::convert::TryFrom;
@@ -105,6 +105,42 @@ impl<R> BinaryHandshake<R> {
             remote_protocol,
             negotiated_protocol,
         }
+    }
+
+    /// Attempts to transform the inner transport while preserving the negotiated metadata.
+    ///
+    /// The closure returns the replacement reader on success or a tuple containing the error and
+    /// original reader on failure, mirroring [`NegotiatedStream::try_map_inner`].
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<BinaryHandshake<T>, TryMapInnerError<BinaryHandshake<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        let Self {
+            stream,
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+        } = self;
+
+        stream
+            .try_map_inner(map)
+            .map(|stream| BinaryHandshake {
+                stream,
+                remote_advertised,
+                remote_protocol,
+                negotiated_protocol,
+            })
+            .map_err(|err| {
+                err.map_original(|stream| BinaryHandshake {
+                    stream,
+                    remote_advertised,
+                    remote_protocol,
+                    negotiated_protocol,
+                })
+            })
     }
 
     /// Decomposes the handshake into the negotiated protocol metadata and replaying stream parts.
@@ -451,6 +487,60 @@ mod tests {
         let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
         expected.extend_from_slice(b"payload");
         assert_eq!(inner.written(), expected.as_slice());
+    }
+
+    #[test]
+    fn try_map_stream_inner_transforms_transport() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let mut handshake = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+
+        handshake
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+        assert_eq!(handshake.remote_protocol(), remote_version);
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"payload");
+        assert_eq!(instrumented.flushes(), 1);
+    }
+
+    #[test]
+    fn try_map_stream_inner_preserves_original_on_error() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let err = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let original = err.into_original();
+        assert_eq!(original.remote_protocol(), remote_version);
+        let transport = original.into_stream().into_inner();
+        assert_eq!(
+            transport.written(),
+            &handshake_bytes(ProtocolVersion::NEWEST)
+        );
     }
 
     #[test]

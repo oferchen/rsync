@@ -144,6 +144,24 @@ impl<R> NegotiatedStream<R> {
         self.into_parts().map_inner(map).into_stream()
     }
 
+    /// Attempts to transform the inner reader while keeping the buffered negotiation state intact.
+    ///
+    /// The closure returns the replacement reader on success or a tuple containing the error and
+    /// original reader on failure. The latter allows callers to recover the original
+    /// [`NegotiatedStream`] without losing any replay bytes.
+    pub fn try_map_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<NegotiatedStream<T>, TryMapInnerError<NegotiatedStream<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        self.into_parts()
+            .try_map_inner(map)
+            .map(NegotiatedStreamParts::into_stream)
+            .map_err(|err| err.map_original(NegotiatedStreamParts::into_stream))
+    }
+
     /// Reconstructs a [`NegotiatedStream`] from previously extracted raw components.
     ///
     /// Callers typically pair this with [`Self::into_raw_parts`], allowing negotiation state to be
@@ -445,6 +463,85 @@ pub struct NegotiatedStreamParts<R> {
     inner: R,
 }
 
+/// Error returned when mapping the inner transport fails.
+///
+/// The structure preserves the original value so callers can continue using it after handling the
+/// error. This mirrors the ergonomics of APIs such as `BufReader::into_inner`, ensuring buffered
+/// negotiation bytes are not lost when a transformation cannot be completed.
+pub struct TryMapInnerError<T, E> {
+    error: E,
+    original: T,
+}
+
+impl<T, E> TryMapInnerError<T, E> {
+    fn new(error: E, original: T) -> Self {
+        Self { error, original }
+    }
+
+    /// Returns a shared reference to the underlying error.
+    #[must_use]
+    pub const fn error(&self) -> &E {
+        &self.error
+    }
+
+    /// Returns a shared reference to the value that failed to be mapped.
+    #[must_use]
+    pub const fn original(&self) -> &T {
+        &self.original
+    }
+
+    /// Decomposes the error into its parts.
+    #[must_use]
+    pub fn into_parts(self) -> (E, T) {
+        (self.error, self.original)
+    }
+
+    /// Returns ownership of the error, discarding the original value.
+    #[must_use]
+    pub fn into_error(self) -> E {
+        self.error
+    }
+
+    /// Returns ownership of the original value, discarding the error.
+    #[must_use]
+    pub fn into_original(self) -> T {
+        self.original
+    }
+
+    /// Maps the preserved value into another type while retaining the error.
+    #[must_use]
+    pub fn map_original<U, F>(self, map: F) -> TryMapInnerError<U, E>
+    where
+        F: FnOnce(T) -> U,
+    {
+        let (error, original) = self.into_parts();
+        TryMapInnerError::new(error, map(original))
+    }
+}
+
+impl<T, E: fmt::Debug> fmt::Debug for TryMapInnerError<T, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TryMapInnerError")
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl<T, E: fmt::Display> fmt::Display for TryMapInnerError<T, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to map inner value: {}", self.error)
+    }
+}
+
+impl<T, E> std::error::Error for TryMapInnerError<T, E>
+where
+    E: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 impl<R> NegotiatedStreamParts<R> {
     /// Returns the negotiation style that was detected.
     #[must_use]
@@ -539,6 +636,40 @@ impl<R> NegotiatedStreamParts<R> {
             decision,
             buffer,
             inner: map(inner),
+        }
+    }
+
+    /// Attempts to transform the inner reader while preserving the buffered negotiation state.
+    ///
+    /// When the mapping fails the original reader is returned alongside the error, ensuring callers
+    /// retain access to the sniffed bytes without needing to re-run negotiation detection.
+    pub fn try_map_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<NegotiatedStreamParts<T>, TryMapInnerError<NegotiatedStreamParts<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        let Self {
+            decision,
+            buffer,
+            inner,
+        } = self;
+
+        match map(inner) {
+            Ok(mapped) => Ok(NegotiatedStreamParts {
+                decision,
+                buffer,
+                inner: mapped,
+            }),
+            Err((error, original)) => Err(TryMapInnerError::new(
+                error,
+                NegotiatedStreamParts {
+                    decision,
+                    buffer,
+                    inner: original,
+                },
+            )),
         }
     }
 
@@ -806,6 +937,7 @@ mod tests {
         sniff_negotiation_stream(cursor)
     }
 
+    #[derive(Debug)]
     struct RecordingTransport {
         reader: Cursor<Vec<u8>>,
         writes: Vec<u8>,
@@ -816,6 +948,14 @@ mod tests {
         fn new(input: &[u8]) -> Self {
             Self {
                 reader: Cursor::new(input.to_vec()),
+                writes: Vec::new(),
+                flushes: 0,
+            }
+        }
+
+        fn from_cursor(cursor: Cursor<Vec<u8>>) -> Self {
+            Self {
+                reader: cursor,
                 writes: Vec::new(),
                 flushes: 0,
             }
@@ -900,6 +1040,96 @@ mod tests {
         stream
             .read_to_end(&mut replay)
             .expect("read_to_end succeeds");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_transforms_transport_without_losing_buffer() {
+        let legacy = b"@RSYNCD: 31.0\nrest";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let mut mapped = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Ok(RecordingTransport::from_cursor(cursor))
+                },
+            )
+            .expect("mapping succeeds");
+
+        let mut replay = Vec::new();
+        mapped
+            .read_to_end(&mut replay)
+            .expect("replay remains available");
+        assert_eq!(replay, legacy);
+
+        mapped.write_all(b"payload").expect("writes propagate");
+        mapped.flush().expect("flush propagates");
+        assert_eq!(mapped.inner().writes(), b"payload");
+        assert_eq!(mapped.inner().flushes(), 1);
+    }
+
+    #[test]
+    fn try_map_inner_preserves_original_on_error() {
+        let legacy = b"@RSYNCD: 31.0\n";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let mut original = err.into_original();
+        let mut replay = Vec::new();
+        original
+            .read_to_end(&mut replay)
+            .expect("original stream still readable");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_on_parts_transforms_transport() {
+        let legacy = b"@RSYNCD: 31.0\nrest";
+        let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
+
+        let mapped = parts
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Ok(RecordingTransport::from_cursor(cursor))
+                },
+            )
+            .expect("mapping succeeds");
+
+        let mut replay = Vec::new();
+        mapped
+            .into_stream()
+            .read_to_end(&mut replay)
+            .expect("stream reconstruction works");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_on_parts_preserves_original_on_error() {
+        let legacy = b"@RSYNCD: 31.0\n";
+        let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
+
+        let err = parts
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let mut original = err.into_original().into_stream();
+        let mut replay = Vec::new();
+        original
+            .read_to_end(&mut replay)
+            .expect("original stream still readable");
         assert_eq!(replay, legacy);
     }
 
