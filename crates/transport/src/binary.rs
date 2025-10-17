@@ -546,7 +546,7 @@ mod tests {
         let err = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                    Err((io::Error::other("boom"), inner))
                 },
             )
             .expect_err("mapping fails");
@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn negotiate_binary_session_rejects_out_of_range_version() {
         let mut bytes = [0u8; 4];
-        bytes.copy_from_slice(&u32::from(27u32).to_le_bytes());
+        bytes.copy_from_slice(&27u32.to_le_bytes());
         let transport = MemoryTransport::new(&bytes);
         let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect_err("unsupported protocol must fail");
