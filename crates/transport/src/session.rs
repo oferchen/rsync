@@ -1,7 +1,7 @@
 use crate::binary::{BinaryHandshake, negotiate_binary_session_from_stream};
 use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session_from_stream};
 use crate::negotiation::{
-    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
 use rsync_protocol::{
@@ -106,6 +106,26 @@ impl<R> SessionHandshake<R> {
         match self {
             Self::Binary(handshake) => SessionHandshake::Binary(handshake.map_stream_inner(map)),
             Self::Legacy(handshake) => SessionHandshake::Legacy(handshake.map_stream_inner(map)),
+        }
+    }
+
+    /// Attempts to transform the inner transport for both handshake variants.
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<SessionHandshake<T>, TryMapInnerError<SessionHandshake<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        match self {
+            Self::Binary(handshake) => handshake
+                .try_map_stream_inner(map)
+                .map(SessionHandshake::Binary)
+                .map_err(|err| err.map_original(SessionHandshake::Binary)),
+            Self::Legacy(handshake) => handshake
+                .try_map_stream_inner(map)
+                .map(SessionHandshake::Legacy)
+                .map_err(|err| err.map_original(SessionHandshake::Legacy)),
         }
     }
 
@@ -368,6 +388,58 @@ impl<R> SessionHandshakeParts<R> {
                 negotiated_protocol,
                 stream: stream.map_inner(map),
             },
+        }
+    }
+
+    /// Attempts to transform the inner transport for both handshake variants while preserving metadata.
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<SessionHandshakeParts<T>, TryMapInnerError<SessionHandshakeParts<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            } => stream
+                .try_map_inner(map)
+                .map(|stream| SessionHandshakeParts::Binary {
+                    remote_advertised_protocol,
+                    remote_protocol,
+                    negotiated_protocol,
+                    stream,
+                })
+                .map_err(|err| {
+                    err.map_original(|stream| SessionHandshakeParts::Binary {
+                        remote_advertised_protocol,
+                        remote_protocol,
+                        negotiated_protocol,
+                        stream,
+                    })
+                }),
+            SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            } => {
+                let mut greeting = Some(server_greeting);
+                match stream.try_map_inner(map) {
+                    Ok(stream) => Ok(SessionHandshakeParts::Legacy {
+                        server_greeting: greeting.take().expect("greeting available"),
+                        negotiated_protocol,
+                        stream,
+                    }),
+                    Err(err) => Err(err.map_original(|stream| SessionHandshakeParts::Legacy {
+                        server_greeting: greeting.take().expect("greeting available"),
+                        negotiated_protocol,
+                        stream,
+                    })),
+                }
+            }
         }
     }
 
@@ -683,6 +755,64 @@ mod tests {
     }
 
     #[test]
+    fn try_map_stream_inner_preserves_variants() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake succeeds");
+
+        let mut handshake = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+
+        assert!(matches!(handshake.decision(), NegotiationPrologue::Binary));
+        handshake
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write succeeds");
+        let transport = handshake
+            .into_binary()
+            .expect("variant remains binary")
+            .into_stream()
+            .into_inner();
+        assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn try_map_stream_inner_preserves_original_handshake_on_error() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake succeeds");
+
+        let err = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let original = err.into_original();
+        let transport = original
+            .into_binary()
+            .expect("handshake remains binary")
+            .into_stream()
+            .into_inner();
+        assert_eq!(
+            transport.writes(),
+            &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        );
+    }
+
+    #[test]
     fn session_reports_clamped_binary_future_version() {
         let future_version = 40u32;
         let transport = MemoryTransport::new(&future_version.to_le_bytes());
@@ -753,6 +883,77 @@ mod tests {
         expected.extend_from_slice(b"payload");
         assert_eq!(transport.writes(), expected.as_slice());
         assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_handshake_parts_try_map_transforms_transport() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake succeeds");
+
+        let parts = handshake.into_stream_parts();
+        let parts = parts.into_binary().expect("binary parts available");
+
+        let parts = SessionHandshakeParts::Binary {
+            remote_advertised_protocol: parts.0,
+            remote_protocol: parts.1,
+            negotiated_protocol: parts.2,
+            stream: parts.3,
+        };
+
+        let parts = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+
+        let handshake = SessionHandshake::from_stream_parts(parts);
+        let mut binary = handshake.into_binary().expect("variant remains binary");
+        binary
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write succeeds");
+        let transport = binary.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_handshake_parts_try_map_preserves_original_on_error() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake succeeds");
+
+        let parts = handshake.into_stream_parts();
+        let parts = parts.into_binary().expect("binary parts available");
+
+        let parts = SessionHandshakeParts::Binary {
+            remote_advertised_protocol: parts.0,
+            remote_protocol: parts.1,
+            negotiated_protocol: parts.2,
+            stream: parts.3,
+        };
+
+        let err = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let original = err.into_original();
+        let transport = original.into_stream().into_inner();
+        assert_eq!(
+            transport.writes(),
+            &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        );
     }
 
     #[test]
