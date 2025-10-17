@@ -4,6 +4,7 @@ use crate::negotiation::{
     NegotiatedStream, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
+use core::convert::TryFrom;
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
@@ -16,7 +17,9 @@ use super::parts::SessionHandshakeParts;
 /// The enum wraps either the binary remote-shell handshake or the legacy ASCII
 /// daemon negotiation while exposing convenience accessors that mirror the
 /// per-variant helpers. Higher layers can match on the [`decision`] to branch on
-/// the negotiated style without re-sniffing the transport.
+/// the negotiated style without re-sniffing the transport. Conversions are
+/// provided via [`From`] and [`TryFrom`] so variant-specific wrappers can be
+/// promoted or recovered ergonomically.
 #[derive(Debug)]
 pub enum SessionHandshake<R> {
     /// Binary remote-shell style negotiation (protocols ≥ 30).
@@ -280,6 +283,34 @@ impl<R> From<SessionHandshakeParts<R>> for SessionHandshake<R> {
 impl<R> From<SessionHandshake<R>> for SessionHandshakeParts<R> {
     fn from(handshake: SessionHandshake<R>) -> Self {
         handshake.into_stream_parts()
+    }
+}
+
+impl<R> From<BinaryHandshake<R>> for SessionHandshake<R> {
+    fn from(handshake: BinaryHandshake<R>) -> Self {
+        SessionHandshake::Binary(handshake)
+    }
+}
+
+impl<R> From<LegacyDaemonHandshake<R>> for SessionHandshake<R> {
+    fn from(handshake: LegacyDaemonHandshake<R>) -> Self {
+        SessionHandshake::Legacy(handshake)
+    }
+}
+
+impl<R> TryFrom<SessionHandshake<R>> for BinaryHandshake<R> {
+    type Error = SessionHandshake<R>;
+
+    fn try_from(handshake: SessionHandshake<R>) -> Result<Self, Self::Error> {
+        handshake.into_binary()
+    }
+}
+
+impl<R> TryFrom<SessionHandshake<R>> for LegacyDaemonHandshake<R> {
+    type Error = SessionHandshake<R>;
+
+    fn try_from(handshake: SessionHandshake<R>) -> Result<Self, Self::Error> {
+        handshake.into_legacy()
     }
 }
 

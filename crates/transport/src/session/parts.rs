@@ -1,3 +1,5 @@
+use crate::binary::BinaryHandshake;
+use crate::daemon::LegacyDaemonHandshake;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
 use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
 use std::convert::TryFrom;
@@ -5,6 +7,14 @@ use std::convert::TryFrom;
 use super::handshake::SessionHandshake;
 
 /// Components extracted from a [`SessionHandshake`].
+///
+/// The structure mirrors the variant-specific handshake wrappers so callers can
+/// temporarily take ownership of the buffered negotiation bytes while keeping
+/// the negotiated protocol metadata. The parts can be converted back into a
+/// [`SessionHandshake`] via [`SessionHandshake::from_stream_parts`] or the
+/// [`From`] implementation. Variant-specific conversions are also exposed via
+/// [`From`] and [`TryFrom`] so binary or legacy wrappers can be promoted or
+/// recovered without manual pattern matching.
 #[derive(Clone, Debug)]
 pub enum SessionHandshakeParts<R> {
     /// Binary handshake metadata and replaying stream parts.
@@ -269,4 +279,52 @@ impl<R> SessionHandshakeParts<R> {
 fn advertisement_was_clamped(advertised: u32, protocol: ProtocolVersion) -> bool {
     let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
     advertised_byte > protocol.as_u8()
+}
+
+impl<R> From<BinaryHandshake<R>> for SessionHandshakeParts<R> {
+    fn from(handshake: BinaryHandshake<R>) -> Self {
+        let (remote_advertised_protocol, remote_protocol, negotiated_protocol, stream) =
+            handshake.into_stream_parts();
+        SessionHandshakeParts::Binary {
+            remote_advertised_protocol,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        }
+    }
+}
+
+impl<R> From<LegacyDaemonHandshake<R>> for SessionHandshakeParts<R> {
+    fn from(handshake: LegacyDaemonHandshake<R>) -> Self {
+        let (server_greeting, negotiated_protocol, stream) = handshake.into_stream_parts();
+        SessionHandshakeParts::Legacy {
+            server_greeting,
+            negotiated_protocol,
+            stream,
+        }
+    }
+}
+
+impl<R> TryFrom<SessionHandshakeParts<R>> for BinaryHandshake<R> {
+    type Error = SessionHandshakeParts<R>;
+
+    fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
+        parts
+            .into_binary()
+            .map(|(remote_advertised, remote, negotiated, stream)| {
+                BinaryHandshake::from_stream_parts(remote_advertised, remote, negotiated, stream)
+            })
+    }
+}
+
+impl<R> TryFrom<SessionHandshakeParts<R>> for LegacyDaemonHandshake<R> {
+    type Error = SessionHandshakeParts<R>;
+
+    fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
+        parts
+            .into_legacy()
+            .map(|(server_greeting, negotiated, stream)| {
+                LegacyDaemonHandshake::from_stream_parts(server_greeting, negotiated, stream)
+            })
+    }
 }
