@@ -58,6 +58,21 @@ impl Role {
 }
 
 /// Source location associated with a message.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::message::SourceLocation;
+///
+/// let location = SourceLocation::from_parts(
+///     env!("CARGO_MANIFEST_DIR"),
+///     "src/lib.rs",
+///     120,
+/// );
+///
+/// assert_eq!(location.line(), 120);
+/// assert!(location.path().ends_with("src/lib.rs"));
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceLocation {
     path: Cow<'static, str>,
@@ -130,6 +145,16 @@ impl fmt::Display for SourceLocation {
 }
 
 /// Macro helper that captures the current source location.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::SourceLocation, message_source};
+///
+/// let location: SourceLocation = message_source!();
+/// assert!(location.path().ends_with(".rs"));
+/// assert!(location.line() > 0);
+/// ```
 #[macro_export]
 macro_rules! message_source {
     () => {
@@ -138,6 +163,20 @@ macro_rules! message_source {
 }
 
 /// Structured representation of an rsync user-visible message.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::{Message, Role}, message_source};
+///
+/// let message = Message::error(23, "delta-transfer failure")
+///     .with_role(Role::Sender)
+///     .with_source(message_source!());
+///
+/// let rendered = message.to_string();
+/// assert!(rendered.contains("delta-transfer failure"));
+/// assert!(rendered.contains("[sender=3.4.1-rust]"));
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Message {
     severity: Severity,
@@ -403,5 +442,23 @@ mod tests {
 
         let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 7);
         assert_eq!(source.path(), "crates/core/src/message.rs");
+    }
+
+    #[test]
+    fn normalize_preserves_relative_parent_segments() {
+        let normalized = normalize_path(Path::new("../shared/src/lib.rs"));
+        assert_eq!(normalized, "../shared/src/lib.rs");
+    }
+
+    #[test]
+    fn normalize_empty_path_defaults_to_current_dir() {
+        let normalized = normalize_path(Path::new(""));
+        assert_eq!(normalized, ".");
+    }
+
+    #[test]
+    fn normalize_unc_like_paths_retains_server_share_structure() {
+        let normalized = normalize_path(Path::new(r"\\server\share\dir\file"));
+        assert_eq!(normalized, "//server/share/dir/file");
     }
 }
