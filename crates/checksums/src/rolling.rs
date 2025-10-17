@@ -186,6 +186,8 @@ impl RollingDigest {
 mod tests {
     use super::*;
 
+    use proptest::prelude::*;
+
     fn reference_digest(data: &[u8]) -> RollingDigest {
         let mut s1: u64 = 0;
         let mut s2: u64 = 0;
@@ -196,6 +198,18 @@ mod tests {
         }
 
         RollingDigest::new((s1 & 0xffff) as u16, (s2 & 0xffff) as u16, data.len())
+    }
+
+    fn random_data_and_window() -> impl Strategy<Value = (Vec<u8>, usize)> {
+        prop::collection::vec(any::<u8>(), 1..=256).prop_flat_map(|data| {
+            let len = data.len();
+            let window_range = 1..=len;
+            (Just(data), window_range).prop_map(|(data, window)| (data, window))
+        })
+    }
+
+    fn chunked_sequences() -> impl Strategy<Value = Vec<Vec<u8>>> {
+        prop::collection::vec(prop::collection::vec(any::<u8>(), 0..=64), 1..=8)
     }
 
     #[test]
@@ -259,5 +273,52 @@ mod tests {
 
         let err = checksum.roll(0, 0).expect_err("oversized window must fail");
         assert!(matches!(err, RollingError::WindowTooLarge { .. }));
+    }
+
+    proptest! {
+        #[test]
+        fn rolling_update_matches_single_pass(chunks in chunked_sequences()) {
+            let mut incremental = RollingChecksum::new();
+            let mut concatenated = Vec::new();
+
+            for chunk in &chunks {
+                incremental.update(chunk);
+                concatenated.extend_from_slice(chunk);
+            }
+
+            let mut single_pass = RollingChecksum::new();
+            single_pass.update(&concatenated);
+
+            prop_assert_eq!(incremental.digest(), single_pass.digest());
+            prop_assert_eq!(incremental.value(), single_pass.value());
+        }
+
+        #[test]
+        fn rolling_matches_reference_for_random_windows((data, window) in random_data_and_window()) {
+            let mut rolling = RollingChecksum::new();
+            rolling.update(&data[..window]);
+
+            let mut reference = RollingChecksum::new();
+            reference.update(&data[..window]);
+
+            prop_assert_eq!(rolling.digest(), reference.digest());
+            prop_assert_eq!(rolling.value(), reference.value());
+
+            if data.len() > window {
+                for start in 1..=data.len() - window {
+                    let outgoing = data[start - 1];
+                    let incoming = data[start + window - 1];
+                    rolling
+                        .roll(outgoing, incoming)
+                        .expect("rolling update must succeed");
+
+                    let mut recomputed = RollingChecksum::new();
+                    recomputed.update(&data[start..start + window]);
+
+                    prop_assert_eq!(rolling.digest(), recomputed.digest());
+                    prop_assert_eq!(rolling.value(), recomputed.value());
+                }
+            }
+        }
     }
 }
