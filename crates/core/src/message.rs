@@ -300,14 +300,14 @@ impl Message {
     }
 
     /// Attaches a role trailer to the message.
-    #[must_use]
+    #[must_use = "the updated message must be emitted to retain the attached role"]
     pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
         self
     }
 
     /// Attaches a source location to the message.
-    #[must_use]
+    #[must_use = "the updated message must be emitted to retain the attached source"]
     pub fn with_source(mut self, source: SourceLocation) -> Self {
         self.source = Some(source);
         self
@@ -518,7 +518,7 @@ fn normalize_path(path: &Path) -> String {
     }
 }
 
-fn encode_unsigned_decimal<'a>(mut value: u64, buf: &'a mut [u8]) -> &'a str {
+fn encode_unsigned_decimal(mut value: u64, buf: &mut [u8]) -> &str {
     debug_assert!(
         !buf.is_empty(),
         "buffer must have capacity for at least one digit"
@@ -540,7 +540,7 @@ fn encode_unsigned_decimal<'a>(mut value: u64, buf: &'a mut [u8]) -> &'a str {
     str::from_utf8(&buf[..len]).expect("decimal digits are valid ASCII")
 }
 
-fn encode_signed_decimal<'a>(value: i64, buf: &'a mut [u8]) -> &'a str {
+fn encode_signed_decimal(value: i64, buf: &mut [u8]) -> &str {
     if value < 0 {
         buf[0] = b'-';
         let digits = encode_unsigned_decimal(value.unsigned_abs(), &mut buf[1..]);
