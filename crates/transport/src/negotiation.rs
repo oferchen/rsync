@@ -1021,9 +1021,8 @@ impl NegotiationBuffer {
 
     fn copy_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         let required = self.buffered.len();
-        if target.capacity() < required {
-            target.try_reserve(required - target.capacity())?;
-        }
+        let len = target.len();
+        target.try_reserve(required.saturating_sub(len))?;
 
         target.clear();
         target.extend_from_slice(&self.buffered);
@@ -1394,6 +1393,25 @@ mod tests {
             .read_exact(&mut replay)
             .expect("buffered bytes remain available after copying");
         assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_grows_from_sparse_len() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nlegacy daemon payload").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+
+        let mut scratch = Vec::with_capacity(expected.len() / 2);
+        scratch.extend_from_slice(b"seed");
+        scratch.truncate(1);
+        assert!(scratch.capacity() < expected.len());
+        assert_eq!(scratch.len(), 1);
+
+        let copied = stream
+            .copy_buffered_into(&mut scratch)
+            .expect("copying buffered bytes succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(scratch, expected);
     }
 
     #[test]
