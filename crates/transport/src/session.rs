@@ -250,14 +250,17 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
-    /// Returns the protocol advertised by the remote peer for binary negotiations.
+    /// Returns the protocol advertised by the remote peer when it can be derived from
+    /// the captured handshake metadata.
     #[must_use]
     pub fn remote_protocol(&self) -> Option<ProtocolVersion> {
         match self {
             SessionHandshakeParts::Binary {
                 remote_protocol, ..
             } => Some(*remote_protocol),
-            SessionHandshakeParts::Legacy { .. } => None,
+            SessionHandshakeParts::Legacy {
+                server_greeting, ..
+            } => Some(server_greeting.protocol()),
         }
     }
 
@@ -645,7 +648,7 @@ mod tests {
         assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
         let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
         assert_eq!(parts.negotiated_protocol(), negotiated);
-        assert!(parts.remote_protocol().is_none());
+        assert_eq!(parts.remote_protocol(), Some(negotiated));
         let server = parts.server_greeting().expect("server greeting retained");
         assert_eq!(server.advertised_protocol(), 31);
         assert_eq!(parts.stream().decision(), NegotiationPrologue::LegacyAscii);
@@ -674,6 +677,23 @@ mod tests {
         expected.extend_from_slice(b"module\n");
         assert_eq!(transport.writes(), expected.as_slice());
         assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_handshake_parts_preserve_remote_protocol_for_legacy_caps() {
+        let desired = ProtocolVersion::from_supported(30).expect("protocol 30 supported");
+        let transport = MemoryTransport::new(b"@RSYNCD: 32.0\n");
+
+        let handshake = negotiate_session(transport, desired)
+            .expect("legacy handshake succeeds with future advertisement");
+
+        let parts = handshake.into_stream_parts();
+        let remote = ProtocolVersion::from_supported(32).expect("protocol 32 supported");
+        assert_eq!(parts.negotiated_protocol(), desired);
+        assert_eq!(parts.remote_protocol(), Some(remote));
+        let server = parts.server_greeting().expect("server greeting retained");
+        assert_eq!(server.protocol(), remote);
+        assert_eq!(server.advertised_protocol(), 32);
     }
 
     #[derive(Debug)]
