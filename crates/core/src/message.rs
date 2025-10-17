@@ -224,7 +224,7 @@ macro_rules! message_source_from {
 
 /// Captures a [`SourceLocation`] that honours `#[track_caller]` propagation.
 ///
-/// Unlike [`message_source!`], this macro calls [`std::panic::Location::caller`]
+/// Unlike [`macro@message_source`], this macro calls [`std::panic::Location::caller`]
 /// so that helper functions annotated with `#[track_caller]` report the
 /// location of their caller rather than their own body.
 ///
@@ -244,6 +244,107 @@ macro_rules! message_source_from {
 #[macro_export]
 macro_rules! tracked_message_source {
     () => {{ $crate::message_source_from!(::std::panic::Location::caller()) }};
+}
+
+/// Constructs an error [`Message`] with the provided exit code and payload.
+///
+/// The macro mirrors upstream diagnostics by automatically attaching the
+/// call-site [`SourceLocation`] using [`macro@message_source`]. It accepts either a
+/// string literal/`Cow<'static, str>` payload or a [`format!`] style template.
+/// Callers can further customise the returned [`Message`] by chaining helpers
+/// such as [`Message::with_role`].
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::Role, rsync_error};
+///
+/// let rendered = rsync_error!(23, "delta-transfer failure")
+///     .with_role(Role::Sender)
+///     .to_string();
+///
+/// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
+/// assert!(rendered.contains("[sender=3.4.1-rust]"));
+/// ```
+///
+/// Formatting arguments are forwarded to [`format!`]:
+///
+/// ```
+/// use rsync_core::rsync_error;
+///
+/// let path = "src/lib.rs";
+/// let rendered = rsync_error!(11, "failed to read {path}", path = path).to_string();
+///
+/// assert!(rendered.contains("failed to read src/lib.rs"));
+/// ```
+#[macro_export]
+macro_rules! rsync_error {
+    ($code:expr, $text:expr $(,)?) => {{
+        $crate::message::Message::error($code, $text)
+            .with_source($crate::message_source!())
+    }};
+    ($code:expr, $fmt:expr, $($arg:tt)+ $(,)?) => {{
+        $crate::message::Message::error($code, format!($fmt, $($arg)+))
+            .with_source($crate::message_source!())
+    }};
+}
+
+/// Constructs a warning [`Message`] from the provided payload.
+///
+/// Like [`macro@rsync_error`], the macro records the call-site source location so
+/// diagnostics include repo-relative paths. Additional context, such as exit
+/// codes, can be attached using [`Message::with_code`].
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::rsync_warning;
+///
+/// let rendered = rsync_warning!("some files vanished")
+///     .with_code(24)
+///     .to_string();
+///
+/// assert!(rendered.starts_with("rsync warning:"));
+/// assert!(rendered.contains("(code 24)"));
+/// ```
+#[macro_export]
+macro_rules! rsync_warning {
+    ($text:expr $(,)?) => {{
+        $crate::message::Message::warning($text)
+            .with_source($crate::message_source!())
+    }};
+    ($fmt:expr, $($arg:tt)+ $(,)?) => {{
+        $crate::message::Message::warning(format!($fmt, $($arg)+))
+            .with_source($crate::message_source!())
+    }};
+}
+
+/// Constructs an informational [`Message`] from the provided payload.
+///
+/// The macro is a convenience wrapper around [`Message::info`] that automatically
+/// attaches the call-site source location. Upstream rsync typically omits source
+/// locations for informational output, but retaining the metadata simplifies
+/// debugging and keeps the API consistent across severities.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::rsync_info;
+///
+/// let rendered = rsync_info!("negotiation complete").to_string();
+///
+/// assert!(rendered.starts_with("rsync info:"));
+/// ```
+#[macro_export]
+macro_rules! rsync_info {
+    ($text:expr $(,)?) => {{
+        $crate::message::Message::info($text)
+            .with_source($crate::message_source!())
+    }};
+    ($fmt:expr, $($arg:tt)+ $(,)?) => {{
+        $crate::message::Message::info(format!($fmt, $($arg)+))
+            .with_source($crate::message_source!())
+    }};
 }
 
 /// Structured representation of an rsync user-visible message.
@@ -761,6 +862,7 @@ fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{rsync_error, rsync_info, rsync_warning};
     use std::io::{self, IoSlice};
 
     #[track_caller]
@@ -1241,5 +1343,34 @@ mod tests {
 
         let rendered = String::from_utf8(buffer).expect("message renders as UTF-8");
         assert!(rendered.contains("(code -2147483648)"));
+    }
+
+    #[test]
+    fn rsync_error_macro_attaches_source_and_code() {
+        let message = rsync_error!(23, "delta-transfer failure");
+
+        assert_eq!(message.severity(), Severity::Error);
+        assert_eq!(message.code(), Some(23));
+        let source = message.source().expect("macro records source location");
+        assert!(source.path().ends_with("crates/core/src/message.rs"));
+    }
+
+    #[test]
+    fn rsync_warning_macro_supports_format_arguments() {
+        let message = rsync_warning!("vanished {count} files", count = 2).with_code(24);
+
+        assert_eq!(message.severity(), Severity::Warning);
+        assert_eq!(message.code(), Some(24));
+        assert_eq!(message.text(), "vanished 2 files");
+    }
+
+    #[test]
+    fn rsync_info_macro_attaches_source() {
+        let message = rsync_info!("protocol {version} negotiated", version = 32);
+
+        assert_eq!(message.severity(), Severity::Info);
+        assert_eq!(message.code(), None);
+        assert_eq!(message.text(), "protocol 32 negotiated");
+        assert!(message.source().is_some());
     }
 }
