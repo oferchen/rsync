@@ -161,9 +161,27 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Returns a mutable reference to the binary handshake when the negotiation used that style.
+    #[must_use]
+    pub fn as_binary_mut(&mut self) -> Option<&mut BinaryHandshake<R>> {
+        match self {
+            Self::Binary(handshake) => Some(handshake),
+            Self::Legacy(_) => None,
+        }
+    }
+
     /// Returns the underlying legacy daemon handshake if the negotiation used that style.
     #[must_use]
     pub fn as_legacy(&self) -> Option<&LegacyDaemonHandshake<R>> {
+        match self {
+            Self::Binary(_) => None,
+            Self::Legacy(handshake) => Some(handshake),
+        }
+    }
+
+    /// Returns a mutable reference to the legacy daemon handshake when the negotiation used that style.
+    #[must_use]
+    pub fn as_legacy_mut(&mut self) -> Option<&mut LegacyDaemonHandshake<R>> {
         match self {
             Self::Binary(_) => None,
             Self::Legacy(handshake) => Some(handshake),

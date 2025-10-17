@@ -191,6 +191,58 @@ fn session_handshake_server_greeting_matches_variant() {
 }
 
 #[test]
+fn as_variant_mut_helpers_allow_mutating_streams() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+    let mut binary_handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    assert!(binary_handshake.as_legacy_mut().is_none());
+    {
+        let stream = binary_handshake
+            .as_binary_mut()
+            .expect("binary handshake exposes mutable reference")
+            .stream_mut();
+        stream
+            .write_all(b"payload")
+            .expect("writes propagate through binary handshake");
+    }
+
+    let transport = binary_handshake
+        .into_binary()
+        .expect("handshake remains binary")
+        .into_stream()
+        .into_inner();
+    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    expected.extend_from_slice(b"payload");
+    assert_eq!(transport.writes(), expected.as_slice());
+
+    let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    let mut legacy_handshake = negotiate_session(legacy_transport, ProtocolVersion::NEWEST)
+        .expect("legacy handshake succeeds");
+
+    assert!(legacy_handshake.as_binary_mut().is_none());
+    {
+        let stream = legacy_handshake
+            .as_legacy_mut()
+            .expect("legacy handshake exposes mutable reference")
+            .stream_mut();
+        stream
+            .write_all(b"payload")
+            .expect("writes propagate through legacy handshake");
+    }
+
+    let transport = legacy_handshake
+        .into_legacy()
+        .expect("handshake remains legacy")
+        .into_stream()
+        .into_inner();
+    let mut expected = b"@RSYNCD: 31.0\n".to_vec();
+    expected.extend_from_slice(b"payload");
+    assert_eq!(transport.writes(), expected.as_slice());
+}
+
+#[test]
 fn map_stream_inner_preserves_variant_and_metadata() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
     let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
