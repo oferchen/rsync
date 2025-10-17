@@ -49,6 +49,8 @@
 //!
 //! # See also
 //!
+//! - [`rsync_core::message::strings`] exposes upstream-aligned exit-code wording
+//!   so higher layers render identical diagnostics.
 //! - [`rsync_protocol`] for the negotiation helpers that feed protocol numbers
 //!   into user-facing diagnostics.
 //! - [`rsync_transport`] for replaying transport wrappers that emit these
