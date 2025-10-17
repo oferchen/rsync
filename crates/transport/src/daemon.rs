@@ -531,7 +531,7 @@ mod tests {
         let err = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                    Err((io::Error::other("boom"), inner))
                 },
             )
             .expect_err("mapping fails");

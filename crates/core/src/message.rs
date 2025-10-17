@@ -272,11 +272,9 @@ fn normalize_path(path: PathBuf) -> String {
             }
             Component::CurDir => {}
             Component::ParentDir => {
-                if let Some(last) = segments.last() {
-                    if last != ".." {
-                        segments.pop();
-                        continue;
-                    }
+                if segments.last().is_some_and(|last| last != "..") {
+                    segments.pop();
+                    continue;
                 }
 
                 if !is_absolute {
@@ -293,15 +291,14 @@ fn normalize_path(path: PathBuf) -> String {
         normalized.push_str(&prefix.to_string_lossy().replace('\\', "/"));
     }
 
-    if is_absolute {
-        if !normalized.ends_with('/') {
-            normalized.push('/');
-        }
+    if is_absolute && !normalized.ends_with('/') {
+        normalized.push('/');
     }
 
     for (index, segment) in segments.iter().enumerate() {
-        if !normalized.is_empty()
-            && !(normalized.ends_with('/') || (index == 0 && normalized.ends_with(':')))
+        if !(normalized.is_empty()
+            || normalized.ends_with('/')
+            || (index == 0 && normalized.ends_with(':')))
         {
             normalized.push('/');
         }
