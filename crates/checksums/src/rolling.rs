@@ -92,6 +92,35 @@ impl RollingChecksum {
         }
     }
 
+    /// Reconstructs a rolling checksum from a previously captured digest.
+    ///
+    /// The helper mirrors the restoration logic used by upstream rsync when a receiver
+    /// rehydrates the checksum state from the `sum1`/`sum2` pair transmitted over the
+    /// wire. Providing a dedicated constructor avoids repeating the field mapping in
+    /// higher layers and keeps the internal truncation rules encapsulated within the
+    /// type. The returned checksum is immediately ready for further rolling updates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::{RollingChecksum, RollingDigest};
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// checksum.update(b"delta state");
+    /// let digest = checksum.digest();
+    ///
+    /// let restored = RollingChecksum::from_digest(digest);
+    /// assert_eq!(restored.digest(), digest);
+    /// ```
+    #[must_use]
+    pub const fn from_digest(digest: RollingDigest) -> Self {
+        Self {
+            s1: digest.sum1() as u32,
+            s2: digest.sum2() as u32,
+            len: digest.len(),
+        }
+    }
+
     /// Resets the checksum back to its initial state.
     pub fn reset(&mut self) {
         self.s1 = 0;
@@ -249,6 +278,13 @@ impl RollingChecksum {
             s2: self.s2 as u16,
             len: self.len,
         }
+    }
+}
+
+impl From<RollingDigest> for RollingChecksum {
+    /// Converts a [`RollingDigest`] back into a [`RollingChecksum`] state.
+    fn from(digest: RollingDigest) -> Self {
+        Self::from_digest(digest)
     }
 }
 
@@ -493,6 +529,19 @@ mod tests {
     }
 
     #[test]
+    fn checksum_restores_from_digest() {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(b"rolling checksum state");
+
+        let digest = checksum.digest();
+        let restored = RollingChecksum::from_digest(digest);
+
+        assert_eq!(restored.digest(), digest);
+        assert_eq!(restored.value(), checksum.value());
+        assert_eq!(restored.len(), checksum.len());
+    }
+
+    #[test]
     fn rolling_matches_recomputed_checksum() {
         let data = b"The quick brown fox jumps over the lazy dog";
         let window = 12;
@@ -692,6 +741,19 @@ mod tests {
 
             prop_assert_eq!(optimized.digest(), reference.digest());
             prop_assert_eq!(optimized.value(), reference.value());
+        }
+
+        #[test]
+        fn from_digest_round_trips(data in prop::collection::vec(any::<u8>(), 0..=256)) {
+            let mut checksum = RollingChecksum::new();
+            checksum.update(&data);
+
+            let digest = checksum.digest();
+            let restored = RollingChecksum::from_digest(digest);
+
+            prop_assert_eq!(restored.digest(), digest);
+            prop_assert_eq!(restored.value(), checksum.value());
+            prop_assert_eq!(restored.len(), checksum.len());
         }
     }
 }
