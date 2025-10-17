@@ -50,6 +50,21 @@ impl RollingSliceError {
         self.len
     }
 
+    /// Reports whether the provided slice was empty when the error occurred.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::{RollingDigest, RollingSliceError};
+    ///
+    /// let err = RollingDigest::from_le_slice(&[], 0).unwrap_err();
+    /// assert!(err.is_empty());
+    /// ```
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
     /// Number of bytes required to decode a rolling checksum digest.
     pub const EXPECTED_LEN: usize = 4;
 }
