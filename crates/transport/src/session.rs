@@ -257,7 +257,7 @@ where
 }
 
 /// Components extracted from a [`SessionHandshake`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SessionHandshakeParts<R> {
     /// Binary handshake metadata and replaying stream parts.
     Binary {

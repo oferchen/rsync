@@ -1,8 +1,10 @@
 use super::*;
-use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion};
+use rsync_protocol::{
+    format_legacy_daemon_greeting, NegotiationPrologueSniffer, ProtocolVersion,
+};
 use std::io::{self, Cursor, Read, Write};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct MemoryTransport {
     reader: Cursor<Vec<u8>>,
     writes: Vec<u8>,
@@ -501,6 +503,102 @@ fn session_handshake_parts_preserve_remote_protocol_for_legacy_caps() {
     let server = parts.server_greeting().expect("server greeting retained");
     assert_eq!(server.protocol(), remote);
     assert_eq!(server.advertised_protocol(), 32);
+}
+
+#[test]
+fn session_handshake_parts_clone_preserves_binary_stream_state() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let parts = handshake.into_stream_parts();
+    let clone = parts.clone();
+
+    let handshake = SessionHandshake::from_stream_parts(parts);
+    assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
+    assert_eq!(handshake.negotiated_protocol(), remote_version);
+    let mut binary = handshake
+        .into_binary()
+        .expect("original parts reconstruct binary handshake");
+
+    let clone_handshake = SessionHandshake::from_stream_parts(clone);
+    assert_eq!(clone_handshake.decision(), NegotiationPrologue::Binary);
+    assert_eq!(clone_handshake.negotiated_protocol(), remote_version);
+    let mut cloned = clone_handshake
+        .into_binary()
+        .expect("cloned parts reconstruct binary handshake");
+
+    binary
+        .stream_mut()
+        .write_all(b"original")
+        .expect("write succeeds");
+    cloned
+        .stream_mut()
+        .write_all(b"clone")
+        .expect("write succeeds");
+
+    let original_transport = binary.into_stream().into_inner();
+    let cloned_transport = cloned.into_stream().into_inner();
+
+    let mut expected_original = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    expected_original.extend_from_slice(b"original");
+    assert_eq!(original_transport.writes(), expected_original.as_slice());
+    assert_eq!(original_transport.flushes(), 1);
+
+    let mut expected_clone = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    expected_clone.extend_from_slice(b"clone");
+    assert_eq!(cloned_transport.writes(), expected_clone.as_slice());
+    assert_eq!(cloned_transport.flushes(), 1);
+}
+
+#[test]
+fn session_handshake_parts_clone_preserves_legacy_stream_state() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
+
+    let parts = handshake.into_stream_parts();
+    let clone = parts.clone();
+
+    let handshake = SessionHandshake::from_stream_parts(parts);
+    assert_eq!(handshake.decision(), NegotiationPrologue::LegacyAscii);
+    let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    assert_eq!(handshake.negotiated_protocol(), negotiated);
+    let mut legacy = handshake
+        .into_legacy()
+        .expect("original parts reconstruct legacy handshake");
+
+    let clone_handshake = SessionHandshake::from_stream_parts(clone);
+    assert_eq!(clone_handshake.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(clone_handshake.negotiated_protocol(), negotiated);
+    let mut cloned = clone_handshake
+        .into_legacy()
+        .expect("cloned parts reconstruct legacy handshake");
+
+    legacy
+        .stream_mut()
+        .write_all(b"module\n")
+        .expect("write succeeds");
+    cloned
+        .stream_mut()
+        .write_all(b"other\n")
+        .expect("write succeeds");
+
+    let original_transport = legacy.into_stream().into_inner();
+    let cloned_transport = cloned.into_stream().into_inner();
+
+    let mut expected_original = format_legacy_daemon_greeting(negotiated).into_bytes();
+    expected_original.extend_from_slice(b"module\n");
+    assert_eq!(original_transport.writes(), expected_original.as_slice());
+    assert_eq!(original_transport.flushes(), 1);
+
+    let mut expected_clone = format_legacy_daemon_greeting(negotiated).into_bytes();
+    expected_clone.extend_from_slice(b"other\n");
+    assert_eq!(cloned_transport.writes(), expected_clone.as_slice());
+    assert_eq!(cloned_transport.flushes(), 1);
 }
 
 #[derive(Debug)]
