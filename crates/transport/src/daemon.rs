@@ -1,7 +1,9 @@
-use crate::negotiation::{NegotiatedStream, sniff_negotiation_stream};
+use crate::negotiation::{
+    NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
+};
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion,
-    format_legacy_daemon_greeting,
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
+    NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
 use std::cmp;
 use std::io::{self, Read, Write};
@@ -107,7 +109,7 @@ pub fn negotiate_legacy_daemon_session<R>(
 where
     R: Read + Write,
 {
-    let mut stream = sniff_negotiation_stream(reader)?;
+    let stream = sniff_negotiation_stream(reader)?;
 
     match stream.decision() {
         NegotiationPrologue::LegacyAscii => {}
@@ -122,6 +124,48 @@ where
         }
     }
 
+    negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
+}
+
+/// Performs the legacy ASCII negotiation with a caller-supplied sniffer.
+///
+/// Reusing a [`NegotiationPrologueSniffer`] allows higher layers to amortize
+/// allocations when establishing many daemon sessions. The sniffer is reset
+/// before any bytes are observed so state from previous negotiations is fully
+/// cleared. Behaviour otherwise matches [`negotiate_legacy_daemon_session`].
+pub fn negotiate_legacy_daemon_session_with_sniffer<R>(
+    reader: R,
+    desired_protocol: ProtocolVersion,
+    sniffer: &mut NegotiationPrologueSniffer,
+) -> io::Result<LegacyDaemonHandshake<R>>
+where
+    R: Read + Write,
+{
+    let stream = sniff_negotiation_stream_with_sniffer(reader, sniffer)?;
+
+    match stream.decision() {
+        NegotiationPrologue::LegacyAscii => {}
+        NegotiationPrologue::Binary => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "legacy daemon negotiation requires @RSYNCD: prefix",
+            ));
+        }
+        NegotiationPrologue::NeedMoreData => {
+            unreachable!("sniffer must fully classify the negotiation prologue")
+        }
+    }
+
+    negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
+}
+
+fn negotiate_legacy_daemon_session_from_stream<R>(
+    mut stream: NegotiatedStream<R>,
+    desired_protocol: ProtocolVersion,
+) -> io::Result<LegacyDaemonHandshake<R>>
+where
+    R: Read + Write,
+{
     let mut line = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN + 32);
     let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
     let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
@@ -143,7 +187,7 @@ where
 mod tests {
     use super::*;
 
-    use rsync_protocol::ProtocolVersion;
+    use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion};
     use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
@@ -300,5 +344,36 @@ mod tests {
         let inner = instrumented.into_inner();
         assert_eq!(inner.flushes(), 2);
         assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    }
+
+    #[test]
+    fn negotiate_legacy_daemon_session_with_sniffer_can_be_reused() {
+        let transport1 = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let transport2 = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let handshake1 = negotiate_legacy_daemon_session_with_sniffer(
+            transport1,
+            ProtocolVersion::NEWEST,
+            &mut sniffer,
+        )
+        .expect("handshake should succeed with supplied sniffer");
+        assert_eq!(
+            handshake1.negotiated_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+
+        drop(handshake1);
+
+        let handshake2 = negotiate_legacy_daemon_session_with_sniffer(
+            transport2,
+            ProtocolVersion::NEWEST,
+            &mut sniffer,
+        )
+        .expect("sniffer can be reused across sessions");
+        assert_eq!(
+            handshake2.negotiated_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
     }
 }

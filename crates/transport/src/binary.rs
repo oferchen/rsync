@@ -1,5 +1,7 @@
-use crate::negotiation::{NegotiatedStream, sniff_negotiation_stream};
-use rsync_protocol::{NegotiationPrologue, ProtocolVersion};
+use crate::negotiation::{
+    NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
+};
+use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
 use std::io::{self, Read, Write};
 
@@ -108,6 +110,27 @@ where
     negotiate_binary_session_from_stream(stream, desired_protocol)
 }
 
+/// Performs the binary negotiation while reusing a caller-supplied sniffer.
+///
+/// This variant mirrors [`negotiate_binary_session`] but feeds the transport
+/// through an existing [`NegotiationPrologueSniffer`]. Reusing the sniffer
+/// avoids repeated allocations when higher layers maintain a pool of sniffers
+/// for successive connections (for example when servicing multiple daemon
+/// sessions). The sniffer is reset before it observes any bytes from the
+/// transport, guaranteeing that stale state from a previous negotiation cannot
+/// leak into the new session.
+pub fn negotiate_binary_session_with_sniffer<R>(
+    reader: R,
+    desired_protocol: ProtocolVersion,
+    sniffer: &mut NegotiationPrologueSniffer,
+) -> io::Result<BinaryHandshake<R>>
+where
+    R: Read + Write,
+{
+    let stream = sniff_negotiation_stream_with_sniffer(reader, sniffer)?;
+    negotiate_binary_session_from_stream(stream, desired_protocol)
+}
+
 fn negotiate_binary_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
@@ -160,6 +183,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsync_protocol::NegotiationPrologueSniffer;
     use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
@@ -343,5 +367,34 @@ mod tests {
         let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect_err("unsupported protocol must fail");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn negotiate_binary_session_with_sniffer_reuses_instance() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport1 = MemoryTransport::new(&handshake_bytes(remote_version));
+        let transport2 = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        let handshake1 = negotiate_binary_session_with_sniffer(
+            transport1,
+            ProtocolVersion::NEWEST,
+            &mut sniffer,
+        )
+        .expect("handshake succeeds with supplied sniffer");
+        assert_eq!(handshake1.remote_protocol(), remote_version);
+        assert_eq!(handshake1.negotiated_protocol(), remote_version);
+
+        drop(handshake1);
+
+        let handshake2 = negotiate_binary_session_with_sniffer(
+            transport2,
+            ProtocolVersion::NEWEST,
+            &mut sniffer,
+        )
+        .expect("sniffer can be reused for subsequent sessions");
+        assert_eq!(handshake2.remote_protocol(), remote_version);
+        assert_eq!(handshake2.negotiated_protocol(), remote_version);
     }
 }

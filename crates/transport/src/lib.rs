@@ -14,8 +14,13 @@ mod binary;
 mod daemon;
 mod negotiation;
 
-pub use binary::{BinaryHandshake, negotiate_binary_session};
-pub use daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session};
+pub use binary::{
+    BinaryHandshake, negotiate_binary_session, negotiate_binary_session_with_sniffer,
+};
+pub use daemon::{
+    LegacyDaemonHandshake, negotiate_legacy_daemon_session,
+    negotiate_legacy_daemon_session_with_sniffer,
+};
 pub use negotiation::{
     NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
