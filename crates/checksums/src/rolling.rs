@@ -182,9 +182,25 @@ impl RollingChecksum {
             return Err(RollingError::EmptyWindow);
         }
 
+        let window_len =
+            u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })?;
+
+        let mut s1 = self.s1;
+        let mut s2 = self.s2;
+
         for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
-            self.roll(out, inn)?;
+            let out = u32::from(out);
+            let inn = u32::from(inn);
+
+            s1 = s1.wrapping_sub(out).wrapping_add(inn) & 0xffff;
+            s2 = s2
+                .wrapping_sub(window_len.wrapping_mul(out))
+                .wrapping_add(s1)
+                & 0xffff;
         }
+
+        self.s1 = s1;
+        self.s2 = s2;
 
         Ok(())
     }
@@ -284,6 +300,14 @@ mod tests {
 
     fn chunked_sequences() -> impl Strategy<Value = Vec<Vec<u8>>> {
         prop::collection::vec(prop::collection::vec(any::<u8>(), 0..=64), 1..=8)
+    }
+
+    fn roll_many_sequences() -> impl Strategy<Value = (Vec<u8>, Vec<(u8, u8)>)> {
+        prop::collection::vec(any::<u8>(), 1..=64).prop_flat_map(|seed| {
+            let seed_clone = seed.clone();
+            prop::collection::vec((any::<u8>(), any::<u8>()), 0..=32)
+                .prop_map(move |pairs| (seed_clone.clone(), pairs))
+        })
     }
 
     #[test]
@@ -461,6 +485,30 @@ mod tests {
                     prop_assert_eq!(rolling.value(), recomputed.value());
                 }
             }
+        }
+
+        #[test]
+        fn roll_many_matches_single_rolls_for_random_sequences(
+            (seed, pairs) in roll_many_sequences(),
+        ) {
+            let mut optimized = RollingChecksum::new();
+            optimized.update(&seed);
+
+            let mut reference = optimized.clone();
+
+            let (outgoing, incoming): (Vec<u8>, Vec<u8>) = pairs.into_iter().unzip();
+            optimized
+                .roll_many(&outgoing, &incoming)
+                .expect("multi-byte roll succeeds");
+
+            for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+                reference
+                    .roll(out, inn)
+                    .expect("single-byte roll succeeds");
+            }
+
+            prop_assert_eq!(optimized.digest(), reference.digest());
+            prop_assert_eq!(optimized.value(), reference.value());
         }
     }
 }
