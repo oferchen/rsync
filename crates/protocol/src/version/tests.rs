@@ -736,6 +736,27 @@ fn supported_versions_iter_is_fused() {
 }
 
 #[test]
+fn supported_versions_iter_supports_nth_and_nth_back() {
+    let mut iter = ProtocolVersion::supported_versions_iter();
+
+    let second = ProtocolVersion::from_supported_index(1)
+        .expect("second supported protocol should exist");
+    assert_eq!(iter.nth(1), Some(second));
+
+    let third = ProtocolVersion::from_supported_index(2)
+        .expect("third supported protocol should exist");
+    assert_eq!(iter.next(), Some(third));
+
+    let oldest = ProtocolVersion::from_supported_index(SUPPORTED_PROTOCOL_COUNT - 1)
+        .expect("oldest supported protocol should exist");
+    assert_eq!(iter.nth_back(0), Some(oldest));
+
+    let penultimate = ProtocolVersion::from_supported_index(SUPPORTED_PROTOCOL_COUNT - 2)
+        .expect("penultimate supported protocol should exist");
+    assert_eq!(iter.last(), Some(penultimate));
+}
+
+#[test]
 fn supported_protocol_numbers_iter_reports_length() {
     let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
 
@@ -777,6 +798,24 @@ fn supported_protocol_numbers_iter_is_fused() {
     fn assert_fused<I: FusedIterator>(_iter: I) {}
 
     assert_fused(ProtocolVersion::supported_protocol_numbers_iter());
+}
+
+#[test]
+fn supported_protocol_numbers_iter_supports_nth_and_nth_back() {
+    let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
+
+    assert_eq!(iter.nth(1), Some(SUPPORTED_PROTOCOLS[1]));
+    assert_eq!(iter.next(), Some(SUPPORTED_PROTOCOLS[2]));
+
+    assert_eq!(
+        iter.nth_back(0),
+        Some(SUPPORTED_PROTOCOLS[SUPPORTED_PROTOCOL_COUNT - 1])
+    );
+
+    assert_eq!(
+        iter.last(),
+        Some(SUPPORTED_PROTOCOLS[SUPPORTED_PROTOCOL_COUNT - 2])
+    );
 }
 
 #[test]
