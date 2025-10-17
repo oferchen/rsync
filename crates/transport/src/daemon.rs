@@ -103,11 +103,8 @@ where
     let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
     let banner = format_legacy_daemon_greeting(negotiated_protocol);
-    {
-        let inner = stream.inner_mut();
-        inner.write_all(banner.as_bytes())?;
-        inner.flush()?;
-    }
+    stream.write_all(banner.as_bytes())?;
+    stream.flush()?;
 
     Ok(LegacyDaemonHandshake {
         stream,

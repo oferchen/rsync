@@ -1,6 +1,6 @@
 use std::collections::TryReserveError;
 use std::fmt;
-use std::io::{self, BufRead, IoSliceMut, Read};
+use std::io::{self, BufRead, IoSlice, IoSliceMut, Read, Write};
 
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonMessage, NegotiationPrologue,
@@ -419,6 +419,24 @@ impl<R: BufRead> BufRead for NegotiatedStream<R> {
     }
 }
 
+impl<R: Write> Write for NegotiatedStream<R> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        self.inner.write_vectored(bufs)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+
+    fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
+        self.inner.write_fmt(fmt)
+    }
+}
+
 /// Components extracted from a [`NegotiatedStream`].
 #[derive(Clone, Debug)]
 pub struct NegotiatedStreamParts<R> {
@@ -768,13 +786,64 @@ fn map_line_reserve_error_for_io(err: TryReserveError) -> io::Error {
 mod tests {
     use super::*;
 
-    use std::io::{self, BufRead, Cursor, IoSliceMut, Read};
+    use std::io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write};
 
     use rsync_protocol::ProtocolVersion;
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
         let cursor = Cursor::new(data.to_vec());
         sniff_negotiation_stream(cursor)
+    }
+
+    struct RecordingTransport {
+        reader: Cursor<Vec<u8>>,
+        writes: Vec<u8>,
+        flushes: usize,
+    }
+
+    impl RecordingTransport {
+        fn new(input: &[u8]) -> Self {
+            Self {
+                reader: Cursor::new(input.to_vec()),
+                writes: Vec::new(),
+                flushes: 0,
+            }
+        }
+
+        fn writes(&self) -> &[u8] {
+            &self.writes
+        }
+
+        fn flushes(&self) -> usize {
+            self.flushes
+        }
+    }
+
+    impl Read for RecordingTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reader.read(buf)
+        }
+    }
+
+    impl Write for RecordingTransport {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            let mut total = 0;
+            for slice in bufs {
+                self.writes.extend_from_slice(slice);
+                total += slice.len();
+            }
+            Ok(total)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
     }
 
     #[test]
@@ -917,6 +986,34 @@ mod tests {
             stream.fill_buf().expect("fill_buf after partial consume"),
             b".0\nhello"
         );
+    }
+
+    #[test]
+    fn sniffed_stream_supports_writing_via_wrapper() {
+        let transport = RecordingTransport::new(b"@RSYNCD: 31.0\nrest");
+        let mut stream = sniff_negotiation_stream(transport).expect("sniff succeeds");
+
+        stream
+            .write_all(b"CLIENT\n")
+            .expect("write forwards to inner transport");
+
+        let vectored = [IoSlice::new(b"V1"), IoSlice::new(b"V2")];
+        let written = stream
+            .write_vectored(&vectored)
+            .expect("vectored write forwards to inner transport");
+        assert_eq!(written, 4);
+
+        stream.flush().expect("flush forwards to inner transport");
+
+        let mut line = Vec::new();
+        stream
+            .read_legacy_daemon_line(&mut line)
+            .expect("legacy line remains readable after writes");
+        assert_eq!(line, b"@RSYNCD: 31.0\n");
+
+        let inner = stream.into_inner();
+        assert_eq!(inner.writes(), b"CLIENT\nV1V2");
+        assert_eq!(inner.flushes(), 1);
     }
 
     #[test]
