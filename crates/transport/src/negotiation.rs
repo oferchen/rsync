@@ -97,6 +97,18 @@ impl<R> NegotiatedStream<R> {
         self.buffer.sniffed_prefix_remaining()
     }
 
+    /// Reports whether the canonical legacy negotiation prefix has been fully buffered.
+    ///
+    /// For legacy daemon sessions this becomes `true` once the entire `@RSYNCD:` marker has been
+    /// captured during negotiation sniffing. Binary negotiations never observe that prefix, so the
+    /// method returns `false` for them. The return value is unaffected by how many buffered bytes
+    /// have already been consumed, allowing higher layers to detect whether they may replay the
+    /// prefix into the legacy greeting parser without issuing additional reads from the transport.
+    #[must_use]
+    pub fn legacy_prefix_complete(&self) -> bool {
+        self.buffer.legacy_prefix_complete()
+    }
+
     /// Returns the remaining number of buffered bytes that have not yet been read.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
@@ -636,6 +648,17 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.sniffed_prefix_remaining()
     }
 
+    /// Reports whether the canonical legacy negotiation prefix has been fully buffered.
+    ///
+    /// The method mirrors [`NegotiatedStream::legacy_prefix_complete`], making it possible to query
+    /// the sniffed prefix state even after the stream has been decomposed into parts. It is `true`
+    /// for legacy ASCII negotiations once the entire `@RSYNCD:` marker has been captured and `false`
+    /// otherwise (including for binary sessions).
+    #[must_use]
+    pub fn legacy_prefix_complete(&self) -> bool {
+        self.buffer.legacy_prefix_complete()
+    }
+
     /// Returns the inner reader.
     #[must_use]
     pub const fn inner(&self) -> &R {
@@ -1068,6 +1091,7 @@ mod tests {
         assert_eq!(stream.sniffed_prefix(), &[0x00]);
         assert_eq!(stream.sniffed_prefix_len(), 1);
         assert_eq!(stream.sniffed_prefix_remaining(), 1);
+        assert!(!stream.legacy_prefix_complete());
         assert_eq!(stream.buffered_len(), 1);
         assert!(stream.buffered_remainder().is_empty());
         let (prefix, remainder) = stream.buffered_split();
@@ -1080,6 +1104,7 @@ mod tests {
             .expect("read_exact drains buffered prefix and remainder");
         assert_eq!(&buf, &[0x00, 0x12, 0x34]);
         assert_eq!(stream.sniffed_prefix_remaining(), 0);
+        assert!(!stream.legacy_prefix_complete());
 
         let mut tail = [0u8; 2];
         let read = stream
@@ -1087,12 +1112,16 @@ mod tests {
             .expect("read after buffer consumes inner");
         assert_eq!(read, 0);
         assert!(tail.iter().all(|byte| *byte == 0));
+
+        let parts = stream.into_parts();
+        assert!(!parts.legacy_prefix_complete());
     }
 
     #[test]
     fn sniffed_prefix_remaining_tracks_consumed_bytes() {
         let mut stream = sniff_bytes(b"@RSYNCD: 29.0\nrest").expect("sniff succeeds");
         assert_eq!(stream.sniffed_prefix_remaining(), LEGACY_DAEMON_PREFIX_LEN);
+        assert!(stream.legacy_prefix_complete());
 
         let mut prefix_fragment = [0u8; 3];
         stream
@@ -1102,6 +1131,7 @@ mod tests {
             stream.sniffed_prefix_remaining(),
             LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len()
         );
+        assert!(stream.legacy_prefix_complete());
 
         let remaining_len = LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len();
         let mut rest_of_prefix = vec![0u8; remaining_len];
@@ -1110,6 +1140,7 @@ mod tests {
             .expect("remaining prefix bytes are replayed");
         assert_eq!(stream.sniffed_prefix_remaining(), 0);
         assert_eq!(rest_of_prefix, b"YNCD:");
+        assert!(stream.legacy_prefix_complete());
     }
 
     #[test]
@@ -1121,6 +1152,7 @@ mod tests {
             initial_parts.sniffed_prefix_remaining(),
             LEGACY_DAEMON_PREFIX_LEN
         );
+        assert!(initial_parts.legacy_prefix_complete());
 
         let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
         let mut prefix_fragment = [0u8; 5];
@@ -1132,6 +1164,37 @@ mod tests {
             parts.sniffed_prefix_remaining(),
             LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len()
         );
+        assert!(parts.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_complete_reports_status_for_legacy_sessions() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 30.0\nrest").expect("sniff succeeds");
+        assert!(stream.legacy_prefix_complete());
+
+        let mut consumed = [0u8; 4];
+        stream
+            .read_exact(&mut consumed)
+            .expect("read_exact consumes part of the prefix");
+        assert!(stream.legacy_prefix_complete());
+
+        let parts = stream.into_parts();
+        assert!(parts.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_complete_reports_status_for_binary_sessions() {
+        let mut stream = sniff_bytes(&[0x00, 0x42, 0x99]).expect("sniff succeeds");
+        assert!(!stream.legacy_prefix_complete());
+
+        let mut consumed = [0u8; 1];
+        stream
+            .read_exact(&mut consumed)
+            .expect("read_exact consumes buffered byte");
+        assert!(!stream.legacy_prefix_complete());
+
+        let parts = stream.into_parts();
+        assert!(!parts.legacy_prefix_complete());
     }
 
     #[test]
