@@ -502,10 +502,7 @@ impl<R> SessionHandshakeParts<R> {
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        advertisement_was_clamped(
-            self.remote_advertised_protocol(),
-            self.remote_protocol(),
-        )
+        advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
     }
 
     /// Reassembles a [`SessionHandshake`] from the stored components.
