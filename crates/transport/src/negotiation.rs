@@ -1164,7 +1164,7 @@ mod tests {
         let err = stream
             .try_map_inner(
                 |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                    Err((io::Error::other("boom"), cursor))
                 },
             )
             .expect_err("mapping fails");
@@ -1207,7 +1207,7 @@ mod tests {
         let err = parts
             .try_map_inner(
                 |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                    Err((io::Error::other("boom"), cursor))
                 },
             )
             .expect_err("mapping fails");
@@ -1229,7 +1229,7 @@ mod tests {
         let err = parts
             .try_map_inner(
                 |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                    Err((io::Error::other("boom"), cursor))
                 },
             )
             .expect_err("mapping fails");
