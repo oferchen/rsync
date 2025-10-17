@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::env;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -68,9 +67,35 @@ impl SourceLocation {
     /// Creates a source location from workspace paths.
     #[must_use]
     pub fn from_parts(manifest_dir: &'static str, file: &'static str, line: u32) -> Self {
-        let absolute = Path::new(manifest_dir).join(file);
-        let relative = strip_workspace_prefix(&absolute);
-        let normalized = normalize_path(relative);
+        let manifest_path = Path::new(manifest_dir);
+        let file_path = Path::new(file);
+
+        let candidate = if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
+            let workspace_path = Path::new(root);
+            if let Ok(manifest_relative) = manifest_path.strip_prefix(workspace_path) {
+                let manifest_relative = manifest_relative.to_path_buf();
+
+                if manifest_relative.as_os_str().is_empty() {
+                    file_path.to_path_buf()
+                } else if file_path.starts_with(&manifest_relative) {
+                    file_path.to_path_buf()
+                } else {
+                    manifest_relative.join(file_path)
+                }
+            } else {
+                manifest_path.join(file_path)
+            }
+        } else {
+            manifest_path.join(file_path)
+        };
+
+        let repo_relative = if candidate.is_absolute() {
+            strip_workspace_prefix(&candidate)
+        } else {
+            candidate
+        };
+
+        let normalized = normalize_path(repo_relative);
 
         Self {
             path: Cow::Owned(normalized),
@@ -218,9 +243,8 @@ impl fmt::Display for Message {
 }
 
 fn strip_workspace_prefix(path: &Path) -> PathBuf {
-    let workspace_dir = env::var("CARGO_WORKSPACE_DIR");
-    if let Ok(root) = workspace_dir {
-        let workspace_path = Path::new(&root);
+    if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
+        let workspace_path = Path::new(root);
         if let Ok(relative) = path.strip_prefix(workspace_path) {
             return relative.to_path_buf();
         }
@@ -272,8 +296,7 @@ mod tests {
     fn source_location_is_repo_relative() {
         let source = message_source!();
         let path = source.path();
-        assert!(!path.is_empty());
-        assert!(path.ends_with("src/message.rs"));
+        assert_eq!(path, "crates/core/src/message.rs");
         assert!(!path.contains('\\'));
         assert!(source.line() > 0);
     }
