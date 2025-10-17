@@ -238,6 +238,11 @@ impl<R> SessionHandshake<R> {
 
     /// Reassembles a [`SessionHandshake`] from the variant-specific stream parts previously
     /// extracted via [`Self::into_stream_parts`].
+    ///
+    /// Callers can invoke this helper directly or rely on the [`From`] conversion implemented
+    /// for [`SessionHandshakeParts`], which internally delegates to this constructor. The explicit
+    /// method remains available for situations where type inference benefits from naming the
+    /// conversion target.
     #[must_use]
     pub fn from_stream_parts(parts: SessionHandshakeParts<R>) -> Self {
         match parts {
@@ -262,6 +267,18 @@ impl<R> SessionHandshake<R> {
                 stream,
             )),
         }
+    }
+}
+
+impl<R> From<SessionHandshakeParts<R>> for SessionHandshake<R> {
+    fn from(parts: SessionHandshakeParts<R>) -> Self {
+        SessionHandshake::from_stream_parts(parts)
+    }
+}
+
+impl<R> From<SessionHandshake<R>> for SessionHandshakeParts<R> {
+    fn from(handshake: SessionHandshake<R>) -> Self {
+        handshake.into_stream_parts()
     }
 }
 

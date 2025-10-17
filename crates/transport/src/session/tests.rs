@@ -644,6 +644,45 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
 }
 
 #[test]
+fn session_handshake_converts_via_from_impls() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let parts: SessionHandshakeParts<_> = negotiate_session(transport, ProtocolVersion::NEWEST)
+        .expect("binary handshake")
+        .into();
+
+    assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    assert_eq!(parts.remote_protocol(), remote_version);
+
+    let handshake: SessionHandshake<_> = SessionHandshake::from(parts);
+    assert!(matches!(handshake.decision(), NegotiationPrologue::Binary));
+    assert_eq!(handshake.remote_protocol(), remote_version);
+
+    let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    let legacy_parts: SessionHandshakeParts<_> =
+        negotiate_session(legacy_transport, ProtocolVersion::NEWEST)
+            .expect("legacy handshake")
+            .into();
+
+    assert_eq!(legacy_parts.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(
+        legacy_parts.remote_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+
+    let legacy_handshake: SessionHandshake<_> = SessionHandshake::from(legacy_parts);
+    assert!(matches!(
+        legacy_handshake.decision(),
+        NegotiationPrologue::LegacyAscii
+    ));
+    assert_eq!(
+        legacy_handshake.remote_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+}
+
+#[test]
 fn session_reports_clamped_future_legacy_version() {
     let transport = MemoryTransport::new(b"@RSYNCD: 40.0\n");
 
