@@ -286,6 +286,27 @@ where
     negotiate_session_from_stream(stream, desired_protocol)
 }
 
+/// Negotiates an rsync session and returns the decomposed handshake parts.
+///
+/// This is a convenience wrapper around [`negotiate_session`] that immediately
+/// converts the negotiated handshake into [`SessionHandshakeParts`]. Callers
+/// that intend to wrap the underlying transport typically need this split
+/// representation to stash the replayed negotiation bytes while instrumenting
+/// the stream before resuming the protocol exchange.
+///
+/// # Errors
+///
+/// Propagates any I/O error reported by [`negotiate_session`].
+pub fn negotiate_session_parts<R>(
+    reader: R,
+    desired_protocol: ProtocolVersion,
+) -> io::Result<SessionHandshakeParts<R>>
+where
+    R: Read + Write,
+{
+    negotiate_session(reader, desired_protocol).map(SessionHandshake::into_stream_parts)
+}
+
 /// Components extracted from a [`SessionHandshake`].
 #[derive(Clone, Debug)]
 pub enum SessionHandshakeParts<R> {
@@ -563,6 +584,29 @@ where
 {
     let stream = sniff_negotiation_stream_with_sniffer(reader, sniffer)?;
     negotiate_session_from_stream(stream, desired_protocol)
+}
+
+/// Negotiates an rsync session using a caller supplied sniffer and returns the
+/// decomposed handshake parts.
+///
+/// This mirrors [`negotiate_session_parts`] but reuses the provided
+/// [`NegotiationPrologueSniffer`], matching the semantics of
+/// [`negotiate_session_with_sniffer`].
+///
+/// # Errors
+///
+/// Propagates any I/O error reported by
+/// [`negotiate_session_with_sniffer`].
+pub fn negotiate_session_parts_with_sniffer<R>(
+    reader: R,
+    desired_protocol: ProtocolVersion,
+    sniffer: &mut NegotiationPrologueSniffer,
+) -> io::Result<SessionHandshakeParts<R>>
+where
+    R: Read + Write,
+{
+    negotiate_session_with_sniffer(reader, desired_protocol, sniffer)
+        .map(SessionHandshake::into_stream_parts)
 }
 
 fn negotiate_session_from_stream<R>(
