@@ -270,34 +270,28 @@ impl<R: Read> NegotiatedStream<R> {
             }
         }
 
+        let prefix_len = self.buffer.sniffed_prefix_len();
+        let legacy_prefix_complete = self.buffer.legacy_prefix_complete();
+        let remaining = self.buffer.sniffed_prefix_remaining();
         if require_full_prefix {
-            if !self.buffer.legacy_prefix_complete() {
+            if !legacy_prefix_complete {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "legacy negotiation prefix is incomplete",
                 ));
             }
 
-            if self.buffer.sniffed_prefix_remaining() != LEGACY_DAEMON_PREFIX_LEN {
+            if remaining != LEGACY_DAEMON_PREFIX_LEN {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "legacy negotiation prefix has already been consumed",
                 ));
             }
-        } else {
-            if self.buffer.sniffed_prefix_len() == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "legacy negotiation prefix is incomplete",
-                ));
-            }
-
-            if self.buffer.sniffed_prefix_remaining() != self.buffer.sniffed_prefix_len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "legacy negotiation prefix has already been consumed",
-                ));
-            }
+        } else if legacy_prefix_complete && remaining != 0 && remaining != prefix_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "legacy negotiation prefix has been partially consumed",
+            ));
         }
 
         self.populate_line_from_buffer(line)
@@ -1122,6 +1116,39 @@ mod tests {
             .read_to_end(&mut remainder)
             .expect("remaining bytes are replayed");
         assert_eq!(remainder, b"#list\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_after_greeting() {
+        let mut stream =
+            sniff_bytes(b"@RSYNCD: 31.0\n@RSYNCD: AUTHREQD module\n@ERROR: access denied\n")
+                .expect("sniff succeeds");
+
+        let mut line = Vec::new();
+        let version = stream
+            .read_and_parse_legacy_daemon_greeting(&mut line)
+            .expect("greeting parses");
+        let expected = ProtocolVersion::from_supported(31).expect("supported version");
+        assert_eq!(version, expected);
+        assert_eq!(line, b"@RSYNCD: 31.0\n");
+
+        let message = stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect("message parses");
+        match message {
+            LegacyDaemonMessage::AuthRequired { module } => {
+                assert_eq!(module, Some("module"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(line, b"@RSYNCD: AUTHREQD module\n");
+
+        let error = stream
+            .read_and_parse_legacy_daemon_error_message(&mut line)
+            .expect("error parses")
+            .expect("payload present");
+        assert_eq!(error, "access denied");
+        assert_eq!(line, b"@ERROR: access denied\n");
     }
 
     #[test]
