@@ -10,8 +10,10 @@
 //! cover the SSH stdio transport and the `rsync://` daemon loop while keeping
 //! higher layers agnostic to the underlying I/O implementation details.
 
+mod daemon;
 mod negotiation;
 
+pub use daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session};
 pub use negotiation::{
     NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,

@@ -255,7 +255,11 @@ impl<R: Read> NegotiatedStream<R> {
 }
 
 impl<R: Read> NegotiatedStream<R> {
-    fn read_legacy_line(&mut self, line: &mut Vec<u8>, require_full_prefix: bool) -> io::Result<()> {
+    fn read_legacy_line(
+        &mut self,
+        line: &mut Vec<u8>,
+        require_full_prefix: bool,
+    ) -> io::Result<()> {
         match self.decision {
             NegotiationPrologue::LegacyAscii => {}
             _ => {
