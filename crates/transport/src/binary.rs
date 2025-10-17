@@ -1,5 +1,6 @@
 use crate::negotiation::{
-    NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
+    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    sniff_negotiation_stream_with_sniffer,
 };
 use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
@@ -81,6 +82,24 @@ impl<R> BinaryHandshake<R> {
             remote_protocol,
             negotiated_protocol,
         }
+    }
+
+    /// Decomposes the handshake into the negotiated protocol metadata and replaying stream parts.
+    ///
+    /// Returning [`NegotiatedStreamParts`] allows higher layers to temporarily take ownership of
+    /// the buffered negotiation bytes (for example to wrap the underlying transport) without
+    /// dropping the recorded remote advertisement. The tuple mirrors
+    /// [`Self::into_components`], but hands back the split representation so callers can inspect or
+    /// transform the inner reader before reassembling a [`NegotiatedStream`].
+    #[must_use]
+    pub fn into_stream_parts(self) -> (ProtocolVersion, ProtocolVersion, NegotiatedStreamParts<R>) {
+        let Self {
+            stream,
+            remote_protocol,
+            negotiated_protocol,
+        } = self;
+
+        (remote_protocol, negotiated_protocol, stream.into_parts())
     }
 }
 
@@ -183,7 +202,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsync_protocol::NegotiationPrologueSniffer;
+    use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer};
     use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
@@ -367,6 +386,36 @@ mod tests {
         let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect_err("unsupported protocol must fail");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn into_stream_parts_exposes_negotiation_state() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let (remote, negotiated, parts) = handshake.into_stream_parts();
+        assert_eq!(remote, remote_version);
+        assert_eq!(negotiated, remote_version);
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+        assert_eq!(parts.sniffed_prefix(), &[remote_version.as_u8()]);
+        assert_eq!(parts.buffered_remaining(), 0);
+        assert_eq!(parts.sniffed_prefix_len(), 1);
+
+        let mut stream = parts.into_stream();
+        let mut remainder = Vec::new();
+        stream
+            .read_to_end(&mut remainder)
+            .expect("no additional bytes remain after handshake");
+        assert!(remainder.is_empty());
+
+        let transport = stream.into_inner();
+        assert_eq!(
+            transport.written(),
+            &handshake_bytes(ProtocolVersion::NEWEST)
+        );
     }
 
     #[test]
