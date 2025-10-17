@@ -435,6 +435,37 @@ impl RollingDigest {
     pub const fn to_le_bytes(&self) -> [u8; 4] {
         self.value().to_le_bytes()
     }
+
+    /// Writes the checksum to the caller-provided buffer using the little-endian wire format.
+    ///
+    /// This helper avoids allocating a temporary array when the caller already owns a
+    /// fixed-size buffer (for example when writing directly into a network packet or an
+    /// mmap-backed region). The output matches [`Self::to_le_bytes`], ensuring the result can be
+    /// transmitted verbatim to peers expecting the packed `sum1`/`sum2` representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RollingSliceError`] when `out` does not contain exactly four bytes. The buffer is
+    /// left untouched on error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    ///
+    /// let digest = RollingDigest::new(0x1357, 0x2468, 1024);
+    /// let mut buf = [0u8; 4];
+    /// digest.write_le_bytes(&mut buf).expect("buffer has the right size");
+    /// assert_eq!(buf, digest.to_le_bytes());
+    /// ```
+    pub fn write_le_bytes(&self, out: &mut [u8]) -> Result<(), RollingSliceError> {
+        if out.len() != RollingSliceError::EXPECTED_LEN {
+            return Err(RollingSliceError { len: out.len() });
+        }
+
+        out.copy_from_slice(&self.to_le_bytes());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +551,29 @@ mod tests {
 
         assert_eq!(parsed, sample);
         assert_eq!(parsed.to_le_bytes(), sample.to_le_bytes());
+    }
+
+    #[test]
+    fn digest_write_le_bytes_populates_target_slice() {
+        let sample = RollingDigest::new(0x0fed, 0xcba9, 2048);
+        let mut buffer = [0u8; RollingSliceError::EXPECTED_LEN];
+        sample
+            .write_le_bytes(&mut buffer)
+            .expect("buffer length matches the digest encoding");
+
+        assert_eq!(buffer, sample.to_le_bytes());
+    }
+
+    #[test]
+    fn digest_write_le_bytes_rejects_wrong_length() {
+        let sample = RollingDigest::new(0x1234, 0x5678, 128);
+        let mut buffer = [0u8; RollingSliceError::EXPECTED_LEN + 1];
+        let err = sample
+            .write_le_bytes(&mut buffer)
+            .expect_err("incorrect buffer length must be rejected");
+
+        assert_eq!(err.len(), buffer.len());
+        assert!(!err.is_empty());
     }
 
     #[test]
