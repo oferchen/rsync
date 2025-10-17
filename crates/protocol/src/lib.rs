@@ -148,7 +148,9 @@ pub use legacy::{
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
     parse_legacy_warning_message_bytes,
 };
-pub use multiplex::{MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg};
+pub use multiplex::{
+    BorrowedMessageFrame, MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg,
+};
 pub use negotiation::{
     BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
     NegotiationPrologueSniffer, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
