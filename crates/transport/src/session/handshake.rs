@@ -22,6 +22,7 @@ pub enum SessionHandshake<R> {
     /// Binary remote-shell style negotiation (protocols ≥ 30).
     Binary(BinaryHandshake<R>),
     /// Legacy `@RSYNCD:` daemon negotiation.
+    #[doc(alias = "@RSYNCD")]
     Legacy(LegacyDaemonHandshake<R>),
 }
 
