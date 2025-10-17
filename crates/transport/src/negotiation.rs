@@ -969,9 +969,30 @@ fn map_line_reserve_error_for_io(err: TryReserveError) -> io::Error {
 mod tests {
     use super::*;
 
-    use std::io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write};
+    use std::{
+        collections::TryReserveError,
+        error::Error as _,
+        io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write},
+    };
 
     use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, ProtocolVersion};
+
+    #[test]
+    fn map_line_reserve_error_for_io_marks_out_of_memory() {
+        let mut buf = Vec::<u8>::new();
+        let reserve_err = buf
+            .try_reserve_exact(usize::MAX)
+            .expect_err("capacity overflow must error");
+
+        let mapped = super::map_line_reserve_error_for_io(reserve_err);
+        assert_eq!(mapped.kind(), io::ErrorKind::OutOfMemory);
+        assert!(mapped
+            .to_string()
+            .contains("failed to reserve memory for legacy negotiation buffer"));
+
+        let source = mapped.source().expect("mapped error must retain source");
+        assert!(source.downcast_ref::<TryReserveError>().is_some());
+    }
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
         let cursor = Cursor::new(data.to_vec());
