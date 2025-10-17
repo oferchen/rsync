@@ -233,7 +233,10 @@ mod tests {
     #[test]
     fn unknown_exit_code_returns_none() {
         for code in [-1, 0, 6, 200, 255] {
-            assert!(exit_code_message(code).is_none(), "unexpected mapping for {code}");
+            assert!(
+                exit_code_message(code).is_none(),
+                "unexpected mapping for {code}"
+            );
         }
     }
 
@@ -283,8 +286,9 @@ mod tests {
             .next()
             .expect("exit code 24 must produce a warning entry");
         assert_eq!(warning.code(), 24);
-        assert!(warnings
-            .next()
-            .is_none(), "exit code table must not contain additional warning severities");
+        assert!(
+            warnings.next().is_none(),
+            "exit code table must not contain additional warning severities"
+        );
     }
 }

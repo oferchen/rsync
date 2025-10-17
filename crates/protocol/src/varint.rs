@@ -189,6 +189,7 @@ pub fn decode_varint(bytes: &[u8]) -> io::Result<(i32, &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::io::Cursor;
 
     #[test]
@@ -263,5 +264,46 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let err = read_varint(&mut cursor).expect_err("truncated input must fail");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    proptest! {
+        #[test]
+        fn encode_decode_round_trip_for_random_values(value in any::<i32>()) {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decoding succeeds");
+            prop_assert_eq!(decoded, value);
+            prop_assert!(remainder.is_empty());
+
+            let mut cursor = Cursor::new(&encoded);
+            let read_back = read_varint(&mut cursor).expect("reading succeeds");
+            prop_assert_eq!(read_back, value);
+            prop_assert_eq!(cursor.position() as usize, encoded.len());
+        }
+
+        #[test]
+        fn decode_sequences_round_trip(values in prop::collection::vec(any::<i32>(), 1..=32)) {
+            let mut encoded = Vec::new();
+            for value in &values {
+                encode_varint_to_vec(*value, &mut encoded);
+            }
+
+            let mut cursor = Cursor::new(&encoded);
+            for expected in &values {
+                let decoded = read_varint(&mut cursor).expect("reading succeeds");
+                prop_assert_eq!(decoded, *expected);
+            }
+
+            prop_assert_eq!(cursor.position() as usize, encoded.len());
+
+            let mut remaining = encoded.as_slice();
+            for expected in &values {
+                let (decoded, tail) = decode_varint(remaining).expect("decoding succeeds");
+                prop_assert_eq!(decoded, *expected);
+                remaining = tail;
+            }
+            prop_assert!(remaining.is_empty());
+        }
     }
 }
