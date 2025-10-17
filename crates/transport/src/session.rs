@@ -424,21 +424,18 @@ impl<R> SessionHandshakeParts<R> {
                 server_greeting,
                 negotiated_protocol,
                 stream,
-            } => {
-                let mut greeting = Some(server_greeting);
-                match stream.try_map_inner(map) {
-                    Ok(stream) => Ok(SessionHandshakeParts::Legacy {
-                        server_greeting: greeting.take().expect("greeting available"),
-                        negotiated_protocol,
-                        stream,
-                    }),
-                    Err(err) => Err(err.map_original(|stream| SessionHandshakeParts::Legacy {
-                        server_greeting: greeting.take().expect("greeting available"),
-                        negotiated_protocol,
-                        stream,
-                    })),
-                }
-            }
+            } => match stream.try_map_inner(map) {
+                Ok(stream) => Ok(SessionHandshakeParts::Legacy {
+                    server_greeting,
+                    negotiated_protocol,
+                    stream,
+                }),
+                Err(err) => Err(err.map_original(|stream| SessionHandshakeParts::Legacy {
+                    server_greeting,
+                    negotiated_protocol,
+                    stream,
+                })),
+            },
         }
     }
 
