@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
+use std::str;
 
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = "3.4.1-rust";
@@ -355,10 +356,11 @@ impl Message {
 
     /// Writes the rendered message into an [`io::Write`] implementor.
     ///
-    /// This helper mirrors [`Self::render_to`] but operates on byte writers. It avoids allocating
-    /// intermediate [`String`] values by streaming the formatted payload directly into the provided
-    /// writer. Any encountered I/O error is propagated unchanged, ensuring callers can surface the
-    /// original failure context in user-facing diagnostics.
+    /// This helper mirrors [`Self::render_to`] but operates on byte writers. It
+    /// avoids allocating intermediate [`String`] values by streaming each
+    /// component directly into the provided writer. Any encountered I/O error is
+    /// propagated unchanged, ensuring callers can surface the original failure
+    /// context in user-facing diagnostics.
     ///
     /// # Examples
     ///
@@ -377,54 +379,37 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        struct Adapter<'a, W: IoWrite> {
-            inner: &'a mut W,
-            error: Option<io::Error>,
+        writer.write_all(b"rsync ")?;
+        writer.write_all(self.severity.as_str().as_bytes())?;
+        writer.write_all(b": ")?;
+        writer.write_all(self.text.as_bytes())?;
+
+        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
+            let mut buffer = [0u8; 20];
+            let digits = encode_signed_decimal(i64::from(code), &mut buffer);
+            writer.write_all(b" (code ")?;
+            writer.write_all(digits.as_bytes())?;
+            writer.write_all(b")")?;
         }
 
-        impl<'a, W: IoWrite> fmt::Write for Adapter<'a, W> {
-            fn write_str(&mut self, s: &str) -> fmt::Result {
-                match self.inner.write_all(s.as_bytes()) {
-                    Ok(()) => Ok(()),
-                    Err(err) => {
-                        self.error = Some(err);
-                        Err(fmt::Error)
-                    }
-                }
-            }
-
-            fn write_char(&mut self, ch: char) -> fmt::Result {
-                let mut buf = [0u8; 4];
-                let encoded = ch.encode_utf8(&mut buf);
-                self.write_str(encoded)
-            }
+        if let Some(source) = &self.source {
+            let mut line_buffer = [0u8; 20];
+            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut line_buffer);
+            writer.write_all(b" at ")?;
+            writer.write_all(source.path().as_bytes())?;
+            writer.write_all(b":")?;
+            writer.write_all(digits.as_bytes())?;
         }
 
-        impl<'a, W: IoWrite> Adapter<'a, W> {
-            fn finish(self) -> io::Result<()> {
-                if let Some(err) = self.error {
-                    Err(err)
-                } else {
-                    Ok(())
-                }
-            }
+        if let Some(role) = self.role {
+            writer.write_all(b" [")?;
+            writer.write_all(role.as_str().as_bytes())?;
+            writer.write_all(b"=")?;
+            writer.write_all(VERSION_SUFFIX.as_bytes())?;
+            writer.write_all(b"]")?;
         }
 
-        let mut adapter = Adapter {
-            inner: writer,
-            error: None,
-        };
-
-        let render_result = self.render_to(&mut adapter);
-        let finish_result = adapter.finish();
-
-        match (render_result, finish_result) {
-            (Ok(()), outcome) => outcome,
-            (Err(_), Err(err)) => Err(err),
-            (Err(_), Ok(())) => Err(io::Error::other(
-                "rendering message failed without capturing the I/O error",
-            )),
-        }
+        Ok(())
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -528,6 +513,39 @@ fn normalize_path(path: &Path) -> String {
         String::from(".")
     } else {
         normalized
+    }
+}
+
+fn encode_unsigned_decimal<'a>(mut value: u64, buf: &'a mut [u8]) -> &'a str {
+    debug_assert!(
+        !buf.is_empty(),
+        "buffer must have capacity for at least one digit"
+    );
+
+    let mut len = 0usize;
+
+    loop {
+        buf[len] = b'0' + (value % 10) as u8;
+        len += 1;
+        value /= 10;
+
+        if value == 0 {
+            break;
+        }
+    }
+
+    buf[..len].reverse();
+    str::from_utf8(&buf[..len]).expect("decimal digits are valid ASCII")
+}
+
+fn encode_signed_decimal<'a>(value: i64, buf: &'a mut [u8]) -> &'a str {
+    if value < 0 {
+        buf[0] = b'-';
+        let digits = encode_unsigned_decimal(value.unsigned_abs(), &mut buf[1..]);
+        let len = digits.len();
+        str::from_utf8(&buf[..=len]).expect("decimal digits are valid ASCII")
+    } else {
+        encode_unsigned_decimal(value as u64, buf)
     }
 }
 
@@ -712,6 +730,20 @@ mod tests {
     }
 
     #[test]
+    fn render_to_writer_matches_render_to_for_negative_codes() {
+        let message = Message::error(-35, "timeout in data send")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let mut buffer = Vec::new();
+        message
+            .render_to_writer(&mut buffer)
+            .expect("writing into a vector never fails");
+
+        assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
     fn render_line_to_writer_appends_newline() {
         let message = Message::info("protocol handshake complete");
 
@@ -775,5 +807,24 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "newline sink error");
+    }
+
+    #[test]
+    fn encode_unsigned_decimal_formats_expected_values() {
+        let mut buf = [0u8; 8];
+        assert_eq!(super::encode_unsigned_decimal(0, &mut buf), "0");
+        assert_eq!(super::encode_unsigned_decimal(42, &mut buf), "42");
+        assert_eq!(
+            super::encode_unsigned_decimal(12_345_678, &mut buf),
+            "12345678"
+        );
+    }
+
+    #[test]
+    fn encode_signed_decimal_handles_positive_and_negative_values() {
+        let mut buf = [0u8; 12];
+        assert_eq!(super::encode_signed_decimal(0, &mut buf), "0");
+        assert_eq!(super::encode_signed_decimal(123, &mut buf), "123");
+        assert_eq!(super::encode_signed_decimal(-456, &mut buf), "-456");
     }
 }
