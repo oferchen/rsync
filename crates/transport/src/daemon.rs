@@ -11,6 +11,7 @@ use std::io::{self, Read, Write};
 /// The structure exposes the negotiated protocol version together with the
 /// parsed greeting metadata while retaining the replaying stream so higher
 /// layers can continue consuming control messages or file lists.
+#[derive(Debug)]
 pub struct LegacyDaemonHandshake<R> {
     stream: NegotiatedStream<R>,
     server_greeting: LegacyDaemonGreetingOwned,
