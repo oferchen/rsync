@@ -75,6 +75,33 @@ impl MessageFrame {
     pub fn into_parts(self) -> (MessageCode, Vec<u8>) {
         (self.code, self.payload)
     }
+
+    /// Decodes a multiplexed frame from the beginning of `bytes`.
+    ///
+    /// The function mirrors [`recv_msg`] but operates on an in-memory slice, making it
+    /// convenient for test fixtures and golden transcript comparisons that already capture
+    /// the full frame without going through `Read`. The returned tuple contains the decoded
+    /// frame together with a slice pointing at the remaining, unread bytes. Callers that wish
+    /// to parse exactly one frame can invoke [`TryFrom<&[u8]>`] to receive an error when extra
+    /// trailing data is present.
+    pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
+        if bytes.len() < HEADER_LEN {
+            return Err(truncated_frame_error(HEADER_LEN, bytes.len()));
+        }
+
+        let header = MessageHeader::decode(&bytes[..HEADER_LEN]).map_err(map_envelope_error)?;
+        let payload_len = header.payload_len_usize();
+        let frame_len = HEADER_LEN + payload_len;
+
+        if bytes.len() < frame_len {
+            return Err(truncated_frame_error(frame_len, bytes.len()));
+        }
+
+        let payload = bytes[HEADER_LEN..frame_len].to_vec();
+        let frame = MessageFrame::new(header.code(), payload)?;
+
+        Ok((frame, &bytes[frame_len..]))
+    }
 }
 
 impl AsRef<[u8]> for MessageFrame {
@@ -100,6 +127,22 @@ impl std::convert::TryFrom<(MessageCode, Vec<u8>)> for MessageFrame {
 impl From<MessageFrame> for (MessageCode, Vec<u8>) {
     fn from(frame: MessageFrame) -> Self {
         frame.into_parts()
+    }
+}
+
+impl std::convert::TryFrom<&[u8]> for MessageFrame {
+    type Error = io::Error;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let (frame, remainder) = MessageFrame::decode_from_slice(bytes)?;
+        if remainder.is_empty() {
+            Ok(frame)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "input slice contains trailing data after multiplexed frame",
+            ))
+        }
     }
 }
 
@@ -198,6 +241,13 @@ fn invalid_len_error(len: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
         format!("multiplexed payload length {len} exceeds maximum {max}"),
+    )
+}
+
+fn truncated_frame_error(expected: usize, actual: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        format!("multiplexed frame truncated: expected {expected} bytes but received {actual}"),
     )
 }
 
@@ -333,6 +383,13 @@ mod tests {
     use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};
     use std::collections::VecDeque;
     use std::convert::TryFrom as _;
+
+    fn encode_frame(code: MessageCode, payload: &[u8]) -> Vec<u8> {
+        let header = MessageHeader::new(code, payload.len() as u32).expect("constructible header");
+        let mut bytes = Vec::from(header.encode());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
 
     #[test]
     fn send_and_receive_round_trip_info_message() {
@@ -523,6 +580,56 @@ mod tests {
             writer.write_calls >= 4,
             "partial schedule should trigger repeated writes"
         );
+    }
+
+    #[test]
+    fn decode_from_slice_round_trips_and_exposes_remainder() {
+        let first = encode_frame(MessageCode::Info, b"hello");
+        let second = encode_frame(MessageCode::Error, b"world");
+
+        let mut concatenated = first.clone();
+        concatenated.extend_from_slice(&second);
+
+        let (frame, remainder) =
+            MessageFrame::decode_from_slice(&concatenated).expect("decode succeeds");
+        assert_eq!(frame.code(), MessageCode::Info);
+        assert_eq!(frame.payload(), b"hello");
+        assert_eq!(remainder, second.as_slice());
+    }
+
+    #[test]
+    fn decode_from_slice_errors_for_truncated_header() {
+        let err = MessageFrame::decode_from_slice(&[0x01, 0x02]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_from_slice_errors_for_truncated_payload() {
+        let header = MessageHeader::new(MessageCode::Data, 4).expect("constructible header");
+        let mut bytes = Vec::from(header.encode());
+        bytes.extend_from_slice(&[0xAA, 0xBB]);
+
+        let err = MessageFrame::decode_from_slice(&bytes).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn message_frame_try_from_slice_round_trips_single_frame() {
+        let encoded = encode_frame(MessageCode::Warning, b"payload");
+        let frame = MessageFrame::try_from(encoded.as_slice()).expect("decode succeeds");
+
+        assert_eq!(frame.code(), MessageCode::Warning);
+        assert_eq!(frame.payload(), b"payload");
+    }
+
+    #[test]
+    fn message_frame_try_from_slice_rejects_trailing_bytes() {
+        let frame = encode_frame(MessageCode::Stats, &[0x01, 0x02, 0x03, 0x04]);
+        let mut bytes = frame.clone();
+        bytes.extend_from_slice(&[0xFF, 0xEE]);
+
+        let err = MessageFrame::try_from(bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
