@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
+use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
 
 /// Version tag appended to message trailers.
@@ -234,6 +235,7 @@ macro_rules! tracked_message_source {
 /// assert!(rendered.contains("[sender=3.4.1-rust]"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use = "messages must be formatted or emitted to reach users"]
 pub struct Message {
     severity: Severity,
     code: Option<i32>,
@@ -244,7 +246,6 @@ pub struct Message {
 
 impl Message {
     /// Creates an informational message.
-    #[must_use]
     pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
             severity: Severity::Info,
@@ -256,7 +257,6 @@ impl Message {
     }
 
     /// Creates a warning message.
-    #[must_use]
     pub fn warning<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
             severity: Severity::Warning,
@@ -268,7 +268,6 @@ impl Message {
     }
 
     /// Creates an error message with the provided exit code.
-    #[must_use]
     pub fn error<T: Into<Cow<'static, str>>>(code: i32, text: T) -> Self {
         Self {
             severity: Severity::Error,
@@ -310,14 +309,12 @@ impl Message {
     }
 
     /// Attaches a role trailer to the message.
-    #[must_use]
     pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
         self
     }
 
     /// Attaches a source location to the message.
-    #[must_use]
     pub fn with_source(mut self, source: SourceLocation) -> Self {
         self.source = Some(source);
         self
@@ -364,6 +361,80 @@ impl Message {
         }
 
         Ok(())
+    }
+
+    /// Writes the rendered message into an [`io::Write`] implementor.
+    ///
+    /// This helper mirrors [`Self::render_to`] but operates on byte writers. It avoids allocating
+    /// intermediate [`String`] values by streaming the formatted payload directly into the provided
+    /// writer. Any encountered I/O error is propagated unchanged, ensuring callers can surface the
+    /// original failure context in user-facing diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let mut output = Vec::new();
+    /// Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!())
+    ///     .render_to_writer(&mut output)
+    ///     .unwrap();
+    ///
+    /// let rendered = String::from_utf8(output).unwrap();
+    /// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
+    /// assert!(rendered.contains("[sender=3.4.1-rust]"));
+    /// ```
+    pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
+        struct Adapter<'a, W: IoWrite> {
+            inner: &'a mut W,
+            error: Option<io::Error>,
+        }
+
+        impl<'a, W: IoWrite> fmt::Write for Adapter<'a, W> {
+            fn write_str(&mut self, s: &str) -> fmt::Result {
+                match self.inner.write_all(s.as_bytes()) {
+                    Ok(()) => Ok(()),
+                    Err(err) => {
+                        self.error = Some(err);
+                        Err(fmt::Error)
+                    }
+                }
+            }
+
+            fn write_char(&mut self, ch: char) -> fmt::Result {
+                let mut buf = [0u8; 4];
+                let encoded = ch.encode_utf8(&mut buf);
+                self.write_str(encoded)
+            }
+        }
+
+        impl<'a, W: IoWrite> Adapter<'a, W> {
+            fn finish(self) -> io::Result<()> {
+                if let Some(err) = self.error {
+                    Err(err)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let mut adapter = Adapter {
+            inner: writer,
+            error: None,
+        };
+
+        let render_result = self.render_to(&mut adapter);
+        let finish_result = adapter.finish();
+
+        match (render_result, finish_result) {
+            (Ok(()), outcome) => outcome,
+            (Err(_), Err(err)) => Err(err),
+            (Err(_), Ok(())) => Err(io::Error::other(
+                "rendering message failed without capturing the I/O error",
+            )),
+        }
     }
 }
 
@@ -446,6 +517,7 @@ fn normalize_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
 
     #[track_caller]
     fn tracked_source() -> SourceLocation {
@@ -591,5 +663,44 @@ mod tests {
             .expect("rendering into a string never fails");
 
         assert_eq!(rendered, message.to_string());
+    }
+
+    #[test]
+    fn render_to_writer_matches_render_to() {
+        let message = Message::warning("soft limit reached")
+            .with_role(Role::Daemon)
+            .with_source(message_source!());
+
+        let mut buffer = Vec::new();
+        message
+            .render_to_writer(&mut buffer)
+            .expect("writing into a vector never fails");
+
+        assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    struct FailingWriter;
+
+    impl io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("sink error"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn render_to_writer_propagates_io_error() {
+        let mut writer = FailingWriter;
+        let message = Message::info("protocol handshake complete");
+
+        let err = message
+            .render_to_writer(&mut writer)
+            .expect_err("writer error should propagate");
+
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "sink error");
     }
 }
