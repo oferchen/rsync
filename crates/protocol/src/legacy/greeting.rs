@@ -1,6 +1,24 @@
 use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
 use core::fmt::{self, Write as FmtWrite};
+use std::borrow::ToOwned;
+
+/// Owned representation of a legacy ASCII daemon greeting.
+///
+/// [`LegacyDaemonGreeting`] borrows the buffer that backed the parsed line,
+/// which is convenient for streaming parsers but cumbersome for higher layers
+/// that need to retain the metadata beyond the lifetime of the temporary
+/// buffer. The owned variant stores the advertised protocol number, optional
+/// subprotocol suffix, and digest list without tying them to an external
+/// allocation. The structure intentionally mirrors the borrowed API so call
+/// sites can switch between the two with minimal friction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LegacyDaemonGreetingOwned {
+    protocol: ProtocolVersion,
+    advertised_protocol: u32,
+    subprotocol: Option<u32>,
+    digest_list: Option<String>,
+}
 
 use super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
 
@@ -70,6 +88,70 @@ impl<'a> LegacyDaemonGreeting<'a> {
     #[must_use]
     pub const fn digest_list(self) -> Option<&'a str> {
         self.digest_list
+    }
+}
+
+impl LegacyDaemonGreetingOwned {
+    /// Returns the negotiated protocol version after clamping unsupported
+    /// advertisements to the newest supported release.
+    #[must_use]
+    pub const fn protocol(&self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns the protocol number advertised by the peer before clamping.
+    #[must_use]
+    pub const fn advertised_protocol(&self) -> u32 {
+        self.advertised_protocol
+    }
+
+    /// Returns the parsed subprotocol value or zero when it was absent.
+    #[must_use]
+    pub const fn subprotocol(&self) -> u32 {
+        match self.subprotocol {
+            Some(value) => value,
+            None => 0,
+        }
+    }
+
+    /// Returns the optional subprotocol suffix without normalizing missing values to zero.
+    #[must_use]
+    pub const fn subprotocol_raw(&self) -> Option<u32> {
+        self.subprotocol
+    }
+
+    /// Reports whether the greeting explicitly supplied a subprotocol suffix.
+    #[must_use]
+    pub const fn has_subprotocol(&self) -> bool {
+        self.subprotocol.is_some()
+    }
+
+    /// Returns the digest list announced by the daemon, if any.
+    #[must_use]
+    pub fn digest_list(&self) -> Option<&str> {
+        self.digest_list.as_deref()
+    }
+
+    /// Returns a borrowed representation of the greeting.
+    #[must_use]
+    pub fn as_borrowed(&self) -> LegacyDaemonGreeting<'_> {
+        LegacyDaemonGreeting {
+            protocol: self.protocol,
+            advertised_protocol: self.advertised_protocol,
+            subprotocol: self.subprotocol,
+            digest_list: self.digest_list.as_deref(),
+        }
+    }
+}
+
+impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
+    fn from(greeting: LegacyDaemonGreeting<'a>) -> Self {
+        Self {
+            protocol: greeting.protocol(),
+            advertised_protocol: greeting.advertised_protocol(),
+            subprotocol: greeting.subprotocol_raw(),
+            digest_list: greeting.digest_list().map(ToOwned::to_owned),
+        }
     }
 }
 
@@ -312,6 +394,34 @@ mod tests {
         assert_eq!(greeting.protocol().as_u8(), 29);
         assert!(!greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol(), 0);
+    }
+
+    #[test]
+    fn owned_greeting_captures_digest_list_and_subprotocol() {
+        let borrowed = parse_legacy_daemon_greeting_details("@RSYNCD: 31.5 md4 md5\n")
+            .expect("greeting should parse");
+        let owned = LegacyDaemonGreetingOwned::from(borrowed);
+
+        assert_eq!(owned.protocol(), borrowed.protocol());
+        assert_eq!(owned.advertised_protocol(), borrowed.advertised_protocol());
+        assert_eq!(owned.subprotocol_raw(), borrowed.subprotocol_raw());
+        assert_eq!(owned.digest_list(), borrowed.digest_list());
+        assert!(owned.has_subprotocol());
+
+        let reborrowed = owned.as_borrowed();
+        assert_eq!(reborrowed.protocol(), borrowed.protocol());
+        assert_eq!(reborrowed.digest_list(), borrowed.digest_list());
+    }
+
+    #[test]
+    fn owned_greeting_tracks_absent_fields() {
+        let borrowed = parse_legacy_daemon_greeting_details("@RSYNCD: 29\n").expect("greeting");
+        let owned = LegacyDaemonGreetingOwned::from(borrowed);
+
+        assert_eq!(owned.protocol().as_u8(), 29);
+        assert!(!owned.has_subprotocol());
+        assert_eq!(owned.subprotocol_raw(), None);
+        assert!(owned.digest_list().is_none());
     }
 
     #[test]
