@@ -55,6 +55,31 @@ impl<R> BinaryHandshake<R> {
     pub fn into_components(self) -> (ProtocolVersion, ProtocolVersion, NegotiatedStream<R>) {
         (self.remote_protocol, self.negotiated_protocol, self.stream)
     }
+
+    /// Maps the inner transport while preserving the negotiated metadata.
+    ///
+    /// This helper forwards to [`NegotiatedStream::map_inner`], allowing callers to
+    /// install additional instrumentation or adapters around the underlying
+    /// transport without losing the negotiated protocol versions. The replay
+    /// buffer captured during negotiation is retained so higher layers can
+    /// resume reading or writing immediately after the transformation.
+    #[must_use]
+    pub fn map_stream_inner<F, T>(self, map: F) -> BinaryHandshake<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        let Self {
+            stream,
+            remote_protocol,
+            negotiated_protocol,
+        } = self;
+
+        BinaryHandshake {
+            stream: stream.map_inner(map),
+            remote_protocol,
+            negotiated_protocol,
+        }
+    }
 }
 
 /// Performs the binary rsync protocol negotiation.
@@ -135,7 +160,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self, Cursor};
+    use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
     struct MemoryTransport {
@@ -173,6 +198,46 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct InstrumentedTransport {
+        inner: MemoryTransport,
+        observed_writes: Vec<u8>,
+    }
+
+    impl InstrumentedTransport {
+        fn new(inner: MemoryTransport) -> Self {
+            Self {
+                inner,
+                observed_writes: Vec::new(),
+            }
+        }
+
+        fn writes(&self) -> &[u8] {
+            &self.observed_writes
+        }
+
+        fn into_inner(self) -> MemoryTransport {
+            self.inner
+        }
+    }
+
+    impl Read for InstrumentedTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Write for InstrumentedTransport {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.observed_writes.extend_from_slice(buf);
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
     fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
         u32::from(version.as_u8()).to_le_bytes()
     }
@@ -193,6 +258,33 @@ mod tests {
             transport.written(),
             &handshake_bytes(ProtocolVersion::NEWEST)
         );
+    }
+
+    #[test]
+    fn map_stream_inner_preserves_protocols_and_replays_transport() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
+        handshake
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+
+        assert_eq!(handshake.remote_protocol(), remote_version);
+        assert_eq!(handshake.negotiated_protocol(), remote_version);
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"payload");
+
+        let inner = instrumented.into_inner();
+        let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+        expected.extend_from_slice(b"payload");
+        assert_eq!(inner.written(), expected.as_slice());
     }
 
     #[test]
