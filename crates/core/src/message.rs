@@ -2,8 +2,9 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write as IoWrite};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str;
+use std::sync::OnceLock;
 
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = "3.4.1-rust";
@@ -107,12 +108,11 @@ impl SourceLocation {
             manifest_path.join(file_path)
         };
 
-        let normalized_absolute = PathBuf::from(normalize_path(&absolute));
-        let repo_relative = strip_workspace_prefix(&normalized_absolute);
-        let normalized = normalize_path(&repo_relative);
+        let normalized = normalize_path(&absolute);
+        let repo_relative = strip_workspace_prefix_owned(normalized);
 
         Self {
-            path: Cow::Owned(normalized),
+            path: Cow::Owned(repo_relative),
             line,
         }
     }
@@ -448,15 +448,60 @@ impl fmt::Display for Message {
     }
 }
 
-fn strip_workspace_prefix(path: &Path) -> PathBuf {
-    if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
-        let workspace_path = Path::new(root);
-        if let Ok(relative) = path.strip_prefix(workspace_path) {
-            return relative.to_path_buf();
+/// Removes the workspace root prefix from a normalized path when possible.
+///
+/// The input string must already be normalised via [`normalize_path`]. When the path lives outside
+/// the workspace root (or the root is unknown), the original string is returned unchanged.
+fn strip_workspace_prefix_owned(normalized_path: String) -> String {
+    if let Some(root) = normalized_workspace_root() {
+        if let Some(stripped) = strip_normalized_workspace_prefix(&normalized_path, root) {
+            return stripped;
         }
     }
 
-    path.to_path_buf()
+    normalized_path
+}
+
+/// Returns the workspace-relative representation of `path` when it shares the provided root.
+///
+/// Both arguments must use forward slashes, matching the representation produced by
+/// [`normalize_path`]. The helper enforces segment boundaries to avoid stripping prefixes from
+/// directories that merely share the same leading byte sequence.
+fn strip_normalized_workspace_prefix(path: &str, root: &str) -> Option<String> {
+    if !path.starts_with(root) {
+        return None;
+    }
+
+    let mut suffix = &path[root.len()..];
+
+    if suffix.is_empty() {
+        return Some(String::from("."));
+    }
+
+    if !root.ends_with('/') {
+        if !suffix.starts_with('/') {
+            return None;
+        }
+
+        suffix = &suffix[1..];
+
+        if suffix.is_empty() {
+            return Some(String::from("."));
+        }
+    }
+
+    Some(suffix.to_owned())
+}
+
+/// Lazily computes the normalized workspace root used for source remapping.
+fn normalized_workspace_root() -> Option<&'static str> {
+    static NORMALIZED: OnceLock<Option<String>> = OnceLock::new();
+
+    NORMALIZED
+        .get_or_init(|| {
+            option_env!("RSYNC_WORKSPACE_ROOT").map(|root| normalize_path(Path::new(root)))
+        })
+        .as_deref()
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -664,6 +709,34 @@ mod tests {
 
         let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 7);
         assert_eq!(source.path(), "crates/core/src/message.rs");
+    }
+
+    #[test]
+    fn workspace_prefix_match_requires_separator_boundary() {
+        let workspace_root = Path::new(env!("RSYNC_WORKSPACE_ROOT"));
+
+        let Some(root_name) = workspace_root.file_name() else {
+            // When the workspace lives at the filesystem root (e.g. `/`), every absolute path
+            // is a descendant. The existing behaviour already strips the prefix, so there is no
+            // partial-prefix scenario to validate.
+            return;
+        };
+
+        let sibling_name = format!("{}-fork", root_name.to_string_lossy());
+        let sibling = workspace_root
+            .parent()
+            .unwrap_or(workspace_root)
+            .join(&sibling_name)
+            .join("src/lib.rs");
+
+        let leaked: &'static str =
+            Box::leak(sibling.to_string_lossy().into_owned().into_boxed_str());
+
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 11);
+        let expected = normalize_path(Path::new(leaked));
+
+        assert_eq!(source.path(), expected);
+        assert!(Path::new(source.path()).is_absolute());
     }
 
     #[test]
