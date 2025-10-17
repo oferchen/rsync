@@ -502,6 +502,29 @@ impl<R: Write> Write for NegotiatedStream<R> {
 }
 
 /// Components extracted from a [`NegotiatedStream`].
+///
+/// # Examples
+///
+/// Decompose the replaying stream into its constituent pieces and resume consumption once any
+/// inspection or wrapping is complete.
+///
+/// ```
+/// use rsync_protocol::NegotiationPrologue;
+/// use rsync_transport::sniff_negotiation_stream;
+/// use std::io::{Cursor, Read};
+///
+/// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+///     .expect("sniff succeeds");
+/// let parts = stream.into_parts();
+/// assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+///
+/// let mut rebuilt = parts.into_stream();
+/// let mut replay = Vec::new();
+/// rebuilt
+///     .read_to_end(&mut replay)
+///     .expect("replayed bytes remain available");
+/// assert_eq!(replay, b"@RSYNCD: 31.0\nreply");
+/// ```
 #[derive(Clone, Debug)]
 pub struct NegotiatedStreamParts<R> {
     decision: NegotiationPrologue,
@@ -514,6 +537,32 @@ pub struct NegotiatedStreamParts<R> {
 /// The structure preserves the original value so callers can continue using it after handling the
 /// error. This mirrors the ergonomics of APIs such as `BufReader::into_inner`, ensuring buffered
 /// negotiation bytes are not lost when a transformation cannot be completed.
+///
+/// # Examples
+///
+/// Propagate a failed transport transformation without losing the replaying stream. The preserved
+/// value can be recovered via [`TryMapInnerError::into_original`] and consumed just like the
+/// original [`NegotiatedStream`].
+///
+/// ```
+/// use rsync_transport::sniff_negotiation_stream;
+/// use std::io::{self, Cursor, Read};
+///
+/// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+///     .expect("sniff succeeds");
+/// let result = stream.try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+///     Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), cursor))
+/// });
+/// let err = result.expect_err("mapping fails");
+/// assert_eq!(err.error().kind(), io::ErrorKind::Other);
+///
+/// let mut restored = err.into_original();
+/// let mut replay = Vec::new();
+/// restored
+///     .read_to_end(&mut replay)
+///     .expect("replayed bytes remain available");
+/// assert_eq!(replay, b"@RSYNCD: 31.0\n");
+/// ```
 pub struct TryMapInnerError<T, E> {
     error: E,
     original: T,
