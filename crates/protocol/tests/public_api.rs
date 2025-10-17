@@ -177,7 +177,10 @@ fn protocol_version_from_str_matches_upstream_rules() {
     assert_eq!(unsupported_future.unsupported_value(), Some(40));
 
     let zero = ProtocolVersion::from_str("0").expect_err("protocol 0 is reserved");
-    assert_eq!(zero.kind(), ParseProtocolVersionErrorKind::UnsupportedRange(0));
+    assert_eq!(
+        zero.kind(),
+        ParseProtocolVersionErrorKind::UnsupportedRange(0)
+    );
     assert_eq!(zero.unsupported_value(), Some(0));
 
     let negative = ProtocolVersion::from_str("-29").expect_err("negative values are rejected");
@@ -185,13 +188,16 @@ fn protocol_version_from_str_matches_upstream_rules() {
 
     let invalid_digit = ProtocolVersion::from_str("3x")
         .expect_err("non-digit characters trigger an invalid digit error");
-    assert_eq!(invalid_digit.kind(), ParseProtocolVersionErrorKind::InvalidDigit);
+    assert_eq!(
+        invalid_digit.kind(),
+        ParseProtocolVersionErrorKind::InvalidDigit
+    );
 
     let empty = ProtocolVersion::from_str("   ").expect_err("empty strings are rejected");
     assert_eq!(empty.kind(), ParseProtocolVersionErrorKind::Empty);
 
-    let overflow = ProtocolVersion::from_str("999")
-        .expect_err("values above u8::MAX report overflow");
+    let overflow =
+        ProtocolVersion::from_str("999").expect_err("values above u8::MAX report overflow");
     assert_eq!(overflow.kind(), ParseProtocolVersionErrorKind::Overflow);
 }
 
