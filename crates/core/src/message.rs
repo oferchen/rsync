@@ -87,17 +87,17 @@ impl SourceLocation {
         let manifest_path = Path::new(manifest_dir);
         let file_path = Path::new(file);
 
-        let candidate = if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
+        let absolute = if file_path.is_absolute() {
+            file_path.to_path_buf()
+        } else if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
             let workspace_path = Path::new(root);
             if let Ok(manifest_relative) = manifest_path.strip_prefix(workspace_path) {
-                let manifest_relative = manifest_relative.to_path_buf();
-                let within_manifest = manifest_relative.as_os_str().is_empty()
-                    || file_path.starts_with(&manifest_relative);
-
-                if within_manifest {
-                    file_path.to_path_buf()
+                if manifest_relative.as_os_str().is_empty() {
+                    manifest_path.join(file_path)
+                } else if file_path.starts_with(manifest_relative) {
+                    workspace_path.join(file_path)
                 } else {
-                    manifest_relative.join(file_path)
+                    manifest_path.join(file_path)
                 }
             } else {
                 manifest_path.join(file_path)
@@ -106,18 +106,8 @@ impl SourceLocation {
             manifest_path.join(file_path)
         };
 
-        let normalized_candidate = if candidate.is_absolute() {
-            PathBuf::from(normalize_path(&candidate))
-        } else {
-            candidate
-        };
-
-        let repo_relative = if normalized_candidate.is_absolute() {
-            strip_workspace_prefix(&normalized_candidate)
-        } else {
-            normalized_candidate
-        };
-
+        let normalized_absolute = PathBuf::from(normalize_path(&absolute));
+        let repo_relative = strip_workspace_prefix(&normalized_absolute);
         let normalized = normalize_path(&repo_relative);
 
         Self {
@@ -636,6 +626,21 @@ mod tests {
 
         let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 7);
         assert_eq!(source.path(), "crates/core/src/message.rs");
+    }
+
+    #[test]
+    fn escaping_workspace_root_renders_absolute_path() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let escape = Path::new("../../../../outside.rs");
+        let absolute = manifest_dir.join(escape);
+
+        let leaked: &'static str =
+            Box::leak(escape.to_string_lossy().into_owned().into_boxed_str());
+
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 13);
+
+        assert!(Path::new(source.path()).is_absolute());
+        assert_eq!(source.path(), normalize_path(&absolute));
     }
 
     #[test]
