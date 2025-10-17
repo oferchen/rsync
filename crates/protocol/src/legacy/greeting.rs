@@ -161,12 +161,14 @@ impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
 /// negotiated [`ProtocolVersion`]. Callers that need access to the advertised
 /// protocol number, subprotocol suffix, or digest list should use
 /// [`parse_legacy_daemon_greeting_details`].
+#[doc(alias = "@RSYNCD")]
 #[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
     parse_legacy_daemon_greeting_details(line).map(LegacyDaemonGreeting::protocol)
 }
 
 /// Parses a legacy daemon greeting and returns a structured representation.
+#[doc(alias = "@RSYNCD")]
 #[must_use = "legacy daemon greeting parsing errors must be handled"]
 pub fn parse_legacy_daemon_greeting_details(
     line: &str,

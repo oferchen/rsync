@@ -11,6 +11,7 @@ use super::{
 /// the ASCII-based negotiation path. These lines reuse the same prefix as the
 /// version greeting, so higher level code benefits from a typed representation
 /// to avoid stringly-typed comparisons while still mirroring upstream behavior.
+#[doc(alias = "@RSYNCD")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LegacyDaemonMessage<'a> {
     /// A protocol version announcement such as `@RSYNCD: 30.0`.
@@ -46,6 +47,7 @@ pub enum LegacyDaemonMessage<'a> {
 /// variants and all remaining inputs yield [`LegacyDaemonMessage::Other`],
 /// allowing callers to gracefully handle extensions without guessing upstream's
 /// future strings.
+#[doc(alias = "@RSYNCD")]
 #[must_use = "the parsed legacy daemon message must be handled"]
 pub fn parse_legacy_daemon_message(
     line: &str,
@@ -110,6 +112,7 @@ pub fn parse_legacy_daemon_message(
 /// payload following `@ERROR:` is returned with surrounding ASCII whitespace
 /// removed, allowing callers to surface the daemon's diagnostic verbatim while
 /// still matching upstream trimming behavior.
+#[doc(alias = "@ERROR")]
 #[must_use]
 pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@ERROR:")
@@ -120,6 +123,7 @@ pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
 /// The returned payload mirrors [`parse_legacy_error_message`], enabling higher
 /// layers to surface warning text emitted by older daemons without guessing the
 /// exact formatting nuances.
+#[doc(alias = "@WARNING")]
 #[must_use]
 pub fn parse_legacy_warning_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@WARNING:")

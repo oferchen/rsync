@@ -57,6 +57,7 @@ impl FmtWrite for LegacyGreetingBuffer {
 /// The structure exposes the negotiated protocol version together with the
 /// parsed greeting metadata while retaining the replaying stream so higher
 /// layers can continue consuming control messages or file lists.
+#[doc(alias = "@RSYNCD")]
 #[derive(Debug)]
 pub struct LegacyDaemonHandshake<R> {
     stream: NegotiatedStream<R>,
@@ -256,6 +257,7 @@ impl<R> LegacyDaemonHandshake<R> {
 ///   binary handshake, which is handled by different transports.
 /// - Any I/O error reported while sniffing the prologue, reading the greeting,
 ///   writing the client's banner, or flushing the stream.
+#[doc(alias = "@RSYNCD")]
 pub fn negotiate_legacy_daemon_session<R>(
     reader: R,
     desired_protocol: ProtocolVersion,
@@ -287,6 +289,7 @@ where
 /// allocations when establishing many daemon sessions. The sniffer is reset
 /// before any bytes are observed so state from previous negotiations is fully
 /// cleared. Behaviour otherwise matches [`negotiate_legacy_daemon_session`].
+#[doc(alias = "@RSYNCD")]
 pub fn negotiate_legacy_daemon_session_with_sniffer<R>(
     reader: R,
     desired_protocol: ProtocolVersion,
