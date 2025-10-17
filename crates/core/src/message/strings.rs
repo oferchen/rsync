@@ -53,6 +53,51 @@
 
 use super::{Message, Severity};
 
+/// Sorted table mirroring upstream `rerr_names` entries.
+const EXIT_CODE_TABLE: &[ExitCodeMessage] = &[
+    ExitCodeMessage::new(Severity::Error, 1, "syntax or usage error"),
+    ExitCodeMessage::new(Severity::Error, 2, "protocol incompatibility"),
+    ExitCodeMessage::new(
+        Severity::Error,
+        3,
+        "errors selecting input/output files, dirs",
+    ),
+    ExitCodeMessage::new(Severity::Error, 4, "requested action not supported"),
+    ExitCodeMessage::new(Severity::Error, 5, "error starting client-server protocol"),
+    ExitCodeMessage::new(Severity::Error, 10, "error in socket IO"),
+    ExitCodeMessage::new(Severity::Error, 11, "error in file IO"),
+    ExitCodeMessage::new(Severity::Error, 12, "error in rsync protocol data stream"),
+    ExitCodeMessage::new(Severity::Error, 13, "errors with program diagnostics"),
+    ExitCodeMessage::new(Severity::Error, 14, "error in IPC code"),
+    ExitCodeMessage::new(Severity::Error, 15, "sibling process crashed"),
+    ExitCodeMessage::new(Severity::Error, 16, "sibling process terminated abnormally"),
+    ExitCodeMessage::new(Severity::Error, 19, "received SIGUSR1"),
+    ExitCodeMessage::new(Severity::Error, 20, "received SIGINT, SIGTERM, or SIGHUP"),
+    ExitCodeMessage::new(Severity::Error, 21, "waitpid() failed"),
+    ExitCodeMessage::new(Severity::Error, 22, "error allocating core memory buffers"),
+    ExitCodeMessage::new(
+        Severity::Error,
+        23,
+        "some files/attrs were not transferred (see previous errors)",
+    ),
+    ExitCodeMessage::new(
+        Severity::Warning,
+        24,
+        "some files vanished before they could be transferred",
+    ),
+    ExitCodeMessage::new(
+        Severity::Error,
+        25,
+        "the --max-delete limit stopped deletions",
+    ),
+    ExitCodeMessage::new(Severity::Error, 30, "timeout in data send/receive"),
+    ExitCodeMessage::new(Severity::Error, 35, "timeout waiting for daemon connection"),
+    ExitCodeMessage::new(Severity::Error, 124, "remote shell failed"),
+    ExitCodeMessage::new(Severity::Error, 125, "remote shell killed"),
+    ExitCodeMessage::new(Severity::Error, 126, "remote command could not be run"),
+    ExitCodeMessage::new(Severity::Error, 127, "remote command not found"),
+];
+
 /// Template describing the canonical wording for a particular exit code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExitCodeMessage {
@@ -102,47 +147,13 @@ impl ExitCodeMessage {
 }
 
 /// Returns the canonical template for the provided exit code, if known.
+#[doc(alias = "rerr_names")]
 #[must_use]
 pub fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
-    use Severity::{Error, Warning};
-
-    let severity = match code {
-        24 => Warning,
-        1 | 2 | 3 | 4 | 5 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 19 | 20 | 21 | 22 | 23 | 25 | 30
-        | 35 | 124 | 125 | 126 | 127 => Error,
-        _ => return None,
-    };
-
-    let text = match code {
-        1 => "syntax or usage error",
-        2 => "protocol incompatibility",
-        3 => "errors selecting input/output files, dirs",
-        4 => "requested action not supported",
-        5 => "error starting client-server protocol",
-        10 => "error in socket IO",
-        11 => "error in file IO",
-        12 => "error in rsync protocol data stream",
-        13 => "errors with program diagnostics",
-        14 => "error in IPC code",
-        15 => "sibling process crashed",
-        16 => "sibling process terminated abnormally",
-        19 => "received SIGUSR1",
-        20 => "received SIGINT, SIGTERM, or SIGHUP",
-        21 => "waitpid() failed",
-        22 => "error allocating core memory buffers",
-        23 => "some files/attrs were not transferred (see previous errors)",
-        24 => "some files vanished before they could be transferred",
-        25 => "the --max-delete limit stopped deletions",
-        30 => "timeout in data send/receive",
-        35 => "timeout waiting for daemon connection",
-        124 => "remote shell failed",
-        125 => "remote shell killed",
-        126 => "remote command could not be run",
-        127 => "remote command not found",
-        _ => unreachable!("severity guard should have filtered unknown codes"),
-    };
-
-    Some(ExitCodeMessage::new(severity, code, text))
+    EXIT_CODE_TABLE
+        .binary_search_by_key(&code, |entry| entry.code())
+        .ok()
+        .map(|index| EXIT_CODE_TABLE[index])
 }
 
 #[cfg(test)]
@@ -180,5 +191,21 @@ mod tests {
         assert!(exit_code_message(-1).is_none());
         assert!(exit_code_message(0).is_none());
         assert!(exit_code_message(255).is_none());
+    }
+
+    #[test]
+    fn exit_code_table_is_strictly_increasing() {
+        let mut previous = None;
+
+        for entry in EXIT_CODE_TABLE {
+            if let Some(prev) = previous {
+                assert!(
+                    prev < entry.code(),
+                    "exit code table must be sorted without duplicates",
+                );
+            }
+
+            previous = Some(entry.code());
+        }
     }
 }
