@@ -70,6 +70,17 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Returns the parsed legacy daemon greeting when the negotiation used the legacy ASCII handshake.
+    ///
+    /// Binary negotiations do not exchange a greeting, so the method returns [`None`] in that case.
+    #[must_use]
+    pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
+        match self {
+            Self::Binary(_) => None,
+            Self::Legacy(handshake) => Some(handshake.server_greeting()),
+        }
+    }
+
     /// Returns a shared reference to the replaying stream regardless of variant.
     #[must_use]
     pub fn stream(&self) -> &NegotiatedStream<R> {

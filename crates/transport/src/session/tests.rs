@@ -97,6 +97,13 @@ fn negotiate_session_detects_legacy_transport() {
         handshake.remote_protocol(),
         ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
     );
+    assert_eq!(
+        handshake
+            .server_greeting()
+            .expect("legacy handshake exposes greeting")
+            .advertised_protocol(),
+        31
+    );
 
     let transport = match handshake.into_legacy() {
         Ok(handshake) => {
@@ -152,6 +159,29 @@ fn negotiate_session_with_sniffer_supports_reuse() {
         .into_inner();
     assert_eq!(transport2.writes(), b"@RSYNCD: 31.0\n");
     assert_eq!(transport2.flushes(), 1);
+}
+
+#[test]
+fn session_handshake_server_greeting_matches_variant() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let binary_transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+    let binary_handshake =
+        negotiate_session(binary_transport, ProtocolVersion::NEWEST).expect("binary handshake");
+
+    assert!(binary_handshake.server_greeting().is_none());
+
+    let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    let legacy_handshake =
+        negotiate_session(legacy_transport, ProtocolVersion::NEWEST).expect("legacy handshake");
+
+    let greeting = legacy_handshake
+        .server_greeting()
+        .expect("legacy handshake exposes greeting");
+    assert_eq!(greeting.advertised_protocol(), 31);
+    assert_eq!(
+        greeting.protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
 }
 
 #[test]
