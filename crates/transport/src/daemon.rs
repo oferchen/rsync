@@ -127,17 +127,15 @@ impl<R> LegacyDaemonHandshake<R> {
             negotiated_protocol,
         } = self;
 
-        let mut greeting = Some(server_greeting);
-
         match stream.try_map_inner(map) {
             Ok(stream) => Ok(LegacyDaemonHandshake {
                 stream,
-                server_greeting: greeting.take().expect("greeting available"),
+                server_greeting,
                 negotiated_protocol,
             }),
             Err(err) => Err(err.map_original(|stream| LegacyDaemonHandshake {
                 stream,
-                server_greeting: greeting.take().expect("greeting available"),
+                server_greeting,
                 negotiated_protocol,
             })),
         }
