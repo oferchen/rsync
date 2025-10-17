@@ -2,19 +2,54 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 
-//! Protocol version negotiation helpers for the Rust `rsync` reimplementation.
+//! # Overview
 //!
-//! The crate is split into small modules that mirror upstream rsync's
-//! negotiation building blocks. Re-exported APIs allow higher layers to remain
-//! agnostic to the internal layout while benefitting from the reduced file
-//! sizes required by the workspace style guide. The utilities exposed here cover
-//! both the initial protocol handshake and the multiplexed control stream used
-//! after a session has been negotiated.
+//! `rsync_protocol` implements the negotiation and multiplexing primitives
+//! required by the Rust `rsync` reimplementation. The crate mirrors upstream
+//! rsync 3.4.1 behaviour so higher layers can negotiate protocol versions,
+//! interpret legacy daemon banners, and exchange multiplexed frames without
+//! depending on the original C sources.
+//!
+//! # Design
+//!
+//! Functionality is decomposed into modules that track the upstream layout:
+//!
+//! - [`version`] exposes [`ProtocolVersion`] and helpers for selecting the
+//!   highest mutually supported protocol between peers.
+//! - [`legacy`] provides parsers for ASCII daemon handshakes such as
+//!   `@RSYNCD: 31.0` and the follow-up control messages emitted by rsync
+//!   daemons prior to protocol 30.
+//! - [`negotiation`] includes incremental sniffers that classify the handshake
+//!   style (binary vs legacy ASCII) without losing buffered bytes.
+//! - [`multiplex`] and [`envelope`] re-create the control/data framing used once
+//!   a session has been negotiated.
+//!
+//! Each module is small enough to satisfy the workspace style guide while the
+//! crate root re-exports the stable APIs consumed by the higher-level
+//! transport, core, and daemon layers.
+//!
+//! # Invariants
+//!
+//! - [`SUPPORTED_PROTOCOLS`] always lists protocol numbers in descending order
+//!   (`32` through `28`).
+//! - Legacy negotiation helpers never drop or duplicate bytes: sniffed prefixes
+//!   can be replayed verbatim into the parsing routines.
+//! - Multiplexed message headers clamp payload lengths to the 24-bit limit used
+//!   by upstream rsync.
+//!
+//! # Errors
+//!
+//! Parsing helpers surface rich error types that carry enough context to
+//! reproduce upstream diagnostics. For example,
+//! [`NegotiationError`](error::NegotiationError) distinguishes between malformed
+//! greetings, unsupported protocol ranges, and truncated payloads. All error
+//! types implement [`std::error::Error`] and convert into [`std::io::Error`]
+//! where appropriate so they integrate naturally with transport code.
 //!
 //! # Examples
 //!
-//! Determine whether a buffered prologue belongs to the legacy ASCII greeting or
-//! the binary negotiation. The helper behaves exactly like upstream rsync's
+//! Determine whether a buffered prologue belongs to the legacy ASCII greeting
+//! or the binary negotiation. The helper behaves exactly like upstream rsync's
 //! `io.c:check_protok` logic by classifying the session based on the first byte.
 //!
 //! ```
@@ -39,8 +74,6 @@
 //! let negotiated = select_highest_mutual([32, 31]).expect("mutual version exists");
 //! assert_eq!(negotiated, ProtocolVersion::NEWEST);
 //! ```
-//!
-//! ## Replaying legacy negotiation prefixes
 //!
 //! When a peer selects the legacy ASCII negotiation, the bytes that triggered
 //! the decision must be replayed into the greeting parser so the full
@@ -77,6 +110,13 @@
 //!     rsync_protocol::ProtocolVersion::from_supported(31).unwrap()
 //! );
 //! ```
+//!
+//! # See also
+//!
+//! - [`rsync_transport`] for transport wrappers that reuse the sniffers and
+//!   parsers exposed here.
+//! - [`rsync_core`] for message formatting utilities that rely on negotiated
+//!   protocol numbers.
 
 mod envelope;
 mod error;
