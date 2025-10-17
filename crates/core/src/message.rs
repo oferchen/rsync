@@ -751,24 +751,29 @@ impl Message {
         }
 
         if segment_count > 1 {
-            match writer.write_vectored(&segments[..segment_count]) {
-                Ok(written) if written == total_len => return Ok(()),
-                Ok(written) => {
-                    let mut remaining = written;
-                    for slice in &segments[..segment_count] {
-                        let data = slice.as_ref();
-                        if remaining >= data.len() {
-                            remaining -= data.len();
-                            continue;
+            loop {
+                match writer.write_vectored(&segments[..segment_count]) {
+                    Ok(written) if written == total_len => return Ok(()),
+                    Ok(written) => {
+                        let mut remaining = written;
+                        for slice in &segments[..segment_count] {
+                            let data = slice.as_ref();
+                            if remaining >= data.len() {
+                                remaining -= data.len();
+                                continue;
+                            }
+
+                            writer.write_all(&data[remaining..])?;
+                            remaining = 0;
                         }
 
-                        writer.write_all(&data[remaining..])?;
-                        remaining = 0;
+                        return Ok(());
                     }
-
-                    return Ok(());
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                        continue;
+                    }
+                    Err(err) => return Err(err),
                 }
-                Err(err) => return Err(err),
             }
         }
 
@@ -1306,6 +1311,60 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "newline sink error");
+    }
+
+    #[derive(Default)]
+    struct InterruptingVectoredWriter {
+        buffer: Vec<u8>,
+        remaining_interrupts: usize,
+    }
+
+    impl InterruptingVectoredWriter {
+        fn new(interruptions: usize) -> Self {
+            Self {
+                remaining_interrupts: interruptions,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl io::Write for InterruptingVectoredWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            if self.remaining_interrupts > 0 {
+                self.remaining_interrupts -= 1;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+
+            let mut written = 0usize;
+            for slice in bufs {
+                self.buffer.extend_from_slice(slice.as_ref());
+                written += slice.len();
+            }
+
+            Ok(written)
+        }
+    }
+
+    #[test]
+    fn render_to_writer_retries_after_interrupted_vectored_write() {
+        let message = Message::info("protocol negotiation complete");
+        let mut writer = InterruptingVectoredWriter::new(1);
+
+        message
+            .render_to_writer(&mut writer)
+            .expect("interrupted writes should be retried");
+
+        assert_eq!(writer.remaining_interrupts, 0);
+        assert_eq!(writer.buffer, message.to_string().into_bytes());
     }
 
     #[test]
