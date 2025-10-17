@@ -44,7 +44,7 @@ impl<R> NegotiatedStream<R> {
         self.buffer.sniffed_prefix()
     }
 
-    /// Returns the bytes buffered beyond the sniffed negotiation prefix.
+    /// Returns the unread bytes buffered beyond the sniffed negotiation prefix.
     #[must_use]
     pub fn buffered_remainder(&self) -> &[u8] {
         self.buffer.buffered_remainder()
@@ -60,9 +60,9 @@ impl<R> NegotiatedStream<R> {
     ///
     /// The tuple mirrors the view exposed by [`NegotiationPrologueSniffer::buffered_split`],
     /// allowing higher layers to borrow both slices simultaneously when staging replay
-    /// buffers. The first element corresponds to the canonical prefix that must be replayed
-    /// before continuing the handshake, while the second slice exposes any additional payload
-    /// that arrived alongside the detection bytes.
+    /// buffers. The first element contains the portion of the canonical prefix that has not
+    /// yet been replayed, while the second slice exposes any additional payload that
+    /// arrived alongside the detection bytes and remains buffered.
     #[must_use]
     pub fn buffered_split(&self) -> (&[u8], &[u8]) {
         self.buffer.buffered_split()
@@ -584,7 +584,11 @@ impl NegotiationBuffer {
     }
 
     fn buffered_remainder(&self) -> &[u8] {
-        &self.buffered[self.sniffed_prefix_len..]
+        let start = self
+            .buffered_pos
+            .max(self.sniffed_prefix_len())
+            .min(self.buffered.len());
+        &self.buffered[start..]
     }
 
     fn buffered(&self) -> &[u8] {
@@ -595,7 +599,14 @@ impl NegotiationBuffer {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
 
-        (&self.buffered[..prefix_len], &self.buffered[prefix_len..])
+        let consumed_prefix = self.buffered_pos.min(prefix_len);
+        let prefix_start = consumed_prefix;
+        let prefix_slice = &self.buffered[prefix_start..prefix_len];
+
+        let remainder_start = self.buffered_pos.max(prefix_len).min(self.buffered.len());
+        let remainder_slice = &self.buffered[remainder_start..];
+
+        (prefix_slice, remainder_slice)
     }
 
     const fn sniffed_prefix_len(&self) -> usize {
@@ -960,8 +971,26 @@ mod tests {
         assert_eq!(buf, [0x00]);
 
         let (after_read_prefix, after_read_remainder) = stream.buffered_split();
-        assert_eq!(after_read_prefix, &[0x00]);
+        assert!(after_read_prefix.is_empty());
         assert_eq!(after_read_remainder, b"abc");
+
+        let mut partial = [0u8; 2];
+        stream
+            .read_exact(&mut partial)
+            .expect("read_exact drains part of the buffered remainder");
+        assert_eq!(&partial, b"ab");
+        assert_eq!(stream.buffered_remainder(), b"c");
+
+        let mut final_byte = [0u8; 1];
+        stream
+            .read_exact(&mut final_byte)
+            .expect("read_exact consumes the last buffered byte");
+        assert_eq!(&final_byte, b"c");
+        assert!(stream.buffered_remainder().is_empty());
+
+        let (after_read_prefix, after_read_remainder) = stream.buffered_split();
+        assert!(after_read_prefix.is_empty());
+        assert!(after_read_remainder.is_empty());
     }
 
     #[test]
@@ -1187,7 +1216,7 @@ mod tests {
         );
 
         let (rehydrated_prefix, rehydrated_remainder) = rehydrated.buffered_split();
-        assert_eq!(rehydrated_prefix, b"@RSYNCD:");
+        assert_eq!(rehydrated_prefix, b"NCD:");
         assert_eq!(rehydrated_remainder, rehydrated.buffered_remainder());
 
         let mut remainder = Vec::new();
