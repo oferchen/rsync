@@ -75,9 +75,26 @@ impl<R> NegotiatedStream<R> {
     }
 
     /// Returns the length of the sniffed negotiation prefix.
+    ///
+    /// The value is the number of bytes that were required to classify the
+    /// negotiation prologue. For legacy ASCII handshakes it matches the length
+    /// of the canonical `@RSYNCD:` prefix. The method complements
+    /// [`Self::sniffed_prefix_remaining`], which tracks how many of those bytes
+    /// have yet to be replayed.
     #[must_use]
     pub const fn sniffed_prefix_len(&self) -> usize {
         self.buffer.sniffed_prefix_len()
+    }
+
+    /// Returns how many bytes from the sniffed negotiation prefix remain buffered.
+    ///
+    /// The value decreases as callers consume the replay data (for example via
+    /// [`Read::read`] or [`BufRead::consume`]). A return value of zero indicates that
+    /// the entire detection prefix has been drained and subsequent reads operate
+    /// directly on the inner transport.
+    #[must_use]
+    pub fn sniffed_prefix_remaining(&self) -> usize {
+        self.buffer.sniffed_prefix_remaining()
     }
 
     /// Returns the remaining number of buffered bytes that have not yet been read.
@@ -609,6 +626,16 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.sniffed_prefix_len()
     }
 
+    /// Returns how many bytes from the sniffed negotiation prefix remain buffered.
+    ///
+    /// This mirrors [`NegotiatedStream::sniffed_prefix_remaining`], giving callers
+    /// access to the replay position after extracting the parts without
+    /// reconstructing a [`NegotiatedStream`].
+    #[must_use]
+    pub fn sniffed_prefix_remaining(&self) -> usize {
+        self.buffer.sniffed_prefix_remaining()
+    }
+
     /// Returns the inner reader.
     #[must_use]
     pub const fn inner(&self) -> &R {
@@ -944,7 +971,7 @@ mod tests {
 
     use std::io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write};
 
-    use rsync_protocol::ProtocolVersion;
+    use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, ProtocolVersion};
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
         let cursor = Cursor::new(data.to_vec());
@@ -1017,6 +1044,7 @@ mod tests {
         assert_eq!(stream.decision(), NegotiationPrologue::Binary);
         assert_eq!(stream.sniffed_prefix(), &[0x00]);
         assert_eq!(stream.sniffed_prefix_len(), 1);
+        assert_eq!(stream.sniffed_prefix_remaining(), 1);
         assert_eq!(stream.buffered_len(), 1);
         assert!(stream.buffered_remainder().is_empty());
         let (prefix, remainder) = stream.buffered_split();
@@ -1028,6 +1056,7 @@ mod tests {
             .read_exact(&mut buf)
             .expect("read_exact drains buffered prefix and remainder");
         assert_eq!(&buf, &[0x00, 0x12, 0x34]);
+        assert_eq!(stream.sniffed_prefix_remaining(), 0);
 
         let mut tail = [0u8; 2];
         let read = stream
@@ -1035,6 +1064,51 @@ mod tests {
             .expect("read after buffer consumes inner");
         assert_eq!(read, 0);
         assert!(tail.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn sniffed_prefix_remaining_tracks_consumed_bytes() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 29.0\nrest").expect("sniff succeeds");
+        assert_eq!(stream.sniffed_prefix_remaining(), LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut prefix_fragment = [0u8; 3];
+        stream
+            .read_exact(&mut prefix_fragment)
+            .expect("prefix fragment is replayed first");
+        assert_eq!(
+            stream.sniffed_prefix_remaining(),
+            LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len()
+        );
+
+        let remaining_len = LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len();
+        let mut rest_of_prefix = vec![0u8; remaining_len];
+        stream
+            .read_exact(&mut rest_of_prefix)
+            .expect("remaining prefix bytes are replayed");
+        assert_eq!(stream.sniffed_prefix_remaining(), 0);
+        assert_eq!(rest_of_prefix, b"YNCD:");
+    }
+
+    #[test]
+    fn sniffed_prefix_remaining_visible_on_parts() {
+        let initial_parts = sniff_bytes(b"@RSYNCD: 31.0\n")
+            .expect("sniff succeeds")
+            .into_parts();
+        assert_eq!(
+            initial_parts.sniffed_prefix_remaining(),
+            LEGACY_DAEMON_PREFIX_LEN
+        );
+
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let mut prefix_fragment = [0u8; 5];
+        stream
+            .read_exact(&mut prefix_fragment)
+            .expect("prefix fragment is replayed");
+        let parts = stream.into_parts();
+        assert_eq!(
+            parts.sniffed_prefix_remaining(),
+            LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len()
+        );
     }
 
     #[test]
