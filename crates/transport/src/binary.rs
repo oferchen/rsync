@@ -2,6 +2,7 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
+use core::convert::TryFrom;
 use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
 use std::io::{self, Read, Write};
@@ -17,6 +18,7 @@ use std::io::{self, Read, Write};
 #[derive(Debug)]
 pub struct BinaryHandshake<R> {
     stream: NegotiatedStream<R>,
+    remote_advertised: u32,
     remote_protocol: ProtocolVersion,
     negotiated_protocol: ProtocolVersion,
 }
@@ -33,6 +35,20 @@ impl<R> BinaryHandshake<R> {
     #[must_use]
     pub const fn remote_protocol(&self) -> ProtocolVersion {
         self.remote_protocol
+    }
+
+    /// Returns the protocol byte advertised by the remote peer before clamping.
+    #[must_use]
+    pub const fn remote_advertised_protocol(&self) -> u32 {
+        self.remote_advertised
+    }
+
+    /// Reports whether the remote peer advertised a protocol newer than we support.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        let advertised = self.remote_advertised_protocol();
+        let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
+        advertised_byte > self.remote_protocol.as_u8()
     }
 
     /// Returns a shared reference to the replaying stream.
@@ -55,8 +71,13 @@ impl<R> BinaryHandshake<R> {
 
     /// Decomposes the handshake into its components.
     #[must_use]
-    pub fn into_components(self) -> (ProtocolVersion, ProtocolVersion, NegotiatedStream<R>) {
-        (self.remote_protocol, self.negotiated_protocol, self.stream)
+    pub fn into_components(self) -> (u32, ProtocolVersion, ProtocolVersion, NegotiatedStream<R>) {
+        (
+            self.remote_advertised,
+            self.remote_protocol,
+            self.negotiated_protocol,
+            self.stream,
+        )
     }
 
     /// Maps the inner transport while preserving the negotiated metadata.
@@ -73,12 +94,14 @@ impl<R> BinaryHandshake<R> {
     {
         let Self {
             stream,
+            remote_advertised,
             remote_protocol,
             negotiated_protocol,
         } = self;
 
         BinaryHandshake {
             stream: stream.map_inner(map),
+            remote_advertised,
             remote_protocol,
             negotiated_protocol,
         }
@@ -92,14 +115,27 @@ impl<R> BinaryHandshake<R> {
     /// [`Self::into_components`], but hands back the split representation so callers can inspect or
     /// transform the inner reader before reassembling a [`NegotiatedStream`].
     #[must_use]
-    pub fn into_stream_parts(self) -> (ProtocolVersion, ProtocolVersion, NegotiatedStreamParts<R>) {
+    pub fn into_stream_parts(
+        self,
+    ) -> (
+        u32,
+        ProtocolVersion,
+        ProtocolVersion,
+        NegotiatedStreamParts<R>,
+    ) {
         let Self {
             stream,
+            remote_advertised,
             remote_protocol,
             negotiated_protocol,
         } = self;
 
-        (remote_protocol, negotiated_protocol, stream.into_parts())
+        (
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream.into_parts(),
+        )
     }
 
     /// Reconstructs a [`BinaryHandshake`] from previously extracted stream parts.
@@ -111,6 +147,7 @@ impl<R> BinaryHandshake<R> {
     /// legacy parts cannot be mixed inadvertently.
     #[must_use]
     pub fn from_stream_parts(
+        remote_advertised: u32,
         remote_protocol: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
         parts: NegotiatedStreamParts<R>,
@@ -119,6 +156,7 @@ impl<R> BinaryHandshake<R> {
 
         Self {
             stream: parts.into_stream(),
+            remote_advertised,
             remote_protocol,
             negotiated_protocol,
         }
@@ -203,9 +241,9 @@ where
 
     let mut remote_buf = [0u8; 4];
     stream.read_exact(&mut remote_buf)?;
-    let remote_raw = u32::from_le_bytes(remote_buf);
+    let remote_advertised = u32::from_le_bytes(remote_buf);
 
-    let remote_byte = remote_raw.try_into().unwrap_or(u8::MAX);
+    let remote_byte = u8::try_from(remote_advertised).unwrap_or(u8::MAX);
 
     let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_byte) {
         Ok(protocol) => protocol,
@@ -220,6 +258,7 @@ where
 
     Ok(BinaryHandshake {
         stream,
+        remote_advertised,
         remote_protocol,
         negotiated_protocol,
     })
@@ -368,6 +407,11 @@ mod tests {
 
         assert_eq!(handshake.remote_protocol(), remote_version);
         assert_eq!(handshake.negotiated_protocol(), remote_version);
+        assert_eq!(
+            handshake.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!handshake.remote_protocol_was_clamped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(
@@ -393,6 +437,11 @@ mod tests {
 
         assert_eq!(handshake.remote_protocol(), remote_version);
         assert_eq!(handshake.negotiated_protocol(), remote_version);
+        assert_eq!(
+            handshake.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!handshake.remote_protocol_was_clamped());
 
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"payload");
@@ -415,6 +464,8 @@ mod tests {
 
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), desired);
+        assert_eq!(handshake.remote_advertised_protocol(), future_version);
+        assert!(handshake.remote_protocol_was_clamped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), &handshake_bytes(desired));
@@ -430,6 +481,8 @@ mod tests {
 
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.remote_advertised_protocol(), future_version);
+        assert!(handshake.remote_protocol_was_clamped());
     }
 
     #[test]
@@ -442,6 +495,11 @@ mod tests {
 
         assert_eq!(handshake.remote_protocol(), remote_version);
         assert_eq!(handshake.negotiated_protocol(), desired);
+        assert_eq!(
+            handshake.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!handshake.remote_protocol_was_clamped());
     }
 
     #[test]
@@ -470,7 +528,8 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
-        let (remote, negotiated, parts) = handshake.into_stream_parts();
+        let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
+        assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
         assert_eq!(negotiated, remote_version);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
@@ -500,12 +559,14 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
-        let (remote, negotiated, parts) = handshake.into_stream_parts();
+        let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
+        assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
         assert_eq!(negotiated, remote_version);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
 
-        let mut rehydrated = BinaryHandshake::from_stream_parts(remote, negotiated, parts);
+        let mut rehydrated =
+            BinaryHandshake::from_stream_parts(remote_adv, remote, negotiated, parts);
 
         assert_eq!(rehydrated.remote_protocol(), remote_version);
         assert_eq!(rehydrated.negotiated_protocol(), remote_version);
