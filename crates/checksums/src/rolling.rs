@@ -197,6 +197,12 @@ impl RollingDigest {
         self.len
     }
 
+    /// Returns whether the digest was computed from zero bytes.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     /// Returns the checksum in rsync's packed 32-bit representation.
     #[must_use]
     pub const fn value(&self) -> u32 {
