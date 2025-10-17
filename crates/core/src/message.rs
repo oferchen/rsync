@@ -1,0 +1,280 @@
+use std::borrow::Cow;
+use std::env;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+/// Version tag appended to message trailers.
+pub const VERSION_SUFFIX: &str = "3.4.1-rust";
+
+/// Severity of a user-visible message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Severity {
+    /// Informational message.
+    Info,
+    /// Warning message.
+    Warning,
+    /// Error message.
+    Error,
+}
+
+impl Severity {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Role used in the trailer portion of an rsync message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    /// Sender role (`[sender=…]`).
+    Sender,
+    /// Receiver role (`[receiver=…]`).
+    Receiver,
+    /// Generator role (`[generator=…]`).
+    Generator,
+    /// Server role (`[server=…]`).
+    Server,
+    /// Client role (`[client=…]`).
+    Client,
+    /// Daemon role (`[daemon=…]`).
+    Daemon,
+}
+
+impl Role {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sender => "sender",
+            Self::Receiver => "receiver",
+            Self::Generator => "generator",
+            Self::Server => "server",
+            Self::Client => "client",
+            Self::Daemon => "daemon",
+        }
+    }
+}
+
+/// Source location associated with a message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceLocation {
+    path: Cow<'static, str>,
+    line: u32,
+}
+
+impl SourceLocation {
+    /// Creates a source location from workspace paths.
+    #[must_use]
+    pub fn from_parts(manifest_dir: &'static str, file: &'static str, line: u32) -> Self {
+        let absolute = Path::new(manifest_dir).join(file);
+        let relative = strip_workspace_prefix(&absolute);
+        let normalized = normalize_path(relative);
+
+        Self {
+            path: Cow::Owned(normalized),
+            line,
+        }
+    }
+
+    /// Returns the repo-relative path stored in the source location.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the line number recorded for the message.
+    #[must_use]
+    pub const fn line(&self) -> u32 {
+        self.line
+    }
+}
+
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.path, self.line)
+    }
+}
+
+/// Macro helper that captures the current source location.
+#[macro_export]
+macro_rules! message_source {
+    () => {
+        $crate::message::SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), line!())
+    };
+}
+
+/// Structured representation of an rsync user-visible message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Message {
+    severity: Severity,
+    code: Option<i32>,
+    text: Cow<'static, str>,
+    role: Option<Role>,
+    source: Option<SourceLocation>,
+}
+
+impl Message {
+    /// Creates an informational message.
+    #[must_use]
+    pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
+        Self {
+            severity: Severity::Info,
+            code: None,
+            text: text.into(),
+            role: None,
+            source: None,
+        }
+    }
+
+    /// Creates a warning message.
+    #[must_use]
+    pub fn warning<T: Into<Cow<'static, str>>>(text: T) -> Self {
+        Self {
+            severity: Severity::Warning,
+            code: None,
+            text: text.into(),
+            role: None,
+            source: None,
+        }
+    }
+
+    /// Creates an error message with the provided exit code.
+    #[must_use]
+    pub fn error<T: Into<Cow<'static, str>>>(code: i32, text: T) -> Self {
+        Self {
+            severity: Severity::Error,
+            code: Some(code),
+            text: text.into(),
+            role: None,
+            source: None,
+        }
+    }
+
+    /// Returns the message severity.
+    #[must_use]
+    pub const fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    /// Returns the exit code associated with the message if present.
+    #[must_use]
+    pub const fn code(&self) -> Option<i32> {
+        self.code
+    }
+
+    /// Returns the message payload text.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Returns the role used in the trailer, if any.
+    #[must_use]
+    pub const fn role(&self) -> Option<Role> {
+        self.role
+    }
+
+    /// Returns the recorded source location, if any.
+    #[must_use]
+    pub fn source(&self) -> Option<&SourceLocation> {
+        self.source.as_ref()
+    }
+
+    /// Attaches a role trailer to the message.
+    #[must_use]
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.role = Some(role);
+        self
+    }
+
+    /// Attaches a source location to the message.
+    #[must_use]
+    pub fn with_source(mut self, source: SourceLocation) -> Self {
+        self.source = Some(source);
+        self
+    }
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "rsync {}: {}", self.severity.as_str(), self.text)?;
+
+        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
+            write!(f, " (code {code})")?;
+        }
+
+        if let Some(source) = &self.source {
+            write!(f, " at {source}")?;
+        }
+
+        if let Some(role) = self.role {
+            write!(f, " [{}={VERSION_SUFFIX}]", role.as_str())?;
+        }
+
+        Ok(())
+    }
+}
+
+fn strip_workspace_prefix(path: &Path) -> PathBuf {
+    let workspace_dir = env::var("CARGO_WORKSPACE_DIR");
+    if let Ok(root) = workspace_dir {
+        let workspace_path = Path::new(&root);
+        if let Ok(relative) = path.strip_prefix(workspace_path) {
+            return relative.to_path_buf();
+        }
+    }
+
+    path.to_path_buf()
+}
+
+fn normalize_path(path: PathBuf) -> String {
+    let lossy = path.to_string_lossy();
+    lossy.replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_error_with_code_role_and_source() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let formatted = message.to_string();
+
+        assert!(formatted.starts_with("rsync error: delta-transfer failure (code 23) at "));
+        assert!(formatted.contains("[sender=3.4.1-rust]"));
+        assert!(formatted.contains("src/message.rs"));
+    }
+
+    #[test]
+    fn formats_warning_without_role_or_source() {
+        let message = Message::warning("soft limit reached");
+        let formatted = message.to_string();
+
+        assert_eq!(formatted, "rsync warning: soft limit reached");
+    }
+
+    #[test]
+    fn info_messages_omit_code_suffix() {
+        let message = Message::info("protocol handshake complete").with_source(message_source!());
+        let formatted = message.to_string();
+
+        assert!(formatted.starts_with("rsync info: protocol handshake complete at "));
+        assert!(!formatted.contains("(code"));
+    }
+
+    #[test]
+    fn source_location_is_repo_relative() {
+        let source = message_source!();
+        let path = source.path();
+        assert!(!path.is_empty());
+        assert!(path.ends_with("src/message.rs"));
+        assert!(!path.contains('\\'));
+        assert!(source.line() > 0);
+    }
+}

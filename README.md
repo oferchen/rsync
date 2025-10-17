@@ -17,6 +17,9 @@ The workspace currently contains the following published crates:
   greetings and control messages.
 - `crates/checksums` — the rolling rsync checksum (`rsum`) together with
   streaming MD4/MD5/XXH64 digests used for strong block verification.
+- `crates/core` — shared infrastructure such as the centralized message
+  formatting utilities that attach role trailers and normalized source
+  locations to user-facing diagnostics.
 
 Higher-level crates such as `core`, `cli`, `daemon`, `engine`, and `meta` have
 not been implemented yet; current gaps and parity status are tracked in
