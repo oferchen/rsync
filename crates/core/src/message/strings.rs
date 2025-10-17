@@ -91,7 +91,7 @@ impl ExitCodeMessage {
     }
 
     /// Converts the template into a [`Message`] that mirrors upstream output.
-    #[must_use]
+    #[must_use = "the constructed Message should be rendered so the exit-code diagnostic reaches the user"]
     pub fn to_message(self) -> Message {
         match self.severity {
             Severity::Info => Message::info(self.text).with_code(self.code),
