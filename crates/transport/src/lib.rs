@@ -12,4 +12,7 @@
 
 mod negotiation;
 
-pub use negotiation::{NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream};
+pub use negotiation::{
+    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    sniff_negotiation_stream_with_sniffer,
+};
