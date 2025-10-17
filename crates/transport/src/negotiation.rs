@@ -96,6 +96,19 @@ impl<R> NegotiatedStream<R> {
         }
     }
 
+    /// Releases the wrapper and returns the raw negotiation components together with the inner reader.
+    ///
+    /// The tuple mirrors the state captured during sniffing: the detected [`NegotiationPrologue`], the
+    /// length of the buffered prefix, the current replay cursor (how many buffered bytes were already
+    /// consumed), the owned buffer containing the sniffed bytes, and the inner reader. This variant
+    /// avoids cloning the buffer when higher layers need to persist or reuse the sniffed data. The
+    /// replay cursor and prefix length are preserved so callers can reconstruct a [`NegotiatedStream`]
+    /// using [`Self::from_raw_parts`] without losing track of partially consumed replay bytes.
+    #[must_use]
+    pub fn into_raw_parts(self) -> (NegotiationPrologue, usize, usize, Vec<u8>, R) {
+        self.into_parts().into_raw_parts()
+    }
+
     /// Returns a shared reference to the inner reader.
     #[must_use]
     pub const fn inner(&self) -> &R {
@@ -129,6 +142,23 @@ impl<R> NegotiatedStream<R> {
         F: FnOnce(R) -> T,
     {
         self.into_parts().map_inner(map).into_stream()
+    }
+
+    /// Reconstructs a [`NegotiatedStream`] from previously extracted raw components.
+    ///
+    /// Callers typically pair this with [`Self::into_raw_parts`], allowing negotiation state to be
+    /// stored temporarily (for example across async boundaries) and later resumed without replaying the
+    /// sniffed prefix. The provided lengths are clamped to the buffer capacity to maintain the
+    /// invariants enforced during initial construction.
+    #[must_use]
+    pub fn from_raw_parts(
+        inner: R,
+        decision: NegotiationPrologue,
+        sniffed_prefix_len: usize,
+        buffered_pos: usize,
+        buffered: Vec<u8>,
+    ) -> Self {
+        Self::from_raw_components(inner, decision, sniffed_prefix_len, buffered_pos, buffered)
     }
 
     fn from_raw_components(
@@ -504,6 +534,19 @@ impl<R> NegotiatedStreamParts<R> {
     pub fn into_stream(self) -> NegotiatedStream<R> {
         NegotiatedStream::from_buffer(self.inner, self.decision, self.buffer)
     }
+
+    /// Releases the parts structure and returns the raw negotiation components together with the reader.
+    ///
+    /// The returned tuple includes the detected [`NegotiationPrologue`], the length of the sniffed
+    /// prefix, the number of buffered bytes that were already consumed, the owned buffer containing the
+    /// sniffed data, and the inner reader. This mirrors the layout used by [`NegotiatedStream::into_raw_parts`]
+    /// while avoiding an intermediate reconstruction of the wrapper when only the raw buffers are needed.
+    #[must_use]
+    pub fn into_raw_parts(self) -> (NegotiationPrologue, usize, usize, Vec<u8>, R) {
+        let (decision, buffer, inner) = self.into_components();
+        let (sniffed_prefix_len, buffered_pos, buffered) = buffer.into_raw_parts();
+        (decision, sniffed_prefix_len, buffered_pos, buffered, inner)
+    }
 }
 
 impl NegotiationBuffer {
@@ -619,6 +662,15 @@ impl NegotiationBuffer {
             self.buffered_pos = self.buffered.len();
             amt - available
         }
+    }
+
+    fn into_raw_parts(self) -> (usize, usize, Vec<u8>) {
+        let Self {
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+        } = self;
+        (sniffed_prefix_len, buffered_pos, buffered)
     }
 }
 
@@ -1046,6 +1098,98 @@ mod tests {
             .read_to_end(&mut remainder)
             .expect("reconstructed stream yields the remaining bytes");
         assert_eq!(remainder, b"NCD: 29.0\nrest");
+    }
+
+    #[test]
+    fn raw_parts_round_trip_binary_state() {
+        let data = [0x00, 0x12, 0x34, 0x56];
+        let stream = sniff_bytes(&data).expect("sniff succeeds");
+        let expected_decision = stream.decision();
+        assert_eq!(expected_decision, NegotiationPrologue::Binary);
+        assert_eq!(stream.sniffed_prefix(), &[0x00]);
+
+        let (decision, sniffed_prefix_len, buffered_pos, buffered, inner) = stream.into_raw_parts();
+        assert_eq!(decision, expected_decision);
+        assert_eq!(sniffed_prefix_len, 1);
+        assert_eq!(buffered_pos, 0);
+        assert_eq!(buffered, vec![0x00]);
+
+        let mut reconstructed = NegotiatedStream::from_raw_parts(
+            inner,
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+        );
+        let mut replay = Vec::new();
+        reconstructed
+            .read_to_end(&mut replay)
+            .expect("reconstructed stream replays buffered prefix and remainder");
+        assert_eq!(replay, data);
+    }
+
+    #[test]
+    fn raw_parts_preserve_consumed_progress() {
+        let data = b"@RSYNCD: 31.0\nrest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+
+        let mut consumed = [0u8; 3];
+        stream
+            .read_exact(&mut consumed)
+            .expect("prefix consumption succeeds");
+        assert_eq!(&consumed, b"@RS");
+
+        let (decision, sniffed_prefix_len, buffered_pos, buffered, inner) = stream.into_raw_parts();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(sniffed_prefix_len, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(buffered_pos, consumed.len());
+        assert_eq!(buffered, b"@RSYNCD:".to_vec());
+
+        let mut reconstructed = NegotiatedStream::from_raw_parts(
+            inner,
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+        );
+        let mut remainder = Vec::new();
+        reconstructed
+            .read_to_end(&mut remainder)
+            .expect("reconstructed stream resumes after consumed prefix");
+        assert_eq!(remainder, b"YNCD: 31.0\nrest");
+
+        let mut combined = Vec::new();
+        combined.extend_from_slice(&consumed);
+        combined.extend_from_slice(&remainder);
+        assert_eq!(combined, data);
+    }
+
+    #[test]
+    fn raw_parts_round_trip_legacy_state() {
+        let data = b"@RSYNCD: 32.0\nrest";
+        let stream = sniff_bytes(data).expect("sniff succeeds");
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(stream.sniffed_prefix(), b"@RSYNCD:");
+
+        let (decision, sniffed_prefix_len, buffered_pos, buffered, inner) = stream.into_raw_parts();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(sniffed_prefix_len, LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(buffered_pos, 0);
+        assert_eq!(buffered, b"@RSYNCD:".to_vec());
+
+        let mut reconstructed = NegotiatedStream::from_raw_parts(
+            inner,
+            decision,
+            sniffed_prefix_len,
+            buffered_pos,
+            buffered,
+        );
+        let mut replay = Vec::new();
+        reconstructed
+            .read_to_end(&mut replay)
+            .expect("reconstructed stream replays full buffer");
+        assert_eq!(replay, data);
     }
 
     #[test]
