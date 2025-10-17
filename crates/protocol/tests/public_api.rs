@@ -4,12 +4,14 @@ use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LogCode,
     LogCodeConversionError, MessageCode, NegotiationError, NegotiationPrologue,
     NegotiationPrologueSniffer, ParseLogCodeError, ParseNegotiationPrologueError,
-    ParseNegotiationPrologueErrorKind, ProtocolVersion, ProtocolVersionAdvertisement,
-    SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter, SupportedVersionsIter,
-    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_details,
-    read_and_parse_legacy_daemon_greeting_details, select_highest_mutual,
+    ParseNegotiationPrologueErrorKind, ParseProtocolVersionErrorKind, ProtocolVersion,
+    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter,
+    SupportedVersionsIter, parse_legacy_daemon_greeting_bytes_details,
+    parse_legacy_daemon_greeting_details, read_and_parse_legacy_daemon_greeting_details,
+    select_highest_mutual,
 };
 use std::iter::FusedIterator;
+use std::str::FromStr;
 
 const NEWEST_AS_USIZE: usize = ProtocolVersion::NEWEST.as_usize();
 const OLDEST_AS_USIZE: usize = ProtocolVersion::OLDEST.as_usize();
@@ -156,6 +158,41 @@ fn supported_protocol_bitmap_matches_helpers() {
         0,
         "no bits above newest supported version"
     );
+}
+
+#[test]
+fn protocol_version_from_str_matches_upstream_rules() {
+    let trimmed = ProtocolVersion::from_str(" 31 ").expect("whitespace should be ignored");
+    assert_eq!(trimmed, ProtocolVersion::V31);
+
+    let leading_plus = ProtocolVersion::from_str("+32").expect("leading plus must be accepted");
+    assert_eq!(leading_plus, ProtocolVersion::V32);
+
+    let unsupported_future =
+        ProtocolVersion::from_str("40").expect_err("future version reports unsupported range");
+    assert_eq!(
+        unsupported_future.kind(),
+        ParseProtocolVersionErrorKind::UnsupportedRange(40),
+    );
+    assert_eq!(unsupported_future.unsupported_value(), Some(40));
+
+    let zero = ProtocolVersion::from_str("0").expect_err("protocol 0 is reserved");
+    assert_eq!(zero.kind(), ParseProtocolVersionErrorKind::UnsupportedRange(0));
+    assert_eq!(zero.unsupported_value(), Some(0));
+
+    let negative = ProtocolVersion::from_str("-29").expect_err("negative values are rejected");
+    assert_eq!(negative.kind(), ParseProtocolVersionErrorKind::Negative);
+
+    let invalid_digit = ProtocolVersion::from_str("3x")
+        .expect_err("non-digit characters trigger an invalid digit error");
+    assert_eq!(invalid_digit.kind(), ParseProtocolVersionErrorKind::InvalidDigit);
+
+    let empty = ProtocolVersion::from_str("   ").expect_err("empty strings are rejected");
+    assert_eq!(empty.kind(), ParseProtocolVersionErrorKind::Empty);
+
+    let overflow = ProtocolVersion::from_str("999")
+        .expect_err("values above u8::MAX report overflow");
+    assert_eq!(overflow.kind(), ParseProtocolVersionErrorKind::Overflow);
 }
 
 #[test]
