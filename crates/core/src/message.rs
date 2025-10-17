@@ -146,6 +146,11 @@ impl fmt::Display for SourceLocation {
 
 /// Macro helper that captures the current source location.
 ///
+/// This macro expands at the call-site and therefore records the location of the
+/// expansion. When the caller is a helper annotated with `#[track_caller]`,
+/// consider using [`tracked_message_source!`] to surface the original
+/// invocation location instead.
+///
 /// # Examples
 ///
 /// ```
@@ -160,6 +165,57 @@ macro_rules! message_source {
     () => {
         $crate::message::SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), line!())
     };
+}
+
+/// Builds a [`SourceLocation`] from an explicit [`std::panic::Location`].
+///
+/// This macro is useful when the caller already captured a location through
+/// `#[track_caller]` and wishes to convert it into the repo-relative form used
+/// by the message subsystem.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::SourceLocation, message_source_from};
+///
+/// let caller = std::panic::Location::caller();
+/// let location: SourceLocation = message_source_from!(caller);
+/// assert_eq!(location.line(), caller.line());
+/// ```
+#[macro_export]
+macro_rules! message_source_from {
+    ($location:expr) => {{
+        let location = $location;
+        $crate::message::SourceLocation::from_parts(
+            env!("CARGO_MANIFEST_DIR"),
+            location.file(),
+            location.line(),
+        )
+    }};
+}
+
+/// Captures a [`SourceLocation`] that honours `#[track_caller]` propagation.
+///
+/// Unlike [`message_source!`], this macro calls [`std::panic::Location::caller`]
+/// so that helper functions annotated with `#[track_caller]` report the
+/// location of their caller rather than their own body.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::SourceLocation, tracked_message_source};
+///
+/// #[track_caller]
+/// fn helper() -> SourceLocation {
+///     tracked_message_source!()
+/// }
+///
+/// let location = helper();
+/// assert!(location.path().ends_with(".rs"));
+/// ```
+#[macro_export]
+macro_rules! tracked_message_source {
+    () => {{ $crate::message_source_from!(::std::panic::Location::caller()) }};
 }
 
 /// Structured representation of an rsync user-visible message.
@@ -362,6 +418,16 @@ fn normalize_path(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    #[track_caller]
+    fn tracked_source() -> SourceLocation {
+        tracked_message_source!()
+    }
+
+    #[track_caller]
+    fn untracked_source() -> SourceLocation {
+        message_source!()
+    }
+
     #[test]
     fn formats_error_with_code_role_and_source() {
         let message = Message::error(23, "delta-transfer failure")
@@ -460,5 +526,27 @@ mod tests {
     fn normalize_unc_like_paths_retains_server_share_structure() {
         let normalized = normalize_path(Path::new(r"\\server\share\dir\file"));
         assert_eq!(normalized, "//server/share/dir/file");
+    }
+
+    #[test]
+    fn message_source_from_accepts_explicit_location() {
+        let caller = std::panic::Location::caller();
+        let location = message_source_from!(caller);
+
+        assert_eq!(location.line(), caller.line());
+        assert!(location.path().ends_with("crates/core/src/message.rs"));
+    }
+
+    #[test]
+    fn tracked_message_source_propagates_caller_location() {
+        let expected_line = line!() + 1;
+        let location = tracked_source();
+
+        assert_eq!(location.line(), expected_line);
+        assert!(location.path().ends_with("crates/core/src/message.rs"));
+
+        let helper_location = untracked_source();
+        assert_ne!(helper_location.line(), expected_line);
+        assert_eq!(helper_location.path(), location.path());
     }
 }
