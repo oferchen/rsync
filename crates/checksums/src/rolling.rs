@@ -256,6 +256,31 @@ impl RollingDigest {
         }
     }
 
+    /// Constructs a digest from the little-endian byte representation used by upstream rsync.
+    ///
+    /// Upstream serialises the rolling checksum with the `SIVAL` macro, which stores the packed
+    /// value as little-endian bytes on the wire. Parsing the checksum therefore requires decoding
+    /// the payload in the same order before recovering the logical components. This helper mirrors
+    /// [`Self::from_value`] while avoiding an intermediate [`u32`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    ///
+    /// let digest = RollingDigest::new(0x1357, 0x2468, 4096);
+    /// let bytes = digest.to_le_bytes();
+    /// let parsed = RollingDigest::from_le_bytes(bytes, digest.len());
+    ///
+    /// assert_eq!(parsed, digest);
+    /// assert_eq!(parsed.sum1(), 0x1357);
+    /// assert_eq!(parsed.sum2(), 0x2468);
+    /// ```
+    #[must_use]
+    pub const fn from_le_bytes(bytes: [u8; 4], len: usize) -> Self {
+        Self::from_value(u32::from_le_bytes(bytes), len)
+    }
+
     /// Returns the first checksum component (sum of bytes).
     #[must_use]
     pub const fn sum1(&self) -> u16 {
@@ -284,6 +309,12 @@ impl RollingDigest {
     #[must_use]
     pub const fn value(&self) -> u32 {
         ((self.s2 as u32) << 16) | (self.s1 as u32)
+    }
+
+    /// Returns the checksum encoded as the little-endian byte sequence used on the wire.
+    #[must_use]
+    pub const fn to_le_bytes(&self) -> [u8; 4] {
+        self.value().to_le_bytes()
     }
 }
 
@@ -347,6 +378,19 @@ mod tests {
         assert_eq!(unpacked.sum1(), sample.sum1());
         assert_eq!(unpacked.sum2(), sample.sum2());
         assert_eq!(unpacked.len(), sample.len());
+    }
+
+    #[test]
+    fn digest_round_trips_through_le_bytes() {
+        let sample = RollingDigest::new(0xabcd, 0x1234, 512);
+        let bytes = sample.to_le_bytes();
+        let parsed = RollingDigest::from_le_bytes(bytes, sample.len());
+
+        assert_eq!(parsed, sample);
+        assert_eq!(parsed.to_le_bytes(), bytes);
+        assert_eq!(parsed.sum1(), sample.sum1());
+        assert_eq!(parsed.sum2(), sample.sum2());
+        assert_eq!(parsed.len(), sample.len());
     }
 
     #[test]
