@@ -74,10 +74,10 @@ impl SourceLocation {
             let workspace_path = Path::new(root);
             if let Ok(manifest_relative) = manifest_path.strip_prefix(workspace_path) {
                 let manifest_relative = manifest_relative.to_path_buf();
+                let within_manifest = manifest_relative.as_os_str().is_empty()
+                    || file_path.starts_with(&manifest_relative);
 
-                if manifest_relative.as_os_str().is_empty() {
-                    file_path.to_path_buf()
-                } else if file_path.starts_with(&manifest_relative) {
+                if within_manifest {
                     file_path.to_path_buf()
                 } else {
                     manifest_relative.join(file_path)
