@@ -232,9 +232,9 @@ mod tests {
 
     #[test]
     fn unknown_exit_code_returns_none() {
-        assert!(exit_code_message(-1).is_none());
-        assert!(exit_code_message(0).is_none());
-        assert!(exit_code_message(255).is_none());
+        for code in [-1, 0, 6, 200, 255] {
+            assert!(exit_code_message(code).is_none(), "unexpected mapping for {code}");
+        }
     }
 
     #[test]
@@ -271,5 +271,20 @@ mod tests {
         assert_eq!(via_into.code(), Some(25));
         assert_eq!(via_into.severity(), Severity::Error);
         assert_eq!(via_into.text(), from_method.text());
+    }
+
+    #[test]
+    fn only_exit_code_twenty_four_is_a_warning() {
+        let mut warnings = EXIT_CODE_TABLE
+            .iter()
+            .filter(|entry| entry.severity() == Severity::Warning);
+
+        let warning = warnings
+            .next()
+            .expect("exit code 24 must produce a warning entry");
+        assert_eq!(warning.code(), 24);
+        assert!(warnings
+            .next()
+            .is_none(), "exit code table must not contain additional warning severities");
     }
 }
