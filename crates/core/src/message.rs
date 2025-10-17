@@ -300,12 +300,14 @@ impl Message {
     }
 
     /// Attaches a role trailer to the message.
+    #[must_use]
     pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
         self
     }
 
     /// Attaches a source location to the message.
+    #[must_use]
     pub fn with_source(mut self, source: SourceLocation) -> Self {
         self.source = Some(source);
         self
