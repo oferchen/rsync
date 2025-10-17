@@ -146,7 +146,7 @@ pub use legacy::{
     parse_legacy_daemon_greeting_details, parse_legacy_daemon_message,
     parse_legacy_daemon_message_bytes, parse_legacy_error_message,
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
-    parse_legacy_warning_message_bytes,
+    parse_legacy_warning_message_bytes, write_legacy_daemon_greeting,
 };
 pub use multiplex::{
     BorrowedMessageFrame, MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg,
