@@ -57,7 +57,7 @@ impl<R> SessionHandshake<R> {
     pub fn remote_advertised_protocol(&self) -> u32 {
         match self {
             Self::Binary(handshake) => handshake.remote_advertised_protocol(),
-            Self::Legacy(handshake) => handshake.server_greeting().advertised_protocol(),
+            Self::Legacy(handshake) => handshake.remote_advertised_protocol(),
         }
     }
 
@@ -66,11 +66,7 @@ impl<R> SessionHandshake<R> {
     pub fn remote_protocol_was_clamped(&self) -> bool {
         match self {
             Self::Binary(handshake) => handshake.remote_protocol_was_clamped(),
-            Self::Legacy(handshake) => {
-                let advertised = handshake.server_greeting().advertised_protocol();
-                let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
-                advertised_byte > handshake.server_protocol().as_u8()
-            }
+            Self::Legacy(handshake) => handshake.remote_protocol_was_clamped(),
         }
     }
 
@@ -432,17 +428,13 @@ impl<R> SessionHandshakeParts<R> {
                 remote_advertised_protocol,
                 remote_protocol,
                 ..
-            } => {
-                let advertised_byte = u8::try_from(*remote_advertised_protocol).unwrap_or(u8::MAX);
-                advertised_byte > remote_protocol.as_u8()
-            }
+            } => advertisement_was_clamped(*remote_advertised_protocol, *remote_protocol),
             SessionHandshakeParts::Legacy {
                 server_greeting, ..
-            } => {
-                let advertised = server_greeting.advertised_protocol();
-                let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
-                advertised_byte > server_greeting.protocol().as_u8()
-            }
+            } => advertisement_was_clamped(
+                server_greeting.advertised_protocol(),
+                server_greeting.protocol(),
+            ),
         }
     }
 
@@ -490,6 +482,11 @@ where
             unreachable!("negotiation sniffer fully classifies the prologue")
         }
     }
+}
+
+fn advertisement_was_clamped(advertised: u32, protocol: ProtocolVersion) -> bool {
+    let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
+    advertised_byte > protocol.as_u8()
 }
 
 #[cfg(test)]
