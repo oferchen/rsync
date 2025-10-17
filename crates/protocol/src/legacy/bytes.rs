@@ -3,7 +3,8 @@ use crate::version::ProtocolVersion;
 
 use super::{
     greeting::{
-        LegacyDaemonGreeting, parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
+        LegacyDaemonGreeting, LegacyDaemonGreetingOwned, parse_legacy_daemon_greeting,
+        parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
     },
     lines::{
         LegacyDaemonMessage, parse_legacy_daemon_message, parse_legacy_error_message,
@@ -84,6 +85,20 @@ pub fn parse_legacy_daemon_greeting_bytes_details(
     parse_lossy_ascii_bytes(line, parse_legacy_daemon_greeting_details)
 }
 
+/// Parses a byte-oriented legacy daemon greeting and returns an owned representation.
+///
+/// This helper mirrors [`parse_legacy_daemon_greeting_bytes_details`] but converts the borrowed
+/// [`LegacyDaemonGreeting`] into [`LegacyDaemonGreetingOwned`]. Callers that read banners into
+/// scratch buffers can therefore reuse the allocation immediately after parsing while retaining the
+/// negotiated metadata for later diagnostics.
+#[doc(alias = "@RSYNCD")]
+#[must_use = "legacy daemon greeting parsing errors must be handled"]
+pub fn parse_legacy_daemon_greeting_bytes_owned(
+    line: &[u8],
+) -> Result<LegacyDaemonGreetingOwned, NegotiationError> {
+    parse_lossy_ascii_bytes(line, parse_legacy_daemon_greeting_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +145,20 @@ mod tests {
         );
         assert_eq!(greeting.digest_list(), Some("md4 md5"));
         assert!(greeting.has_subprotocol());
+    }
+
+    #[test]
+    fn parse_legacy_daemon_greeting_bytes_owned_matches_details() {
+        let owned = parse_legacy_daemon_greeting_bytes_owned(b"@RSYNCD: 28.9\n")
+            .expect("owned parsing should succeed");
+
+        assert_eq!(
+            owned.protocol(),
+            ProtocolVersion::from_supported(28).unwrap()
+        );
+        assert_eq!(owned.subprotocol(), 9);
+        assert!(owned.has_subprotocol());
+        assert!(!owned.has_digest_list());
     }
 
     #[test]
