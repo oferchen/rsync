@@ -626,14 +626,29 @@ impl ProtocolVersion {
         (SUPPORTED_PROTOCOL_BITMAP & (1u64 << value)) != 0
     }
 
-    /// Returns `true` when the protocol participates in the binary negotiation introduced with
-    /// protocol 30.
+    /// Reports whether sessions negotiated at this protocol version use the
+    /// binary framing introduced in protocol 30.
+    ///
+    /// Upstream rsync switched from the legacy ASCII `@RSYNCD:` greeting to a
+    /// binary negotiation envelope starting with protocol 30. Higher layers
+    /// frequently branch on that boundary when deciding how to sniff the peer
+    /// stream or which multiplex framing to emit. Centralising the predicate in
+    /// this type keeps call sites from duplicating the numeric threshold and
+    /// guarantees the workspace stays aligned with upstream semantics even if
+    /// the constants change in the future.
     #[must_use]
     pub const fn uses_binary_negotiation(self) -> bool {
         self.as_u8() >= Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
 
-    /// Returns `true` when the protocol uses the legacy ASCII `@RSYNCD:` negotiation path.
+    /// Reports whether this protocol version still relies on the legacy ASCII
+    /// daemon negotiation.
+    ///
+    /// The helper mirrors [`ProtocolVersion::uses_binary_negotiation`] while
+    /// keeping call sites readable at points where the legacy behaviour is the
+    /// exceptional path. Returning the negation from a shared boundary ensures
+    /// both predicates stay consistent and matches the split found in upstream
+    /// rsync's negotiation logic.
     #[must_use]
     pub const fn uses_legacy_ascii_negotiation(self) -> bool {
         self.as_u8() < Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()

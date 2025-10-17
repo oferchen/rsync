@@ -185,6 +185,19 @@ fn named_version_constants_match_supported_protocols() {
 }
 
 #[test]
+fn negotiation_style_predicates_match_protocol_boundaries() {
+    assert!(ProtocolVersion::V32.uses_binary_negotiation());
+    assert!(ProtocolVersion::V31.uses_binary_negotiation());
+    assert!(ProtocolVersion::V30.uses_binary_negotiation());
+
+    assert!(ProtocolVersion::V29.uses_legacy_ascii_negotiation());
+    assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
+
+    assert!(!ProtocolVersion::V29.uses_binary_negotiation());
+    assert!(!ProtocolVersion::V28.uses_binary_negotiation());
+}
+
+#[test]
 fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
     let peers = [
         NonZeroU8::new(32).expect("non-zero"),
