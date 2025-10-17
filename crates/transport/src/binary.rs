@@ -131,7 +131,7 @@ where
     negotiate_binary_session_from_stream(stream, desired_protocol)
 }
 
-fn negotiate_binary_session_from_stream<R>(
+pub(crate) fn negotiate_binary_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
 ) -> io::Result<BinaryHandshake<R>>
