@@ -322,25 +322,54 @@ impl Message {
         self.source = Some(source);
         self
     }
+
+    /// Renders the message into an arbitrary [`fmt::Write`] implementation.
+    ///
+    /// This helper mirrors the [`Display`](fmt::Display) representation while
+    /// allowing callers to avoid allocating intermediate [`String`] values.
+    /// Higher layers can stream messages directly into log buffers or I/O
+    /// adaptors without cloning the payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let mut rendered = String::new();
+    /// Message::error(12, "example")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!())
+    ///     .render_to(&mut rendered)
+    ///     .unwrap();
+    ///
+    /// assert!(rendered.contains("rsync error: example (code 12)"));
+    /// assert!(rendered.contains("[sender=3.4.1-rust]"));
+    /// ```
+    pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
+        writer.write_str("rsync ")?;
+        writer.write_str(self.severity.as_str())?;
+        writer.write_str(": ")?;
+        writer.write_str(&self.text)?;
+
+        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
+            write!(writer, " (code {code})")?;
+        }
+
+        if let Some(source) = &self.source {
+            write!(writer, " at {source}")?;
+        }
+
+        if let Some(role) = self.role {
+            write!(writer, " [{}={VERSION_SUFFIX}]", role.as_str())?;
+        }
+
+        Ok(())
+    }
 }
 
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "rsync {}: {}", self.severity.as_str(), self.text)?;
-
-        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
-            write!(f, " (code {code})")?;
-        }
-
-        if let Some(source) = &self.source {
-            write!(f, " at {source}")?;
-        }
-
-        if let Some(role) = self.role {
-            write!(f, " [{}={VERSION_SUFFIX}]", role.as_str())?;
-        }
-
-        Ok(())
+        self.render_to(f)
     }
 }
 
@@ -548,5 +577,19 @@ mod tests {
         let helper_location = untracked_source();
         assert_ne!(helper_location.line(), expected_line);
         assert_eq!(helper_location.path(), location.path());
+    }
+
+    #[test]
+    fn render_to_matches_display_output() {
+        let message = Message::error(35, "timeout in data send")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let mut rendered = String::new();
+        message
+            .render_to(&mut rendered)
+            .expect("rendering into a string never fails");
+
+        assert_eq!(rendered, message.to_string());
     }
 }
