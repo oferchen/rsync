@@ -23,6 +23,10 @@
 //!   style (binary vs legacy ASCII) without losing buffered bytes.
 //! - [`multiplex`] and [`envelope`] re-create the control/data framing used once
 //!   a session has been negotiated.
+//! - [`compatibility`] models the post-negotiation compatibility flags shared
+//!   by peers and exposes typed helpers for working with individual bits.
+//! - [`varint`] reproduces rsync's variable-length integer codec so other
+//!   modules can serialise the compatibility flags and future protocol values.
 //!
 //! Each module is small enough to satisfy the workspace style guide while the
 //! crate root re-exports the stable APIs consumed by the higher-level
@@ -118,13 +122,16 @@
 //! - [`rsync_core`] for message formatting utilities that rely on negotiated
 //!   protocol numbers.
 
+mod compatibility;
 mod envelope;
 mod error;
 mod legacy;
 mod multiplex;
 mod negotiation;
+mod varint;
 mod version;
 
+pub use compatibility::CompatibilityFlags;
 pub use envelope::{
     EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, LogCodeConversionError,
     MAX_PAYLOAD_LENGTH, MPLEX_BASE, MessageCode, MessageHeader, ParseLogCodeError,
@@ -148,6 +155,7 @@ pub use negotiation::{
     detect_negotiation_prologue, read_and_parse_legacy_daemon_greeting,
     read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
+pub use varint::{decode_varint, encode_varint_to_vec, read_varint, write_varint};
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
     ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
