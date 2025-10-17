@@ -179,6 +179,34 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
     parse_legacy_daemon_greeting_details(line).map(LegacyDaemonGreeting::protocol)
 }
 
+/// Parses a legacy ASCII daemon greeting and returns an owned representation.
+///
+/// Legacy negotiation helpers frequently need to retain the parsed metadata
+/// beyond the lifetime of the buffer that backed the original line. This
+/// wrapper mirrors [`parse_legacy_daemon_greeting_details`] but converts the
+/// borrowed [`LegacyDaemonGreeting`] into the fully owned
+/// [`LegacyDaemonGreetingOwned`], allowing callers to drop the input buffer
+/// immediately after parsing.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
+///
+/// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 29\n")?;
+/// assert_eq!(owned.protocol(), ProtocolVersion::from_supported(29).unwrap());
+/// assert_eq!(owned.advertised_protocol(), 29);
+/// assert!(!owned.has_subprotocol());
+/// # Ok::<_, rsync_protocol::NegotiationError>(())
+/// ```
+#[doc(alias = "@RSYNCD")]
+#[must_use = "legacy daemon greeting parsing errors must be handled"]
+pub fn parse_legacy_daemon_greeting_owned(
+    line: &str,
+) -> Result<LegacyDaemonGreetingOwned, NegotiationError> {
+    parse_legacy_daemon_greeting_details(line).map(Into::into)
+}
+
 /// Parses a legacy daemon greeting and returns a structured representation.
 #[doc(alias = "@RSYNCD")]
 #[must_use = "legacy daemon greeting parsing errors must be handled"]
@@ -411,6 +439,21 @@ mod tests {
         assert!(!greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol(), 0);
         assert!(!greeting.has_digest_list());
+    }
+
+    #[test]
+    fn parse_owned_greeting_retains_metadata() {
+        let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 29.1 md4\n")
+            .expect("owned parsing should succeed");
+
+        assert_eq!(
+            owned.protocol(),
+            ProtocolVersion::from_supported(29).unwrap()
+        );
+        assert_eq!(owned.advertised_protocol(), 29);
+        assert_eq!(owned.subprotocol_raw(), Some(1));
+        assert_eq!(owned.digest_list(), Some("md4"));
+        assert!(owned.has_digest_list());
     }
 
     #[test]
