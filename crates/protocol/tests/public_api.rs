@@ -1,14 +1,15 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LogCode,
-    LogCodeConversionError, MessageCode, NegotiationError, NegotiationPrologue,
+    CompatibilityFlags, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting,
+    LogCode, LogCodeConversionError, MessageCode, NegotiationError, NegotiationPrologue,
     NegotiationPrologueSniffer, ParseLogCodeError, ParseNegotiationPrologueError,
     ParseNegotiationPrologueErrorKind, ParseProtocolVersionErrorKind, ProtocolVersion,
     ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter,
-    SupportedVersionsIter, parse_legacy_daemon_greeting_bytes_details,
-    parse_legacy_daemon_greeting_details, read_and_parse_legacy_daemon_greeting_details,
-    select_highest_mutual,
+    SupportedVersionsIter, decode_varint, encode_varint_to_vec,
+    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_details,
+    read_and_parse_legacy_daemon_greeting_details, read_varint, select_highest_mutual,
+    write_varint,
 };
 use std::iter::FusedIterator;
 use std::str::FromStr;
@@ -158,6 +159,33 @@ fn supported_protocol_bitmap_matches_helpers() {
         0,
         "no bits above newest supported version"
     );
+}
+
+#[test]
+fn compatibility_flags_public_constants_are_available() {
+    let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+    assert!(flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+    assert_eq!(flags.bits(), 0b11);
+
+    let masked = flags.difference(CompatibilityFlags::SYMLINK_TIMES);
+    assert_eq!(masked, CompatibilityFlags::INC_RECURSE);
+}
+
+#[test]
+fn varint_codec_round_trips_through_public_api() {
+    let mut encoded = Vec::new();
+    write_varint(&mut encoded, 16_384).expect("write succeeds");
+    let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+    assert_eq!(decoded, 16_384);
+    assert!(remainder.is_empty());
+
+    let mut cursor = std::io::Cursor::new(encoded);
+    let read_back = read_varint(&mut cursor).expect("read succeeds");
+    assert_eq!(read_back, 16_384);
+
+    let mut appended = Vec::new();
+    encode_varint_to_vec(-1, &mut appended);
+    assert_eq!(decode_varint(&appended).expect("decode succeeds").0, -1);
 }
 
 #[test]
