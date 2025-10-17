@@ -1247,14 +1247,15 @@ where
         }
     }
 
-    for ours in SUPPORTED_PROTOCOLS {
-        if ours as u32 >= u64::BITS {
-            continue;
-        }
+    let mutual_bitmap = seen_bitmap & SUPPORTED_PROTOCOL_BITMAP;
+    if mutual_bitmap != 0 {
+        let highest_bit = (u64::BITS - 1) - mutual_bitmap.leading_zeros();
+        debug_assert!(highest_bit < u64::BITS);
 
-        if seen_bitmap & (1u64 << ours) != 0 {
-            return Ok(ProtocolVersion::new_const(ours));
-        }
+        let highest = highest_bit as u8;
+        debug_assert!(ProtocolVersion::is_supported_protocol_number(highest));
+
+        return Ok(ProtocolVersion::new_const(highest));
     }
 
     if let Some(value) = oldest_rejection {
