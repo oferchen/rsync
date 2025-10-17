@@ -37,12 +37,43 @@ impl fmt::Display for RollingError {
 
 impl std::error::Error for RollingError {}
 
+/// Error returned when reconstructing a rolling checksum digest from a byte slice of the wrong length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RollingSliceError {
+    len: usize,
+}
+
+impl RollingSliceError {
+    /// Number of bytes the caller supplied when the error was raised.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.len
+    }
+
+    /// Number of bytes required to decode a rolling checksum digest.
+    pub const EXPECTED_LEN: usize = 4;
+}
+
+impl fmt::Display for RollingSliceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "rolling checksum digest requires {} bytes, received {}",
+            Self::EXPECTED_LEN,
+            self.len
+        )
+    }
+}
+
+impl std::error::Error for RollingSliceError {}
+
 /// Rolling checksum used by rsync for weak block matching (often called `rsum`).
 ///
 /// The checksum mirrors upstream rsync's Adler-32 variant where the first component
 /// (`s1`) accumulates the byte sum and the second component (`s2`) tracks the sum of
 /// the running prefix sums. Both components are truncated to 16 bits after every
 /// update to match the canonical algorithm used during delta transfer.
+#[doc(alias = "rsum")]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RollingChecksum {
     s1: u32,
@@ -276,18 +307,54 @@ impl RollingDigest {
     /// assert_eq!(parsed.sum1(), 0x1357);
     /// assert_eq!(parsed.sum2(), 0x2468);
     /// ```
+    #[doc(alias = "SIVAL")]
     #[must_use]
     pub const fn from_le_bytes(bytes: [u8; 4], len: usize) -> Self {
         Self::from_value(u32::from_le_bytes(bytes), len)
     }
 
+    /// Constructs a digest from a little-endian byte slice, validating the input length.
+    ///
+    /// This helper complements [`Self::from_le_bytes`] by accepting arbitrary byte slices, making
+    /// it convenient to decode digests from network buffers without first converting them into an
+    /// array. When the slice does not contain exactly four bytes, the function returns
+    /// [`RollingSliceError`], mirroring upstream rsync which treats truncated digests as fatal
+    /// protocol violations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RollingSliceError`] if `bytes` does not contain exactly four elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::{RollingDigest, RollingSliceError};
+    ///
+    /// let digest = RollingDigest::new(0x1357, 0x2468, 4096);
+    /// let parsed = RollingDigest::from_le_slice(&digest.to_le_bytes(), digest.len())?;
+    /// assert_eq!(parsed.sum1(), 0x1357);
+    /// assert_eq!(parsed.sum2(), 0x2468);
+    /// # Ok::<(), RollingSliceError>(())
+    /// ```
+    pub fn from_le_slice(bytes: &[u8], len: usize) -> Result<Self, RollingSliceError> {
+        if bytes.len() != RollingSliceError::EXPECTED_LEN {
+            return Err(RollingSliceError { len: bytes.len() });
+        }
+
+        let mut array = [0u8; RollingSliceError::EXPECTED_LEN];
+        array.copy_from_slice(bytes);
+        Ok(Self::from_le_bytes(array, len))
+    }
+
     /// Returns the first checksum component (sum of bytes).
+    #[doc(alias = "s1")]
     #[must_use]
     pub const fn sum1(&self) -> u16 {
         self.s1
     }
 
     /// Returns the second checksum component (sum of prefix sums).
+    #[doc(alias = "s2")]
     #[must_use]
     pub const fn sum2(&self) -> u16 {
         self.s2
@@ -312,6 +379,7 @@ impl RollingDigest {
     }
 
     /// Returns the checksum encoded as the little-endian byte sequence used on the wire.
+    #[doc(alias = "SIVAL")]
     #[must_use]
     pub const fn to_le_bytes(&self) -> [u8; 4] {
         self.value().to_le_bytes()
@@ -391,6 +459,24 @@ mod tests {
         assert_eq!(parsed.sum1(), sample.sum1());
         assert_eq!(parsed.sum2(), sample.sum2());
         assert_eq!(parsed.len(), sample.len());
+    }
+
+    #[test]
+    fn digest_round_trips_through_le_slice() {
+        let sample = RollingDigest::new(0x1357, 0x2468, 1024);
+        let parsed = RollingDigest::from_le_slice(&sample.to_le_bytes(), sample.len())
+            .expect("slice length matches the digest encoding");
+
+        assert_eq!(parsed, sample);
+        assert_eq!(parsed.to_le_bytes(), sample.to_le_bytes());
+    }
+
+    #[test]
+    fn digest_from_le_slice_rejects_incorrect_length() {
+        let error = RollingDigest::from_le_slice(&[0u8; 3], 0)
+            .expect_err("three bytes cannot encode a rolling digest");
+
+        assert_eq!(error.len(), 3);
     }
 
     #[test]
