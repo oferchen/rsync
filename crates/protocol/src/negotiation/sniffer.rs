@@ -399,21 +399,32 @@ impl NegotiationPrologueSniffer {
     /// existing vector supplied by the caller.
     ///
     /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
-    /// caller already owns a reusable buffer. The destination vector is cleared before the
-    /// buffered bytes (prefix plus any trailing payload captured in the same read) are copied
-    /// into it, ensuring the slice matches the data consumed during negotiation sniffing. The
-    /// returned length mirrors the number of bytes that were replayed into `target`, keeping
-    /// the API consistent with the I/O traits used throughout the transport layer. After the
-    /// transfer the sniffer retains an empty buffer whose capacity is clamped to the canonical
-    /// legacy prefix length so repeated connections continue to benefit from buffer reuse. If
-    /// growing the destination buffer fails, the allocation error is forwarded to the caller
-    /// instead of panicking so the transport layer can surface the failure as an I/O error. To
-    /// avoid surprising the caller, the existing contents of `target` are only cleared after
-    /// the reservation succeeds, mirroring upstream's failure semantics where buffers remain
-    /// untouched when memory is exhausted.
+    /// caller already owns a reusable buffer. When the destination lacks sufficient capacity the
+    /// helper transfers ownership of the sniffer's allocation to `target`, avoiding a redundant
+    /// copy before the destination inevitably reallocates. Otherwise the buffered bytes (prefix
+    /// plus any trailing payload captured in the same read) are copied into the cleared vector,
+    /// ensuring the slice matches the data consumed during negotiation sniffing. The returned
+    /// length mirrors the number of bytes that were replayed into `target`, keeping the API
+    /// consistent with the I/O traits used throughout the transport layer. After the transfer the
+    /// sniffer retains an empty buffer whose capacity is clamped to the canonical legacy prefix
+    /// length so repeated connections continue to benefit from buffer reuse. If growing the
+    /// destination buffer fails, the allocation error is forwarded to the caller instead of
+    /// panicking so the transport layer can surface the failure as an I/O error. To avoid
+    /// surprising the caller, the existing contents of `target` are only cleared after the
+    /// reservation succeeds (or after the swap has taken place), mirroring upstream's failure
+    /// semantics where buffers remain untouched when memory is exhausted.
     #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         let required = self.buffered.len();
+
+        if target.capacity() < required {
+            target.clear();
+            mem::swap(&mut self.buffered, target);
+            let drained = target.len();
+            self.reset_buffer_for_reuse();
+
+            return Ok(drained);
+        }
 
         ensure_vec_capacity(target, required)?;
         target.clear();
