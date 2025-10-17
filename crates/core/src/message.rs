@@ -374,6 +374,7 @@ pub struct Message {
 
 impl Message {
     /// Creates an informational message.
+    #[must_use]
     pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
             severity: Severity::Info,
@@ -385,6 +386,7 @@ impl Message {
     }
 
     /// Creates a warning message.
+    #[must_use]
     pub fn warning<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
             severity: Severity::Warning,
@@ -396,6 +398,7 @@ impl Message {
     }
 
     /// Creates an error message with the provided exit code.
+    #[must_use]
     pub fn error<T: Into<Cow<'static, str>>>(code: i32, text: T) -> Self {
         Self {
             severity: Severity::Error,
