@@ -1492,6 +1492,24 @@ mod tests {
     }
 
     #[test]
+    fn read_legacy_daemon_line_errors_for_incomplete_prefix_state() {
+        let mut stream = NegotiatedStream::from_raw_parts(
+            Cursor::new(b" 31.0\n".to_vec()),
+            NegotiationPrologue::LegacyAscii,
+            LEGACY_DAEMON_PREFIX_LEN - 1,
+            0,
+            b"@RSYNCD".to_vec(),
+        );
+
+        let mut line = Vec::new();
+        let err = stream
+            .read_legacy_daemon_line(&mut line)
+            .expect_err("incomplete prefix must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(line.is_empty());
+    }
+
+    #[test]
     fn read_legacy_daemon_line_errors_for_binary_negotiation() {
         let mut stream = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
         let mut line = Vec::new();
@@ -1509,6 +1527,22 @@ mod tests {
             .read_legacy_daemon_line(&mut line)
             .expect_err("EOF before newline must error");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_errors_when_prefix_partially_consumed() {
+        let mut stream = sniff_bytes(b"@RSYNCD: AUTHREQD module\n").expect("sniff succeeds");
+        let mut prefix_fragment = [0u8; 3];
+        stream
+            .read_exact(&mut prefix_fragment)
+            .expect("prefix fragment is replayed before parsing");
+
+        let mut line = Vec::new();
+        let err = stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect_err("partial prefix consumption must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(line.is_empty());
     }
 
     #[test]
