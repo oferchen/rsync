@@ -584,8 +584,24 @@ impl<R> NegotiatedStreamParts<R> {
 /// Returns [`io::ErrorKind::UnexpectedEof`] if the stream ends before a
 /// negotiation style can be determined or propagates any underlying I/O error
 /// reported by the reader.
-pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<NegotiatedStream<R>> {
+pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStream<R>> {
     let mut sniffer = NegotiationPrologueSniffer::new();
+    sniff_negotiation_stream_with_sniffer(reader, &mut sniffer)
+}
+
+/// Sniffs the negotiation prologue using a caller supplied sniffer instance.
+///
+/// The helper mirrors [`sniff_negotiation_stream`] but reuses the provided
+/// [`NegotiationPrologueSniffer`], avoiding temporary allocations when a
+/// higher layer already maintains a pool of reusable sniffers. The sniffer is
+/// reset to guarantee stale state from previous sessions is discarded before
+/// the new transport is observed.
+pub fn sniff_negotiation_stream_with_sniffer<R: Read>(
+    mut reader: R,
+    sniffer: &mut NegotiationPrologueSniffer,
+) -> io::Result<NegotiatedStream<R>> {
+    sniffer.reset();
+
     let decision = sniffer.read_from(&mut reader)?;
     debug_assert_ne!(decision, NegotiationPrologue::NeedMoreData);
 
@@ -692,6 +708,51 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("read_to_end succeeds");
         assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn sniff_negotiation_with_supplied_sniffer_reuses_internal_buffer() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+
+        {
+            let mut stream = sniff_negotiation_stream_with_sniffer(
+                Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec()),
+                &mut sniffer,
+            )
+            .expect("sniff succeeds");
+
+            assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+            assert_eq!(stream.sniffed_prefix(), b"@RSYNCD:");
+
+            let mut replay = Vec::new();
+            stream
+                .read_to_end(&mut replay)
+                .expect("replay reads all bytes");
+            assert_eq!(replay, b"@RSYNCD: 31.0\nrest");
+        }
+
+        assert_eq!(sniffer.buffered_len(), 0);
+        assert_eq!(sniffer.sniffed_prefix_len(), 0);
+
+        {
+            let mut stream = sniff_negotiation_stream_with_sniffer(
+                Cursor::new(vec![0x00, 0x12, 0x34, 0x56]),
+                &mut sniffer,
+            )
+            .expect("sniff succeeds");
+
+            assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+            assert_eq!(stream.sniffed_prefix(), &[0x00]);
+
+            let mut replay = Vec::new();
+            stream
+                .read_to_end(&mut replay)
+                .expect("binary replay drains reader");
+            assert_eq!(replay, &[0x00, 0x12, 0x34, 0x56]);
+        }
+
+        assert_eq!(sniffer.buffered_len(), 0);
+        assert_eq!(sniffer.sniffed_prefix_len(), 0);
     }
 
     #[test]
