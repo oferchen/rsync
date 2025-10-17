@@ -116,6 +116,31 @@ impl<R> NegotiatedStream<R> {
         self.buffer.buffered_len()
     }
 
+    /// Returns how many buffered bytes have already been replayed.
+    ///
+    /// The counter starts at zero and increases as callers consume data through [`Read::read`],
+    /// [`Read::read_vectored`], or [`BufRead::consume`]. Once it matches [`Self::buffered_len`], the
+    /// replay buffer has been exhausted and subsequent reads operate on the inner transport.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, Read};
+    ///
+    /// let mut stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// assert_eq!(stream.buffered_consumed(), 0);
+    ///
+    /// let mut buf = [0u8; 4];
+    /// stream.read(&mut buf).expect("buffered bytes are available");
+    /// assert_eq!(stream.buffered_consumed(), 4);
+    /// ```
+    #[must_use]
+    pub fn buffered_consumed(&self) -> usize {
+        self.buffer.buffered_consumed()
+    }
+
     /// Returns the length of the sniffed negotiation prefix.
     ///
     /// The value is the number of bytes that were required to classify the
@@ -844,6 +869,32 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.buffered_len()
     }
 
+    /// Returns how many buffered bytes had already been replayed when the stream was decomposed.
+    ///
+    /// The counter mirrors [`NegotiatedStream::buffered_consumed`], allowing callers to observe the
+    /// replay position without reconstructing the wrapper. It is useful when higher layers need to
+    /// resume consumption from the point where the stream was split into parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, Read};
+    ///
+    /// let mut stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let mut buf = [0u8; 5];
+    /// stream.read(&mut buf).expect("buffered bytes are available");
+    /// let consumed = stream.buffered_consumed();
+    ///
+    /// let parts = stream.into_parts();
+    /// assert_eq!(parts.buffered_consumed(), consumed);
+    /// ```
+    #[must_use]
+    pub fn buffered_consumed(&self) -> usize {
+        self.buffer.buffered_consumed()
+    }
+
     /// Returns how many buffered bytes remain unread.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
@@ -1104,6 +1155,10 @@ impl NegotiationBuffer {
 
     fn buffered_len(&self) -> usize {
         self.buffered.len()
+    }
+
+    fn buffered_consumed(&self) -> usize {
+        self.buffered_pos
     }
 
     fn buffered_remaining(&self) -> usize {
@@ -1479,6 +1534,46 @@ mod tests {
 
         let parts = stream.into_parts();
         assert!(!parts.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn buffered_consumed_tracks_reads() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nremaining").expect("sniff succeeds");
+        assert_eq!(stream.buffered_consumed(), 0);
+
+        let total = stream.buffered_len();
+        assert!(total > 0);
+
+        let mut remaining = total;
+        let mut scratch = [0u8; 4];
+        while remaining > 0 {
+            let chunk = remaining.min(scratch.len());
+            let read = stream
+                .read(&mut scratch[..chunk])
+                .expect("buffered bytes are readable");
+            assert!(read > 0);
+            remaining -= read;
+            assert_eq!(stream.buffered_consumed(), total - remaining);
+        }
+
+        assert_eq!(stream.buffered_consumed(), total);
+    }
+
+    #[test]
+    fn parts_buffered_consumed_matches_stream_state() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let total = stream.buffered_len();
+        assert!(total > 1);
+
+        let mut prefix = vec![0u8; total - 1];
+        stream
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed");
+        assert_eq!(stream.buffered_consumed(), total - 1);
+
+        let parts = stream.into_parts();
+        assert_eq!(parts.buffered_consumed(), total - 1);
+        assert_eq!(parts.buffered_remaining(), 1);
     }
 
     #[test]
