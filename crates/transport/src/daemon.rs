@@ -2,6 +2,7 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
+use core::convert::TryFrom;
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
     NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
@@ -38,6 +39,20 @@ impl<R> LegacyDaemonHandshake<R> {
     #[must_use]
     pub const fn server_protocol(&self) -> ProtocolVersion {
         self.server_greeting.protocol()
+    }
+
+    /// Returns the raw protocol number advertised by the remote daemon before clamping.
+    #[must_use]
+    pub const fn remote_advertised_protocol(&self) -> u32 {
+        self.server_greeting.advertised_protocol()
+    }
+
+    /// Reports whether the remote daemon advertised a protocol newer than we support.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        let advertised = self.remote_advertised_protocol();
+        let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
+        advertised_byte > self.server_protocol().as_u8()
     }
 
     /// Returns a shared reference to the replaying stream.
@@ -349,6 +364,8 @@ mod tests {
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
         assert_eq!(handshake.server_greeting().advertised_protocol(), 31);
+        assert_eq!(handshake.remote_advertised_protocol(), 31);
+        assert!(!handshake.remote_protocol_was_clamped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 31.0\n");
@@ -367,9 +384,27 @@ mod tests {
             handshake.server_protocol(),
             ProtocolVersion::from_supported(32).expect("protocol 32 supported"),
         );
+        assert_eq!(handshake.remote_advertised_protocol(), 32);
+        assert!(!handshake.remote_protocol_was_clamped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 30.0\n");
+    }
+
+    #[test]
+    fn negotiate_clamps_future_advertisement() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 40.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        assert_eq!(handshake.server_greeting().advertised_protocol(), 40);
+        assert_eq!(handshake.remote_advertised_protocol(), 40);
+        assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+
+        let transport = handshake.into_stream().into_inner();
+        assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
     }
 
     #[test]
