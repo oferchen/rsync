@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt::{self, Write as FmtWrite};
-use std::io::{self, Write as IoWrite};
+use std::io::{self, IoSlice, Write as IoWrite};
 use std::path::Path;
 use std::str;
 use std::sync::OnceLock;
@@ -447,10 +447,13 @@ impl Message {
     /// Writes the rendered message into an [`io::Write`] implementor.
     ///
     /// This helper mirrors [`Self::render_to`] but operates on byte writers. It
-    /// avoids allocating intermediate [`String`] values by streaming each
-    /// component directly into the provided writer. Any encountered I/O error is
-    /// propagated unchanged, ensuring callers can surface the original failure
-    /// context in user-facing diagnostics.
+    /// avoids allocating intermediate [`String`] values by streaming the
+    /// constituent byte slices directly into the provided writer. Implementors
+    /// that advertise vectored-write support receive the full message in a
+    /// single [`write_vectored`](IoWrite::write_vectored) call; others fall back
+    /// to sequential [`write_all`](IoWrite::write_all) operations. Any
+    /// encountered I/O error is propagated unchanged, ensuring callers can
+    /// surface the original failure context in user-facing diagnostics.
     ///
     /// # Examples
     ///
@@ -469,37 +472,7 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        writer.write_all(b"rsync ")?;
-        writer.write_all(self.severity.as_str().as_bytes())?;
-        writer.write_all(b": ")?;
-        writer.write_all(self.text.as_bytes())?;
-
-        if let Some(code) = self.code {
-            let mut buffer = [0u8; 20];
-            let digits = encode_signed_decimal(i64::from(code), &mut buffer);
-            writer.write_all(b" (code ")?;
-            writer.write_all(digits.as_bytes())?;
-            writer.write_all(b")")?;
-        }
-
-        if let Some(source) = &self.source {
-            let mut line_buffer = [0u8; 20];
-            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut line_buffer);
-            writer.write_all(b" at ")?;
-            writer.write_all(source.path().as_bytes())?;
-            writer.write_all(b":")?;
-            writer.write_all(digits.as_bytes())?;
-        }
-
-        if let Some(role) = self.role {
-            writer.write_all(b" [")?;
-            writer.write_all(role.as_str().as_bytes())?;
-            writer.write_all(b"=")?;
-            writer.write_all(VERSION_SUFFIX.as_bytes())?;
-            writer.write_all(b"]")?;
-        }
-
-        Ok(())
+        self.render_to_writer_inner(writer, false)
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -525,8 +498,91 @@ impl Message {
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        self.render_to_writer(writer)?;
-        writer.write_all(b"\n")
+        self.render_to_writer_inner(writer, true)
+    }
+
+    fn render_to_writer_inner<W: IoWrite>(
+        &self,
+        writer: &mut W,
+        include_newline: bool,
+    ) -> io::Result<()> {
+        const MAX_SEGMENTS: usize = 18;
+
+        let mut segments: [IoSlice<'_>; MAX_SEGMENTS] = [IoSlice::new(&[]); MAX_SEGMENTS];
+        let mut segment_count = 0usize;
+        let mut total_len = 0usize;
+
+        macro_rules! push_segment {
+            ($expr:expr) => {{
+                let slice: &[u8] = $expr;
+                segments[segment_count] = IoSlice::new(slice);
+                segment_count += 1;
+                total_len += slice.len();
+            }};
+        }
+
+        let mut code_buffer = [0u8; 20];
+        let mut line_buffer = [0u8; 20];
+
+        push_segment!(b"rsync ");
+        push_segment!(self.severity.as_str().as_bytes());
+        push_segment!(b": ");
+        push_segment!(self.text.as_bytes());
+
+        if let Some(code) = self.code {
+            push_segment!(b" (code ");
+            let digits = encode_signed_decimal(i64::from(code), &mut code_buffer);
+            push_segment!(digits.as_bytes());
+            push_segment!(b")");
+        }
+
+        if let Some(source) = &self.source {
+            push_segment!(b" at ");
+            push_segment!(source.path().as_bytes());
+            push_segment!(b":");
+            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut line_buffer);
+            push_segment!(digits.as_bytes());
+        }
+
+        if let Some(role) = self.role {
+            push_segment!(b" [");
+            push_segment!(role.as_str().as_bytes());
+            push_segment!(b"=");
+            push_segment!(VERSION_SUFFIX.as_bytes());
+            push_segment!(b"]");
+        }
+
+        if include_newline {
+            push_segment!(b"\n");
+        }
+
+        if segment_count > 1 {
+            match writer.write_vectored(&segments[..segment_count]) {
+                Ok(written) if written == total_len => return Ok(()),
+                Ok(written) => {
+                    let mut remaining = written;
+                    for slice in &segments[..segment_count] {
+                        let data = slice.as_ref();
+                        if remaining >= data.len() {
+                            remaining -= data.len();
+                            continue;
+                        }
+
+                        writer.write_all(&data[remaining..])?;
+                        remaining = 0;
+                    }
+
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        for slice in &segments[..segment_count] {
+            writer.write_all(slice.as_ref())?;
+        }
+
+        Ok(())
     }
 }
 
@@ -705,7 +761,7 @@ fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io;
+    use std::io::{self, IoSlice};
 
     #[track_caller]
     fn tracked_source() -> SourceLocation {
@@ -1022,6 +1078,109 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "newline sink error");
+    }
+
+    #[test]
+    fn render_to_writer_coalesces_segments_for_vectored_writer() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(untracked_source());
+
+        let expected = message.to_string();
+
+        let mut writer = RecordingWriter::new();
+        message
+            .render_to_writer(&mut writer)
+            .expect("vectored write succeeds");
+
+        assert_eq!(writer.vectored_calls, 1, "single vectored write expected");
+        assert_eq!(
+            writer.write_calls, 0,
+            "sequential fallback should be unused"
+        );
+        assert_eq!(String::from_utf8(writer.buffer).unwrap(), expected);
+    }
+
+    #[test]
+    fn render_to_writer_falls_back_when_vectored_partial() {
+        let message = Message::error(30, "timeout in data send/receive")
+            .with_role(Role::Receiver)
+            .with_source(untracked_source());
+
+        let expected = message.to_string();
+
+        let mut writer = RecordingWriter::with_vectored_limit(5);
+        message
+            .render_to_writer(&mut writer)
+            .expect("fallback write succeeds");
+
+        assert_eq!(
+            writer.vectored_calls, 1,
+            "vectored path should be attempted once"
+        );
+        assert!(
+            writer.write_calls > 0,
+            "sequential fallback must finish the message"
+        );
+        assert_eq!(String::from_utf8(writer.buffer).unwrap(), expected);
+    }
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        buffer: Vec<u8>,
+        vectored_calls: usize,
+        write_calls: usize,
+        vectored_limit: Option<usize>,
+    }
+
+    impl RecordingWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn with_vectored_limit(limit: usize) -> Self {
+            Self {
+                vectored_limit: Some(limit),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl super::IoWrite for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+
+            let mut to_write: usize = bufs.iter().map(|slice| slice.len()).sum();
+            if let Some(limit) = self.vectored_limit {
+                let capped = to_write.min(limit);
+                self.vectored_limit = Some(limit.saturating_sub(capped));
+                to_write = capped;
+            }
+
+            let mut remaining = to_write;
+            for slice in bufs {
+                if remaining == 0 {
+                    break;
+                }
+
+                let data = slice.as_ref();
+                let portion = data.len().min(remaining);
+                self.buffer.extend_from_slice(&data[..portion]);
+                remaining -= portion;
+            }
+
+            Ok(to_write)
+        }
     }
 
     #[test]
