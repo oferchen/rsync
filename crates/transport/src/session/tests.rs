@@ -120,6 +120,104 @@ fn negotiate_session_detects_legacy_transport() {
 }
 
 #[test]
+fn negotiate_session_parts_exposes_binary_metadata() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let parts =
+        negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
+
+    assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    assert_eq!(parts.remote_protocol(), remote_version);
+    assert_eq!(parts.negotiated_protocol(), remote_version);
+    assert!(!parts.remote_protocol_was_clamped());
+    assert!(!parts.local_protocol_was_capped());
+
+    let (remote_advertised, remote_protocol, negotiated_protocol, stream_parts) =
+        parts.into_binary().expect("binary parts");
+    assert_eq!(remote_advertised, u32::from(remote_version.as_u8()));
+    assert_eq!(remote_protocol, remote_version);
+    assert_eq!(negotiated_protocol, remote_version);
+
+    let transport = stream_parts.into_stream().into_inner();
+    assert_eq!(
+        transport.writes(),
+        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+    );
+    assert_eq!(transport.flushes(), 1);
+}
+
+#[test]
+fn negotiate_session_parts_exposes_legacy_metadata() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let parts =
+        negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("legacy parts succeed");
+
+    assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(
+        parts.remote_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+    assert_eq!(
+        parts.negotiated_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+    assert!(!parts.local_protocol_was_capped());
+
+    let (greeting, negotiated_protocol, stream_parts) = parts.into_legacy().expect("legacy parts");
+    assert_eq!(greeting.advertised_protocol(), 31);
+    assert_eq!(
+        greeting.protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+    assert_eq!(
+        negotiated_protocol,
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+
+    let transport = stream_parts.into_stream().into_inner();
+    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.flushes(), 1);
+}
+
+#[test]
+fn negotiate_session_parts_with_sniffer_supports_reuse() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport1 = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+    let transport2 = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    let mut sniffer = NegotiationPrologueSniffer::new();
+
+    let parts1 =
+        negotiate_session_parts_with_sniffer(transport1, ProtocolVersion::NEWEST, &mut sniffer)
+            .expect("binary parts succeed");
+    assert_eq!(parts1.decision(), NegotiationPrologue::Binary);
+    assert_eq!(parts1.remote_protocol(), remote_version);
+
+    let (_remote_advertised, _remote_protocol, _negotiated, stream_parts) =
+        parts1.into_binary().expect("binary parts");
+    let transport1 = stream_parts.into_stream().into_inner();
+    assert_eq!(
+        transport1.writes(),
+        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+    );
+
+    let parts2 =
+        negotiate_session_parts_with_sniffer(transport2, ProtocolVersion::NEWEST, &mut sniffer)
+            .expect("legacy parts succeed");
+    assert_eq!(parts2.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(
+        parts2.remote_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+
+    let (_greeting, _negotiated, stream_parts) = parts2.into_legacy().expect("legacy parts");
+    let transport2 = stream_parts.into_stream().into_inner();
+    assert_eq!(transport2.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport2.flushes(), 1);
+}
+
+#[test]
 fn negotiate_session_with_sniffer_supports_reuse() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
     let transport1 = MemoryTransport::new(&binary_handshake_bytes(remote_version));
