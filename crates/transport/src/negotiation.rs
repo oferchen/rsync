@@ -290,6 +290,8 @@ impl<R: Read> NegotiatedStream<R> {
         line: &mut Vec<u8>,
         require_full_prefix: bool,
     ) -> io::Result<()> {
+        line.clear();
+
         match self.decision {
             NegotiationPrologue::LegacyAscii => {}
             _ => {
@@ -328,8 +330,6 @@ impl<R: Read> NegotiatedStream<R> {
     }
 
     fn populate_line_from_buffer(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
-        line.clear();
-
         while self.buffer.has_remaining() {
             let remaining = self.buffer.remaining_slice();
 
@@ -1570,6 +1570,19 @@ mod tests {
         let err = stream
             .read_and_parse_legacy_daemon_message(&mut line)
             .expect_err("partial prefix consumption must error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(line.is_empty());
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_clears_line_on_error() {
+        let mut stream = sniff_bytes(b"\x00rest").expect("sniff succeeds");
+        let mut line = b"stale".to_vec();
+
+        let err = stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect_err("binary negotiation cannot parse legacy message");
+
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(line.is_empty());
     }
