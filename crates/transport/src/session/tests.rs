@@ -1,5 +1,7 @@
 use super::*;
-use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting};
+use rsync_protocol::{
+    NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
+};
 use std::io::{self, Cursor, Read, Write};
 
 #[derive(Clone, Debug)]
