@@ -517,6 +517,20 @@ impl<T, E> TryMapInnerError<T, E> {
         let (error, original) = self.into_parts();
         TryMapInnerError::new(error, map(original))
     }
+
+    /// Maps the preserved error into another type while retaining the original value.
+    ///
+    /// This mirrors [`Self::map_original`] but transforms the stored error instead. It is useful when
+    /// callers need to downgrade rich error types (for example to [`io::ErrorKind`]) without losing the
+    /// buffered transport state captured by [`TryMapInnerError`].
+    #[must_use]
+    pub fn map_error<E2, F>(self, map: F) -> TryMapInnerError<T, E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        let (error, original) = self.into_parts();
+        TryMapInnerError::new(map(error), original)
+    }
 }
 
 impl<T, E: fmt::Debug> fmt::Debug for TryMapInnerError<T, E> {
@@ -1130,6 +1144,30 @@ mod tests {
         original
             .read_to_end(&mut replay)
             .expect("original stream still readable");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_error_can_transform_error_without_losing_original() {
+        let legacy = b"@RSYNCD: 31.0\n";
+        let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
+
+        let err = parts
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        let mapped = err.map_error(|error| error.kind());
+        assert_eq!(*mapped.error(), io::ErrorKind::Other);
+
+        let mut original = mapped.into_original().into_stream();
+        let mut replay = Vec::new();
+        original
+            .read_to_end(&mut replay)
+            .expect("mapped error preserves original stream");
         assert_eq!(replay, legacy);
     }
 
