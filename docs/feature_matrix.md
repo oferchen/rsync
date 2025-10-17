@@ -17,7 +17,7 @@ binary so documentation never overstates parity.
 | Checksums | Rolling checksum (`rsum`) implementation | Implemented | Streaming `RollingChecksum` mirrors upstream `sum1`/`sum2` semantics and exposes safe rolling updates. | `crates/checksums/src/rolling.rs` |
 | Checksums | Strong digests (MD4/MD5/XXH64) | Implemented | Streaming wrappers over RustCrypto hashes and `xxhash-rust` provide the strong checksum variants negotiated by rsync. | `crates/checksums/src/strong/` |
 | Workspace | CLI front-end (`bin/rsync`) | Missing | No CLI crate or binary exists yet; command-line parsing and help parity are outstanding. | _n/a_ |
-| Transport | Binary negotiation orchestration | Missing | Remote-shell style binary negotiation remains unimplemented; higher layers do not yet drive the multiplexed handshake after the ASCII greeting. | _n/a_ |
+| Transport | Binary negotiation orchestration | Implemented | `binary::negotiate_binary_session` drives the remote-shell handshake, clamps the negotiated protocol, and returns the replaying stream together with the peer advertisement. | `crates/transport/src/binary.rs` |
 | Workspace | Daemon server (`bin/rsyncd`) | Missing | Daemon crate, config parser, and transport loop have not been implemented. | _n/a_ |
 | Workspace | Core transfer/engine/meta/filter/compress crates | Missing | Crates beyond `protocol`, `transport`, and `checksums` remain absent; delta transfer, metadata application, and compression still need to be written. | _n/a_ |
 | Quality | Golden parity harness & interop tests | Missing | The repository does not yet build or execute the upstream rsync comparison matrix. | _n/a_ |
