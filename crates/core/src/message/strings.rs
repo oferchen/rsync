@@ -156,6 +156,26 @@ pub fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
         .map(|index| EXIT_CODE_TABLE[index])
 }
 
+/// Returns the full table of known exit-code templates.
+///
+/// The slice mirrors upstream rsync's `rerr_names` array, including the
+/// downgraded severity for exit code 24. Callers can iterate over the entries to
+/// build aggregated documentation or validation tables without hard-coding the
+/// mapping in multiple places.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::message::strings::exit_code_messages;
+///
+/// let templates = exit_code_messages();
+/// assert!(templates.iter().any(|entry| entry.code() == 24));
+/// ```
+#[must_use]
+pub const fn exit_code_messages() -> &'static [ExitCodeMessage] {
+    EXIT_CODE_TABLE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +227,13 @@ mod tests {
 
             previous = Some(entry.code());
         }
+    }
+
+    #[test]
+    fn exit_code_messages_exposes_full_table() {
+        let slice = exit_code_messages();
+        assert_eq!(slice.len(), EXIT_CODE_TABLE.len());
+        assert_eq!(slice.first(), EXIT_CODE_TABLE.first());
+        assert_eq!(slice.last(), EXIT_CODE_TABLE.last());
     }
 }
