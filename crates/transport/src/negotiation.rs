@@ -363,7 +363,7 @@ impl<R: Read> NegotiatedStream<R> {
                     line.try_reserve(observed.len())
                         .map_err(map_line_reserve_error_for_io)?;
                     line.extend_from_slice(observed);
-                    if observed.iter().any(|&value| value == b'\n') {
+                    if observed.contains(&b'\n') {
                         return Ok(());
                     }
                 }

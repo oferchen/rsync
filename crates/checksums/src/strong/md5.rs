@@ -6,6 +6,12 @@ pub struct Md5 {
     inner: md5::Md5,
 }
 
+impl Default for Md5 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Md5 {
     /// Creates a hasher with an empty state.
     #[must_use]

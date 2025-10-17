@@ -6,6 +6,12 @@ pub struct Md4 {
     inner: md4::Md4,
 }
 
+impl Default for Md4 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Md4 {
     /// Creates a hasher with an empty state.
     #[must_use]
