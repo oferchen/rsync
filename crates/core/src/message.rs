@@ -676,6 +676,18 @@ mod tests {
     }
 
     #[test]
+    fn normalize_windows_drive_paths_standardizes_separators() {
+        let normalized = normalize_path(Path::new(r"C:\foo\bar\baz.txt"));
+        assert_eq!(normalized, "C:/foo/bar/baz.txt");
+    }
+
+    #[test]
+    fn normalize_windows_drive_roots_include_trailing_separator() {
+        let normalized = normalize_path(Path::new(r"C:\"));
+        assert_eq!(normalized, "C:/");
+    }
+
+    #[test]
     fn normalize_unc_like_paths_retains_server_share_structure() {
         let normalized = normalize_path(Path::new(r"\\server\share\dir\file"));
         assert_eq!(normalized, "//server/share/dir/file");
