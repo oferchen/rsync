@@ -20,7 +20,7 @@ binary so documentation never overstates parity.
 | Workspace | CLI front-end (`bin/rsync`) | Missing | No CLI crate or binary exists yet; command-line parsing and help parity are outstanding. | _n/a_ |
 | Transport | Binary negotiation orchestration | Implemented | `binary::negotiate_binary_session` drives the remote-shell handshake, clamps the negotiated protocol, and returns the replaying stream together with the peer advertisement. | `crates/transport/src/binary.rs` |
 | Workspace | Daemon server (`bin/rsyncd`) | Missing | Daemon crate, config parser, and transport loop have not been implemented. | _n/a_ |
-| Workspace | Core transfer/engine/meta/filter/compress crates | Missing | Crates beyond `protocol`, `transport`, and `checksums` remain absent; delta transfer, metadata application, and compression still need to be written. | _n/a_ |
+| Workspace | Core transfer orchestration plus engine/meta/filter/compress crates | Missing | The `core` crate currently only provides message formatting. The transfer engine, metadata (`meta`), filtering, and compression crates are not implemented, leaving delta transfer and metadata application unavailable. | _n/a_ |
 | Quality | Golden parity harness & interop tests | Missing | The repository does not yet build or execute the upstream rsync comparison matrix. | _n/a_ |
 | Quality | Packaging (deb/rpm), SBOM, systemd unit | Missing | Packaging artifacts are absent pending higher-layer implementation. | _n/a_ |
 

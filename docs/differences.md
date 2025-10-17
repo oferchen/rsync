@@ -15,10 +15,13 @@ referenced functionality ships and parity is verified by tests or goldens.
     CLI/daemon parity via snapshot and interop tests.
 - **Transfer engine and metadata pipeline missing**
   - *Impact*: Delta transfer, metadata preservation, filters, and compression are
-    unavailable; only negotiation helpers compile today.
+    unavailable. The `core` crate currently only exposes message formatting
+    helpers, so there is no orchestration that wires negotiation into an actual
+    file transfer.
   - *Removal plan*: Implement the `engine`, `meta`, `filters`, and `compress`
-    crates with exhaustive unit/integration coverage, then connect them through
-    the `core` facade before re-running the parity harness.
+    crates with exhaustive unit/integration coverage, extend `core` with the
+    client/daemon orchestration APIs, then connect them through the workspace
+    facade before re-running the parity harness.
 - **No interop or packaging automation**
   - *Impact*: There is no exit-code oracle, goldens, CI interop matrix, or
     packaging artifacts, preventing validation against upstream and distribution
