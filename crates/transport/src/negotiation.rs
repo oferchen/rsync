@@ -570,6 +570,49 @@ mod tests {
             let extra = (remainder_read - first.len()).min(second.len());
             remainder.extend_from_slice(&second[..extra]);
         }
+        if remainder.len() < b"rest".len() {
+            let mut tail = Vec::new();
+            stream
+                .read_to_end(&mut tail)
+                .expect("consume any bytes left by the default vectored implementation");
+            remainder.extend_from_slice(&tail);
+        }
+        assert_eq!(remainder, b"rest");
+    }
+
+    #[test]
+    fn vectored_reads_delegate_to_inner_even_without_specialized_support() {
+        let data = b"\x00rest".to_vec();
+        let mut stream = sniff_negotiation_stream(NonVectoredCursor::new(data))
+            .expect("sniff succeeds");
+
+        let mut prefix_buf = [0u8; 1];
+        let mut prefix_vecs = [IoSliceMut::new(&mut prefix_buf)];
+        let read = stream
+            .read_vectored(&mut prefix_vecs)
+            .expect("vectored read yields buffered prefix");
+        assert_eq!(read, 1);
+        assert_eq!(prefix_buf, [0x00]);
+
+        let mut first = [0u8; 2];
+        let mut second = [0u8; 8];
+        let mut remainder_bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+        let remainder_read = stream
+            .read_vectored(&mut remainder_bufs)
+            .expect("vectored read falls back to inner read implementation");
+
+        let mut remainder = Vec::new();
+        remainder.extend_from_slice(&first[..first.len().min(remainder_read)]);
+        if remainder_read > first.len() {
+            let extra = (remainder_read - first.len()).min(second.len());
+            remainder.extend_from_slice(&second[..extra]);
+        }
+        let mut tail = Vec::new();
+        stream
+            .read_to_end(&mut tail)
+            .expect("consume any bytes left by the default vectored implementation");
+        remainder.extend_from_slice(&tail);
+
         assert_eq!(remainder, b"rest");
     }
 
@@ -665,5 +708,20 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("rebuilt stream yields original contents");
         assert_eq!(replay, data);
+    }
+
+    #[derive(Debug)]
+    struct NonVectoredCursor(Cursor<Vec<u8>>);
+
+    impl NonVectoredCursor {
+        fn new(bytes: Vec<u8>) -> Self {
+            Self(Cursor::new(bytes))
+        }
+    }
+
+    impl Read for NonVectoredCursor {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buf)
+        }
     }
 }
