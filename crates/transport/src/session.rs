@@ -7,6 +7,7 @@ use crate::negotiation::{
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
+use std::convert::TryFrom;
 use std::io::{self, Read, Write};
 
 /// Result of negotiating an rsync session over an arbitrary transport.
@@ -48,6 +49,28 @@ impl<R> SessionHandshake<R> {
         match self {
             Self::Binary(handshake) => handshake.remote_protocol(),
             Self::Legacy(handshake) => handshake.server_protocol(),
+        }
+    }
+
+    /// Returns the raw protocol number advertised by the remote peer before clamping.
+    #[must_use]
+    pub fn remote_advertised_protocol(&self) -> u32 {
+        match self {
+            Self::Binary(handshake) => handshake.remote_advertised_protocol(),
+            Self::Legacy(handshake) => handshake.server_greeting().advertised_protocol(),
+        }
+    }
+
+    /// Reports whether the remote advertisement had to be clamped to the supported range.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        match self {
+            Self::Binary(handshake) => handshake.remote_protocol_was_clamped(),
+            Self::Legacy(handshake) => {
+                let advertised = handshake.server_greeting().advertised_protocol();
+                let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
+                advertised_byte > handshake.server_protocol().as_u8()
+            }
         }
     }
 
@@ -135,8 +158,10 @@ impl<R> SessionHandshake<R> {
     pub fn into_stream_parts(self) -> SessionHandshakeParts<R> {
         match self {
             SessionHandshake::Binary(handshake) => {
-                let (remote_protocol, negotiated_protocol, parts) = handshake.into_stream_parts();
+                let (remote_advertised_protocol, remote_protocol, negotiated_protocol, parts) =
+                    handshake.into_stream_parts();
                 SessionHandshakeParts::Binary {
+                    remote_advertised_protocol,
                     remote_protocol,
                     negotiated_protocol,
                     stream: parts,
@@ -159,10 +184,12 @@ impl<R> SessionHandshake<R> {
     pub fn from_stream_parts(parts: SessionHandshakeParts<R>) -> Self {
         match parts {
             SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
                 remote_protocol,
                 negotiated_protocol,
                 stream,
             } => SessionHandshake::Binary(BinaryHandshake::from_stream_parts(
+                remote_advertised_protocol,
                 remote_protocol,
                 negotiated_protocol,
                 stream,
@@ -207,6 +234,8 @@ where
 pub enum SessionHandshakeParts<R> {
     /// Binary handshake metadata and replaying stream parts.
     Binary {
+        /// Protocol number advertised by the remote peer before clamping.
+        remote_advertised_protocol: u32,
         /// Protocol advertised by the remote peer.
         remote_protocol: ProtocolVersion,
         /// Protocol negotiated after applying the caller cap.
@@ -264,6 +293,20 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
+    /// Returns the raw protocol number advertised by the remote peer.
+    #[must_use]
+    pub fn remote_advertised_protocol(&self) -> u32 {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
+                ..
+            } => *remote_advertised_protocol,
+            SessionHandshakeParts::Legacy {
+                server_greeting, ..
+            } => server_greeting.advertised_protocol(),
+        }
+    }
+
     /// Returns the legacy daemon greeting advertised by the server when available.
     #[must_use]
     pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
@@ -310,10 +353,12 @@ impl<R> SessionHandshakeParts<R> {
     {
         match self {
             SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
                 remote_protocol,
                 negotiated_protocol,
                 stream,
             } => SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
                 remote_protocol,
                 negotiated_protocol,
                 stream: stream.map_inner(map),
@@ -334,15 +379,26 @@ impl<R> SessionHandshakeParts<R> {
     pub fn into_binary(
         self,
     ) -> Result<
-        (ProtocolVersion, ProtocolVersion, NegotiatedStreamParts<R>),
+        (
+            u32,
+            ProtocolVersion,
+            ProtocolVersion,
+            NegotiatedStreamParts<R>,
+        ),
         SessionHandshakeParts<R>,
     > {
         match self {
             SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
                 remote_protocol,
                 negotiated_protocol,
                 stream,
-            } => Ok((remote_protocol, negotiated_protocol, stream)),
+            } => Ok((
+                remote_advertised_protocol,
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            )),
             SessionHandshakeParts::Legacy { .. } => Err(self),
         }
     }
@@ -365,6 +421,28 @@ impl<R> SessionHandshakeParts<R> {
                 negotiated_protocol,
                 stream,
             } => Ok((server_greeting, negotiated_protocol, stream)),
+        }
+    }
+
+    /// Reports whether the remote advertisement had to be clamped to the supported range.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
+                remote_protocol,
+                ..
+            } => {
+                let advertised_byte = u8::try_from(*remote_advertised_protocol).unwrap_or(u8::MAX);
+                advertised_byte > remote_protocol.as_u8()
+            }
+            SessionHandshakeParts::Legacy {
+                server_greeting, ..
+            } => {
+                let advertised = server_greeting.advertised_protocol();
+                let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
+                advertised_byte > server_greeting.protocol().as_u8()
+            }
         }
     }
 
@@ -478,6 +556,11 @@ mod tests {
         assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
         assert_eq!(handshake.negotiated_protocol(), remote_version);
         assert_eq!(handshake.remote_protocol(), remote_version);
+        assert_eq!(
+            handshake.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!handshake.remote_protocol_was_clamped());
 
         let transport = match handshake.into_binary() {
             Ok(handshake) => {
@@ -584,6 +667,12 @@ mod tests {
             .write_all(b"payload")
             .expect("write succeeds");
 
+        assert_eq!(
+            handshake.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!handshake.remote_protocol_was_clamped());
+
         let transport = handshake
             .into_binary()
             .expect("variant remains binary")
@@ -594,6 +683,26 @@ mod tests {
         expected.extend_from_slice(b"payload");
         assert_eq!(transport.writes(), expected.as_slice());
         assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_reports_clamped_binary_future_version() {
+        let future_version = 40u32;
+        let transport = MemoryTransport::new(&future_version.to_le_bytes());
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake clamps future versions");
+
+        assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.remote_advertised_protocol(), future_version);
+        assert!(handshake.remote_protocol_was_clamped());
+
+        let parts = handshake.into_stream_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+        assert_eq!(parts.remote_protocol(), Some(ProtocolVersion::NEWEST));
+        assert_eq!(parts.remote_advertised_protocol(), future_version);
+        assert!(parts.remote_protocol_was_clamped());
     }
 
     #[test]
@@ -608,13 +717,19 @@ mod tests {
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
         assert_eq!(parts.negotiated_protocol(), remote_version);
         assert_eq!(parts.remote_protocol(), Some(remote_version));
+        assert_eq!(
+            parts.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!parts.remote_protocol_was_clamped());
         assert!(parts.server_greeting().is_none());
         assert_eq!(parts.stream().decision(), NegotiationPrologue::Binary);
 
-        let (remote_protocol, negotiated_protocol, stream_parts) =
+        let (remote_advertised_protocol, remote_protocol, negotiated_protocol, stream_parts) =
             parts.into_binary().expect("binary parts available");
 
         let parts = SessionHandshakeParts::Binary {
+            remote_advertised_protocol,
             remote_protocol,
             negotiated_protocol,
             stream: stream_parts.map_inner(InstrumentedTransport::new),
@@ -624,6 +739,12 @@ mod tests {
         let mut binary = handshake
             .into_binary()
             .expect("parts reconstruct binary handshake");
+
+        assert_eq!(
+            binary.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert!(!binary.remote_protocol_was_clamped());
 
         binary
             .stream_mut()
@@ -649,6 +770,8 @@ mod tests {
         let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
         assert_eq!(parts.negotiated_protocol(), negotiated);
         assert_eq!(parts.remote_protocol(), Some(negotiated));
+        assert_eq!(parts.remote_advertised_protocol(), 31);
+        assert!(!parts.remote_protocol_was_clamped());
         let server = parts.server_greeting().expect("server greeting retained");
         assert_eq!(server.advertised_protocol(), 31);
         assert_eq!(parts.stream().decision(), NegotiationPrologue::LegacyAscii);
@@ -680,6 +803,25 @@ mod tests {
     }
 
     #[test]
+    fn session_reports_clamped_future_legacy_version() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 40.0\n");
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("legacy handshake clamps future advertisement");
+
+        assert_eq!(handshake.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.remote_advertised_protocol(), 40);
+        assert!(handshake.remote_protocol_was_clamped());
+
+        let parts = handshake.into_stream_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(parts.remote_protocol(), Some(ProtocolVersion::NEWEST));
+        assert_eq!(parts.remote_advertised_protocol(), 40);
+        assert!(parts.remote_protocol_was_clamped());
+    }
+
+    #[test]
     fn session_handshake_parts_preserve_remote_protocol_for_legacy_caps() {
         let desired = ProtocolVersion::from_supported(30).expect("protocol 30 supported");
         let transport = MemoryTransport::new(b"@RSYNCD: 32.0\n");
@@ -691,6 +833,8 @@ mod tests {
         let remote = ProtocolVersion::from_supported(32).expect("protocol 32 supported");
         assert_eq!(parts.negotiated_protocol(), desired);
         assert_eq!(parts.remote_protocol(), Some(remote));
+        assert_eq!(parts.remote_advertised_protocol(), 32);
+        assert!(!parts.remote_protocol_was_clamped());
         let server = parts.server_greeting().expect("server greeting retained");
         assert_eq!(server.protocol(), remote);
         assert_eq!(server.advertised_protocol(), 32);
