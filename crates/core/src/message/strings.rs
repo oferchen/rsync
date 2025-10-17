@@ -13,9 +13,10 @@
 //! The module exposes [`ExitCodeMessage`], a light-weight descriptor capturing
 //! the severity, numeric exit code, and upstream text. Callers obtain instances
 //! through [`exit_code_message`] and can immediately convert them into a
-//! [`Message`] via [`ExitCodeMessage::to_message`]. This mirrors the behaviour
-//! of upstream rsync where exit code 24 emits a warning while all other entries
-//! are treated as errors.
+//! [`Message`] via [`ExitCodeMessage::to_message`] or the blanket
+//! [`From<ExitCodeMessage>`](ExitCodeMessage#impl-From%3CExitCodeMessage%3E-for-Message)
+//! implementation. This mirrors the behaviour of upstream rsync where exit code
+//! 24 emits a warning while all other entries are treated as errors.
 //!
 //! # Invariants
 //!
@@ -45,6 +46,19 @@
 //! assert!(rendered.contains("rsync warning: some files vanished"));
 //! assert!(rendered.contains("(code 24)"));
 //! assert!(rendered.contains("[receiver=3.4.1-rust]"));
+//! ```
+//!
+//! Convert a template directly into a [`Message`] without calling
+//! [`ExitCodeMessage::to_message`].
+//!
+//! ```
+//! use rsync_core::message::{strings::exit_code_message, Message, Severity};
+//!
+//! let template = exit_code_message(23).expect("exit code 23 is known");
+//! let message: Message = template.into();
+//!
+//! assert_eq!(message.code(), Some(23));
+//! assert_eq!(message.severity(), Severity::Error);
 //! ```
 //!
 //! # See also
@@ -138,11 +152,21 @@ impl ExitCodeMessage {
     /// Converts the template into a [`Message`] that mirrors upstream output.
     #[must_use = "the constructed Message should be rendered so the exit-code diagnostic reaches the user"]
     pub fn to_message(self) -> Message {
-        match self.severity {
-            Severity::Info => Message::info(self.text).with_code(self.code),
-            Severity::Warning => Message::warning(self.text).with_code(self.code),
-            Severity::Error => Message::error(self.code, self.text),
-        }
+        message_from_template(self)
+    }
+}
+
+impl From<ExitCodeMessage> for Message {
+    fn from(value: ExitCodeMessage) -> Self {
+        message_from_template(value)
+    }
+}
+
+fn message_from_template(template: ExitCodeMessage) -> Message {
+    match template.severity {
+        Severity::Info => Message::info(template.text).with_code(template.code),
+        Severity::Warning => Message::warning(template.text).with_code(template.code),
+        Severity::Error => Message::error(template.code, template.text),
     }
 }
 
@@ -235,5 +259,17 @@ mod tests {
         assert_eq!(slice.len(), EXIT_CODE_TABLE.len());
         assert_eq!(slice.first(), EXIT_CODE_TABLE.first());
         assert_eq!(slice.last(), EXIT_CODE_TABLE.last());
+    }
+
+    #[test]
+    fn exit_code_message_converts_into_message() {
+        let template = exit_code_message(25).expect("code 25 is mapped");
+
+        let from_method = template.to_message();
+        let via_into: Message = template.into();
+
+        assert_eq!(via_into.code(), Some(25));
+        assert_eq!(via_into.severity(), Severity::Error);
+        assert_eq!(via_into.text(), from_method.text());
     }
 }
