@@ -27,5 +27,6 @@ pub use negotiation::{
     sniff_negotiation_stream_with_sniffer,
 };
 pub use session::{
-    SessionHandshake, SessionHandshakeParts, negotiate_session, negotiate_session_with_sniffer,
+    SessionHandshake, SessionHandshakeParts, negotiate_session, negotiate_session_parts,
+    negotiate_session_parts_with_sniffer, negotiate_session_with_sniffer,
 };
