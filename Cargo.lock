@@ -270,6 +270,7 @@ dependencies = [
  "digest",
  "md-5",
  "md4",
+ "proptest",
  "xxhash-rust",
 ]
 

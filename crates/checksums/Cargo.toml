@@ -9,3 +9,6 @@ md4 = { version = "0.10", default-features = false, features = ["std"] }
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
+
+[dev-dependencies]
+proptest = "1.4"
