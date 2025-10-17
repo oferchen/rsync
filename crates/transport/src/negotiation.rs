@@ -656,10 +656,34 @@ impl<T, E> TryMapInnerError<T, E> {
         &self.error
     }
 
+    /// Returns a mutable reference to the underlying error.
+    ///
+    /// This mirrors [`Self::error`] but allows callers to adjust the preserved error in-place before
+    /// reusing the buffered transport state. Upstream rsync occasionally downgrades rich errors to
+    /// more specific variants (for example timeouts) prior to surfacing them, so exposing a mutable
+    /// handle keeps those transformations possible without reconstructing the entire
+    /// [`TryMapInnerError`].
+    #[must_use]
+    pub fn error_mut(&mut self) -> &mut E {
+        &mut self.error
+    }
+
     /// Returns a shared reference to the value that failed to be mapped.
     #[must_use]
     pub const fn original(&self) -> &T {
         &self.original
+    }
+
+    /// Returns a mutable reference to the value that failed to be mapped.
+    ///
+    /// The mutable accessor mirrors [`Self::original`] and allows callers to prepare the preserved
+    /// transport (for example by consuming buffered bytes or tweaking adapter state) before the
+    /// error is resolved. The modifications are retained when [`Self::into_original`] is invoked,
+    /// matching the behaviour of upstream rsync where negotiation buffers remain usable after a
+    /// failed transformation.
+    #[must_use]
+    pub fn original_mut(&mut self) -> &mut T {
+        &mut self.original
     }
 
     /// Decomposes the error into its parts.
@@ -1793,6 +1817,39 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("mapped error preserves original stream");
         assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_error_mut_accessors_preserve_state() {
+        let legacy = b"@RSYNCD: 31.0\n";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let mut err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        *err.error_mut() = io::Error::new(io::ErrorKind::TimedOut, "timeout");
+        assert_eq!(err.error().kind(), io::ErrorKind::TimedOut);
+
+        {
+            let original = err.original_mut();
+            let mut first = [0u8; 1];
+            original
+                .read_exact(&mut first)
+                .expect("reading from preserved stream succeeds");
+            assert_eq!(&first, b"@");
+        }
+
+        let mut restored = err.into_original();
+        let mut replay = Vec::new();
+        restored
+            .read_to_end(&mut replay)
+            .expect("mutations persist when recovering the original stream");
+        assert_eq!(replay, &legacy[1..]);
     }
 
     #[test]
