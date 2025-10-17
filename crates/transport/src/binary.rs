@@ -101,6 +101,28 @@ impl<R> BinaryHandshake<R> {
 
         (remote_protocol, negotiated_protocol, stream.into_parts())
     }
+
+    /// Reconstructs a [`BinaryHandshake`] from previously extracted stream parts.
+    ///
+    /// Higher layers occasionally need to stash the negotiated protocol metadata while they wrap the
+    /// underlying transport with instrumentation or adapters. This helper accepts the values returned
+    /// by [`Self::into_stream_parts`] and rebuilds the handshake without rerunning the negotiation or
+    /// replaying buffered bytes. The negotiation decision is asserted in debug builds so binary and
+    /// legacy parts cannot be mixed inadvertently.
+    #[must_use]
+    pub fn from_stream_parts(
+        remote_protocol: ProtocolVersion,
+        negotiated_protocol: ProtocolVersion,
+        parts: NegotiatedStreamParts<R>,
+    ) -> Self {
+        debug_assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+
+        Self {
+            stream: parts.into_stream(),
+            remote_protocol,
+            negotiated_protocol,
+        }
+    }
 }
 
 /// Performs the binary rsync protocol negotiation.
@@ -468,6 +490,42 @@ mod tests {
             transport.written(),
             &handshake_bytes(ProtocolVersion::NEWEST)
         );
+    }
+
+    #[test]
+    fn from_stream_parts_rehydrates_binary_handshake() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = CountingTransport::new(&handshake_bytes(remote_version));
+
+        let handshake =
+            negotiate_binary_session(transport, ProtocolVersion::NEWEST).expect("handshake succeeds");
+
+        let (remote, negotiated, parts) = handshake.into_stream_parts();
+        assert_eq!(remote, remote_version);
+        assert_eq!(negotiated, remote_version);
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+
+        let mut rehydrated = BinaryHandshake::from_stream_parts(remote, negotiated, parts);
+
+        assert_eq!(rehydrated.remote_protocol(), remote_version);
+        assert_eq!(rehydrated.negotiated_protocol(), remote_version);
+        assert_eq!(rehydrated.stream().decision(), NegotiationPrologue::Binary);
+
+        rehydrated
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+        rehydrated
+            .stream_mut()
+            .flush()
+            .expect("flush propagates");
+
+        let transport = rehydrated.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 2);
+
+        let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+        expected.extend_from_slice(b"payload");
+        assert_eq!(transport.written(), expected.as_slice());
     }
 
     #[test]
