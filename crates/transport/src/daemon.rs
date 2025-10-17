@@ -34,6 +34,12 @@ impl<R> LegacyDaemonHandshake<R> {
         &self.server_greeting
     }
 
+    /// Returns the protocol version announced by the server before client capping is applied.
+    #[must_use]
+    pub const fn server_protocol(&self) -> ProtocolVersion {
+        self.server_greeting.protocol()
+    }
+
     /// Returns a shared reference to the replaying stream.
     #[must_use]
     pub const fn stream(&self) -> &NegotiatedStream<R> {
@@ -338,6 +344,10 @@ mod tests {
             handshake.negotiated_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
+        assert_eq!(
+            handshake.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
         assert_eq!(handshake.server_greeting().advertised_protocol(), 31);
 
         let transport = handshake.into_stream().into_inner();
@@ -353,6 +363,10 @@ mod tests {
             negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
 
         assert_eq!(handshake.negotiated_protocol(), desired);
+        assert_eq!(
+            handshake.server_protocol(),
+            ProtocolVersion::from_supported(32).expect("protocol 32 supported"),
+        );
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 30.0\n");
@@ -384,6 +398,10 @@ mod tests {
             handshake.negotiated_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
+        assert_eq!(
+            handshake.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
 
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"@RSYNCD: OK\n");
@@ -410,6 +428,10 @@ mod tests {
             handshake1.negotiated_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
+        assert_eq!(
+            handshake1.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
 
         drop(handshake1);
 
@@ -421,6 +443,10 @@ mod tests {
         .expect("sniffer can be reused across sessions");
         assert_eq!(
             handshake2.negotiated_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+        assert_eq!(
+            handshake2.server_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
     }
@@ -472,6 +498,7 @@ mod tests {
 
         assert_eq!(rehydrated.negotiated_protocol(), negotiated);
         assert_eq!(rehydrated.server_greeting(), &greeting_clone);
+        assert_eq!(rehydrated.server_protocol(), greeting_clone.protocol());
         assert_eq!(
             rehydrated.stream().decision(),
             NegotiationPrologue::LegacyAscii

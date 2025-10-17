@@ -42,6 +42,15 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Returns the protocol version advertised by the peer before client caps are applied.
+    #[must_use]
+    pub fn remote_protocol(&self) -> ProtocolVersion {
+        match self {
+            Self::Binary(handshake) => handshake.remote_protocol(),
+            Self::Legacy(handshake) => handshake.server_protocol(),
+        }
+    }
+
     /// Returns a shared reference to the replaying stream regardless of variant.
     #[must_use]
     pub fn stream(&self) -> &NegotiatedStream<R> {
@@ -465,6 +474,7 @@ mod tests {
 
         assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
         assert_eq!(handshake.negotiated_protocol(), remote_version);
+        assert_eq!(handshake.remote_protocol(), remote_version);
 
         let transport = match handshake.into_binary() {
             Ok(handshake) => {
@@ -493,6 +503,10 @@ mod tests {
             handshake.negotiated_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
+        assert_eq!(
+            handshake.remote_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
 
         let transport = match handshake.into_legacy() {
             Ok(handshake) => {
@@ -517,6 +531,7 @@ mod tests {
             negotiate_session_with_sniffer(transport1, ProtocolVersion::NEWEST, &mut sniffer)
                 .expect("binary handshake succeeds");
         assert!(matches!(handshake1.decision(), NegotiationPrologue::Binary));
+        assert_eq!(handshake1.remote_protocol(), remote_version);
 
         let transport1 = handshake1
             .into_binary()
@@ -535,6 +550,10 @@ mod tests {
             handshake2.decision(),
             NegotiationPrologue::LegacyAscii
         ));
+        assert_eq!(
+            handshake2.remote_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
 
         let transport2 = handshake2
             .into_legacy()
