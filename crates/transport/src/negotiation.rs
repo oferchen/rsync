@@ -3,9 +3,10 @@ use std::fmt;
 use std::io::{self, BufRead, IoSliceMut, Read};
 
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, NegotiationPrologue,
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonMessage, NegotiationPrologue,
     NegotiationPrologueSniffer, ProtocolVersion, parse_legacy_daemon_greeting_bytes,
-    parse_legacy_daemon_greeting_bytes_details,
+    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_message_bytes,
+    parse_legacy_error_message_bytes, parse_legacy_warning_message_bytes,
 };
 
 /// Result produced when sniffing the negotiation prologue from a transport stream.
@@ -186,6 +187,75 @@ impl<R: Read> NegotiatedStream<R> {
     ///   observed.
     /// - [`io::ErrorKind::OutOfMemory`] when reserving space for the output buffer fails.
     pub fn read_legacy_daemon_line(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
+        self.read_legacy_line(line, true)
+    }
+
+    /// Reads and parses the legacy daemon greeting using the replaying stream wrapper.
+    ///
+    /// The helper forwards to [`Self::read_legacy_daemon_line`] before delegating to
+    /// [`rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
+    /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
+    /// subsequent reads.
+    pub fn read_and_parse_legacy_daemon_greeting(
+        &mut self,
+        line: &mut Vec<u8>,
+    ) -> io::Result<ProtocolVersion> {
+        self.read_legacy_daemon_line(line)?;
+        parse_legacy_daemon_greeting_bytes(line).map_err(io::Error::from)
+    }
+
+    /// Reads and parses the legacy daemon greeting, returning the detailed representation.
+    ///
+    /// This mirrors [`Self::read_and_parse_legacy_daemon_greeting`] but exposes the structured
+    /// [`LegacyDaemonGreeting`] used by higher layers to inspect the advertised protocol number,
+    /// subprotocol, and digest list.
+    pub fn read_and_parse_legacy_daemon_greeting_details<'a>(
+        &mut self,
+        line: &'a mut Vec<u8>,
+    ) -> io::Result<LegacyDaemonGreeting<'a>> {
+        self.read_legacy_daemon_line(line)?;
+        parse_legacy_daemon_greeting_bytes_details(line).map_err(io::Error::from)
+    }
+
+    /// Reads and parses a legacy daemon control message such as `@RSYNCD: OK` or `@RSYNCD: AUTHREQD`.
+    ///
+    /// The helper mirrors [`rsync_protocol::parse_legacy_daemon_message_bytes`] but operates on the
+    /// replaying transport wrapper so callers can continue using [`Read`] after the buffered
+    /// negotiation prefix has been replayed. The returned [`LegacyDaemonMessage`] borrows the
+    /// supplied buffer, matching the lifetime semantics of the parser from the protocol crate.
+    pub fn read_and_parse_legacy_daemon_message<'a>(
+        &mut self,
+        line: &'a mut Vec<u8>,
+    ) -> io::Result<LegacyDaemonMessage<'a>> {
+        self.read_legacy_line(line, false)?;
+        parse_legacy_daemon_message_bytes(line).map_err(io::Error::from)
+    }
+
+    /// Reads and parses a legacy daemon error line of the form `@ERROR: ...`.
+    ///
+    /// Empty payloads are returned as `Some("")`, mirroring the behaviour of
+    /// [`rsync_protocol::parse_legacy_error_message_bytes`]. Any parsing failure is converted into
+    /// [`io::ErrorKind::InvalidData`], matching the conversion performed by the protocol crate.
+    pub fn read_and_parse_legacy_daemon_error_message<'a>(
+        &mut self,
+        line: &'a mut Vec<u8>,
+    ) -> io::Result<Option<&'a str>> {
+        self.read_legacy_line(line, false)?;
+        parse_legacy_error_message_bytes(line).map_err(io::Error::from)
+    }
+
+    /// Reads and parses a legacy daemon warning line of the form `@WARNING: ...`.
+    pub fn read_and_parse_legacy_daemon_warning_message<'a>(
+        &mut self,
+        line: &'a mut Vec<u8>,
+    ) -> io::Result<Option<&'a str>> {
+        self.read_legacy_line(line, false)?;
+        parse_legacy_warning_message_bytes(line).map_err(io::Error::from)
+    }
+}
+
+impl<R: Read> NegotiatedStream<R> {
+    fn read_legacy_line(&mut self, line: &mut Vec<u8>, require_full_prefix: bool) -> io::Result<()> {
         match self.decision {
             NegotiationPrologue::LegacyAscii => {}
             _ => {
@@ -196,20 +266,40 @@ impl<R: Read> NegotiatedStream<R> {
             }
         }
 
-        if !self.buffer.legacy_prefix_complete() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "legacy negotiation prefix is incomplete",
-            ));
+        if require_full_prefix {
+            if !self.buffer.legacy_prefix_complete() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix is incomplete",
+                ));
+            }
+
+            if self.buffer.sniffed_prefix_remaining() != LEGACY_DAEMON_PREFIX_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix has already been consumed",
+                ));
+            }
+        } else {
+            if self.buffer.sniffed_prefix_len() == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix is incomplete",
+                ));
+            }
+
+            if self.buffer.sniffed_prefix_remaining() != self.buffer.sniffed_prefix_len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation prefix has already been consumed",
+                ));
+            }
         }
 
-        if self.buffer.sniffed_prefix_remaining() != LEGACY_DAEMON_PREFIX_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "legacy negotiation prefix has already been consumed",
-            ));
-        }
+        self.populate_line_from_buffer(line)
+    }
 
+    fn populate_line_from_buffer(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
         line.clear();
 
         while self.buffer.has_remaining() {
@@ -253,33 +343,6 @@ impl<R: Read> NegotiatedStream<R> {
                 Err(err) => return Err(err),
             }
         }
-    }
-
-    /// Reads and parses the legacy daemon greeting using the replaying stream wrapper.
-    ///
-    /// The helper forwards to [`Self::read_legacy_daemon_line`] before delegating to
-    /// [`rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
-    /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
-    /// subsequent reads.
-    pub fn read_and_parse_legacy_daemon_greeting(
-        &mut self,
-        line: &mut Vec<u8>,
-    ) -> io::Result<ProtocolVersion> {
-        self.read_legacy_daemon_line(line)?;
-        parse_legacy_daemon_greeting_bytes(line).map_err(io::Error::from)
-    }
-
-    /// Reads and parses the legacy daemon greeting, returning the detailed representation.
-    ///
-    /// This mirrors [`Self::read_and_parse_legacy_daemon_greeting`] but exposes the structured
-    /// [`LegacyDaemonGreeting`] used by higher layers to inspect the advertised protocol number,
-    /// subprotocol, and digest list.
-    pub fn read_and_parse_legacy_daemon_greeting_details<'a>(
-        &mut self,
-        line: &'a mut Vec<u8>,
-    ) -> io::Result<LegacyDaemonGreeting<'a>> {
-        self.read_legacy_daemon_line(line)?;
-        parse_legacy_daemon_greeting_bytes_details(line).map_err(io::Error::from)
     }
 }
 
@@ -1055,6 +1118,90 @@ mod tests {
             .read_to_end(&mut remainder)
             .expect("remaining bytes are replayed");
         assert_eq!(remainder, b"#list\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_routes_keywords() {
+        let mut stream = sniff_bytes(b"@RSYNCD: AUTHREQD module\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        match stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect("message parses")
+        {
+            LegacyDaemonMessage::AuthRequired { module } => {
+                assert_eq!(module, Some("module"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(line, b"@RSYNCD: AUTHREQD module\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_routes_versions() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 29.0\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        match stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect("message parses")
+        {
+            LegacyDaemonMessage::Version(version) => {
+                let expected = ProtocolVersion::from_supported(29).expect("supported version");
+                assert_eq!(version, expected);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(line, b"@RSYNCD: 29.0\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_message_propagates_parse_errors() {
+        let mut stream = sniff_bytes(b"@RSYNCD:\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        let err = stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect_err("message parsing should fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_error_message_returns_payload() {
+        let mut stream = sniff_bytes(b"@ERROR: something went wrong\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        {
+            let payload = stream
+                .read_and_parse_legacy_daemon_error_message(&mut line)
+                .expect("error payload parses")
+                .expect("payload is present");
+            assert_eq!(payload, "something went wrong");
+        }
+        assert_eq!(line, b"@ERROR: something went wrong\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_error_message_allows_empty_payloads() {
+        let mut stream = sniff_bytes(b"@ERROR:\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        {
+            let payload = stream
+                .read_and_parse_legacy_daemon_error_message(&mut line)
+                .expect("empty payload parses");
+            assert_eq!(payload, Some(""));
+        }
+        assert_eq!(line, b"@ERROR:\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_warning_message_returns_payload() {
+        let mut stream = sniff_bytes(b"@WARNING: check perms\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        {
+            let payload = stream
+                .read_and_parse_legacy_daemon_warning_message(&mut line)
+                .expect("warning payload parses")
+                .expect("payload is present");
+            assert_eq!(payload, "check perms");
+        }
+        assert_eq!(line, b"@WARNING: check perms\n");
     }
 
     #[test]
