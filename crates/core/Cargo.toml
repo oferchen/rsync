@@ -6,5 +6,6 @@ authors = ["rsync rust port contributors"]
 license = "GPL-3.0-or-later"
 description = "Core utilities shared by the Rust rsync implementation"
 repository = "https://github.com/oferchen/rsync"
+build = "build.rs"
 
 [dependencies]
