@@ -90,13 +90,19 @@ impl SourceLocation {
             manifest_path.join(file_path)
         };
 
-        let repo_relative = if candidate.is_absolute() {
-            strip_workspace_prefix(&candidate)
+        let normalized_candidate = if candidate.is_absolute() {
+            PathBuf::from(normalize_path(&candidate))
         } else {
             candidate
         };
 
-        let normalized = normalize_path(repo_relative);
+        let repo_relative = if normalized_candidate.is_absolute() {
+            strip_workspace_prefix(&normalized_candidate)
+        } else {
+            normalized_candidate
+        };
+
+        let normalized = normalize_path(&repo_relative);
 
         Self {
             path: Cow::Owned(normalized),
@@ -254,7 +260,7 @@ fn strip_workspace_prefix(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn normalize_path(path: PathBuf) -> String {
+fn normalize_path(path: &Path) -> String {
     use std::path::Component;
 
     let mut prefix: Option<OsString> = None;
@@ -369,5 +375,33 @@ mod tests {
         let source = SourceLocation::from_parts(manifest_dir, "/tmp/outside.rs", 42);
 
         assert!(std::path::Path::new(source.path()).is_absolute());
+    }
+
+    #[test]
+    fn strips_workspace_prefix_after_normalization() {
+        let workspace_root = std::path::Path::new(env!("RSYNC_WORKSPACE_ROOT"));
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let crate_relative = manifest_dir
+            .strip_prefix(workspace_root)
+            .expect("manifest directory must live within the workspace root");
+
+        let redundant_root = workspace_root.join("..").join(
+            workspace_root
+                .file_name()
+                .expect("workspace root should have a terminal component"),
+        );
+
+        let redundant_path = redundant_root.join(crate_relative).join("src/message.rs");
+
+        let leaked: &'static str = Box::leak(
+            redundant_path
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        );
+
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), leaked, 7);
+        assert_eq!(source.path(), "crates/core/src/message.rs");
     }
 }
