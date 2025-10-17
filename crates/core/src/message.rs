@@ -6,6 +6,8 @@ use std::path::Path;
 use std::str;
 use std::sync::OnceLock;
 
+pub mod strings;
+
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = "3.4.1-rust";
 
@@ -347,6 +349,31 @@ impl Message {
         self
     }
 
+    /// Overrides the exit code associated with the message.
+    ///
+    /// The helper is primarily used by warning templates that mirror upstream rsync's
+    /// behaviour of emitting `(code N)` even for warning severities (for example when files
+    /// vanish on the sender side). It can also adjust informational messages when higher
+    /// layers need to bubble up a numeric status that differs from the default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let rendered = Message::warning("some files vanished before transfer")
+    ///     .with_code(24)
+    ///     .to_string();
+    ///
+    /// assert!(rendered.contains("rsync warning:"));
+    /// assert!(rendered.contains("(code 24)"));
+    /// ```
+    #[must_use = "the updated message must be emitted to retain the attached code"]
+    pub fn with_code(mut self, code: i32) -> Self {
+        self.code = Some(code);
+        self
+    }
+
     /// Renders the message into an arbitrary [`fmt::Write`] implementation.
     ///
     /// This helper mirrors the [`Display`](fmt::Display) representation while
@@ -375,7 +402,7 @@ impl Message {
         writer.write_str(": ")?;
         writer.write_str(&self.text)?;
 
-        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
+        if let Some(code) = self.code {
             write!(writer, " (code {code})")?;
         }
 
@@ -447,7 +474,7 @@ impl Message {
         writer.write_all(b": ")?;
         writer.write_all(self.text.as_bytes())?;
 
-        if let (Severity::Error, Some(code)) = (self.severity, self.code) {
+        if let Some(code) = self.code {
             let mut buffer = [0u8; 20];
             let digits = encode_signed_decimal(i64::from(code), &mut buffer);
             writer.write_all(b" (code ")?;
@@ -709,6 +736,16 @@ mod tests {
         let formatted = message.to_string();
 
         assert_eq!(formatted, "rsync warning: soft limit reached");
+    }
+
+    #[test]
+    fn warnings_with_code_render_code_suffix() {
+        let formatted = Message::warning("some files vanished before they could be transferred")
+            .with_code(24)
+            .to_string();
+
+        assert!(formatted.starts_with("rsync warning: some files vanished"));
+        assert!(formatted.contains("(code 24)"));
     }
 
     #[test]
