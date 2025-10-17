@@ -2,12 +2,55 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
+use core::fmt::{self, Write as FmtWrite};
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
-    NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
+    NegotiationPrologueSniffer, ProtocolVersion, write_legacy_daemon_greeting,
 };
 use std::cmp;
 use std::io::{self, Read, Write};
+
+const LEGACY_GREETING_BUFFER_CAPACITY: usize = LEGACY_DAEMON_PREFIX_LEN + 7;
+
+/// Stack-allocated buffer used to render the legacy daemon greeting without allocating.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LegacyGreetingBuffer {
+    buf: [u8; LEGACY_GREETING_BUFFER_CAPACITY],
+    len: usize,
+}
+
+impl LegacyGreetingBuffer {
+    const fn new() -> Self {
+        Self {
+            buf: [0; LEGACY_GREETING_BUFFER_CAPACITY],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl FmtWrite for LegacyGreetingBuffer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        if self.len + bytes.len() > self.buf.len() {
+            return Err(fmt::Error);
+        }
+
+        let end = self.len + bytes.len();
+        self.buf[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+
+    fn write_char(&mut self, ch: char) -> fmt::Result {
+        let mut encoded = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut encoded);
+        self.write_str(encoded)
+    }
+}
 
 /// Result of performing the legacy ASCII daemon negotiation.
 ///
@@ -283,7 +326,14 @@ where
 
     let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
-    let banner = format_legacy_daemon_greeting(negotiated_protocol);
+    let mut banner = LegacyGreetingBuffer::new();
+    write_legacy_daemon_greeting(&mut banner, negotiated_protocol).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "failed to format legacy daemon greeting",
+        )
+    })?;
+
     stream.write_all(banner.as_bytes())?;
     stream.flush()?;
 
@@ -298,7 +348,10 @@ where
 mod tests {
     use super::*;
 
-    use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+    use rsync_protocol::{
+        NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+        format_legacy_daemon_greeting,
+    };
     use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
@@ -666,5 +719,26 @@ mod tests {
         let mut expected = format_legacy_daemon_greeting(negotiated);
         expected.push_str("@RSYNCD: OK\n");
         assert_eq!(transport.written(), expected.as_bytes());
+    }
+
+    #[test]
+    fn legacy_greeting_buffer_matches_formatter() {
+        let mut buffer = LegacyGreetingBuffer::new();
+        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
+            .expect("writing to stack buffer succeeds");
+
+        assert_eq!(
+            buffer.as_bytes(),
+            format_legacy_daemon_greeting(ProtocolVersion::NEWEST).as_bytes()
+        );
+    }
+
+    #[test]
+    fn legacy_greeting_buffer_rejects_overflow() {
+        let mut buffer = LegacyGreetingBuffer::new();
+        let long = "@RSYNCD: 32.0 additional";
+
+        assert!(buffer.write_str(long).is_err());
+        assert!(buffer.as_bytes().is_empty());
     }
 }
