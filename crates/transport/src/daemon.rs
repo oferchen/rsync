@@ -60,6 +60,31 @@ impl<R> LegacyDaemonHandshake<R> {
     ) {
         (self.server_greeting, self.negotiated_protocol, self.stream)
     }
+
+    /// Maps the inner transport while keeping the negotiated metadata intact.
+    ///
+    /// The helper mirrors [`NegotiatedStream::map_inner`], making it convenient to
+    /// wrap the transport with instrumentation or adapters (for example timeout
+    /// guards) after the handshake completes. The sniffed negotiation prefix and
+    /// buffered bytes remain available so higher layers can resume protocol
+    /// processing without re-reading the greeting.
+    #[must_use]
+    pub fn map_stream_inner<F, T>(self, map: F) -> LegacyDaemonHandshake<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        let Self {
+            stream,
+            server_greeting,
+            negotiated_protocol,
+        } = self;
+
+        LegacyDaemonHandshake {
+            stream: stream.map_inner(map),
+            server_greeting,
+            negotiated_protocol,
+        }
+    }
 }
 
 /// Performs the legacy ASCII rsync daemon negotiation.
@@ -119,8 +144,9 @@ mod tests {
     use super::*;
 
     use rsync_protocol::ProtocolVersion;
-    use std::io::{self, Cursor};
+    use std::io::{self, Cursor, Read, Write};
 
+    #[derive(Debug)]
     struct MemoryTransport {
         reader: Cursor<Vec<u8>>,
         written: Vec<u8>,
@@ -163,6 +189,53 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct InstrumentedTransport {
+        inner: MemoryTransport,
+        observed_writes: Vec<u8>,
+        flushes: usize,
+    }
+
+    impl InstrumentedTransport {
+        fn new(inner: MemoryTransport) -> Self {
+            Self {
+                inner,
+                observed_writes: Vec::new(),
+                flushes: 0,
+            }
+        }
+
+        fn writes(&self) -> &[u8] {
+            &self.observed_writes
+        }
+
+        fn flushes(&self) -> usize {
+            self.flushes
+        }
+
+        fn into_inner(self) -> MemoryTransport {
+            self.inner
+        }
+    }
+
+    impl Read for InstrumentedTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Write for InstrumentedTransport {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.observed_writes.extend_from_slice(buf);
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            self.inner.flush()
+        }
+    }
+
     #[test]
     fn negotiate_legacy_daemon_session_exchanges_banners() {
         let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
@@ -200,5 +273,32 @@ mod tests {
             Ok(_) => panic!("binary negotiation is rejected"),
             Err(err) => assert_eq!(err.kind(), io::ErrorKind::InvalidData),
         }
+    }
+
+    #[test]
+    fn map_stream_inner_preserves_state_and_transforms_transport() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
+        handshake
+            .stream_mut()
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+
+        assert_eq!(
+            handshake.negotiated_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"@RSYNCD: OK\n");
+        assert_eq!(instrumented.flushes(), 1);
+
+        let inner = instrumented.into_inner();
+        assert_eq!(inner.flushes(), 2);
+        assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
     }
 }
