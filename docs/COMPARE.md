@@ -32,6 +32,17 @@ layers (CLI, core, engine, daemon) land.
   vectors from RFC test suites and the upstream xxhash reference. The tests
   validate multi-chunk updates plus one-shot helpers for each algorithm.【F:crates/checksums/src/strong/md4.rs†L1-L60】【F:crates/checksums/src/strong/md5.rs†L1-L58】【F:crates/checksums/src/strong/xxhash.rs†L1-L48】
 
+## User-Facing Diagnostics
+
+- **Diagnostic formatter** – The `core::message::Message` facade reconstructs
+  upstream `rsync error:`/`rsync warning:` output, normalises Rust
+  `file!()`/`line!()` metadata to repo-relative paths, and appends role trailers
+  with the `3.4.1-rust` suffix. The byte-oriented renderer streams the message
+  through vectored writes when available and falls back to sequential copies if
+  a writer reports a partial write. Unit tests cover the path normalisation,
+  newline handling, and vectored-write fallback to guarantee parity for the
+  current diagnostic surface.【F:crates/core/src/message.rs†L99-L209】【F:crates/core/src/message.rs†L569-L708】【F:crates/core/src/message.rs†L940-L1261】
+
 ## Outstanding Areas
 
 The following parity milestones remain unmet and are tracked in
