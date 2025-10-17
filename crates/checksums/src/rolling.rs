@@ -10,6 +10,13 @@ pub enum RollingError {
         /// Number of bytes present in the rolling window when the error was raised.
         len: usize,
     },
+    /// The number of outgoing bytes does not match the number of incoming bytes.
+    MismatchedSliceLength {
+        /// Number of bytes being removed from the rolling window.
+        outgoing: usize,
+        /// Number of bytes being appended to the rolling window.
+        incoming: usize,
+    },
 }
 
 impl fmt::Display for RollingError {
@@ -19,6 +26,10 @@ impl fmt::Display for RollingError {
             Self::WindowTooLarge { len } => write!(
                 f,
                 "rolling checksum window of {len} bytes exceeds 32-bit limit"
+            ),
+            Self::MismatchedSliceLength { outgoing, incoming } => write!(
+                f,
+                "rolling checksum requires outgoing ({outgoing}) and incoming ({incoming}) slices to have the same length"
             ),
         }
     }
@@ -140,6 +151,41 @@ impl RollingChecksum {
 
         self.s1 = new_s1;
         self.s2 = new_s2;
+        Ok(())
+    }
+
+    /// Rolls the checksum forward by replacing multiple bytes at once.
+    ///
+    /// The method behaves as if [`roll`](Self::roll) were called repeatedly for each pair of
+    /// outgoing and incoming bytes. Providing slices of different lengths is rejected to avoid
+    /// ambiguous state. Passing empty slices is allowed and leaves the checksum unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RollingError::MismatchedSliceLength`] when the outgoing and incoming slices
+    /// differ in length, [`RollingError::EmptyWindow`] if the checksum has not been seeded with a
+    /// block yet, and [`RollingError::WindowTooLarge`] if the internal window length exceeds the
+    /// upstream limit.
+    pub fn roll_many(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
+        if outgoing.len() != incoming.len() {
+            return Err(RollingError::MismatchedSliceLength {
+                outgoing: outgoing.len(),
+                incoming: incoming.len(),
+            });
+        }
+
+        if outgoing.is_empty() {
+            return Ok(());
+        }
+
+        if self.len == 0 {
+            return Err(RollingError::EmptyWindow);
+        }
+
+        for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+            self.roll(out, inn)?;
+        }
+
         Ok(())
     }
 
@@ -301,6 +347,74 @@ mod tests {
 
         let err = checksum.roll(0, 0).expect_err("oversized window must fail");
         assert!(matches!(err, RollingError::WindowTooLarge { .. }));
+    }
+
+    #[test]
+    fn roll_many_matches_multiple_single_rolls() {
+        let data = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+        let window = 12;
+        let mut rolling = RollingChecksum::new();
+        rolling.update(&data[..window]);
+
+        let mut reference = rolling.clone();
+        let mut position = window;
+
+        while position < data.len() {
+            let advance = (data.len() - position).min(3);
+            let outgoing_start = position - window;
+            let outgoing_end = outgoing_start + advance;
+            let incoming_end = position + advance;
+
+            rolling
+                .roll_many(
+                    &data[outgoing_start..outgoing_end],
+                    &data[position..incoming_end],
+                )
+                .expect("multi-byte roll succeeds");
+
+            for (&out, &inn) in data[outgoing_start..outgoing_end]
+                .iter()
+                .zip(data[position..incoming_end].iter())
+            {
+                reference.roll(out, inn).expect("single roll succeeds");
+            }
+
+            assert_eq!(rolling.digest(), reference.digest());
+            assert_eq!(rolling.value(), reference.value());
+
+            position += advance;
+        }
+    }
+
+    #[test]
+    fn roll_many_rejects_mismatched_lengths() {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(b"abcd");
+
+        let err = checksum
+            .roll_many(b"ab", b"c")
+            .expect_err("length mismatch must fail");
+        assert!(matches!(
+            err,
+            RollingError::MismatchedSliceLength {
+                outgoing: 2,
+                incoming: 1,
+            }
+        ));
+    }
+
+    #[test]
+    fn roll_many_allows_empty_slices() {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(b"rsync");
+
+        checksum
+            .roll_many(&[], &[])
+            .expect("empty slices should be ignored");
+        assert_eq!(
+            checksum.digest(),
+            RollingDigest::new(checksum.s1 as u16, checksum.s2 as u16, checksum.len)
+        );
     }
 
     proptest! {
