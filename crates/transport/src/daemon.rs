@@ -159,7 +159,7 @@ where
     negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
 }
 
-fn negotiate_legacy_daemon_session_from_stream<R>(
+pub(crate) fn negotiate_legacy_daemon_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
 ) -> io::Result<LegacyDaemonHandshake<R>>
