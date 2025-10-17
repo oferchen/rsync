@@ -112,26 +112,17 @@ where
     stream.read_exact(&mut remote_buf)?;
     let remote_raw = u32::from_le_bytes(remote_buf);
 
-    let (oldest, newest) = ProtocolVersion::supported_range_bounds();
-    let remote_byte = match u8::try_from(remote_raw) {
-        Ok(byte) => byte,
+    let remote_byte = remote_raw.try_into().unwrap_or(u8::MAX);
+
+    let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_byte) {
+        Ok(protocol) => protocol,
         Err(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "binary negotiation protocol identifier exceeds u8 range",
+                "binary negotiation protocol identifier outside supported range",
             ));
         }
     };
-
-    if remote_byte < oldest || remote_byte > newest {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "binary negotiation protocol identifier outside supported range",
-        ));
-    }
-
-    let remote_protocol = ProtocolVersion::from_supported(remote_byte)
-        .expect("range check ensures remote protocol is supported");
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
 
     Ok(BinaryHandshake {
@@ -200,8 +191,36 @@ mod tests {
         let transport = handshake.into_stream().into_inner();
         assert_eq!(
             transport.written(),
-            handshake_bytes(ProtocolVersion::NEWEST)
+            &handshake_bytes(ProtocolVersion::NEWEST)
         );
+    }
+
+    #[test]
+    fn negotiate_binary_session_clamps_future_protocols() {
+        let future_version = 40u32;
+        let transport = MemoryTransport::new(&future_version.to_le_bytes());
+
+        let desired = ProtocolVersion::from_supported(29).expect("29 supported");
+        let handshake =
+            negotiate_binary_session(transport, desired).expect("future versions clamp");
+
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), desired);
+
+        let transport = handshake.into_stream().into_inner();
+        assert_eq!(transport.written(), &handshake_bytes(desired));
+    }
+
+    #[test]
+    fn negotiate_binary_session_accepts_protocols_beyond_u8() {
+        let future_version = 0x0001_0200u32;
+        let transport = MemoryTransport::new(&future_version.to_le_bytes());
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("future ints clamp");
+
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
     }
 
     #[test]
