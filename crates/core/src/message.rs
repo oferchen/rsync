@@ -3,7 +3,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
 use std::path::Path;
-use std::str;
+use std::str::{self, FromStr};
 use std::sync::OnceLock;
 
 pub mod strings;
@@ -50,6 +50,39 @@ impl Severity {
     }
 }
 
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Error returned when parsing a [`Severity`] from a string fails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseSeverityError {
+    _private: (),
+}
+
+impl fmt::Display for ParseSeverityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unrecognised rsync message severity")
+    }
+}
+
+impl std::error::Error for ParseSeverityError {}
+
+impl FromStr for Severity {
+    type Err = ParseSeverityError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "info" => Ok(Self::Info),
+            "warning" => Ok(Self::Warning),
+            "error" => Ok(Self::Error),
+            _ => Err(ParseSeverityError { _private: () }),
+        }
+    }
+}
+
 /// Role used in the trailer portion of an rsync message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Role {
@@ -92,6 +125,42 @@ impl Role {
             Self::Server => "server",
             Self::Client => "client",
             Self::Daemon => "daemon",
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Error returned when parsing a [`Role`] from a string fails.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParseRoleError {
+    _private: (),
+}
+
+impl fmt::Display for ParseRoleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unrecognised rsync message role")
+    }
+}
+
+impl std::error::Error for ParseRoleError {}
+
+impl FromStr for Role {
+    type Err = ParseRoleError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "sender" => Ok(Self::Sender),
+            "receiver" => Ok(Self::Receiver),
+            "generator" => Ok(Self::Generator),
+            "server" => Ok(Self::Server),
+            "client" => Ok(Self::Client),
+            "daemon" => Ok(Self::Daemon),
+            _ => Err(ParseRoleError { _private: () }),
         }
     }
 }
@@ -909,6 +978,7 @@ mod tests {
     use std::collections::HashSet;
     use std::ffi::OsStr;
     use std::io::{self, IoSlice};
+    use std::str::FromStr;
 
     #[track_caller]
     fn tracked_source() -> SourceLocation {
@@ -1349,6 +1419,25 @@ mod tests {
     }
 
     #[test]
+    fn severity_display_matches_as_str() {
+        assert_eq!(Severity::Info.to_string(), "info");
+        assert_eq!(Severity::Warning.to_string(), "warning");
+        assert_eq!(Severity::Error.to_string(), "error");
+    }
+
+    #[test]
+    fn severity_from_str_parses_known_labels() {
+        assert_eq!(Severity::from_str("info"), Ok(Severity::Info));
+        assert_eq!(Severity::from_str("warning"), Ok(Severity::Warning));
+        assert_eq!(Severity::from_str("error"), Ok(Severity::Error));
+    }
+
+    #[test]
+    fn severity_from_str_rejects_unknown_labels() {
+        assert!(Severity::from_str("verbose").is_err());
+    }
+
+    #[test]
     fn role_as_str_matches_expected_labels() {
         assert_eq!(Role::Sender.as_str(), "sender");
         assert_eq!(Role::Receiver.as_str(), "receiver");
@@ -1356,6 +1445,27 @@ mod tests {
         assert_eq!(Role::Server.as_str(), "server");
         assert_eq!(Role::Client.as_str(), "client");
         assert_eq!(Role::Daemon.as_str(), "daemon");
+    }
+
+    #[test]
+    fn role_display_matches_as_str() {
+        assert_eq!(Role::Sender.to_string(), "sender");
+        assert_eq!(Role::Daemon.to_string(), "daemon");
+    }
+
+    #[test]
+    fn role_from_str_parses_known_labels() {
+        assert_eq!(Role::from_str("sender"), Ok(Role::Sender));
+        assert_eq!(Role::from_str("receiver"), Ok(Role::Receiver));
+        assert_eq!(Role::from_str("generator"), Ok(Role::Generator));
+        assert_eq!(Role::from_str("server"), Ok(Role::Server));
+        assert_eq!(Role::from_str("client"), Ok(Role::Client));
+        assert_eq!(Role::from_str("daemon"), Ok(Role::Daemon));
+    }
+
+    #[test]
+    fn role_from_str_rejects_unknown_labels() {
+        assert!(Role::from_str("observer").is_err());
     }
 
     #[test]
