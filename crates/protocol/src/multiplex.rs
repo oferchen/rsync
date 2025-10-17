@@ -76,6 +76,48 @@ impl MessageFrame {
         (self.code, self.payload)
     }
 
+    /// Encodes the frame into the caller-provided buffer using the upstream rsync envelope format.
+    ///
+    /// The buffer is extended with the four-byte multiplexed header followed by the payload bytes
+    /// without clearing any existing contents. Capacity is grown with [`Vec::try_reserve`] to avoid
+    /// panicking on allocation failure, matching the error semantics used throughout the crate.
+    /// This mirrors [`send_frame`], making it convenient for test fixtures and golden transcripts
+    /// that need to capture the exact byte representation of a frame without going through an I/O
+    /// handle.
+    ///
+    /// # Examples
+    ///
+    /// Encode an informational frame and decode it back from the produced bytes.
+    ///
+    /// ```
+    /// # use std::io;
+    /// use rsync_protocol::{MessageCode, MessageFrame};
+    ///
+    /// # fn example() -> io::Result<()> {
+    /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
+    /// let mut bytes = Vec::new();
+    /// frame.encode_into_vec(&mut bytes)?;
+    ///
+    /// let (decoded, remainder) = MessageFrame::decode_from_slice(&bytes)?;
+    /// assert_eq!(decoded.code(), MessageCode::Info);
+    /// assert_eq!(decoded.payload(), b"abc");
+    /// assert!(remainder.is_empty());
+    /// # Ok(())
+    /// # }
+    /// # assert!(example().is_ok());
+    /// ```
+    pub fn encode_into_vec(&self, out: &mut Vec<u8>) -> io::Result<()> {
+        out.try_reserve(HEADER_LEN + self.payload.len())
+            .map_err(map_allocation_error)?;
+
+        let payload_len = ensure_payload_length(self.payload.len())?;
+        let header = MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)?;
+        out.extend_from_slice(&header.encode());
+        out.extend_from_slice(&self.payload);
+
+        Ok(())
+    }
+
     /// Decodes a multiplexed frame from the beginning of `bytes`.
     ///
     /// The function mirrors [`recv_msg`] but operates on an in-memory slice, making it
@@ -757,6 +799,22 @@ mod tests {
             &buffer[..HEADER_LEN],
             &MessageHeader::new(frame.code(), 0).unwrap().encode()
         );
+    }
+
+    #[test]
+    fn encode_into_vec_appends_multiplexed_bytes() {
+        let payload = b"encoded payload".to_vec();
+        let frame = MessageFrame::new(MessageCode::Info, payload).expect("frame is valid");
+
+        let mut via_encode = vec![0xAA];
+        frame
+            .encode_into_vec(&mut via_encode)
+            .expect("encode_into_vec succeeds");
+
+        let mut via_send = vec![0xAA];
+        send_frame(&mut via_send, &frame).expect("send_frame succeeds");
+
+        assert_eq!(via_encode, via_send);
     }
 
     #[test]
