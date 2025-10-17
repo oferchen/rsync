@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -254,8 +255,65 @@ fn strip_workspace_prefix(path: &Path) -> PathBuf {
 }
 
 fn normalize_path(path: PathBuf) -> String {
-    let lossy = path.to_string_lossy();
-    lossy.replace('\\', "/")
+    use std::path::Component;
+
+    let mut prefix: Option<OsString> = None;
+    let is_absolute = path.is_absolute();
+    let mut segments: Vec<OsString> = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(value) => {
+                prefix = Some(value.as_os_str().to_os_string());
+            }
+            Component::RootDir => {
+                // Root components are handled via the `is_absolute` flag to avoid
+                // reintroducing platform-specific separators when reconstructing the path.
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if let Some(last) = segments.last() {
+                    if last != ".." {
+                        segments.pop();
+                        continue;
+                    }
+                }
+
+                if !is_absolute {
+                    segments.push(OsString::from(".."));
+                }
+            }
+            Component::Normal(value) => segments.push(value.to_os_string()),
+        }
+    }
+
+    let mut normalized = String::new();
+
+    if let Some(prefix) = prefix {
+        normalized.push_str(&prefix.to_string_lossy().replace('\\', "/"));
+    }
+
+    if is_absolute {
+        if !normalized.ends_with('/') {
+            normalized.push('/');
+        }
+    }
+
+    for (index, segment) in segments.iter().enumerate() {
+        if !normalized.is_empty()
+            && !(normalized.ends_with('/') || (index == 0 && normalized.ends_with(':')))
+        {
+            normalized.push('/');
+        }
+
+        normalized.push_str(&segment.to_string_lossy().replace('\\', "/"));
+    }
+
+    if normalized.is_empty() {
+        String::from(".")
+    } else {
+        normalized
+    }
 }
 
 #[cfg(test)]
@@ -299,5 +357,20 @@ mod tests {
         assert_eq!(path, "crates/core/src/message.rs");
         assert!(!path.contains('\\'));
         assert!(source.line() > 0);
+    }
+
+    #[test]
+    fn normalizes_redundant_segments() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let source = SourceLocation::from_parts(manifest_dir, "src/../src/message.rs", 7);
+        assert_eq!(source.path(), "crates/core/src/message.rs");
+    }
+
+    #[test]
+    fn retains_absolute_paths_outside_workspace() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let source = SourceLocation::from_parts(manifest_dir, "/tmp/outside.rs", 42);
+
+        assert!(std::path::Path::new(source.path()).is_absolute());
     }
 }
