@@ -89,6 +89,12 @@ impl<'a> LegacyDaemonGreeting<'a> {
     pub const fn digest_list(self) -> Option<&'a str> {
         self.digest_list
     }
+
+    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    #[must_use]
+    pub const fn has_digest_list(self) -> bool {
+        self.digest_list.is_some()
+    }
 }
 
 impl LegacyDaemonGreetingOwned {
@@ -130,6 +136,12 @@ impl LegacyDaemonGreetingOwned {
     #[must_use]
     pub fn digest_list(&self) -> Option<&str> {
         self.digest_list.as_deref()
+    }
+
+    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    #[must_use]
+    pub const fn has_digest_list(&self) -> bool {
+        self.digest_list.is_some()
     }
 
     /// Returns a borrowed representation of the greeting.
@@ -378,6 +390,7 @@ mod tests {
         assert!(greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol(), 0);
         assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        assert!(greeting.has_digest_list());
     }
 
     #[test]
@@ -386,6 +399,7 @@ mod tests {
             .expect("digest list should tolerate padding");
 
         assert_eq!(greeting.digest_list(), Some("md4   md5"));
+        assert!(greeting.has_digest_list());
     }
 
     #[test]
@@ -396,6 +410,7 @@ mod tests {
         assert_eq!(greeting.protocol().as_u8(), 29);
         assert!(!greeting.has_subprotocol());
         assert_eq!(greeting.subprotocol(), 0);
+        assert!(!greeting.has_digest_list());
     }
 
     #[test]
@@ -409,6 +424,7 @@ mod tests {
         assert_eq!(owned.subprotocol_raw(), borrowed.subprotocol_raw());
         assert_eq!(owned.digest_list(), borrowed.digest_list());
         assert!(owned.has_subprotocol());
+        assert!(owned.has_digest_list());
 
         let reborrowed = owned.as_borrowed();
         assert_eq!(reborrowed.protocol(), borrowed.protocol());
@@ -424,6 +440,7 @@ mod tests {
         assert!(!owned.has_subprotocol());
         assert_eq!(owned.subprotocol_raw(), None);
         assert!(owned.digest_list().is_none());
+        assert!(!owned.has_digest_list());
     }
 
     #[test]
