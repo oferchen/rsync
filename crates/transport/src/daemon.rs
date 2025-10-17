@@ -2,7 +2,6 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
-use core::convert::TryFrom;
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
     NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
@@ -51,8 +50,9 @@ impl<R> LegacyDaemonHandshake<R> {
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
         let advertised = self.remote_advertised_protocol();
-        let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
-        advertised_byte > self.server_protocol().as_u8()
+        let negotiated = u32::from(self.server_protocol().as_u8());
+
+        advertised > negotiated
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
@@ -443,6 +443,23 @@ mod tests {
 
         assert_eq!(handshake.server_greeting().advertised_protocol(), 40);
         assert_eq!(handshake.remote_advertised_protocol(), 40);
+        assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
+
+        let transport = handshake.into_stream().into_inner();
+        assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
+    }
+
+    #[test]
+    fn negotiate_clamps_large_future_advertisement() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 999.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        assert_eq!(handshake.server_greeting().advertised_protocol(), 999);
+        assert_eq!(handshake.remote_advertised_protocol(), 999);
         assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert!(handshake.remote_protocol_was_clamped());
