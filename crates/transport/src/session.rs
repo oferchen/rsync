@@ -70,6 +70,18 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
+    ///
+    /// This mirrors the per-variant helpers and keeps the aggregated handshake API aligned with
+    /// upstream rsync, where diagnostics note when the user-requested protocol forced a downgrade.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        match self {
+            Self::Binary(handshake) => handshake.local_protocol_was_capped(),
+            Self::Legacy(handshake) => handshake.local_protocol_was_capped(),
+        }
+    }
+
     /// Returns the parsed legacy daemon greeting when the negotiation used the legacy ASCII handshake.
     ///
     /// Binary negotiations do not exchange a greeting, so the method returns [`None`] in that case.
@@ -503,6 +515,12 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
         advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+    }
+
+    /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        self.negotiated_protocol() < self.remote_protocol()
     }
 
     /// Reassembles a [`SessionHandshake`] from the stored components.
