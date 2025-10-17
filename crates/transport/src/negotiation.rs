@@ -23,7 +23,7 @@ pub struct NegotiatedStream<R> {
     buffer: NegotiationBuffer,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct NegotiationBuffer {
     sniffed_prefix_len: usize,
     buffered_pos: usize,
@@ -329,7 +329,7 @@ impl<R: BufRead> BufRead for NegotiatedStream<R> {
 }
 
 /// Components extracted from a [`NegotiatedStream`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NegotiatedStreamParts<R> {
     decision: NegotiationPrologue,
     buffer: NegotiationBuffer,
@@ -916,6 +916,40 @@ mod tests {
         let (prefix, remainder) = parts.buffered_split();
         assert_eq!(prefix, b"\x00");
         assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn parts_can_be_cloned_without_sharing_state() {
+        let data = b"@RSYNCD: 30.0\nrest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut prefix_fragment = [0u8; 3];
+        stream
+            .read_exact(&mut prefix_fragment)
+            .expect("read_exact consumes part of the buffered prefix");
+        assert_eq!(&prefix_fragment, b"@RS");
+
+        let parts = stream.into_parts();
+        let cloned = parts.clone();
+
+        assert_eq!(cloned.decision(), parts.decision());
+        assert_eq!(cloned.sniffed_prefix(), parts.sniffed_prefix());
+        assert_eq!(cloned.buffered_remainder(), parts.buffered_remainder());
+        assert_eq!(cloned.buffered_remaining(), parts.buffered_remaining());
+
+        let mut original_stream = parts.into_stream();
+        let mut original_replay = Vec::new();
+        original_stream
+            .read_to_end(&mut original_replay)
+            .expect("original stream replays buffered bytes");
+
+        let mut cloned_stream = cloned.into_stream();
+        let mut cloned_replay = Vec::new();
+        cloned_stream
+            .read_to_end(&mut cloned_replay)
+            .expect("cloned stream replays its buffered bytes");
+
+        assert_eq!(original_replay, cloned_replay);
     }
 
     #[test]
