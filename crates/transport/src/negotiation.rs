@@ -1,6 +1,12 @@
+use std::collections::TryReserveError;
+use std::fmt;
 use std::io::{self, BufRead, IoSliceMut, Read};
 
-use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer};
+use rsync_protocol::{
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, NegotiationPrologue,
+    NegotiationPrologueSniffer, ProtocolVersion, parse_legacy_daemon_greeting_bytes,
+    parse_legacy_daemon_greeting_bytes_details,
+};
 
 /// Result produced when sniffing the negotiation prologue from a transport stream.
 ///
@@ -158,6 +164,122 @@ impl<R> NegotiatedStream<R> {
     pub fn from_parts(parts: NegotiatedStreamParts<R>) -> Self {
         let (decision, buffer, inner) = parts.into_components();
         Self::from_buffer(inner, decision, buffer)
+    }
+}
+
+impl<R: Read> NegotiatedStream<R> {
+    /// Reads the legacy daemon greeting line after the negotiation prefix has been sniffed.
+    ///
+    /// The method mirrors [`rsync_protocol::read_legacy_daemon_line`] but operates on the
+    /// replaying stream wrapper instead of a [`NegotiationPrologueSniffer`]. It expects the
+    /// negotiation to have been classified as legacy ASCII and the canonical `@RSYNCD:` prefix
+    /// to remain fully buffered. Consuming any of the replay bytes before invoking the helper
+    /// results in an [`io::ErrorKind::InvalidInput`] error so higher layers cannot accidentally
+    /// replay a partial prefix. The captured line (including the terminating newline) is written
+    /// into `line`, which is cleared before new data is appended.
+    ///
+    /// # Errors
+    ///
+    /// - [`io::ErrorKind::InvalidInput`] if the negotiation is not legacy ASCII, if the prefix is
+    ///   incomplete, or if buffered bytes were consumed prior to calling the method.
+    /// - [`io::ErrorKind::UnexpectedEof`] if the underlying stream closes before a newline is
+    ///   observed.
+    /// - [`io::ErrorKind::OutOfMemory`] when reserving space for the output buffer fails.
+    pub fn read_legacy_daemon_line(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
+        match self.decision {
+            NegotiationPrologue::LegacyAscii => {}
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "legacy negotiation has not been detected",
+                ));
+            }
+        }
+
+        if !self.buffer.legacy_prefix_complete() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "legacy negotiation prefix is incomplete",
+            ));
+        }
+
+        if self.buffer.sniffed_prefix_remaining() != LEGACY_DAEMON_PREFIX_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "legacy negotiation prefix has already been consumed",
+            ));
+        }
+
+        line.clear();
+
+        while self.buffer.has_remaining() {
+            let remaining = self.buffer.remaining_slice();
+
+            if let Some(newline_index) = remaining.iter().position(|&byte| byte == b'\n') {
+                let to_copy = newline_index + 1;
+                line.try_reserve(to_copy)
+                    .map_err(map_line_reserve_error_for_io)?;
+                line.extend_from_slice(&remaining[..to_copy]);
+                self.buffer.consume(to_copy);
+                return Ok(());
+            }
+
+            line.try_reserve(remaining.len())
+                .map_err(map_line_reserve_error_for_io)?;
+            line.extend_from_slice(remaining);
+            let consumed = remaining.len();
+            self.buffer.consume(consumed);
+        }
+
+        let mut byte = [0u8; 1];
+        loop {
+            match self.inner.read(&mut byte) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "EOF while reading legacy rsync daemon line",
+                    ));
+                }
+                Ok(read) => {
+                    let observed = &byte[..read];
+                    line.try_reserve(observed.len())
+                        .map_err(map_line_reserve_error_for_io)?;
+                    line.extend_from_slice(observed);
+                    if observed.iter().any(|&value| value == b'\n') {
+                        return Ok(());
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Reads and parses the legacy daemon greeting using the replaying stream wrapper.
+    ///
+    /// The helper forwards to [`Self::read_legacy_daemon_line`] before delegating to
+    /// [`rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
+    /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
+    /// subsequent reads.
+    pub fn read_and_parse_legacy_daemon_greeting(
+        &mut self,
+        line: &mut Vec<u8>,
+    ) -> io::Result<ProtocolVersion> {
+        self.read_legacy_daemon_line(line)?;
+        parse_legacy_daemon_greeting_bytes(line).map_err(io::Error::from)
+    }
+
+    /// Reads and parses the legacy daemon greeting, returning the detailed representation.
+    ///
+    /// This mirrors [`Self::read_and_parse_legacy_daemon_greeting`] but exposes the structured
+    /// [`LegacyDaemonGreeting`] used by higher layers to inspect the advertised protocol number,
+    /// subprotocol, and digest list.
+    pub fn read_and_parse_legacy_daemon_greeting_details<'a>(
+        &mut self,
+        line: &'a mut Vec<u8>,
+    ) -> io::Result<LegacyDaemonGreeting<'a>> {
+        self.read_legacy_daemon_line(line)?;
+        parse_legacy_daemon_greeting_bytes_details(line).map_err(io::Error::from)
     }
 }
 
@@ -366,6 +488,15 @@ impl NegotiationBuffer {
         self.buffered.len().saturating_sub(self.buffered_pos)
     }
 
+    fn sniffed_prefix_remaining(&self) -> usize {
+        let consumed_prefix = self.buffered_pos.min(self.sniffed_prefix_len);
+        self.sniffed_prefix_len.saturating_sub(consumed_prefix)
+    }
+
+    fn legacy_prefix_complete(&self) -> bool {
+        self.sniffed_prefix_len >= LEGACY_DAEMON_PREFIX_LEN
+    }
+
     fn has_remaining(&self) -> bool {
         self.buffered_pos < self.buffered.len()
     }
@@ -473,11 +604,44 @@ pub fn sniff_negotiation_stream<R: Read>(mut reader: R) -> io::Result<Negotiated
     ))
 }
 
+#[derive(Debug)]
+struct LegacyLineReserveError {
+    inner: TryReserveError,
+}
+
+impl LegacyLineReserveError {
+    fn new(inner: TryReserveError) -> Self {
+        Self { inner }
+    }
+}
+
+impl fmt::Display for LegacyLineReserveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to reserve memory for legacy negotiation buffer: {}",
+            self.inner
+        )
+    }
+}
+
+impl std::error::Error for LegacyLineReserveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.inner)
+    }
+}
+
+fn map_line_reserve_error_for_io(err: TryReserveError) -> io::Error {
+    io::Error::new(io::ErrorKind::OutOfMemory, LegacyLineReserveError::new(err))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::io::{self, BufRead, Cursor, IoSliceMut, Read};
+
+    use rsync_protocol::ProtocolVersion;
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
         let cursor = Cursor::new(data.to_vec());
@@ -645,8 +809,8 @@ mod tests {
     #[test]
     fn vectored_reads_delegate_to_inner_even_without_specialized_support() {
         let data = b"\x00rest".to_vec();
-        let mut stream = sniff_negotiation_stream(NonVectoredCursor::new(data))
-            .expect("sniff succeeds");
+        let mut stream =
+            sniff_negotiation_stream(NonVectoredCursor::new(data)).expect("sniff succeeds");
 
         let mut prefix_buf = [0u8; 1];
         let mut prefix_vecs = [IoSliceMut::new(&mut prefix_buf)];
@@ -780,6 +944,84 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("rebuilt stream yields original contents");
         assert_eq!(replay, data);
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_replays_buffered_prefix() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 30.0\n#list\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        stream
+            .read_legacy_daemon_line(&mut line)
+            .expect("legacy line is read");
+        assert_eq!(line, b"@RSYNCD: 30.0\n");
+
+        let mut remainder = Vec::new();
+        stream
+            .read_to_end(&mut remainder)
+            .expect("remaining bytes are replayed");
+        assert_eq!(remainder, b"#list\n");
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_errors_when_prefix_already_consumed() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 29.0\nrest").expect("sniff succeeds");
+        let mut prefix_chunk = [0u8; 4];
+        stream
+            .read_exact(&mut prefix_chunk)
+            .expect("prefix chunk is replayed before parsing");
+
+        let mut line = Vec::new();
+        let err = stream
+            .read_legacy_daemon_line(&mut line)
+            .expect_err("consuming prefix first should fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_errors_for_binary_negotiation() {
+        let mut stream = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
+        let mut line = Vec::new();
+        let err = stream
+            .read_legacy_daemon_line(&mut line)
+            .expect_err("binary negotiations do not yield legacy lines");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn read_legacy_daemon_line_errors_on_eof_before_newline() {
+        let mut stream = sniff_bytes(b"@RSYNCD:").expect("sniff succeeds");
+        let mut line = Vec::new();
+        let err = stream
+            .read_legacy_daemon_line(&mut line)
+            .expect_err("EOF before newline must error");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_greeting_from_stream() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        let version = stream
+            .read_and_parse_legacy_daemon_greeting(&mut line)
+            .expect("greeting parses");
+        assert_eq!(version, ProtocolVersion::from_supported(31).unwrap());
+        assert_eq!(line, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn read_and_parse_legacy_daemon_greeting_details_from_stream() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0 md4 md5\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        let details = stream
+            .read_and_parse_legacy_daemon_greeting_details(&mut line)
+            .expect("detailed greeting parses");
+        assert_eq!(
+            details.protocol(),
+            ProtocolVersion::from_supported(31).unwrap()
+        );
+        assert_eq!(details.digest_list(), Some("md4 md5"));
+        assert!(details.has_subprotocol());
+        assert_eq!(line, b"@RSYNCD: 31.0 md4 md5\n");
     }
 
     #[derive(Debug)]
