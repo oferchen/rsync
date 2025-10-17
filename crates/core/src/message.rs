@@ -436,6 +436,33 @@ impl Message {
             )),
         }
     }
+
+    /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
+    ///
+    /// This helper mirrors the behaviour of upstream rsync, which emits a newline terminator for
+    /// user-visible diagnostics. Callers that need to stream multiple messages into the same
+    /// output can therefore avoid handling line termination manually.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let mut output = Vec::new();
+    /// Message::error(30, "timeout in data send")
+    ///     .with_role(Role::Receiver)
+    ///     .with_source(message_source!())
+    ///     .render_line_to_writer(&mut output)
+    ///     .unwrap();
+    ///
+    /// let rendered = String::from_utf8(output).unwrap();
+    /// assert!(rendered.ends_with('\n'));
+    /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
+    /// ```
+    pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
+        self.render_to_writer(writer)?;
+        writer.write_all(b"\n")
+    }
 }
 
 impl fmt::Display for Message {
@@ -679,6 +706,18 @@ mod tests {
         assert_eq!(buffer, message.to_string().into_bytes());
     }
 
+    #[test]
+    fn render_line_to_writer_appends_newline() {
+        let message = Message::info("protocol handshake complete");
+
+        let mut buffer = Vec::new();
+        message
+            .render_line_to_writer(&mut buffer)
+            .expect("writing into a vector never fails");
+
+        assert_eq!(buffer, format!("{}\n", message).into_bytes());
+    }
+
     struct FailingWriter;
 
     impl io::Write for FailingWriter {
@@ -702,5 +741,34 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "sink error");
+    }
+
+    struct NewlineFailingWriter;
+
+    impl io::Write for NewlineFailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if buf == b"\n" {
+                Err(io::Error::other("newline sink error"))
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn render_line_to_writer_propagates_newline_error() {
+        let mut writer = NewlineFailingWriter;
+        let message = Message::warning("soft limit reached");
+
+        let err = message
+            .render_line_to_writer(&mut writer)
+            .expect_err("newline error should propagate");
+
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "newline sink error");
     }
 }
