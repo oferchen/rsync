@@ -518,17 +518,47 @@ fn normalize_path(path: &Path) -> String {
     }
 }
 
-fn encode_unsigned_decimal(mut value: u64, buf: &mut [u8]) -> &str {
-    debug_assert!(
+fn encode_unsigned_decimal(value: u64, buf: &mut [u8]) -> &str {
+    let start = encode_unsigned_decimal_into(value, buf);
+    str::from_utf8(&buf[start..]).expect("decimal digits are valid ASCII")
+}
+
+fn encode_signed_decimal(value: i64, buf: &mut [u8]) -> &str {
+    if value < 0 {
+        assert!(
+            buf.len() >= 2,
+            "buffer must include capacity for a sign and at least one digit"
+        );
+
+        let start = encode_unsigned_decimal_into(value.unsigned_abs(), buf);
+        assert!(
+            start > 0,
+            "buffer must retain one byte to prefix the minus sign"
+        );
+
+        let sign_index = start - 1;
+        buf[sign_index] = b'-';
+        str::from_utf8(&buf[sign_index..]).expect("decimal digits are valid ASCII")
+    } else {
+        encode_unsigned_decimal(value as u64, buf)
+    }
+}
+
+fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> usize {
+    assert!(
         !buf.is_empty(),
         "buffer must have capacity for at least one digit"
     );
 
-    let mut len = 0usize;
-
+    let mut index = buf.len();
     loop {
-        buf[len] = b'0' + (value % 10) as u8;
-        len += 1;
+        assert!(
+            index > 0,
+            "decimal representation does not fit in the provided buffer"
+        );
+
+        index -= 1;
+        buf[index] = b'0' + (value % 10) as u8;
         value /= 10;
 
         if value == 0 {
@@ -536,19 +566,7 @@ fn encode_unsigned_decimal(mut value: u64, buf: &mut [u8]) -> &str {
         }
     }
 
-    buf[..len].reverse();
-    str::from_utf8(&buf[..len]).expect("decimal digits are valid ASCII")
-}
-
-fn encode_signed_decimal(value: i64, buf: &mut [u8]) -> &str {
-    if value < 0 {
-        buf[0] = b'-';
-        let digits = encode_unsigned_decimal(value.unsigned_abs(), &mut buf[1..]);
-        let len = digits.len();
-        str::from_utf8(&buf[..=len]).expect("decimal digits are valid ASCII")
-    } else {
-        encode_unsigned_decimal(value as u64, buf)
-    }
+    index
 }
 
 #[cfg(test)]
@@ -840,5 +858,29 @@ mod tests {
         assert_eq!(super::encode_signed_decimal(0, &mut buf), "0");
         assert_eq!(super::encode_signed_decimal(123, &mut buf), "123");
         assert_eq!(super::encode_signed_decimal(-456, &mut buf), "-456");
+    }
+
+    #[test]
+    fn encode_signed_decimal_formats_i64_minimum_value() {
+        let mut buf = [0u8; 32];
+        assert_eq!(
+            super::encode_signed_decimal(i64::MIN, &mut buf),
+            "-9223372036854775808"
+        );
+    }
+
+    #[test]
+    fn render_to_writer_formats_minimum_exit_code() {
+        let message = Message::error(i32::MIN, "integrity check failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut buffer = Vec::new();
+        message
+            .render_to_writer(&mut buffer)
+            .expect("rendering into a vector never fails");
+
+        let rendered = String::from_utf8(buffer).expect("message renders as UTF-8");
+        assert!(rendered.contains("(code -2147483648)"));
     }
 }
