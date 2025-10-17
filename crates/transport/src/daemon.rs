@@ -1,5 +1,5 @@
 use crate::negotiation::{
-    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
 use core::convert::TryFrom;
@@ -107,6 +107,39 @@ impl<R> LegacyDaemonHandshake<R> {
             stream: stream.map_inner(map),
             server_greeting,
             negotiated_protocol,
+        }
+    }
+
+    /// Attempts to transform the inner transport while keeping the negotiated metadata intact.
+    ///
+    /// The closure returns the replacement reader on success or a tuple containing the error and
+    /// original reader on failure, matching [`NegotiatedStream::try_map_inner`].
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<LegacyDaemonHandshake<T>, TryMapInnerError<LegacyDaemonHandshake<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        let Self {
+            stream,
+            server_greeting,
+            negotiated_protocol,
+        } = self;
+
+        let mut greeting = Some(server_greeting);
+
+        match stream.try_map_inner(map) {
+            Ok(stream) => Ok(LegacyDaemonHandshake {
+                stream,
+                server_greeting: greeting.take().expect("greeting available"),
+                negotiated_protocol,
+            }),
+            Err(err) => Err(err.map_original(|stream| LegacyDaemonHandshake {
+                stream,
+                server_greeting: greeting.take().expect("greeting available"),
+                negotiated_protocol,
+            })),
         }
     }
 
@@ -445,6 +478,51 @@ mod tests {
         let inner = instrumented.into_inner();
         assert_eq!(inner.flushes(), 2);
         assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    }
+
+    #[test]
+    fn try_map_stream_inner_transforms_transport() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let mut handshake = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+
+        handshake
+            .stream_mut()
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"@RSYNCD: OK\n");
+        assert_eq!(instrumented.flushes(), 1);
+    }
+
+    #[test]
+    fn try_map_stream_inner_preserves_original_on_error() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let err = handshake
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "boom"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let original = err.into_original();
+        let transport = original.into_stream().into_inner();
+        assert_eq!(transport.written(), b"@RSYNCD: 31.0\n");
     }
 
     #[test]

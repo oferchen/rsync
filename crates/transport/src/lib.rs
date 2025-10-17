@@ -23,7 +23,7 @@ pub use daemon::{
     negotiate_legacy_daemon_session_with_sniffer,
 };
 pub use negotiation::{
-    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
 pub use session::{SessionHandshake, negotiate_session, negotiate_session_with_sniffer};
