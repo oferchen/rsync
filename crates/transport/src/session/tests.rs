@@ -262,7 +262,7 @@ fn session_reports_clamped_binary_future_version() {
 
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
-    assert_eq!(parts.remote_protocol(), Some(ProtocolVersion::NEWEST));
+    assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(parts.remote_advertised_protocol(), future_version);
     assert!(parts.remote_protocol_was_clamped());
 }
@@ -278,7 +278,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts.negotiated_protocol(), remote_version);
-    assert_eq!(parts.remote_protocol(), Some(remote_version));
+    assert_eq!(parts.remote_protocol(), remote_version);
     assert_eq!(
         parts.remote_advertised_protocol(),
         u32::from(remote_version.as_u8())
@@ -402,7 +402,7 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
     assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
     let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
     assert_eq!(parts.negotiated_protocol(), negotiated);
-    assert_eq!(parts.remote_protocol(), Some(negotiated));
+    assert_eq!(parts.remote_protocol(), negotiated);
     assert_eq!(parts.remote_advertised_protocol(), 31);
     assert!(!parts.remote_protocol_was_clamped());
     let server = parts.server_greeting().expect("server greeting retained");
@@ -449,7 +449,7 @@ fn session_reports_clamped_future_legacy_version() {
 
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
-    assert_eq!(parts.remote_protocol(), Some(ProtocolVersion::NEWEST));
+    assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(parts.remote_advertised_protocol(), 40);
     assert!(parts.remote_protocol_was_clamped());
 }
@@ -465,7 +465,7 @@ fn session_handshake_parts_preserve_remote_protocol_for_legacy_caps() {
     let parts = handshake.into_stream_parts();
     let remote = ProtocolVersion::from_supported(32).expect("protocol 32 supported");
     assert_eq!(parts.negotiated_protocol(), desired);
-    assert_eq!(parts.remote_protocol(), Some(remote));
+    assert_eq!(parts.remote_protocol(), remote);
     assert_eq!(parts.remote_advertised_protocol(), 32);
     assert!(!parts.remote_protocol_was_clamped());
     let server = parts.server_greeting().expect("server greeting retained");

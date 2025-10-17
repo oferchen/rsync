@@ -295,17 +295,16 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
-    /// Returns the protocol advertised by the remote peer when it can be derived from
-    /// the captured handshake metadata.
+    /// Returns the protocol advertised by the remote peer.
     #[must_use]
-    pub fn remote_protocol(&self) -> Option<ProtocolVersion> {
+    pub fn remote_protocol(&self) -> ProtocolVersion {
         match self {
             SessionHandshakeParts::Binary {
                 remote_protocol, ..
-            } => Some(*remote_protocol),
+            } => *remote_protocol,
             SessionHandshakeParts::Legacy {
                 server_greeting, ..
-            } => Some(server_greeting.protocol()),
+            } => server_greeting.protocol(),
         }
     }
 
@@ -495,19 +494,10 @@ impl<R> SessionHandshakeParts<R> {
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                ..
-            } => advertisement_was_clamped(*remote_advertised_protocol, *remote_protocol),
-            SessionHandshakeParts::Legacy {
-                server_greeting, ..
-            } => advertisement_was_clamped(
-                server_greeting.advertised_protocol(),
-                server_greeting.protocol(),
-            ),
-        }
+        advertisement_was_clamped(
+            self.remote_advertised_protocol(),
+            self.remote_protocol(),
+        )
     }
 
     /// Reassembles a [`SessionHandshake`] from the stored components.
