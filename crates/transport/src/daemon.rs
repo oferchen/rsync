@@ -112,6 +112,29 @@ impl<R> LegacyDaemonHandshake<R> {
 
         (server_greeting, negotiated_protocol, stream.into_parts())
     }
+
+    /// Reconstructs a [`LegacyDaemonHandshake`] from previously extracted stream parts.
+    ///
+    /// This helper complements [`Self::into_stream_parts`] by allowing higher layers to stash the
+    /// parsed greeting and negotiated protocol while temporarily taking ownership of the
+    /// [`NegotiatedStreamParts`]. Once the caller has finished wrapping or inspecting the underlying
+    /// transport they can rebuild the handshake without replaying the daemon's greeting or
+    /// re-parsing any metadata. The negotiation decision is asserted in debug builds to catch
+    /// accidental misuse where binary session parts are supplied.
+    #[must_use]
+    pub fn from_stream_parts(
+        server_greeting: LegacyDaemonGreetingOwned,
+        negotiated_protocol: ProtocolVersion,
+        parts: NegotiatedStreamParts<R>,
+    ) -> Self {
+        debug_assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+
+        Self {
+            stream: parts.into_stream(),
+            server_greeting,
+            negotiated_protocol,
+        }
+    }
 }
 
 /// Performs the legacy ASCII rsync daemon negotiation.
@@ -431,5 +454,41 @@ mod tests {
             transport.written(),
             format_legacy_daemon_greeting(negotiated).as_bytes()
         );
+    }
+
+    #[test]
+    fn from_stream_parts_rehydrates_legacy_handshake() {
+        let desired = ProtocolVersion::from_supported(30).expect("protocol 30 supported");
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+        let handshake =
+            negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
+
+        let (greeting, negotiated, parts) = handshake.into_stream_parts();
+        let greeting_clone = greeting.clone();
+        assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+
+        let mut rehydrated =
+            LegacyDaemonHandshake::from_stream_parts(greeting, negotiated, parts);
+
+        assert_eq!(rehydrated.negotiated_protocol(), negotiated);
+        assert_eq!(rehydrated.server_greeting(), &greeting_clone);
+        assert_eq!(rehydrated.stream().decision(), NegotiationPrologue::LegacyAscii);
+
+        rehydrated
+            .stream_mut()
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        rehydrated
+            .stream_mut()
+            .flush()
+            .expect("flush propagates");
+
+        let transport = rehydrated.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 2);
+
+        let mut expected = format_legacy_daemon_greeting(negotiated);
+        expected.push_str("@RSYNCD: OK\n");
+        assert_eq!(transport.written(), expected.as_bytes());
     }
 }
