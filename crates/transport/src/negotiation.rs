@@ -31,6 +31,48 @@ struct NegotiationBuffer {
     buffered: Vec<u8>,
 }
 
+/// Error returned when a caller-provided buffer is too small to hold the sniffed bytes.
+///
+/// The structure reports how many bytes were required to copy the replay data and how many were
+/// provided by the caller. It mirrors upstream rsync's approach of signalling insufficient
+/// capacity without mutating the destination, allowing higher layers to retry with a suitably
+/// sized buffer while keeping the captured negotiation prefix intact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BufferedCopyTooSmall {
+    required: usize,
+    provided: usize,
+}
+
+impl BufferedCopyTooSmall {
+    const fn new(required: usize, provided: usize) -> Self {
+        Self { required, provided }
+    }
+
+    /// Returns the number of bytes necessary to copy the buffered negotiation data.
+    #[must_use]
+    pub const fn required(self) -> usize {
+        self.required
+    }
+
+    /// Returns the number of bytes made available by the caller.
+    #[must_use]
+    pub const fn provided(self) -> usize {
+        self.provided
+    }
+}
+
+impl fmt::Display for BufferedCopyTooSmall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "buffered negotiation data requires {} bytes but destination provided {}",
+            self.required, self.provided
+        )
+    }
+}
+
+impl std::error::Error for BufferedCopyTooSmall {}
+
 impl<R> NegotiatedStream<R> {
     /// Returns the negotiation style determined while sniffing the transport.
     #[must_use]
@@ -171,6 +213,41 @@ impl<R> NegotiatedStream<R> {
     /// surface the allocation error.
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         self.buffer.copy_into_vec(target)
+    }
+
+    /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
+    ///
+    /// This mirrors [`Self::copy_buffered_into`] but avoids reallocating a [`Vec`]. Callers that
+    /// stage replay data on the stack or inside fixed-size scratch buffers can therefore reuse
+    /// their storage while keeping the sniffed bytes untouched. When the destination cannot hold
+    /// the buffered data, a [`BufferedCopyTooSmall`] error is returned and the slice remains
+    /// unchanged.
+    pub fn copy_buffered_into_slice(
+        &self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_slice(target)
+    }
+
+    /// Copies the buffered negotiation data into a caller-provided array without consuming it.
+    ///
+    /// The helper mirrors [`Self::copy_buffered_into_slice`] but accepts a fixed-size array
+    /// directly, allowing stack-allocated scratch storage to be reused without converting it into a
+    /// mutable slice at the call site.
+    pub fn copy_buffered_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_array(target)
+    }
+
+    /// Streams the buffered negotiation data into the provided writer without consuming it.
+    ///
+    /// The buffered bytes are written exactly once, mirroring upstream rsync's behaviour when the
+    /// handshake transcript is echoed into logs or diagnostics. Any I/O error reported by the
+    /// writer is propagated unchanged.
+    pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
+        self.buffer.copy_all_into_writer(target)
     }
 
     /// Transforms the inner reader while preserving the buffered negotiation state.
@@ -779,6 +856,27 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.copy_into_vec(target)
     }
 
+    /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
+    pub fn copy_buffered_into_slice(
+        &self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_slice(target)
+    }
+
+    /// Copies the buffered negotiation data into a caller-provided array without consuming it.
+    pub fn copy_buffered_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_array(target)
+    }
+
+    /// Streams the buffered negotiation data into the provided writer without consuming it.
+    pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
+        self.buffer.copy_all_into_writer(target)
+    }
+
     /// Attempts to transform the inner reader while preserving the buffered negotiation state.
     ///
     /// When the mapping fails the original reader is returned alongside the error, ensuring callers
@@ -930,6 +1028,28 @@ impl NegotiationBuffer {
         target.clear();
         target.extend_from_slice(&self.buffered);
         Ok(target.len())
+    }
+
+    fn copy_all_into_slice(&self, target: &mut [u8]) -> Result<usize, BufferedCopyTooSmall> {
+        let required = self.buffered.len();
+        if target.len() < required {
+            return Err(BufferedCopyTooSmall::new(required, target.len()));
+        }
+
+        target[..required].copy_from_slice(&self.buffered);
+        Ok(required)
+    }
+
+    fn copy_all_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.copy_all_into_slice(target.as_mut_slice())
+    }
+
+    fn copy_all_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
+        target.write_all(&self.buffered)?;
+        Ok(self.buffered.len())
     }
 
     fn copy_into_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> usize {
@@ -1277,6 +1397,60 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_buffered_into_slice_copies_bytes() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nreplay").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut scratch = vec![0u8; expected.len()];
+        let copied = stream
+            .copy_buffered_into_slice(&mut scratch)
+            .expect("copying into slice succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(scratch, expected);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+
+        let mut replay = vec![0u8; expected.len()];
+        stream
+            .read_exact(&mut replay)
+            .expect("buffered bytes remain available after slicing copy");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_slice_reports_small_buffer() {
+        let stream = sniff_bytes(b"@RSYNCD: 30.0\nrest").expect("sniff succeeds");
+        let expected_len = stream.buffered_len();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut scratch = vec![0u8; expected_len.saturating_sub(1)];
+        let err = stream
+            .copy_buffered_into_slice(&mut scratch)
+            .expect_err("insufficient slice capacity must error");
+
+        assert_eq!(err.required(), expected_len);
+        assert_eq!(err.provided(), scratch.len());
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_writer_copies_bytes() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\npayload").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut output = Vec::new();
+        let written = stream
+            .copy_buffered_into_writer(&mut output)
+            .expect("writing buffered bytes succeeds");
+
+        assert_eq!(written, expected.len());
+        assert_eq!(output, expected);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+    }
+
+    #[test]
     fn negotiated_stream_parts_copy_buffered_into_preserves_replay_state() {
         let parts = sniff_bytes(b"@RSYNCD: 30.0\nleftovers")
             .expect("sniff succeeds")
@@ -1297,6 +1471,68 @@ mod tests {
         rebuilt
             .read_exact(&mut replay)
             .expect("rebuilt stream still replays buffered bytes");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_slice_copies_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\nlisting")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut scratch = vec![0u8; expected.len()];
+        let copied = parts
+            .copy_buffered_into_slice(&mut scratch)
+            .expect("copying into slice succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(scratch, expected);
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = vec![0u8; expected.len()];
+        rebuilt
+            .read_exact(&mut replay)
+            .expect("rebuilt stream still replays buffered bytes after slice copy");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_slice_reports_small_buffer() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nlisting")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected_len = parts.buffered_len();
+
+        let mut scratch = vec![0u8; expected_len.saturating_sub(1)];
+        let err = parts
+            .copy_buffered_into_slice(&mut scratch)
+            .expect_err("insufficient slice capacity must error");
+
+        assert_eq!(err.required(), expected_len);
+        assert_eq!(err.provided(), scratch.len());
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_writer_copies_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\ntrailing")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut output = Vec::new();
+        let written = parts
+            .copy_buffered_into_writer(&mut output)
+            .expect("writing buffered bytes succeeds");
+
+        assert_eq!(written, expected.len());
+        assert_eq!(output, expected);
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = vec![0u8; expected.len()];
+        rebuilt
+            .read_exact(&mut replay)
+            .expect("rebuilt stream still replays buffered bytes after writer copy");
         assert_eq!(replay, expected);
     }
 

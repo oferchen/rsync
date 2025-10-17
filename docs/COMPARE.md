@@ -11,11 +11,11 @@ layers (CLI, core, engine, daemon) land.
   upstream negotiation detection by replaying the sniffed bytes before handing
   control to higher layers. Unit tests exercise both branches and verify that
   the buffered prefix remains byte-identical regardless of the negotiation
-  style.【F:crates/transport/src/negotiation.rs†L860-L921】
+  style.【F:crates/transport/src/negotiation.rs†L1131-L1165】【F:crates/transport/src/negotiation.rs†L1540-L1587】
 - **Legacy daemon greeting parsing** – `NegotiatedStream::read_and_parse_legacy_
   daemon_greeting` forwards the buffered greeting into the protocol parser and
   round-trips through `ProtocolVersion`, demonstrating compatibility with the
-  ASCII `@RSYNCD:` flow.【F:crates/transport/src/negotiation.rs†L218-L235】【F:crates/transport/src/negotiation.rs†L1046-L1099】
+  ASCII `@RSYNCD:` flow.【F:crates/transport/src/negotiation.rs†L342-L405】【F:crates/transport/src/negotiation.rs†L2388-L2412】
 - **Session orchestration** – `transport::session::negotiate_session` selects
   the correct handshake style, clamps the protocol, and exposes unified access
   to the replaying transport. Tests cover binary, legacy, shared sniffer reuse,
