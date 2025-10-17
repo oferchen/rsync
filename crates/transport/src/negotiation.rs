@@ -156,6 +156,23 @@ impl<R> NegotiatedStream<R> {
         self.inner
     }
 
+    /// Copies the buffered negotiation prefix and any captured remainder into `target`.
+    ///
+    /// The helper provides read-only access to the bytes that were observed while detecting the
+    /// negotiation style without consuming them. Callers can therefore inspect, log, or cache the
+    /// handshake transcript while continuing to rely on the replaying [`Read`] implementation for
+    /// subsequent parsing. The destination vector is cleared before new data is written; its
+    /// capacity is grown as needed and the resulting length is returned for convenience.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`TryReserveError`] when the destination vector cannot be grown to hold the
+    /// buffered bytes. On failure `target` retains its previous contents so callers can recover or
+    /// surface the allocation error.
+    pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.copy_into_vec(target)
+    }
+
     /// Transforms the inner reader while preserving the buffered negotiation state.
     ///
     /// The helper allows callers to wrap the underlying transport (for example to
@@ -703,6 +720,16 @@ impl<R> NegotiatedStreamParts<R> {
         }
     }
 
+    /// Copies the buffered negotiation bytes into the destination vector without consuming them.
+    ///
+    /// This mirrors [`NegotiatedStream::copy_buffered_into`], allowing callers that temporarily
+    /// decompose the stream into parts to observe the sniffed prefix and remainder while preserving
+    /// the replay state. The destination is cleared before data is appended; if additional capacity
+    /// is required a [`TryReserveError`] is returned and the original contents remain untouched.
+    pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.copy_into_vec(target)
+    }
+
     /// Attempts to transform the inner reader while preserving the buffered negotiation state.
     ///
     /// When the mapping fails the original reader is returned alongside the error, ensuring callers
@@ -843,6 +870,17 @@ impl NegotiationBuffer {
         buf[..to_copy].copy_from_slice(&available[..to_copy]);
         self.buffered_pos += to_copy;
         to_copy
+    }
+
+    fn copy_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        let required = self.buffered.len();
+        if target.capacity() < required {
+            target.try_reserve(required - target.capacity())?;
+        }
+
+        target.clear();
+        target.extend_from_slice(&self.buffered);
+        Ok(target.len())
     }
 
     fn copy_into_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> usize {
@@ -1165,6 +1203,52 @@ mod tests {
             LEGACY_DAEMON_PREFIX_LEN - prefix_fragment.len()
         );
         assert!(parts.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_preserves_replay_state() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\ntrailing").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut scratch = Vec::from([0xAAu8, 0xBB]);
+        let copied = stream
+            .copy_buffered_into(&mut scratch)
+            .expect("copying buffered bytes succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(scratch, expected);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+
+        let mut replay = vec![0u8; expected.len()];
+        stream
+            .read_exact(&mut replay)
+            .expect("buffered bytes remain available after copying");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_preserves_replay_state() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\nleftovers")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut scratch = Vec::with_capacity(1);
+        scratch.extend_from_slice(b"junk");
+        let copied = parts
+            .copy_buffered_into(&mut scratch)
+            .expect("copying buffered bytes succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(scratch, expected);
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = vec![0u8; expected.len()];
+        rebuilt
+            .read_exact(&mut replay)
+            .expect("rebuilt stream still replays buffered bytes");
+        assert_eq!(replay, expected);
     }
 
     #[test]
