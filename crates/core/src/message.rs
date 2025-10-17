@@ -12,7 +12,7 @@ pub mod strings;
 pub const VERSION_SUFFIX: &str = "3.4.1-rust";
 
 /// Severity of a user-visible message.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Severity {
     /// Informational message.
     Info,
@@ -51,7 +51,7 @@ impl Severity {
 }
 
 /// Role used in the trailer portion of an rsync message.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Role {
     /// Sender role (`[sender=…]`).
     Sender,
@@ -112,7 +112,7 @@ impl Role {
 /// assert_eq!(location.line(), 120);
 /// assert!(location.path().ends_with("src/lib.rs"));
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SourceLocation {
     path: Cow<'static, str>,
     line: u32,
@@ -362,7 +362,7 @@ macro_rules! rsync_info {
 /// assert!(rendered.contains("delta-transfer failure"));
 /// assert!(rendered.contains("[sender=3.4.1-rust]"));
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[must_use = "messages must be formatted or emitted to reach users"]
 pub struct Message {
     severity: Severity,
@@ -863,6 +863,7 @@ fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> usize {
 mod tests {
     use super::*;
     use crate::{rsync_error, rsync_info, rsync_warning};
+    use std::collections::HashSet;
     use std::io::{self, IoSlice};
 
     #[track_caller]
@@ -1060,6 +1061,17 @@ mod tests {
         let helper_location = untracked_source();
         assert_ne!(helper_location.line(), expected_line);
         assert_eq!(helper_location.path(), location.path());
+    }
+
+    #[test]
+    fn message_is_hashable() {
+        let mut dedupe = HashSet::new();
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        assert!(dedupe.insert(message.clone()));
+        assert!(!dedupe.insert(message));
     }
 
     #[test]
