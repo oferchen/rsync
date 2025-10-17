@@ -986,9 +986,11 @@ mod tests {
 
         let mapped = super::map_line_reserve_error_for_io(reserve_err);
         assert_eq!(mapped.kind(), io::ErrorKind::OutOfMemory);
-        assert!(mapped
-            .to_string()
-            .contains("failed to reserve memory for legacy negotiation buffer"));
+        assert!(
+            mapped
+                .to_string()
+                .contains("failed to reserve memory for legacy negotiation buffer")
+        );
 
         let source = mapped.source().expect("mapped error must retain source");
         assert!(source.downcast_ref::<TryReserveError>().is_some());
