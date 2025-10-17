@@ -357,6 +357,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// - [`io::ErrorKind::UnexpectedEof`] if the underlying stream closes before a newline is
     ///   observed.
     /// - [`io::ErrorKind::OutOfMemory`] when reserving space for the output buffer fails.
+    #[doc(alias = "@RSYNCD")]
     pub fn read_legacy_daemon_line(&mut self, line: &mut Vec<u8>) -> io::Result<()> {
         self.read_legacy_line(line, true)
     }
@@ -367,6 +368,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// [`rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
     /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
     /// subsequent reads.
+    #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_greeting(
         &mut self,
         line: &mut Vec<u8>,
@@ -380,6 +382,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// This mirrors [`Self::read_and_parse_legacy_daemon_greeting`] but exposes the structured
     /// [`LegacyDaemonGreeting`] used by higher layers to inspect the advertised protocol number,
     /// subprotocol, and digest list.
+    #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_greeting_details<'a>(
         &mut self,
         line: &'a mut Vec<u8>,
@@ -394,6 +397,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// replaying transport wrapper so callers can continue using [`Read`] after the buffered
     /// negotiation prefix has been replayed. The returned [`LegacyDaemonMessage`] borrows the
     /// supplied buffer, matching the lifetime semantics of the parser from the protocol crate.
+    #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_message<'a>(
         &mut self,
         line: &'a mut Vec<u8>,
@@ -407,6 +411,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// Empty payloads are returned as `Some("")`, mirroring the behaviour of
     /// [`rsync_protocol::parse_legacy_error_message_bytes`]. Any parsing failure is converted into
     /// [`io::ErrorKind::InvalidData`], matching the conversion performed by the protocol crate.
+    #[doc(alias = "@ERROR")]
     pub fn read_and_parse_legacy_daemon_error_message<'a>(
         &mut self,
         line: &'a mut Vec<u8>,
@@ -416,6 +421,7 @@ impl<R: Read> NegotiatedStream<R> {
     }
 
     /// Reads and parses a legacy daemon warning line of the form `@WARNING: ...`.
+    #[doc(alias = "@WARNING")]
     pub fn read_and_parse_legacy_daemon_warning_message<'a>(
         &mut self,
         line: &'a mut Vec<u8>,
