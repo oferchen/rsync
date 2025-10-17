@@ -21,8 +21,10 @@ The workspace currently contains the following published crates:
   formatting utilities that attach role trailers and normalized source
   locations to user-facing diagnostics.
 
-Higher-level crates such as `core`, `cli`, `daemon`, `engine`, and `meta` have
-not been implemented yet; current gaps and parity status are tracked in
+Higher-level crates such as `cli`, `daemon`, `engine`, and `meta` have not been
+implemented yet. The `core` crate currently focuses on message formatting and
+source remapping utilities; transfer orchestration and other facade features
+remain to be written. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
