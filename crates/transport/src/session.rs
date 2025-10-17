@@ -1,9 +1,12 @@
 use crate::binary::{BinaryHandshake, negotiate_binary_session_from_stream};
 use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session_from_stream};
 use crate::negotiation::{
-    NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
+    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    sniff_negotiation_stream_with_sniffer,
 };
-use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use rsync_protocol::{
+    LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+};
 use std::io::{self, Read, Write};
 
 /// Result of negotiating an rsync session over an arbitrary transport.
@@ -111,6 +114,61 @@ impl<R> SessionHandshake<R> {
             Self::Legacy(handshake) => Ok(handshake),
         }
     }
+
+    /// Decomposes the handshake into variant-specific metadata and replaying stream parts.
+    ///
+    /// The returned [`SessionHandshakeParts`] mirrors the helpers exposed by the variant-specific
+    /// handshakes while allowing higher layers to stage the buffered negotiation bytes and
+    /// negotiated metadata without matching on [`SessionHandshake`] immediately. This is useful
+    /// when temporary ownership of the underlying transport is required (for example to wrap it
+    /// with instrumentation) before resuming the rsync protocol exchange.
+    #[must_use]
+    pub fn into_stream_parts(self) -> SessionHandshakeParts<R> {
+        match self {
+            SessionHandshake::Binary(handshake) => {
+                let (remote_protocol, negotiated_protocol, parts) = handshake.into_stream_parts();
+                SessionHandshakeParts::Binary {
+                    remote_protocol,
+                    negotiated_protocol,
+                    stream: parts,
+                }
+            }
+            SessionHandshake::Legacy(handshake) => {
+                let (server_greeting, negotiated_protocol, parts) = handshake.into_stream_parts();
+                SessionHandshakeParts::Legacy {
+                    server_greeting,
+                    negotiated_protocol,
+                    stream: parts,
+                }
+            }
+        }
+    }
+
+    /// Reassembles a [`SessionHandshake`] from the variant-specific stream parts previously
+    /// extracted via [`Self::into_stream_parts`].
+    #[must_use]
+    pub fn from_stream_parts(parts: SessionHandshakeParts<R>) -> Self {
+        match parts {
+            SessionHandshakeParts::Binary {
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            } => SessionHandshake::Binary(BinaryHandshake::from_stream_parts(
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            )),
+            SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            } => SessionHandshake::Legacy(LegacyDaemonHandshake::from_stream_parts(
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            )),
+        }
+    }
 }
 
 /// Negotiates an rsync session, automatically detecting the handshake style.
@@ -133,6 +191,176 @@ where
 {
     let stream = sniff_negotiation_stream(reader)?;
     negotiate_session_from_stream(stream, desired_protocol)
+}
+
+/// Components extracted from a [`SessionHandshake`].
+#[derive(Debug)]
+pub enum SessionHandshakeParts<R> {
+    /// Binary handshake metadata and replaying stream parts.
+    Binary {
+        /// Protocol advertised by the remote peer.
+        remote_protocol: ProtocolVersion,
+        /// Protocol negotiated after applying the caller cap.
+        negotiated_protocol: ProtocolVersion,
+        /// Replaying stream parts containing the sniffed negotiation bytes.
+        stream: NegotiatedStreamParts<R>,
+    },
+    /// Legacy daemon handshake metadata and replaying stream parts.
+    Legacy {
+        /// Parsed legacy daemon greeting announced by the server.
+        server_greeting: LegacyDaemonGreetingOwned,
+        /// Protocol negotiated after applying the caller cap.
+        negotiated_protocol: ProtocolVersion,
+        /// Replaying stream parts containing the sniffed negotiation bytes.
+        stream: NegotiatedStreamParts<R>,
+    },
+}
+
+impl<R> SessionHandshakeParts<R> {
+    /// Returns the negotiation style associated with the extracted handshake.
+    #[must_use]
+    pub const fn decision(&self) -> NegotiationPrologue {
+        match self {
+            SessionHandshakeParts::Binary { .. } => NegotiationPrologue::Binary,
+            SessionHandshakeParts::Legacy { .. } => NegotiationPrologue::LegacyAscii,
+        }
+    }
+
+    /// Returns the negotiated protocol version retained by the parts structure.
+    #[must_use]
+    pub fn negotiated_protocol(&self) -> ProtocolVersion {
+        match self {
+            SessionHandshakeParts::Binary {
+                negotiated_protocol,
+                ..
+            }
+            | SessionHandshakeParts::Legacy {
+                negotiated_protocol,
+                ..
+            } => *negotiated_protocol,
+        }
+    }
+
+    /// Returns the protocol advertised by the remote peer for binary negotiations.
+    #[must_use]
+    pub fn remote_protocol(&self) -> Option<ProtocolVersion> {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_protocol, ..
+            } => Some(*remote_protocol),
+            SessionHandshakeParts::Legacy { .. } => None,
+        }
+    }
+
+    /// Returns the legacy daemon greeting advertised by the server when available.
+    #[must_use]
+    pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
+        match self {
+            SessionHandshakeParts::Binary { .. } => None,
+            SessionHandshakeParts::Legacy {
+                server_greeting, ..
+            } => Some(server_greeting),
+        }
+    }
+
+    /// Returns a shared reference to the replaying stream parts.
+    #[must_use]
+    pub fn stream(&self) -> &NegotiatedStreamParts<R> {
+        match self {
+            SessionHandshakeParts::Binary { stream, .. }
+            | SessionHandshakeParts::Legacy { stream, .. } => stream,
+        }
+    }
+
+    /// Returns a mutable reference to the replaying stream parts.
+    #[must_use]
+    pub fn stream_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+        match self {
+            SessionHandshakeParts::Binary { stream, .. }
+            | SessionHandshakeParts::Legacy { stream, .. } => stream,
+        }
+    }
+
+    /// Releases the parts structure and reconstructs the replaying stream.
+    #[must_use]
+    pub fn into_stream(self) -> NegotiatedStream<R> {
+        match self {
+            SessionHandshakeParts::Binary { stream, .. }
+            | SessionHandshakeParts::Legacy { stream, .. } => stream.into_stream(),
+        }
+    }
+
+    /// Maps the inner transport for both variants while preserving the negotiated metadata.
+    #[must_use]
+    pub fn map_stream_inner<F, T>(self, map: F) -> SessionHandshakeParts<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            } => SessionHandshakeParts::Binary {
+                remote_protocol,
+                negotiated_protocol,
+                stream: stream.map_inner(map),
+            },
+            SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            } => SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream: stream.map_inner(map),
+            },
+        }
+    }
+
+    /// Consumes the parts structure, returning the binary handshake components when available.
+    pub fn into_binary(
+        self,
+    ) -> Result<
+        (ProtocolVersion, ProtocolVersion, NegotiatedStreamParts<R>),
+        SessionHandshakeParts<R>,
+    > {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            } => Ok((remote_protocol, negotiated_protocol, stream)),
+            SessionHandshakeParts::Legacy { .. } => Err(self),
+        }
+    }
+
+    /// Consumes the parts structure, returning the legacy handshake components when available.
+    pub fn into_legacy(
+        self,
+    ) -> Result<
+        (
+            LegacyDaemonGreetingOwned,
+            ProtocolVersion,
+            NegotiatedStreamParts<R>,
+        ),
+        SessionHandshakeParts<R>,
+    > {
+        match self {
+            SessionHandshakeParts::Binary { .. } => Err(self),
+            SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            } => Ok((server_greeting, negotiated_protocol, stream)),
+        }
+    }
+
+    /// Reassembles a [`SessionHandshake`] from the stored components.
+    #[must_use]
+    pub fn into_handshake(self) -> SessionHandshake<R> {
+        SessionHandshake::from_stream_parts(self)
+    }
 }
 
 /// Negotiates an rsync session while reusing a caller supplied sniffer.
@@ -342,6 +570,89 @@ mod tests {
 
         let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
         expected.extend_from_slice(b"payload");
+        assert_eq!(transport.writes(), expected.as_slice());
+        assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_handshake_parts_round_trip_binary_handshake() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("binary handshake succeeds");
+
+        let parts = handshake.into_stream_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+        assert_eq!(parts.negotiated_protocol(), remote_version);
+        assert_eq!(parts.remote_protocol(), Some(remote_version));
+        assert!(parts.server_greeting().is_none());
+        assert_eq!(parts.stream().decision(), NegotiationPrologue::Binary);
+
+        let (remote_protocol, negotiated_protocol, stream_parts) =
+            parts.into_binary().expect("binary parts available");
+
+        let parts = SessionHandshakeParts::Binary {
+            remote_protocol,
+            negotiated_protocol,
+            stream: stream_parts.map_inner(InstrumentedTransport::new),
+        };
+
+        let handshake = SessionHandshake::from_stream_parts(parts);
+        let mut binary = handshake
+            .into_binary()
+            .expect("parts reconstruct binary handshake");
+
+        binary
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write succeeds");
+
+        let transport = binary.into_stream().into_inner();
+        let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+        expected.extend_from_slice(b"payload");
+        assert_eq!(transport.writes(), expected.as_slice());
+        assert_eq!(transport.flushes(), 1);
+    }
+
+    #[test]
+    fn session_handshake_parts_round_trip_legacy_handshake() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+        let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
+            .expect("legacy handshake succeeds");
+
+        let parts = handshake.into_stream_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+        let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        assert_eq!(parts.negotiated_protocol(), negotiated);
+        assert!(parts.remote_protocol().is_none());
+        let server = parts.server_greeting().expect("server greeting retained");
+        assert_eq!(server.advertised_protocol(), 31);
+        assert_eq!(parts.stream().decision(), NegotiationPrologue::LegacyAscii);
+
+        let (server_greeting, negotiated_protocol, stream_parts) =
+            parts.into_legacy().expect("legacy parts available");
+
+        let parts = SessionHandshakeParts::Legacy {
+            server_greeting,
+            negotiated_protocol,
+            stream: stream_parts.map_inner(InstrumentedTransport::new),
+        };
+
+        let handshake = SessionHandshake::from_stream_parts(parts);
+        let mut legacy = handshake
+            .into_legacy()
+            .expect("parts reconstruct legacy handshake");
+
+        legacy
+            .stream_mut()
+            .write_all(b"module\n")
+            .expect("write succeeds");
+
+        let transport = legacy.into_stream().into_inner();
+        let mut expected = b"@RSYNCD: 31.0\n".to_vec();
+        expected.extend_from_slice(b"module\n");
         assert_eq!(transport.writes(), expected.as_slice());
         assert_eq!(transport.flushes(), 1);
     }

@@ -497,8 +497,8 @@ mod tests {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
         let transport = CountingTransport::new(&handshake_bytes(remote_version));
 
-        let handshake =
-            negotiate_binary_session(transport, ProtocolVersion::NEWEST).expect("handshake succeeds");
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
 
         let (remote, negotiated, parts) = handshake.into_stream_parts();
         assert_eq!(remote, remote_version);
@@ -515,10 +515,7 @@ mod tests {
             .stream_mut()
             .write_all(b"payload")
             .expect("write propagates");
-        rehydrated
-            .stream_mut()
-            .flush()
-            .expect("flush propagates");
+        rehydrated.stream_mut().flush().expect("flush propagates");
 
         let transport = rehydrated.into_stream().into_inner();
         assert_eq!(transport.flushes(), 2);

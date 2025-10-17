@@ -468,21 +468,20 @@ mod tests {
         let greeting_clone = greeting.clone();
         assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
 
-        let mut rehydrated =
-            LegacyDaemonHandshake::from_stream_parts(greeting, negotiated, parts);
+        let mut rehydrated = LegacyDaemonHandshake::from_stream_parts(greeting, negotiated, parts);
 
         assert_eq!(rehydrated.negotiated_protocol(), negotiated);
         assert_eq!(rehydrated.server_greeting(), &greeting_clone);
-        assert_eq!(rehydrated.stream().decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(
+            rehydrated.stream().decision(),
+            NegotiationPrologue::LegacyAscii
+        );
 
         rehydrated
             .stream_mut()
             .write_all(b"@RSYNCD: OK\n")
             .expect("write propagates");
-        rehydrated
-            .stream_mut()
-            .flush()
-            .expect("flush propagates");
+        rehydrated.stream_mut().flush().expect("flush propagates");
 
         let transport = rehydrated.into_stream().into_inner();
         assert_eq!(transport.flushes(), 2);
