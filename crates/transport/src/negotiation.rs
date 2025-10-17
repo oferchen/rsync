@@ -1419,6 +1419,28 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_buffered_into_array_copies_bytes() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\narray").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut scratch = [0u8; 64];
+        let copied = stream
+            .copy_buffered_into_array(&mut scratch)
+            .expect("copying into array succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(&scratch[..copied], expected.as_slice());
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+
+        let mut replay = vec![0u8; expected.len()];
+        stream
+            .read_exact(&mut replay)
+            .expect("buffered bytes remain available after array copy");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
     fn negotiated_stream_copy_buffered_into_slice_reports_small_buffer() {
         let stream = sniff_bytes(b"@RSYNCD: 30.0\nrest").expect("sniff succeeds");
         let expected_len = stream.buffered_len();
@@ -1428,6 +1450,22 @@ mod tests {
         let err = stream
             .copy_buffered_into_slice(&mut scratch)
             .expect_err("insufficient slice capacity must error");
+
+        assert_eq!(err.required(), expected_len);
+        assert_eq!(err.provided(), scratch.len());
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_array_reports_small_array() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let expected_len = stream.buffered_len();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut scratch = [0u8; 4];
+        let err = stream
+            .copy_buffered_into_array(&mut scratch)
+            .expect_err("insufficient array capacity must error");
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
@@ -1498,6 +1536,29 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_parts_copy_buffered_into_array_copies_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\nlisting")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut scratch = [0u8; 64];
+        let copied = parts
+            .copy_buffered_into_array(&mut scratch)
+            .expect("copying into array succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(&scratch[..copied], expected.as_slice());
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = vec![0u8; expected.len()];
+        rebuilt
+            .read_exact(&mut replay)
+            .expect("rebuilt stream still replays buffered bytes after array copy");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
     fn negotiated_stream_parts_copy_buffered_into_slice_reports_small_buffer() {
         let parts = sniff_bytes(b"@RSYNCD: 31.0\nlisting")
             .expect("sniff succeeds")
@@ -1508,6 +1569,22 @@ mod tests {
         let err = parts
             .copy_buffered_into_slice(&mut scratch)
             .expect_err("insufficient slice capacity must error");
+
+        assert_eq!(err.required(), expected_len);
+        assert_eq!(err.provided(), scratch.len());
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_array_reports_small_array() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nlisting")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected_len = parts.buffered_len();
+
+        let mut scratch = [0u8; 4];
+        let err = parts
+            .copy_buffered_into_array(&mut scratch)
+            .expect_err("insufficient array capacity must error");
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
