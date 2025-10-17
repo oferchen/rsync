@@ -1,5 +1,6 @@
 use crate::negotiation::{
-    NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
+    NegotiatedStream, NegotiatedStreamParts, sniff_negotiation_stream,
+    sniff_negotiation_stream_with_sniffer,
 };
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
@@ -86,6 +87,30 @@ impl<R> LegacyDaemonHandshake<R> {
             server_greeting,
             negotiated_protocol,
         }
+    }
+
+    /// Decomposes the handshake into the parsed greeting, negotiated protocol, and replaying stream parts.
+    ///
+    /// Returning [`NegotiatedStreamParts`] mirrors the convenience provided by [`Self::into_stream`]
+    /// while giving callers access to the buffered negotiation bytes without immediately
+    /// reconstructing a [`NegotiatedStream`]. This is useful when temporary ownership of the
+    /// underlying transport is required (for example to wrap it with a timeout adapter) before the
+    /// rsync daemon exchange continues.
+    #[must_use]
+    pub fn into_stream_parts(
+        self,
+    ) -> (
+        LegacyDaemonGreetingOwned,
+        ProtocolVersion,
+        NegotiatedStreamParts<R>,
+    ) {
+        let Self {
+            stream,
+            server_greeting,
+            negotiated_protocol,
+        } = self;
+
+        (server_greeting, negotiated_protocol, stream.into_parts())
     }
 }
 
@@ -187,7 +212,7 @@ where
 mod tests {
     use super::*;
 
-    use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion};
+    use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
     use std::io::{self, Cursor, Read, Write};
 
     #[derive(Debug)]
@@ -374,6 +399,37 @@ mod tests {
         assert_eq!(
             handshake2.negotiated_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+    }
+
+    #[test]
+    fn into_stream_parts_exposes_legacy_state() {
+        let desired = ProtocolVersion::from_supported(30).expect("protocol 30 supported");
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+        let handshake =
+            negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
+
+        let (greeting, negotiated, parts) = handshake.into_stream_parts();
+        assert_eq!(greeting.advertised_protocol(), 31);
+        assert_eq!(negotiated, desired);
+        assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(parts.sniffed_prefix(), b"@RSYNCD:");
+        assert_eq!(parts.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(parts.buffered_remaining(), 0);
+
+        let mut stream = parts.into_stream();
+        let mut tail = Vec::new();
+        stream
+            .read_to_end(&mut tail)
+            .expect("legacy handshake drains buffered prefix");
+        assert!(tail.is_empty());
+
+        let transport = stream.into_inner();
+        assert_eq!(transport.flushes(), 1);
+        assert_eq!(
+            transport.written(),
+            format_legacy_daemon_greeting(negotiated).as_bytes()
         );
     }
 }
