@@ -55,6 +55,17 @@ impl<R> LegacyDaemonHandshake<R> {
         advertised_byte > self.server_protocol().as_u8()
     }
 
+    /// Reports whether the caller's desired cap reduced the negotiated protocol version.
+    ///
+    /// The negotiated protocol equals the minimum of the daemon's advertised protocol and the
+    /// caller's requested cap. When the caller limits the session to an older version, certain
+    /// protocol features become unavailable. This helper mirrors upstream rsync by exposing that
+    /// condition so higher layers can render matching diagnostics.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        self.negotiated_protocol < self.server_greeting.protocol()
+    }
+
     /// Returns a shared reference to the replaying stream.
     #[must_use]
     pub const fn stream(&self) -> &NegotiatedStream<R> {
@@ -397,6 +408,7 @@ mod tests {
         assert_eq!(handshake.server_greeting().advertised_protocol(), 31);
         assert_eq!(handshake.remote_advertised_protocol(), 31);
         assert!(!handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 31.0\n");
@@ -417,6 +429,7 @@ mod tests {
         );
         assert_eq!(handshake.remote_advertised_protocol(), 32);
         assert!(!handshake.remote_protocol_was_clamped());
+        assert!(handshake.local_protocol_was_capped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 30.0\n");
@@ -433,6 +446,7 @@ mod tests {
         assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
@@ -453,6 +467,7 @@ mod tests {
         let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake should succeed");
 
+        assert!(!handshake.local_protocol_was_capped());
         let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
         handshake
             .stream_mut()
@@ -468,6 +483,7 @@ mod tests {
             handshake.server_protocol(),
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         );
+        assert!(!handshake.local_protocol_was_capped());
 
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"@RSYNCD: OK\n");
@@ -484,6 +500,7 @@ mod tests {
         let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake should succeed");
 
+        assert!(!handshake.local_protocol_was_capped());
         let mut handshake = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -492,6 +509,7 @@ mod tests {
             )
             .expect("mapping succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         handshake
             .stream_mut()
             .write_all(b"@RSYNCD: OK\n")
@@ -509,6 +527,7 @@ mod tests {
         let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake should succeed");
 
+        assert!(!handshake.local_protocol_was_capped());
         let err = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -570,6 +589,7 @@ mod tests {
         let handshake =
             negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
 
+        assert!(handshake.local_protocol_was_capped());
         let (greeting, negotiated, parts) = handshake.into_stream_parts();
         assert_eq!(greeting.advertised_protocol(), 31);
         assert_eq!(negotiated, desired);
@@ -601,12 +621,14 @@ mod tests {
         let handshake =
             negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
 
+        assert!(handshake.local_protocol_was_capped());
         let (greeting, negotiated, parts) = handshake.into_stream_parts();
         let greeting_clone = greeting.clone();
         assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
 
         let mut rehydrated = LegacyDaemonHandshake::from_stream_parts(greeting, negotiated, parts);
 
+        assert!(rehydrated.local_protocol_was_capped());
         assert_eq!(rehydrated.negotiated_protocol(), negotiated);
         assert_eq!(rehydrated.server_greeting(), &greeting_clone);
         assert_eq!(rehydrated.server_protocol(), greeting_clone.protocol());

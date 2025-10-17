@@ -51,6 +51,18 @@ impl<R> BinaryHandshake<R> {
         advertised_byte > self.remote_protocol.as_u8()
     }
 
+    /// Reports whether the caller's desired cap reduced the negotiated protocol version.
+    ///
+    /// Upstream rsync clamps the negotiated protocol to the minimum of the peer's
+    /// advertisement and the caller's requested cap. When the desired value is lower than the
+    /// remote protocol, the transfer is forced to speak the older protocol. This helper exposes
+    /// that condition so higher layers can surface diagnostics or adjust feature negotiation in
+    /// parity with the C implementation.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        self.negotiated_protocol < self.remote_protocol
+    }
+
     /// Returns a shared reference to the replaying stream.
     #[must_use]
     pub const fn stream(&self) -> &NegotiatedStream<R> {
@@ -448,6 +460,7 @@ mod tests {
             u32::from(remote_version.as_u8())
         );
         assert!(!handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(
@@ -464,6 +477,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
         handshake
             .stream_mut()
@@ -478,6 +492,7 @@ mod tests {
             u32::from(remote_version.as_u8())
         );
         assert!(!handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
 
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"payload");
@@ -497,6 +512,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let mut handshake = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -505,6 +521,7 @@ mod tests {
             )
             .expect("mapping succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         handshake
             .stream_mut()
             .write_all(b"payload")
@@ -525,6 +542,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let err = handshake
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -556,6 +574,7 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), desired);
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
         assert!(handshake.remote_protocol_was_clamped());
+        assert!(handshake.local_protocol_was_capped());
 
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.written(), &handshake_bytes(desired));
@@ -573,6 +592,7 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
         assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
     }
 
     #[test]
@@ -590,6 +610,7 @@ mod tests {
             u32::from(remote_version.as_u8())
         );
         assert!(!handshake.remote_protocol_was_clamped());
+        assert!(handshake.local_protocol_was_capped());
     }
 
     #[test]
@@ -618,6 +639,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
         assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
@@ -649,6 +671,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
         assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
@@ -658,6 +681,7 @@ mod tests {
         let mut rehydrated =
             BinaryHandshake::from_stream_parts(remote_adv, remote, negotiated, parts);
 
+        assert!(!rehydrated.local_protocol_was_capped());
         assert_eq!(rehydrated.remote_protocol(), remote_version);
         assert_eq!(rehydrated.negotiated_protocol(), remote_version);
         assert_eq!(rehydrated.stream().decision(), NegotiationPrologue::Binary);
@@ -683,6 +707,7 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        assert!(!handshake.local_protocol_was_capped());
         let transport = handshake.into_stream().into_inner();
         assert_eq!(transport.flushes(), 1);
         assert_eq!(
@@ -707,6 +732,7 @@ mod tests {
         .expect("handshake succeeds with supplied sniffer");
         assert_eq!(handshake1.remote_protocol(), remote_version);
         assert_eq!(handshake1.negotiated_protocol(), remote_version);
+        assert!(!handshake1.local_protocol_was_capped());
 
         drop(handshake1);
 
@@ -718,5 +744,6 @@ mod tests {
         .expect("sniffer can be reused for subsequent sessions");
         assert_eq!(handshake2.remote_protocol(), remote_version);
         assert_eq!(handshake2.negotiated_protocol(), remote_version);
+        assert!(!handshake2.local_protocol_was_capped());
     }
 }

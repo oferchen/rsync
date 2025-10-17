@@ -1,7 +1,5 @@
 use super::*;
-use rsync_protocol::{
-    format_legacy_daemon_greeting, NegotiationPrologueSniffer, ProtocolVersion,
-};
+use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting};
 use std::io::{self, Cursor, Read, Write};
 
 #[derive(Clone, Debug)]
@@ -67,6 +65,7 @@ fn negotiate_session_detects_binary_transport() {
         u32::from(remote_version.as_u8())
     );
     assert!(!handshake.remote_protocol_was_clamped());
+    assert!(!handshake.local_protocol_was_capped());
 
     let transport = match handshake.into_binary() {
         Ok(handshake) => {
@@ -106,6 +105,7 @@ fn negotiate_session_detects_legacy_transport() {
             .advertised_protocol(),
         31
     );
+    assert!(!handshake.local_protocol_was_capped());
 
     let transport = match handshake.into_legacy() {
         Ok(handshake) => {
@@ -131,6 +131,7 @@ fn negotiate_session_with_sniffer_supports_reuse() {
             .expect("binary handshake succeeds");
     assert!(matches!(handshake1.decision(), NegotiationPrologue::Binary));
     assert_eq!(handshake1.remote_protocol(), remote_version);
+    assert!(!handshake1.local_protocol_was_capped());
 
     let transport1 = handshake1
         .into_binary()
@@ -153,6 +154,7 @@ fn negotiate_session_with_sniffer_supports_reuse() {
         handshake2.remote_protocol(),
         ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
     );
+    assert!(!handshake2.local_protocol_was_capped());
 
     let transport2 = handshake2
         .into_legacy()
@@ -170,12 +172,14 @@ fn session_handshake_server_greeting_matches_variant() {
     let binary_handshake =
         negotiate_session(binary_transport, ProtocolVersion::NEWEST).expect("binary handshake");
 
+    assert!(!binary_handshake.local_protocol_was_capped());
     assert!(binary_handshake.server_greeting().is_none());
 
     let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
     let legacy_handshake =
         negotiate_session(legacy_transport, ProtocolVersion::NEWEST).expect("legacy handshake");
 
+    assert!(!legacy_handshake.local_protocol_was_capped());
     let greeting = legacy_handshake
         .server_greeting()
         .expect("legacy handshake exposes greeting");
@@ -194,6 +198,7 @@ fn map_stream_inner_preserves_variant_and_metadata() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
     assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
     assert!(handshake.as_binary().is_some());
@@ -208,6 +213,7 @@ fn map_stream_inner_preserves_variant_and_metadata() {
         u32::from(remote_version.as_u8())
     );
     assert!(!handshake.remote_protocol_was_clamped());
+    assert!(!handshake.local_protocol_was_capped());
 
     let transport = handshake
         .into_binary()
@@ -229,6 +235,7 @@ fn try_map_stream_inner_preserves_variants() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let mut handshake = handshake
         .try_map_stream_inner(
             |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -237,6 +244,7 @@ fn try_map_stream_inner_preserves_variants() {
         )
         .expect("mapping succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     assert!(matches!(handshake.decision(), NegotiationPrologue::Binary));
     handshake
         .stream_mut()
@@ -258,6 +266,7 @@ fn try_map_stream_inner_preserves_original_handshake_on_error() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let err = handshake
         .try_map_stream_inner(
             |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -291,12 +300,14 @@ fn session_reports_clamped_binary_future_version() {
     assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(handshake.remote_advertised_protocol(), future_version);
     assert!(handshake.remote_protocol_was_clamped());
+    assert!(!handshake.local_protocol_was_capped());
 
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(parts.remote_advertised_protocol(), future_version);
     assert!(parts.remote_protocol_was_clamped());
+    assert!(!parts.local_protocol_was_capped());
 }
 
 #[test]
@@ -307,6 +318,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts.negotiated_protocol(), remote_version);
@@ -316,6 +328,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
         u32::from(remote_version.as_u8())
     );
     assert!(!parts.remote_protocol_was_clamped());
+    assert!(!parts.local_protocol_was_capped());
     assert!(parts.server_greeting().is_none());
     assert_eq!(parts.stream().decision(), NegotiationPrologue::Binary);
 
@@ -334,6 +347,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
         .into_binary()
         .expect("parts reconstruct binary handshake");
 
+    assert!(!binary.local_protocol_was_capped());
     assert_eq!(
         binary.remote_advertised_protocol(),
         u32::from(remote_version.as_u8())
@@ -360,7 +374,9 @@ fn session_handshake_parts_try_map_transforms_transport() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
+    assert!(!parts.local_protocol_was_capped());
     let parts = parts.into_binary().expect("binary parts available");
 
     let parts = SessionHandshakeParts::Binary {
@@ -380,6 +396,8 @@ fn session_handshake_parts_try_map_transforms_transport() {
 
     let handshake = SessionHandshake::from_stream_parts(parts);
     let mut binary = handshake.into_binary().expect("variant remains binary");
+
+    assert!(!binary.local_protocol_was_capped());
     binary
         .stream_mut()
         .write_all(b"payload")
@@ -396,7 +414,9 @@ fn session_handshake_parts_try_map_preserves_original_on_error() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
+    assert!(!parts.local_protocol_was_capped());
     let parts = parts.into_binary().expect("binary parts available");
 
     let parts = SessionHandshakeParts::Binary {
@@ -416,6 +436,7 @@ fn session_handshake_parts_try_map_preserves_original_on_error() {
 
     assert_eq!(err.error().kind(), io::ErrorKind::Other);
     let original = err.into_original();
+    assert!(!original.local_protocol_was_capped());
     let transport = original.into_stream().into_inner();
     assert_eq!(
         transport.writes(),
@@ -430,6 +451,7 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
     let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
@@ -437,6 +459,7 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
     assert_eq!(parts.remote_protocol(), negotiated);
     assert_eq!(parts.remote_advertised_protocol(), 31);
     assert!(!parts.remote_protocol_was_clamped());
+    assert!(!parts.local_protocol_was_capped());
     let server = parts.server_greeting().expect("server greeting retained");
     assert_eq!(server.advertised_protocol(), 31);
     assert_eq!(parts.stream().decision(), NegotiationPrologue::LegacyAscii);
@@ -455,6 +478,7 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
         .into_legacy()
         .expect("parts reconstruct legacy handshake");
 
+    assert!(!legacy.local_protocol_was_capped());
     legacy
         .stream_mut()
         .write_all(b"module\n")
@@ -478,12 +502,14 @@ fn session_reports_clamped_future_legacy_version() {
     assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(handshake.remote_advertised_protocol(), 40);
     assert!(handshake.remote_protocol_was_clamped());
+    assert!(!handshake.local_protocol_was_capped());
 
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
     assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(parts.remote_advertised_protocol(), 40);
     assert!(parts.remote_protocol_was_clamped());
+    assert!(!parts.local_protocol_was_capped());
 }
 
 #[test]
@@ -494,12 +520,14 @@ fn session_handshake_parts_preserve_remote_protocol_for_legacy_caps() {
     let handshake = negotiate_session(transport, desired)
         .expect("legacy handshake succeeds with future advertisement");
 
+    assert!(handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     let remote = ProtocolVersion::from_supported(32).expect("protocol 32 supported");
     assert_eq!(parts.negotiated_protocol(), desired);
     assert_eq!(parts.remote_protocol(), remote);
     assert_eq!(parts.remote_advertised_protocol(), 32);
     assert!(!parts.remote_protocol_was_clamped());
+    assert!(parts.local_protocol_was_capped());
     let server = parts.server_greeting().expect("server greeting retained");
     assert_eq!(server.protocol(), remote);
     assert_eq!(server.advertised_protocol(), 32);
@@ -513,6 +541,7 @@ fn session_handshake_parts_clone_preserves_binary_stream_state() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     let clone = parts.clone();
 
@@ -523,12 +552,16 @@ fn session_handshake_parts_clone_preserves_binary_stream_state() {
         .into_binary()
         .expect("original parts reconstruct binary handshake");
 
+    assert!(!binary.local_protocol_was_capped());
+
     let clone_handshake = SessionHandshake::from_stream_parts(clone);
     assert_eq!(clone_handshake.decision(), NegotiationPrologue::Binary);
     assert_eq!(clone_handshake.negotiated_protocol(), remote_version);
     let mut cloned = clone_handshake
         .into_binary()
         .expect("cloned parts reconstruct binary handshake");
+
+    assert!(!cloned.local_protocol_was_capped());
 
     binary
         .stream_mut()
@@ -560,6 +593,7 @@ fn session_handshake_parts_clone_preserves_legacy_stream_state() {
     let handshake =
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
 
+    assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     let clone = parts.clone();
 
@@ -571,12 +605,16 @@ fn session_handshake_parts_clone_preserves_legacy_stream_state() {
         .into_legacy()
         .expect("original parts reconstruct legacy handshake");
 
+    assert!(!legacy.local_protocol_was_capped());
+
     let clone_handshake = SessionHandshake::from_stream_parts(clone);
     assert_eq!(clone_handshake.decision(), NegotiationPrologue::LegacyAscii);
     assert_eq!(clone_handshake.negotiated_protocol(), negotiated);
     let mut cloned = clone_handshake
         .into_legacy()
         .expect("cloned parts reconstruct legacy handshake");
+
+    assert!(!cloned.local_protocol_was_capped());
 
     legacy
         .stream_mut()
