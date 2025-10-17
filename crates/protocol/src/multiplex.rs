@@ -5,6 +5,79 @@ use std::slice;
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
 
+/// A view into a multiplexed message that borrows the payload from the input slice.
+///
+/// Borrowed frames are useful when iterating over byte buffers captured from upstream rsync
+/// sessions (for example golden transcripts) because they avoid cloning the payload while still
+/// validating the header and payload length. Callers can convert the borrowed representation into
+/// an owned [`MessageFrame`] via [`BorrowedMessageFrame::into_owned`] if they need to mutate the
+/// payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BorrowedMessageFrame<'a> {
+    code: MessageCode,
+    payload: &'a [u8],
+}
+
+impl<'a> BorrowedMessageFrame<'a> {
+    /// Returns the message code associated with the frame.
+    #[must_use]
+    #[inline]
+    pub const fn code(&self) -> MessageCode {
+        self.code
+    }
+
+    /// Returns the payload bytes carried by the frame.
+    #[must_use]
+    #[inline]
+    pub fn payload(&self) -> &'a [u8] {
+        self.payload
+    }
+
+    /// Returns the payload length in bytes.
+    #[must_use]
+    #[inline]
+    pub fn payload_len(&self) -> usize {
+        self.payload.len()
+    }
+
+    /// Converts the borrowed frame into an owned [`MessageFrame`].
+    pub fn into_owned(self) -> io::Result<MessageFrame> {
+        MessageFrame::new(self.code, self.payload.to_vec())
+    }
+
+    /// Decodes a multiplexed frame from the beginning of `bytes` without cloning the payload.
+    ///
+    /// The returned tuple contains the borrowed frame and a slice pointing at the remaining bytes.
+    /// Callers that require an owned representation can use [`BorrowedMessageFrame::into_owned`] on
+    /// the borrowed value. Invalid headers or truncated payloads surface the same errors as
+    /// [`MessageFrame::decode_from_slice`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{BorrowedMessageFrame, MessageCode, MessageHeader};
+    ///
+    /// let header = MessageHeader::new(MessageCode::Info, 3).unwrap();
+    /// let mut bytes = Vec::from(header.encode());
+    /// bytes.extend_from_slice(b"abc");
+    /// let (frame, remainder) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+    ///
+    /// assert_eq!(frame.code(), MessageCode::Info);
+    /// assert_eq!(frame.payload(), b"abc");
+    /// assert!(remainder.is_empty());
+    /// ```
+    pub fn decode_from_slice(bytes: &'a [u8]) -> io::Result<(Self, &'a [u8])> {
+        let (header, payload, remainder) = decode_frame_parts(bytes)?;
+        Ok((
+            Self {
+                code: header.code(),
+                payload,
+            },
+            remainder,
+        ))
+    }
+}
+
 /// A decoded multiplexed message consisting of the tag and payload bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageFrame {
@@ -111,7 +184,8 @@ impl MessageFrame {
             .map_err(map_allocation_error)?;
 
         let payload_len = ensure_payload_length(self.payload.len())?;
-        let header = MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)?;
+        let header =
+            MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)?;
         out.extend_from_slice(&header.encode());
         out.extend_from_slice(&self.payload);
 
@@ -125,24 +199,12 @@ impl MessageFrame {
     /// the full frame without going through `Read`. The returned tuple contains the decoded
     /// frame together with a slice pointing at the remaining, unread bytes. Callers that wish
     /// to parse exactly one frame can invoke [`TryFrom<&[u8]>`] to receive an error when extra
-    /// trailing data is present.
+    /// trailing data is present. Use [`BorrowedMessageFrame::decode_from_slice`] to parse without
+    /// allocating a new buffer when a borrowed view suffices.
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
-        if bytes.len() < HEADER_LEN {
-            return Err(truncated_frame_error(HEADER_LEN, bytes.len()));
-        }
-
-        let header = MessageHeader::decode(&bytes[..HEADER_LEN]).map_err(map_envelope_error)?;
-        let payload_len = header.payload_len_usize();
-        let frame_len = HEADER_LEN + payload_len;
-
-        if bytes.len() < frame_len {
-            return Err(truncated_frame_error(frame_len, bytes.len()));
-        }
-
-        let payload = bytes[HEADER_LEN..frame_len].to_vec();
-        let frame = MessageFrame::new(header.code(), payload)?;
-
-        Ok((frame, &bytes[frame_len..]))
+        let (header, payload, remainder) = decode_frame_parts(bytes)?;
+        let frame = MessageFrame::new(header.code(), payload.to_vec())?;
+        Ok((frame, remainder))
     }
 }
 
@@ -419,6 +481,25 @@ fn write_all_vectored<W: Write + ?Sized>(
     Ok(())
 }
 
+fn decode_frame_parts(bytes: &[u8]) -> io::Result<(MessageHeader, &[u8], &[u8])> {
+    if bytes.len() < HEADER_LEN {
+        return Err(truncated_frame_error(HEADER_LEN, bytes.len()));
+    }
+
+    let header = MessageHeader::decode(&bytes[..HEADER_LEN]).map_err(map_envelope_error)?;
+    let payload_len = header.payload_len_usize();
+    let frame_len = HEADER_LEN + payload_len;
+
+    if bytes.len() < frame_len {
+        return Err(truncated_frame_error(frame_len, bytes.len()));
+    }
+
+    let payload = &bytes[HEADER_LEN..frame_len];
+    let remainder = &bytes[frame_len..];
+
+    Ok((header, payload, remainder))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,6 +718,39 @@ mod tests {
         assert_eq!(frame.code(), MessageCode::Info);
         assert_eq!(frame.payload(), b"hello");
         assert_eq!(remainder, second.as_slice());
+    }
+
+    #[test]
+    fn borrowed_message_frame_decodes_without_allocating_payload() {
+        let first = encode_frame(MessageCode::Data, b"abcde");
+        let second = encode_frame(MessageCode::Info, b"more");
+
+        let mut concatenated = first.clone();
+        concatenated.extend_from_slice(&second);
+
+        let (frame, remainder) =
+            BorrowedMessageFrame::decode_from_slice(&concatenated).expect("decode succeeds");
+        assert_eq!(frame.code(), MessageCode::Data);
+        assert_eq!(frame.payload(), b"abcde");
+        assert_eq!(remainder, second.as_slice());
+
+        // Converting to an owned frame should produce the same payload bytes.
+        let owned = frame.into_owned().expect("conversion succeeds");
+        assert_eq!(owned.code(), MessageCode::Data);
+        assert_eq!(owned.payload(), b"abcde");
+    }
+
+    #[test]
+    fn borrowed_message_frame_matches_owned_decoding() {
+        let encoded = encode_frame(MessageCode::Warning, b"payload");
+
+        let (borrowed, remainder) =
+            BorrowedMessageFrame::decode_from_slice(&encoded).expect("decode succeeds");
+        assert!(remainder.is_empty());
+
+        let owned = MessageFrame::try_from(encoded.as_slice()).expect("owned decode succeeds");
+        assert_eq!(borrowed.code(), owned.code());
+        assert_eq!(borrowed.payload(), owned.payload());
     }
 
     #[test]
