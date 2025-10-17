@@ -21,7 +21,25 @@ pub enum Severity {
 }
 
 impl Severity {
-    const fn as_str(self) -> &'static str {
+    /// Returns the lowercase label used when rendering the severity.
+    ///
+    /// The strings mirror upstream rsync's diagnostics and therefore feed directly into
+    /// the formatting helpers implemented by [`Message`]. Exposing the label keeps
+    /// external crates from duplicating the canonical wording while still allowing
+    /// call sites to branch on the textual representation when building structured
+    /// logs or integration tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Severity;
+    ///
+    /// assert_eq!(Severity::Info.as_str(), "info");
+    /// assert_eq!(Severity::Warning.as_str(), "warning");
+    /// assert_eq!(Severity::Error.as_str(), "error");
+    /// ```
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Info => "info",
             Self::Warning => "warning",
@@ -48,7 +66,23 @@ pub enum Role {
 }
 
 impl Role {
-    const fn as_str(self) -> &'static str {
+    /// Returns the lowercase trailer identifier used when formatting messages.
+    ///
+    /// The returned string matches the suffix rendered by upstream rsync. Keeping the
+    /// mapping here allows higher layers to reuse the canonical spelling when
+    /// constructing out-of-band logs or telemetry derived from [`Message`] instances.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Role;
+    ///
+    /// assert_eq!(Role::Sender.as_str(), "sender");
+    /// assert_eq!(Role::Receiver.as_str(), "receiver");
+    /// assert_eq!(Role::Daemon.as_str(), "daemon");
+    /// ```
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Sender => "sender",
             Self::Receiver => "receiver",
@@ -951,6 +985,23 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert_eq!(err.to_string(), "newline sink error");
+    }
+
+    #[test]
+    fn severity_as_str_matches_expected_labels() {
+        assert_eq!(Severity::Info.as_str(), "info");
+        assert_eq!(Severity::Warning.as_str(), "warning");
+        assert_eq!(Severity::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn role_as_str_matches_expected_labels() {
+        assert_eq!(Role::Sender.as_str(), "sender");
+        assert_eq!(Role::Receiver.as_str(), "receiver");
+        assert_eq!(Role::Generator.as_str(), "generator");
+        assert_eq!(Role::Server.as_str(), "server");
+        assert_eq!(Role::Client.as_str(), "client");
+        assert_eq!(Role::Daemon.as_str(), "daemon");
     }
 
     #[test]
