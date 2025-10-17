@@ -739,12 +739,12 @@ fn supported_versions_iter_is_fused() {
 fn supported_versions_iter_supports_nth_and_nth_back() {
     let mut iter = ProtocolVersion::supported_versions_iter();
 
-    let second = ProtocolVersion::from_supported_index(1)
-        .expect("second supported protocol should exist");
+    let second =
+        ProtocolVersion::from_supported_index(1).expect("second supported protocol should exist");
     assert_eq!(iter.nth(1), Some(second));
 
-    let third = ProtocolVersion::from_supported_index(2)
-        .expect("third supported protocol should exist");
+    let third =
+        ProtocolVersion::from_supported_index(2).expect("third supported protocol should exist");
     assert_eq!(iter.next(), Some(third));
 
     let oldest = ProtocolVersion::from_supported_index(SUPPORTED_PROTOCOL_COUNT - 1)
