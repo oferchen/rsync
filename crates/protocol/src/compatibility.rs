@@ -12,7 +12,11 @@
 //! [`CompatibilityFlags`] wraps a `u32` and provides associated constants for
 //! every flag currently defined by rsync 3.4.1. The bitfield implements the
 //! standard bit-operator traits (`BitOr`, `BitAnd`, `BitXor`) to keep usage
-//! ergonomic, and reuses the varint codec for serialization.
+//! ergonomic, and reuses the varint codec for serialization. The module also
+//! exposes [`KnownCompatibilityFlag`], an enumeration of the upstream flag
+//! definitions, together with [`CompatibilityFlags::iter_known`] so higher
+//! layers can iterate over individual capabilities without hand-rolling bit
+//! scans.
 //!
 //! # Examples
 //!
@@ -37,7 +41,133 @@
 use crate::varint::{decode_varint, encode_varint_to_vec, read_varint, write_varint};
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::iter::FusedIterator;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
+
+/// Enumerates the compatibility flags defined by upstream rsync 3.4.1.
+///
+/// The variants mirror the canonical `CF_*` identifiers from the C
+/// implementation. They serve as a strongly-typed view that avoids leaking raw
+/// bit positions into higher layers while still supporting inexpensive
+/// conversions back into [`CompatibilityFlags`]. The iterator returned by
+/// [`CompatibilityFlags::iter_known`] yields values in ascending bit order.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum KnownCompatibilityFlag {
+    /// Sender and receiver support incremental recursion (`CF_INC_RECURSE`).
+    #[doc(alias = "CF_INC_RECURSE")]
+    IncRecurse,
+    /// Symlink timestamps can be preserved (`CF_SYMLINK_TIMES`).
+    #[doc(alias = "CF_SYMLINK_TIMES")]
+    SymlinkTimes,
+    /// Symlink payload requires iconv translation (`CF_SYMLINK_ICONV`).
+    #[doc(alias = "CF_SYMLINK_ICONV")]
+    SymlinkIconv,
+    /// Receiver requests the "safe" file list (`CF_SAFE_FLIST`).
+    #[doc(alias = "CF_SAFE_FLIST")]
+    SafeFileList,
+    /// Receiver cannot use the xattr optimization (`CF_AVOID_XATTR_OPTIM`).
+    #[doc(alias = "CF_AVOID_XATTR_OPTIM")]
+    AvoidXattrOptimization,
+    /// Checksum seed handling follows the fixed ordering (`CF_CHKSUM_SEED_FIX`).
+    #[doc(alias = "CF_CHKSUM_SEED_FIX")]
+    ChecksumSeedFix,
+    /// Partial directory should be used with `--inplace` (`CF_INPLACE_PARTIAL_DIR`).
+    #[doc(alias = "CF_INPLACE_PARTIAL_DIR")]
+    InplacePartialDir,
+    /// File-list flags are encoded as varints (`CF_VARINT_FLIST_FLAGS`).
+    #[doc(alias = "CF_VARINT_FLIST_FLAGS")]
+    VarintFlistFlags,
+    /// File-list entries support id0 names (`CF_ID0_NAMES`).
+    #[doc(alias = "CF_ID0_NAMES")]
+    Id0Names,
+}
+
+impl KnownCompatibilityFlag {
+    /// Returns the [`CompatibilityFlags`] bit corresponding to the enum variant.
+    #[must_use]
+    pub const fn as_flag(self) -> CompatibilityFlags {
+        match self {
+            Self::IncRecurse => CompatibilityFlags::INC_RECURSE,
+            Self::SymlinkTimes => CompatibilityFlags::SYMLINK_TIMES,
+            Self::SymlinkIconv => CompatibilityFlags::SYMLINK_ICONV,
+            Self::SafeFileList => CompatibilityFlags::SAFE_FILE_LIST,
+            Self::AvoidXattrOptimization => CompatibilityFlags::AVOID_XATTR_OPTIMIZATION,
+            Self::ChecksumSeedFix => CompatibilityFlags::CHECKSUM_SEED_FIX,
+            Self::InplacePartialDir => CompatibilityFlags::INPLACE_PARTIAL_DIR,
+            Self::VarintFlistFlags => CompatibilityFlags::VARINT_FLIST_FLAGS,
+            Self::Id0Names => CompatibilityFlags::ID0_NAMES,
+        }
+    }
+
+    const fn from_bits(bits: u32) -> Option<Self> {
+        match bits {
+            _ if bits == CompatibilityFlags::INC_RECURSE.bits => Some(Self::IncRecurse),
+            _ if bits == CompatibilityFlags::SYMLINK_TIMES.bits => Some(Self::SymlinkTimes),
+            _ if bits == CompatibilityFlags::SYMLINK_ICONV.bits => Some(Self::SymlinkIconv),
+            _ if bits == CompatibilityFlags::SAFE_FILE_LIST.bits => Some(Self::SafeFileList),
+            _ if bits == CompatibilityFlags::AVOID_XATTR_OPTIMIZATION.bits => {
+                Some(Self::AvoidXattrOptimization)
+            }
+            _ if bits == CompatibilityFlags::CHECKSUM_SEED_FIX.bits => Some(Self::ChecksumSeedFix),
+            _ if bits == CompatibilityFlags::INPLACE_PARTIAL_DIR.bits => {
+                Some(Self::InplacePartialDir)
+            }
+            _ if bits == CompatibilityFlags::VARINT_FLIST_FLAGS.bits => {
+                Some(Self::VarintFlistFlags)
+            }
+            _ if bits == CompatibilityFlags::ID0_NAMES.bits => Some(Self::Id0Names),
+            _ => None,
+        }
+    }
+}
+
+impl From<KnownCompatibilityFlag> for CompatibilityFlags {
+    fn from(flag: KnownCompatibilityFlag) -> Self {
+        flag.as_flag()
+    }
+}
+
+/// Iterator over the known compatibility flags set within a [`CompatibilityFlags`] value.
+#[derive(Clone, Debug)]
+pub struct KnownCompatibilityFlagsIter {
+    remaining: u32,
+}
+
+impl KnownCompatibilityFlagsIter {
+    const fn new(flags: CompatibilityFlags) -> Self {
+        Self {
+            remaining: flags.bits & CompatibilityFlags::KNOWN_MASK,
+        }
+    }
+}
+
+impl Iterator for KnownCompatibilityFlagsIter {
+    type Item = KnownCompatibilityFlag;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+
+        let bit_index = self.remaining.trailing_zeros();
+        let bit_mask = 1u32 << bit_index;
+        self.remaining &= !bit_mask;
+        KnownCompatibilityFlag::from_bits(bit_mask)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.remaining.count_ones() as usize;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for KnownCompatibilityFlagsIter {
+    fn len(&self) -> usize {
+        self.remaining.count_ones() as usize
+    }
+}
+
+impl FusedIterator for KnownCompatibilityFlagsIter {}
 
 /// Bitfield that encodes rsync compatibility flags exchanged after protocol negotiation.
 ///
@@ -133,6 +263,17 @@ impl CompatibilityFlags {
     #[must_use]
     pub const fn difference(self, other: Self) -> Self {
         Self::new(self.bits & !other.bits)
+    }
+
+    /// Returns an iterator over the known compatibility flags set in the bitfield.
+    ///
+    /// The iterator yields [`KnownCompatibilityFlag`] values in ascending bit
+    /// order. Unknown bits that are outside the upstream-defined set are
+    /// skipped, mirroring rsync's behaviour where future flags are tolerated but
+    /// ignored by older implementations.
+    #[must_use]
+    pub fn iter_known(self) -> KnownCompatibilityFlagsIter {
+        KnownCompatibilityFlagsIter::new(self)
     }
 
     /// Encodes the bitfield using rsync's variable-length integer format and writes it to `writer`.
@@ -307,6 +448,46 @@ mod tests {
             assert_eq!(decoded, flags);
             assert!(remainder.is_empty());
         }
+    }
+
+    #[test]
+    fn iter_known_yields_flags_in_bit_order() {
+        let flags = CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+            | CompatibilityFlags::CHECKSUM_SEED_FIX;
+
+        let collected: Vec<_> = flags.iter_known().collect();
+        assert_eq!(
+            collected,
+            vec![
+                KnownCompatibilityFlag::IncRecurse,
+                KnownCompatibilityFlag::ChecksumSeedFix,
+                KnownCompatibilityFlag::VarintFlistFlags,
+            ]
+        );
+
+        let mut iter = flags.iter_known();
+        assert_eq!(iter.size_hint(), (3, Some(3)));
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next(), Some(KnownCompatibilityFlag::IncRecurse));
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+        assert_eq!(iter.len(), 2);
+    }
+
+    #[test]
+    fn iter_known_skips_unknown_bits() {
+        let flags = CompatibilityFlags::from_bits(1 << 15)
+            | CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::ID0_NAMES;
+
+        let collected: Vec<_> = flags.iter_known().collect();
+        assert_eq!(
+            collected,
+            vec![
+                KnownCompatibilityFlag::SafeFileList,
+                KnownCompatibilityFlag::Id0Names,
+            ]
+        );
     }
 
     #[test]
