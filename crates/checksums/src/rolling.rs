@@ -241,6 +241,22 @@ impl RollingDigest {
         }
     }
 
+    /// Constructs a digest from the packed 32-bit representation used on the wire.
+    ///
+    /// Upstream rsync transmits the rolling checksum as two 16-bit components (`s1`
+    /// and `s2`) packed into a 32-bit integer. Higher layers often know the block
+    /// length separately, so the caller provides it explicitly to avoid guessing.
+    /// The helper mirrors [`Self::value`], making it cheap to round-trip digests
+    /// through their network encoding without manually extracting bit fields.
+    #[must_use]
+    pub const fn from_value(value: u32, len: usize) -> Self {
+        Self {
+            s1: value as u16,
+            s2: (value >> 16) as u16,
+            len,
+        }
+    }
+
     /// Returns the first checksum component (sum of bytes).
     #[must_use]
     pub const fn sum1(&self) -> u16 {
@@ -319,6 +335,19 @@ mod tests {
         checksum.update(data);
         assert_eq!(checksum.digest(), digest);
         assert_eq!(checksum.value(), digest.value());
+    }
+
+    #[test]
+    fn digest_round_trips_through_packed_value() {
+        let sample = RollingDigest::new(0x1357, 0x2468, 4096);
+        let packed = sample.value();
+        let unpacked = RollingDigest::from_value(packed, sample.len());
+
+        assert_eq!(unpacked, sample);
+        assert_eq!(unpacked.value(), packed);
+        assert_eq!(unpacked.sum1(), sample.sum1());
+        assert_eq!(unpacked.sum2(), sample.sum2());
+        assert_eq!(unpacked.len(), sample.len());
     }
 
     #[test]
