@@ -173,7 +173,11 @@ where
     let mut advertisement = [0u8; 4];
     let desired = desired_protocol.as_u8();
     advertisement.copy_from_slice(&u32::from(desired).to_le_bytes());
-    stream.inner_mut().write_all(&advertisement)?;
+    {
+        let inner = stream.inner_mut();
+        inner.write_all(&advertisement)?;
+        inner.flush()?;
+    }
 
     let mut remote_buf = [0u8; 4];
     stream.read_exact(&mut remote_buf)?;
@@ -245,6 +249,7 @@ mod tests {
     struct InstrumentedTransport {
         inner: MemoryTransport,
         observed_writes: Vec<u8>,
+        flushes: usize,
     }
 
     impl InstrumentedTransport {
@@ -252,11 +257,16 @@ mod tests {
             Self {
                 inner,
                 observed_writes: Vec::new(),
+                flushes: 0,
             }
         }
 
         fn writes(&self) -> &[u8] {
             &self.observed_writes
+        }
+
+        fn flushes(&self) -> usize {
+            self.flushes
         }
 
         fn into_inner(self) -> MemoryTransport {
@@ -277,6 +287,47 @@ mod tests {
         }
 
         fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            self.inner.flush()
+        }
+    }
+
+    #[derive(Debug)]
+    struct CountingTransport {
+        inner: MemoryTransport,
+        flushes: usize,
+    }
+
+    impl CountingTransport {
+        fn new(input: &[u8]) -> Self {
+            Self {
+                inner: MemoryTransport::new(input),
+                flushes: 0,
+            }
+        }
+
+        fn written(&self) -> &[u8] {
+            self.inner.written()
+        }
+
+        fn flushes(&self) -> usize {
+            self.flushes
+        }
+    }
+
+    impl Read for CountingTransport {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Write for CountingTransport {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
             self.inner.flush()
         }
     }
@@ -323,6 +374,7 @@ mod tests {
 
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"payload");
+        assert_eq!(instrumented.flushes(), 1);
 
         let inner = instrumented.into_inner();
         let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
@@ -412,6 +464,21 @@ mod tests {
         assert!(remainder.is_empty());
 
         let transport = stream.into_inner();
+        assert_eq!(
+            transport.written(),
+            &handshake_bytes(ProtocolVersion::NEWEST)
+        );
+    }
+
+    #[test]
+    fn negotiate_binary_session_flushes_advertisement() {
+        let transport = CountingTransport::new(&handshake_bytes(ProtocolVersion::NEWEST));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let transport = handshake.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 1);
         assert_eq!(
             transport.written(),
             &handshake_bytes(ProtocolVersion::NEWEST)

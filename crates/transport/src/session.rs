@@ -250,7 +250,7 @@ mod tests {
             transport.writes(),
             &binary_handshake_bytes(ProtocolVersion::NEWEST)
         );
-        assert_eq!(transport.flushes(), 0);
+        assert_eq!(transport.flushes(), 1);
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
         let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
         expected.extend_from_slice(b"payload");
         assert_eq!(transport.writes(), expected.as_slice());
-        assert_eq!(transport.flushes(), 0);
+        assert_eq!(transport.flushes(), 1);
     }
 
     #[derive(Debug)]
