@@ -215,6 +215,51 @@ impl<R> NegotiatedStream<R> {
         self.buffer.copy_into_vec(target)
     }
 
+    /// Copies the buffered negotiation data into the provided vectored buffers without consuming it.
+    ///
+    /// The helper mirrors [`Self::copy_buffered_into_slice`] but operates on a slice of
+    /// [`IoSliceMut`], allowing callers to scatter the replay bytes across multiple scratch buffers
+    /// without reallocating. This is particularly useful when staging transcript snapshots inside
+    /// pre-allocated ring buffers or logging structures while keeping the replay cursor untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedCopyTooSmall`] when the combined capacity of `bufs` is smaller than the
+    /// buffered negotiation payload. On success the buffers are populated sequentially and the total
+    /// number of written bytes is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, IoSliceMut};
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let expected = stream.buffered().to_vec();
+    /// let mut head = [0u8; 12];
+    /// let mut tail = [0u8; 32];
+    /// let mut bufs = [IoSliceMut::new(&mut head), IoSliceMut::new(&mut tail)];
+    /// let copied = stream
+    ///     .copy_buffered_into_vectored(&mut bufs)
+    ///     .expect("buffers are large enough");
+    ///
+    /// let prefix_len = head.len().min(copied);
+    /// let mut assembled = Vec::new();
+    /// assembled.extend_from_slice(&head[..prefix_len]);
+    /// let remainder_len = copied - prefix_len;
+    /// if remainder_len > 0 {
+    ///     assembled.extend_from_slice(&tail[..remainder_len]);
+    /// }
+    /// assert_eq!(assembled, expected);
+    /// ```
+    pub fn copy_buffered_into_vectored(
+        &self,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_vectored(bufs)
+    }
+
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
     ///
     /// This mirrors [`Self::copy_buffered_into`] but avoids reallocating a [`Vec`]. Callers that
@@ -886,6 +931,51 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.copy_into_vec(target)
     }
 
+    /// Copies the buffered negotiation data into the provided vectored buffers without consuming it.
+    ///
+    /// The helper mirrors [`Self::copy_buffered_into_slice`] while operating on a mutable slice of
+    /// [`IoSliceMut`]. This is useful when the stream has been decomposed into parts but callers
+    /// still need to scatter the sniffed negotiation transcript across multiple scratch buffers
+    /// without cloning the stored bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedCopyTooSmall`] if the combined capacity of `bufs` is smaller than the
+    /// buffered negotiation payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, IoSliceMut};
+    ///
+    /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .into_parts();
+    /// let expected = parts.buffered().to_vec();
+    /// let mut first = [0u8; 10];
+    /// let mut second = [0u8; 32];
+    /// let mut bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+    /// let copied = parts
+    ///     .copy_buffered_into_vectored(&mut bufs)
+    ///     .expect("buffers are large enough");
+    ///
+    /// let prefix_len = first.len().min(copied);
+    /// let mut assembled = Vec::new();
+    /// assembled.extend_from_slice(&first[..prefix_len]);
+    /// let remainder_len = copied - prefix_len;
+    /// if remainder_len > 0 {
+    ///     assembled.extend_from_slice(&second[..remainder_len]);
+    /// }
+    /// assert_eq!(assembled, expected);
+    /// ```
+    pub fn copy_buffered_into_vectored(
+        &self,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer.copy_all_into_vectored(bufs)
+    }
+
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
     pub fn copy_buffered_into_slice(
         &self,
@@ -1079,6 +1169,44 @@ impl NegotiationBuffer {
     fn copy_all_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
         target.write_all(&self.buffered)?;
         Ok(self.buffered.len())
+    }
+
+    fn copy_all_into_vectored(
+        &self,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        let required = self.buffered.len();
+        if required == 0 {
+            return Ok(0);
+        }
+
+        let mut provided = 0usize;
+        for buf in bufs.iter() {
+            provided = provided.saturating_add(buf.len());
+        }
+
+        if provided < required {
+            return Err(BufferedCopyTooSmall::new(required, provided));
+        }
+
+        let mut written = 0usize;
+        for buf in bufs.iter_mut() {
+            if written == required {
+                break;
+            }
+
+            let slice = buf.as_mut();
+            if slice.is_empty() {
+                continue;
+            }
+
+            let to_copy = (required - written).min(slice.len());
+            slice[..to_copy].copy_from_slice(&self.buffered[written..written + to_copy]);
+            written += to_copy;
+        }
+
+        debug_assert_eq!(written, required);
+        Ok(required)
     }
 
     fn copy_into_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> usize {
@@ -1489,6 +1617,54 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_buffered_into_vectored_copies_bytes() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nvectored payload").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut prefix = [0u8; 12];
+        let mut suffix = [0u8; 64];
+        let mut bufs = [IoSliceMut::new(&mut prefix), IoSliceMut::new(&mut suffix)];
+        let copied = stream
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect("vectored copy succeeds");
+
+        assert_eq!(copied, expected.len());
+
+        let prefix_len = prefix.len().min(copied);
+        let remainder_len = copied - prefix_len;
+        let mut assembled = Vec::new();
+        assembled.extend_from_slice(&prefix[..prefix_len]);
+        if remainder_len > 0 {
+            assembled.extend_from_slice(&suffix[..remainder_len]);
+        }
+        assert_eq!(assembled, expected);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+
+        let mut replay = vec![0u8; expected.len()];
+        stream
+            .read_exact(&mut replay)
+            .expect("buffered bytes remain available after vectored copy");
+        assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_copy_buffered_into_vectored_reports_small_buffers() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nshort").expect("sniff succeeds");
+        let required = stream.buffered().len();
+
+        let mut prefix = [0u8; 4];
+        let mut suffix = [0u8; 3];
+        let mut bufs = [IoSliceMut::new(&mut prefix), IoSliceMut::new(&mut suffix)];
+        let err = stream
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect_err("insufficient capacity must error");
+
+        assert_eq!(err.required(), required);
+        assert_eq!(err.provided(), prefix.len() + suffix.len());
+    }
+
+    #[test]
     fn negotiated_stream_copy_buffered_into_slice_reports_small_buffer() {
         let stream = sniff_bytes(b"@RSYNCD: 30.0\nrest").expect("sniff succeeds");
         let expected_len = stream.buffered_len();
@@ -1604,6 +1780,50 @@ mod tests {
             .read_exact(&mut replay)
             .expect("rebuilt stream still replays buffered bytes after array copy");
         assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_vectored_copies_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\nrecord")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut first = [0u8; 10];
+        let mut second = [0u8; 64];
+        let mut bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+        let copied = parts
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect("vectored copy succeeds");
+
+        assert_eq!(copied, expected.len());
+
+        let prefix_len = first.len().min(copied);
+        let remainder_len = copied - prefix_len;
+        let mut assembled = Vec::new();
+        assembled.extend_from_slice(&first[..prefix_len]);
+        if remainder_len > 0 {
+            assembled.extend_from_slice(&second[..remainder_len]);
+        }
+        assert_eq!(assembled, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_vectored_reports_small_buffers() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nlimited")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected_len = parts.buffered().len();
+
+        let mut first = [0u8; 4];
+        let mut second = [0u8; 3];
+        let mut bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+        let err = parts
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect_err("insufficient capacity must error");
+
+        assert_eq!(err.required(), expected_len);
+        assert_eq!(err.provided(), first.len() + second.len());
     }
 
     #[test]
