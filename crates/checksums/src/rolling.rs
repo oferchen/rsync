@@ -1,5 +1,5 @@
 use core::fmt;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 /// Errors that can occur while updating the rolling checksum state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -570,6 +570,59 @@ impl RollingDigest {
         out.copy_from_slice(&self.to_le_bytes());
         Ok(())
     }
+
+    /// Reads a rolling checksum digest from the provided reader using the little-endian wire format.
+    ///
+    /// The helper mirrors upstream rsync's expectation that digests appear as four little-endian
+    /// bytes. It blocks until the bytes have been read in full or the reader returns an error. The
+    /// caller supplies the number of bytes that contributed to the checksum so the resulting
+    /// [`RollingDigest`] matches the original metadata transmitted alongside the digest.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`io::Error`] raised by the reader. Short reads surface as
+    /// [`io::ErrorKind::UnexpectedEof`], matching upstream diagnostics for truncated payloads.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    /// use std::io::Cursor;
+    ///
+    /// let digest = RollingDigest::new(0xaaaa, 0xbbbb, 4096);
+    /// let mut cursor = Cursor::new(digest.to_le_bytes());
+    /// let parsed = RollingDigest::read_le_from(&mut cursor, digest.len()).unwrap();
+    /// assert_eq!(parsed, digest);
+    /// ```
+    pub fn read_le_from<R: Read>(reader: &mut R, len: usize) -> io::Result<Self> {
+        let mut bytes = [0u8; RollingSliceError::EXPECTED_LEN];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self::from_le_bytes(bytes, len))
+    }
+
+    /// Writes the rolling checksum digest to the provided writer using the little-endian wire format.
+    ///
+    /// The output matches [`Self::to_le_bytes`], making the helper convenient for serialising
+    /// digests directly into network buffers without allocating intermediate arrays.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`io::Error`] reported by the writer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    /// use std::io::Cursor;
+    ///
+    /// let digest = RollingDigest::new(0x1234, 0x5678, 1024);
+    /// let mut cursor = Cursor::new(Vec::new());
+    /// digest.write_le_to(&mut cursor).unwrap();
+    /// assert_eq!(cursor.into_inner(), digest.to_le_bytes());
+    /// ```
+    pub fn write_le_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
 
 #[cfg(test)]
@@ -679,6 +732,30 @@ mod tests {
 
         assert_eq!(err.len(), buffer.len());
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn digest_round_trips_through_reader_and_writer() {
+        let sample = RollingDigest::new(0x0102, 0x0304, 2048);
+
+        let mut writer = Cursor::new(Vec::new());
+        sample
+            .write_le_to(&mut writer)
+            .expect("writing into an in-memory buffer cannot fail");
+        assert_eq!(writer.get_ref().as_slice(), &sample.to_le_bytes());
+
+        let mut reader = Cursor::new(writer.into_inner());
+        let parsed = RollingDigest::read_le_from(&mut reader, sample.len())
+            .expect("cursor provides the expected number of bytes");
+
+        assert_eq!(parsed, sample);
+    }
+
+    #[test]
+    fn digest_read_le_from_reports_truncated_input() {
+        let mut reader = Cursor::new(vec![0xde, 0xad, 0xbe]);
+        let err = RollingDigest::read_le_from(&mut reader, 0).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
