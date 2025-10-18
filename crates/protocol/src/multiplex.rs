@@ -439,31 +439,58 @@ fn write_all_vectored<W: Write + ?Sized>(
     mut header: &[u8],
     mut payload: &[u8],
 ) -> io::Result<()> {
-    while !header.is_empty() || !payload.is_empty() {
-        let written = loop {
-            let result = if header.is_empty() {
-                let slice = IoSlice::new(payload);
-                writer.write_vectored(slice::from_ref(&slice))
-            } else if payload.is_empty() {
-                let slice = IoSlice::new(header);
-                writer.write_vectored(slice::from_ref(&slice))
-            } else {
-                let slices = [IoSlice::new(header), IoSlice::new(payload)];
-                writer.write_vectored(&slices)
-            };
+    let mut use_vectored = true;
 
-            match result {
-                Ok(0) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::WriteZero,
-                        "failed to write multiplexed message",
-                    ));
+    'outer: while !header.is_empty() || !payload.is_empty() {
+        let written;
+        if use_vectored {
+            written = loop {
+                let result = if header.is_empty() {
+                    let slice = IoSlice::new(payload);
+                    writer.write_vectored(slice::from_ref(&slice))
+                } else if payload.is_empty() {
+                    let slice = IoSlice::new(header);
+                    writer.write_vectored(slice::from_ref(&slice))
+                } else {
+                    let slices = [IoSlice::new(header), IoSlice::new(payload)];
+                    writer.write_vectored(&slices)
+                };
+
+                match result {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "failed to write multiplexed message",
+                        ));
+                    }
+                    Ok(written) => break written,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(ref err)
+                        if err.kind() == io::ErrorKind::Unsupported
+                            || err.kind() == io::ErrorKind::InvalidInput =>
+                    {
+                        use_vectored = false;
+                        continue 'outer;
+                    }
+                    Err(err) => return Err(err),
                 }
-                Ok(written) => break written,
-                Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                Err(err) => return Err(err),
-            }
-        };
+            };
+        } else {
+            written = loop {
+                let buffer = if !header.is_empty() { header } else { payload };
+                match writer.write(buffer) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "failed to write multiplexed message",
+                        ));
+                    }
+                    Ok(written) => break written,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(err) => return Err(err),
+                }
+            };
+        }
 
         let mut remaining = written;
         if !header.is_empty() {
@@ -622,6 +649,114 @@ mod tests {
         let header = MessageHeader::new(MessageCode::Warning, payload.len() as u32).unwrap();
         let mut expected = Vec::from(header.encode());
         expected.extend_from_slice(payload);
+        assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_msg_falls_back_when_vectored_is_not_supported() {
+        struct NoVectoredWriter {
+            writes: Vec<u8>,
+            write_calls: usize,
+            vectored_attempts: usize,
+        }
+
+        impl NoVectoredWriter {
+            fn new() -> Self {
+                Self {
+                    writes: Vec::new(),
+                    write_calls: 0,
+                    vectored_attempts: 0,
+                }
+            }
+        }
+
+        impl Write for NoVectoredWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.write_calls += 1;
+                self.writes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.vectored_attempts += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "vectored IO disabled",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = NoVectoredWriter::new();
+        let payload = b"payload";
+        send_msg(&mut writer, MessageCode::Warning, payload).expect("send succeeds");
+
+        let header = MessageHeader::new(MessageCode::Warning, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+
+        assert_eq!(writer.vectored_attempts, 1);
+        assert_eq!(writer.write_calls, 2);
+        assert_eq!(writer.writes, expected);
+    }
+
+    #[test]
+    fn send_msg_falls_back_after_vectored_reports_unsupported() {
+        struct UnsupportedVectoredWriter {
+            writes: Vec<u8>,
+            vectored_attempts: usize,
+            sequential_calls: usize,
+        }
+
+        impl UnsupportedVectoredWriter {
+            fn new() -> Self {
+                Self {
+                    writes: Vec::new(),
+                    vectored_attempts: 0,
+                    sequential_calls: 0,
+                }
+            }
+        }
+
+        impl Write for UnsupportedVectoredWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.sequential_calls += 1;
+                self.writes.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.vectored_attempts += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "vectored IO disabled",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = UnsupportedVectoredWriter::new();
+        let payload = b"payload";
+        send_msg(&mut writer, MessageCode::Info, payload).expect("send succeeds");
+
+        let header = MessageHeader::new(MessageCode::Info, payload.len() as u32).unwrap();
+        let mut expected = Vec::from(header.encode());
+        expected.extend_from_slice(payload);
+
+        assert_eq!(
+            writer.vectored_attempts, 1,
+            "one vectored attempt should occur before fallback"
+        );
+        assert!(
+            writer.sequential_calls >= 2,
+            "fallback must write header and payload sequentially"
+        );
         assert_eq!(writer.writes, expected);
     }
 
