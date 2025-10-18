@@ -1130,16 +1130,17 @@ fn parse_protocol_version_error_display_matches_variants() {
     assert_eq!(negative.to_string(), "protocol version cannot be negative");
 
     let overflow = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Overflow);
-    assert_eq!(overflow.to_string(), "protocol version value exceeds u8::MAX");
+    assert_eq!(
+        overflow.to_string(),
+        "protocol version value exceeds u8::MAX"
+    );
 
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     let unsupported =
         ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(27));
     assert_eq!(
         unsupported.to_string(),
-        format!(
-            "protocol version 27 is outside the supported range {oldest}-{newest}"
-        )
+        format!("protocol version 27 is outside the supported range {oldest}-{newest}")
     );
 }
 

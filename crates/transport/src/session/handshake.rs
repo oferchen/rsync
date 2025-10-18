@@ -132,6 +132,9 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Maps the inner transport while preserving the negotiated metadata.
+    ///
+    /// The returned handshake replaces `self`; callers must use the value to
+    /// retain access to the negotiated stream and metadata.
     #[must_use]
     pub fn map_stream_inner<F, T>(self, map: F) -> SessionHandshake<T>
     where
