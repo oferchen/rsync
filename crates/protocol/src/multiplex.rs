@@ -355,6 +355,13 @@ fn truncated_frame_error(expected: usize, actual: usize) -> io::Error {
     )
 }
 
+fn truncated_payload_error(expected: usize, actual: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        format!("multiplexed payload truncated: expected {expected} bytes but received {actual}"),
+    )
+}
+
 fn ensure_payload_length(len: usize) -> io::Result<u32> {
     if len > MAX_PAYLOAD_LENGTH as usize {
         return Err(invalid_len_error(len));
@@ -404,10 +411,7 @@ fn read_payload_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, len: usize) 
         match reader.read(&mut buffer[read_total..]) {
             Ok(0) => {
                 buffer.truncate(read_total);
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "failed to fill whole buffer",
-                ));
+                return Err(truncated_payload_error(len, read_total));
             }
             Ok(bytes_read) => {
                 read_total += bytes_read;
@@ -415,6 +419,9 @@ fn read_payload_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>, len: usize) 
             Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
             Err(err) => {
                 buffer.truncate(read_total);
+                if err.kind() == io::ErrorKind::UnexpectedEof {
+                    return Err(truncated_payload_error(len, read_total));
+                }
                 return Err(err);
             }
         }
@@ -1043,6 +1050,10 @@ mod tests {
 
         let err = recv_msg(&mut io::Cursor::new(buffer)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            err.to_string(),
+            "multiplexed payload truncated: expected 4 bytes but received 2"
+        );
     }
 
     #[test]
@@ -1058,6 +1069,10 @@ mod tests {
         let err = recv_msg_into(&mut cursor, &mut buffer).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            err.to_string(),
+            "multiplexed payload truncated: expected 4 bytes but received 2"
+        );
         assert_eq!(buffer, vec![1, 2]);
     }
 
