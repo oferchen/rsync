@@ -241,7 +241,7 @@ impl<'a> MessageSegments<'a> {
                 match writer.write_vectored(&slices[start..count]) {
                     Ok(0) => {
                         return Err(io::Error::from(io::ErrorKind::WriteZero));
-                    },
+                    }
                     Ok(written) => {
                         debug_assert!(written <= remaining);
                         remaining -= written;

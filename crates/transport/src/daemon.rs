@@ -218,6 +218,235 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         self.stream
     }
 
+    /// Maps the inner transport while preserving the negotiated metadata and greeting.
+    ///
+    /// The helper mirrors [`LegacyDaemonHandshake::map_stream_inner`] but operates on the
+    /// decomposed parts, making it convenient to wrap the underlying transport before rebuilding
+    /// the handshake. The replay buffer and parsed greeting remain intact so higher layers can
+    /// continue processing daemon responses without rerunning the negotiation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct MemoryTransport {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    ///     flushes: usize,
+    /// }
+    ///
+    /// impl MemoryTransport {
+    ///     fn new(input: &[u8]) -> Self {
+    ///         Self {
+    ///             reader: Cursor::new(input.to_vec()),
+    ///             written: Vec::new(),
+    ///             flushes: 0,
+    ///         }
+    ///     }
+    ///
+    ///     fn written(&self) -> &[u8] {
+    ///         &self.written
+    ///     }
+    ///
+    ///     fn flushes(&self) -> usize {
+    ///         self.flushes
+    ///     }
+    /// }
+    ///
+    /// impl Read for MemoryTransport {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for MemoryTransport {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         self.flushes += 1;
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// #[derive(Debug)]
+    /// struct Instrumented {
+    ///     inner: MemoryTransport,
+    ///     writes: Vec<u8>,
+    ///     flushes: usize,
+    /// }
+    ///
+    /// impl Instrumented {
+    ///     fn new(inner: MemoryTransport) -> Self {
+    ///         Self {
+    ///             inner,
+    ///             writes: Vec::new(),
+    ///             flushes: 0,
+    ///         }
+    ///     }
+    ///
+    ///     fn writes(&self) -> &[u8] {
+    ///         &self.writes
+    ///     }
+    ///
+    ///     fn flushes(&self) -> usize {
+    ///         self.flushes
+    ///     }
+    ///
+    ///     fn into_inner(self) -> MemoryTransport {
+    ///         self.inner
+    ///     }
+    /// }
+    ///
+    /// impl Read for Instrumented {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.inner.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Instrumented {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.writes.extend_from_slice(buf);
+    ///         self.inner.write(buf)
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         self.flushes += 1;
+    ///         self.inner.flush()
+    ///     }
+    /// }
+    ///
+    /// let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    /// let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+    ///     .expect("handshake succeeds")
+    ///     .into_parts();
+    ///
+    /// let instrumented = parts.map_stream_inner(Instrumented::new);
+    /// assert_eq!(instrumented.server_protocol(), ProtocolVersion::from_supported(31).unwrap());
+    ///
+    /// let mut handshake = instrumented.into_handshake();
+    /// handshake.stream_mut().write_all(b"OK\n").unwrap();
+    /// handshake.stream_mut().flush().unwrap();
+    ///
+    /// let instrumented = handshake.into_stream().into_inner();
+    /// assert_eq!(instrumented.writes(), b"OK\n");
+    /// assert_eq!(instrumented.flushes(), 1);
+    /// let inner = instrumented.into_inner();
+    /// assert_eq!(inner.written(), b"@RSYNCD: 31.0\nOK\n");
+    /// ```
+    #[must_use]
+    pub fn map_stream_inner<F, T>(self, map: F) -> LegacyDaemonHandshakeParts<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        let Self {
+            server_greeting,
+            negotiated_protocol,
+            stream,
+        } = self;
+
+        LegacyDaemonHandshakeParts::from_components(
+            server_greeting,
+            negotiated_protocol,
+            stream.map_inner(map),
+        )
+    }
+
+    /// Attempts to transform the inner transport while preserving the negotiated metadata.
+    ///
+    /// On success the new transport replaces the previous one and the replay buffer remains
+    /// available. If the mapping fails, the original parts structure is returned alongside the
+    /// error so callers can continue using the negotiated session without repeating the handshake.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct MemoryTransport {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    ///     flushes: usize,
+    /// }
+    ///
+    /// impl MemoryTransport {
+    ///     fn new(input: &[u8]) -> Self {
+    ///         Self {
+    ///             reader: Cursor::new(input.to_vec()),
+    ///             written: Vec::new(),
+    ///             flushes: 0,
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// impl Read for MemoryTransport {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for MemoryTransport {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         self.flushes += 1;
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    /// let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+    ///     .expect("handshake succeeds")
+    ///     .into_parts();
+    ///
+    /// let err = parts
+    ///     .try_map_stream_inner(|inner| -> Result<MemoryTransport, (io::Error, MemoryTransport)> {
+    ///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), inner))
+    ///     })
+    ///     .expect_err("mapping fails");
+    /// assert_eq!(err.error().kind(), io::ErrorKind::Other);
+    ///
+    /// let restored = err.into_original().into_handshake();
+    /// assert_eq!(restored.server_protocol(), ProtocolVersion::from_supported(31).unwrap());
+    /// ```
+    #[must_use]
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<LegacyDaemonHandshakeParts<T>, TryMapInnerError<LegacyDaemonHandshakeParts<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        let Self {
+            server_greeting,
+            negotiated_protocol,
+            stream,
+        } = self;
+
+        match (stream.try_map_inner(map), server_greeting) {
+            (Ok(stream), greeting) => Ok(LegacyDaemonHandshakeParts::from_components(
+                greeting,
+                negotiated_protocol,
+                stream,
+            )),
+            (Err(err), greeting) => Err(err.map_original(|stream| {
+                LegacyDaemonHandshakeParts::from_components(greeting, negotiated_protocol, stream)
+            })),
+        }
+    }
+
     fn into_components(
         self,
     ) -> (
@@ -869,6 +1098,92 @@ mod tests {
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"@RSYNCD: OK\n");
         assert_eq!(instrumented.flushes(), 1);
+    }
+
+    #[test]
+    fn parts_map_stream_inner_transforms_transport() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed")
+            .into_parts();
+
+        let mapped = parts.map_stream_inner(InstrumentedTransport::new);
+        assert_eq!(
+            mapped.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+
+        let mut handshake = mapped.into_handshake();
+        handshake
+            .stream_mut()
+            .write_all(b"OK\n")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"OK\n");
+        assert_eq!(instrumented.flushes(), 1);
+
+        let inner = instrumented.into_inner();
+        assert_eq!(inner.written(), b"@RSYNCD: 31.0\nOK\n");
+    }
+
+    #[test]
+    fn parts_try_map_stream_inner_transforms_transport() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed")
+            .into_parts();
+
+        let mapped = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+        assert_eq!(
+            mapped.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+
+        let mut handshake = mapped.into_handshake();
+        handshake
+            .stream_mut()
+            .write_all(b"OK\n")
+            .expect("write propagates");
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"OK\n");
+    }
+
+    #[test]
+    fn parts_try_map_stream_inner_preserves_original_on_error() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed")
+            .into_parts();
+
+        let err = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+
+        let restored = err.into_original();
+        assert_eq!(
+            restored.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
+
+        let remapped = restored.map_stream_inner(InstrumentedTransport::new);
+        assert_eq!(
+            remapped.server_protocol(),
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        );
     }
 
     #[test]
