@@ -1546,10 +1546,7 @@ impl Message {
     ) -> io::Result<Vec<u8>> {
         let segments = self.as_segments(scratch, include_newline);
         let mut buffer = Vec::new();
-        buffer
-            .try_reserve(segments.len())
-            .map_err(map_message_reserve_error)?;
-        segments.write_to(&mut buffer)?;
+        segments.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
 
