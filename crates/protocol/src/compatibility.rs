@@ -215,7 +215,7 @@ impl KnownCompatibilityFlag {
     /// assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);
     /// assert!(KnownCompatibilityFlag::from_str("CF_UNKNOWN").is_err());
     /// ```
-    #[must_use]
+    #[must_use = "discarding the parsed flag would drop potential parse errors"]
     pub fn from_name(name: &str) -> Result<Self, ParseKnownCompatibilityFlagError> {
         Self::from_str(name)
     }
