@@ -1222,6 +1222,56 @@ impl Message {
         })
     }
 
+    /// Appends the rendered message into the provided byte buffer.
+    ///
+    /// The helper mirrors [`Self::render_to_writer`] but avoids the overhead of
+    /// constructing a temporary [`Vec`] or going through the [`Write`] trait for
+    /// `Vec<u8>`. Callers that batch multiple diagnostics can therefore reuse
+    /// an output buffer across invocations without repeated allocations or
+    /// trait-object dispatch. The buffer is grown exactly enough to hold the
+    /// rendered message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let mut buffer = Vec::new();
+    /// Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!())
+    ///     .append_to_vec(&mut buffer);
+    ///
+    /// assert!(buffer.starts_with(b"rsync error:"));
+    /// assert!(buffer.ends_with(b"[sender=3.4.1-rust]"));
+    /// ```
+    pub fn append_to_vec(&self, buffer: &mut Vec<u8>) {
+        with_thread_local_scratch(|scratch| self.append_to_vec_with_scratch(scratch, buffer))
+    }
+
+    /// Appends the rendered message followed by a newline into the provided buffer.
+    ///
+    /// This convenience function mirrors [`Self::render_line_to_writer`] while
+    /// avoiding intermediate allocations. It is particularly useful for
+    /// snapshot-style tests or logging sinks that keep diagnostics in an
+    /// in-memory byte buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let mut buffer = Vec::new();
+    /// Message::warning("vanished file")
+    ///     .with_code(24)
+    ///     .append_line_to_vec(&mut buffer);
+    ///
+    /// assert!(buffer.ends_with(b"\n"));
+    /// ```
+    pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) {
+        with_thread_local_scratch(|scratch| self.append_line_to_vec_with_scratch(scratch, buffer))
+    }
+
     /// Streams the rendered message into an [`io::Write`] implementor using caller-provided scratch buffers.
     ///
     /// This variant avoids reinitialising [`MessageScratch`] storage for callers that need to emit
@@ -1268,6 +1318,25 @@ impl Message {
         self.render_to_writer_inner(scratch, writer, true)
     }
 
+    /// Appends the rendered message into the provided buffer while reusing caller-supplied scratch space.
+    ///
+    /// The helper mirrors [`Self::append_to_vec`] but avoids reinitialising the
+    /// thread-local scratch storage when the caller already maintains a
+    /// reusable [`MessageScratch`]. The buffer is extended in place using the
+    /// vectored slices emitted by [`MessageSegments`].
+    pub fn append_to_vec_with_scratch(&self, scratch: &mut MessageScratch, buffer: &mut Vec<u8>) {
+        self.append_to_vec_with_scratch_inner(scratch, buffer, false);
+    }
+
+    /// Appends the rendered message followed by a newline into the provided buffer while reusing scratch space.
+    pub fn append_line_to_vec_with_scratch(
+        &self,
+        scratch: &mut MessageScratch,
+        buffer: &mut Vec<u8>,
+    ) {
+        self.append_to_vec_with_scratch_inner(scratch, buffer, true);
+    }
+
     fn render_to_writer_inner<W: IoWrite>(
         &self,
         scratch: &mut MessageScratch,
@@ -1287,6 +1356,19 @@ impl Message {
         let mut buffer = Vec::with_capacity(segments.len());
         segments.write_to(&mut buffer)?;
         Ok(buffer)
+    }
+
+    fn append_to_vec_with_scratch_inner(
+        &self,
+        scratch: &mut MessageScratch,
+        buffer: &mut Vec<u8>,
+        include_newline: bool,
+    ) {
+        let segments = self.as_segments(scratch, include_newline);
+        buffer.reserve(segments.len());
+        for slice in segments.iter() {
+            buffer.extend_from_slice(slice.as_ref());
+        }
     }
 }
 
@@ -2066,6 +2148,51 @@ mod tests {
         };
 
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn append_to_vec_matches_to_bytes() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut buffer = Vec::new();
+        message.append_to_vec(&mut buffer);
+
+        assert_eq!(buffer, message.to_bytes().unwrap());
+    }
+
+    #[test]
+    fn append_line_to_vec_matches_to_line_bytes() {
+        let message = Message::warning("vanished")
+            .with_code(24)
+            .with_source(message_source!());
+
+        let mut buffer = Vec::new();
+        message.append_line_to_vec(&mut buffer);
+
+        assert_eq!(buffer, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn append_with_scratch_accumulates_messages() {
+        let message = Message::error(11, "read failure")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        message.append_to_vec_with_scratch(&mut scratch, &mut buffer);
+        let first_len = buffer.len();
+        let without_newline = message.to_bytes().unwrap();
+
+        message.append_line_to_vec_with_scratch(&mut scratch, &mut buffer);
+        let with_newline = message
+            .to_line_bytes()
+            .expect("Vec<u8> writes are infallible");
+
+        assert_eq!(&buffer[..first_len], without_newline.as_slice());
+        assert_eq!(&buffer[first_len..], with_newline.as_slice());
     }
 
     #[test]
