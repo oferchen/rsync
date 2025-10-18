@@ -80,6 +80,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::iter::{Extend, FromIterator, FusedIterator};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
+use std::str::FromStr;
 
 /// Enumerates the compatibility flags defined by upstream rsync 3.4.1.
 ///
@@ -196,6 +197,68 @@ impl KnownCompatibilityFlag {
         }
     }
 }
+
+impl KnownCompatibilityFlag {
+    /// Attempts to parse a canonical upstream identifier into a compatibility flag variant.
+    ///
+    /// The parser accepts the exact `CF_*` names emitted by upstream rsync and returned by
+    /// [`Self::name`]. Any other input is rejected, ensuring higher layers avoid silently mapping
+    /// unknown identifiers to a default value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::str::FromStr;
+    /// use rsync_protocol::KnownCompatibilityFlag;
+    ///
+    /// let parsed = KnownCompatibilityFlag::from_str("CF_INC_RECURSE").expect("known flag");
+    /// assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);
+    /// assert!(KnownCompatibilityFlag::from_str("CF_UNKNOWN").is_err());
+    /// ```
+    #[must_use]
+    pub fn from_name(name: &str) -> Result<Self, ParseKnownCompatibilityFlagError> {
+        Self::from_str(name)
+    }
+}
+
+impl FromStr for KnownCompatibilityFlag {
+    type Err = ParseKnownCompatibilityFlagError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "CF_INC_RECURSE" => Ok(Self::IncRecurse),
+            "CF_SYMLINK_TIMES" => Ok(Self::SymlinkTimes),
+            "CF_SYMLINK_ICONV" => Ok(Self::SymlinkIconv),
+            "CF_SAFE_FLIST" => Ok(Self::SafeFileList),
+            "CF_AVOID_XATTR_OPTIM" => Ok(Self::AvoidXattrOptimization),
+            "CF_CHKSUM_SEED_FIX" => Ok(Self::ChecksumSeedFix),
+            "CF_INPLACE_PARTIAL_DIR" => Ok(Self::InplacePartialDir),
+            "CF_VARINT_FLIST_FLAGS" => Ok(Self::VarintFlistFlags),
+            "CF_ID0_NAMES" => Ok(Self::Id0Names),
+            _ => Err(ParseKnownCompatibilityFlagError::new()),
+        }
+    }
+}
+
+/// Error returned when parsing a [`KnownCompatibilityFlag`] from an invalid identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseKnownCompatibilityFlagError {
+    _private: (),
+}
+
+impl ParseKnownCompatibilityFlagError {
+    const fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl fmt::Display for ParseKnownCompatibilityFlagError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unrecognized compatibility flag identifier")
+    }
+}
+
+impl std::error::Error for ParseKnownCompatibilityFlagError {}
 
 impl From<KnownCompatibilityFlag> for CompatibilityFlags {
     /// Converts a single known compatibility flag into the corresponding bitfield value.
@@ -894,6 +957,57 @@ mod tests {
         ] {
             assert_eq!(flag.name(), flag.to_string());
         }
+    }
+
+    #[test]
+    fn known_flag_from_str_accepts_canonical_names() {
+        use std::str::FromStr;
+
+        for (name, expected) in [
+            ("CF_INC_RECURSE", KnownCompatibilityFlag::IncRecurse),
+            ("CF_SYMLINK_TIMES", KnownCompatibilityFlag::SymlinkTimes),
+            ("CF_SYMLINK_ICONV", KnownCompatibilityFlag::SymlinkIconv),
+            ("CF_SAFE_FLIST", KnownCompatibilityFlag::SafeFileList),
+            (
+                "CF_AVOID_XATTR_OPTIM",
+                KnownCompatibilityFlag::AvoidXattrOptimization,
+            ),
+            (
+                "CF_CHKSUM_SEED_FIX",
+                KnownCompatibilityFlag::ChecksumSeedFix,
+            ),
+            (
+                "CF_INPLACE_PARTIAL_DIR",
+                KnownCompatibilityFlag::InplacePartialDir,
+            ),
+            (
+                "CF_VARINT_FLIST_FLAGS",
+                KnownCompatibilityFlag::VarintFlistFlags,
+            ),
+            ("CF_ID0_NAMES", KnownCompatibilityFlag::Id0Names),
+        ] {
+            assert_eq!(KnownCompatibilityFlag::from_str(name).unwrap(), expected);
+            assert_eq!(KnownCompatibilityFlag::from_name(name).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn known_flag_from_str_rejects_unknown_identifiers() {
+        use std::str::FromStr;
+
+        let err = KnownCompatibilityFlag::from_str("CF_UNKNOWN").expect_err("unknown flag");
+        assert_eq!(err, ParseKnownCompatibilityFlagError::new());
+        assert_eq!(
+            err.to_string(),
+            "unrecognized compatibility flag identifier"
+        );
+    }
+
+    #[test]
+    fn parse_known_flag_error_implements_std_error() {
+        fn assert_error<E: std::error::Error>() {}
+
+        assert_error::<ParseKnownCompatibilityFlagError>();
     }
 
     #[test]
