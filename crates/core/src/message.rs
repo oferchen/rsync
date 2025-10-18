@@ -309,44 +309,75 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
-        let mut remaining = self.len();
+        let total_len = self.len();
         let mut start = 0usize;
-        let mut vectored = self.segments;
+        let mut written_total = 0usize;
+        let mut vectored_storage: Option<[IoSlice<'a>; MAX_MESSAGE_SEGMENTS]> = None;
 
-        while remaining > 0 {
-            let mut tail = &mut vectored[start..count];
-            if tail.is_empty() {
-                break;
-            }
-
-            match writer.write_vectored(&*tail) {
-                Ok(0) => {
-                    return Err(io::Error::from(io::ErrorKind::WriteZero));
-                }
-                Ok(written) => {
-                    debug_assert!(written <= remaining);
-                    remaining -= written;
-
-                    if remaining == 0 {
-                        return Ok(());
+        if count > 1 {
+            loop {
+                if let Some(ref mut storage) = vectored_storage {
+                    let mut tail = &mut storage[start..count];
+                    if tail.is_empty() {
+                        break;
                     }
 
-                    let before_len = tail.len();
-                    IoSlice::advance_slices(&mut tail, written);
-                    let consumed_slices = before_len - tail.len();
-                    start += consumed_slices;
+                    match writer.write_vectored(&*tail) {
+                        Ok(0) => {
+                            return Err(io::Error::from(io::ErrorKind::WriteZero));
+                        }
+                        Ok(written) => {
+                            debug_assert!(written <= total_len - written_total);
+                            written_total += written;
+
+                            if written_total == total_len {
+                                return Ok(());
+                            }
+
+                            let before_len = tail.len();
+                            IoSlice::advance_slices(&mut tail, written);
+                            let consumed_slices = before_len - tail.len();
+                            start += consumed_slices;
+                        }
+                        Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
+                        Err(err) => return Err(err),
+                    }
+                } else {
+                    let tail = &slices[start..count];
+                    if tail.is_empty() {
+                        break;
+                    }
+
+                    match writer.write_vectored(tail) {
+                        Ok(0) => {
+                            return Err(io::Error::from(io::ErrorKind::WriteZero));
+                        }
+                        Ok(written) => {
+                            debug_assert!(written <= total_len - written_total);
+                            written_total += written;
+
+                            if written_total == total_len {
+                                return Ok(());
+                            }
+
+                            let mut storage = self.segments;
+                            let mut tail_mut = &mut storage[start..count];
+                            let before_len = tail_mut.len();
+                            IoSlice::advance_slices(&mut tail_mut, written);
+                            let consumed_slices = before_len - tail_mut.len();
+                            start += consumed_slices;
+                            vectored_storage = Some(storage);
+                        }
+                        Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
+                        Err(err) => return Err(err),
+                    }
                 }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
-                Err(err) => return Err(err),
             }
         }
 
-        if remaining == 0 {
-            return Ok(());
-        }
-
-        let mut consumed = self.len() - remaining;
+        let mut consumed = written_total;
 
         if start > 0 {
             let skip = start.min(slices.len());
