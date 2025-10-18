@@ -1,3 +1,5 @@
+use super::StrongDigest;
+
 /// Streaming XXH64 hasher used by rsync when negotiated by newer protocols.
 #[derive(Clone)]
 pub struct Xxh64 {
@@ -27,9 +29,25 @@ impl Xxh64 {
     /// Convenience helper that computes the XXH64 digest for `data` in one shot.
     #[must_use]
     pub fn digest(seed: u64, data: &[u8]) -> [u8; 8] {
-        let mut hasher = Self::new(seed);
-        hasher.update(data);
-        hasher.finalize()
+        <Self as StrongDigest>::digest_with_seed(seed, data)
+    }
+}
+
+impl StrongDigest for Xxh64 {
+    type Seed = u64;
+    type Digest = [u8; 8];
+    const DIGEST_LEN: usize = 8;
+
+    fn with_seed(seed: Self::Seed) -> Self {
+        Xxh64::new(seed)
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+
+    fn finalize(self) -> Self::Digest {
+        self.inner.digest().to_le_bytes()
     }
 }
 
