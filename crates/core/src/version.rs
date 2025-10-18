@@ -85,6 +85,15 @@ pub enum CompiledFeature {
 }
 
 impl CompiledFeature {
+    /// Canonical ordering of optional capabilities as rendered in `--version` output.
+    pub const ALL: [CompiledFeature; 5] = [
+        CompiledFeature::Acl,
+        CompiledFeature::Xattr,
+        CompiledFeature::Zstd,
+        CompiledFeature::Iconv,
+        CompiledFeature::SdNotify,
+    ];
+
     /// Returns the canonical label used when listing the feature in `--version` output.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -94,6 +103,18 @@ impl CompiledFeature {
             Self::Zstd => "zstd",
             Self::Iconv => "iconv",
             Self::SdNotify => "sd-notify",
+        }
+    }
+
+    /// Reports whether the feature was compiled into the current build.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        match self {
+            Self::Acl => cfg!(feature = "acl"),
+            Self::Xattr => cfg!(feature = "xattr"),
+            Self::Zstd => cfg!(feature = "zstd"),
+            Self::Iconv => cfg!(feature = "iconv"),
+            Self::SdNotify => cfg!(feature = "sd-notify"),
         }
     }
 
@@ -125,22 +146,12 @@ impl fmt::Display for CompiledFeature {
 /// compression and auxiliary integrations.
 #[must_use]
 pub fn compiled_features() -> Vec<CompiledFeature> {
-    let mut features = Vec::with_capacity(5);
+    let mut features = Vec::with_capacity(CompiledFeature::ALL.len());
 
-    if cfg!(feature = "acl") {
-        features.push(CompiledFeature::Acl);
-    }
-    if cfg!(feature = "xattr") {
-        features.push(CompiledFeature::Xattr);
-    }
-    if cfg!(feature = "zstd") {
-        features.push(CompiledFeature::Zstd);
-    }
-    if cfg!(feature = "iconv") {
-        features.push(CompiledFeature::Iconv);
-    }
-    if cfg!(feature = "sd-notify") {
-        features.push(CompiledFeature::SdNotify);
+    for feature in CompiledFeature::ALL {
+        if feature.is_enabled() {
+            features.push(feature);
+        }
     }
 
     features
@@ -255,37 +266,14 @@ mod tests {
     fn compiled_features_match_cfg_flags() {
         let features = compiled_features();
 
-        assert_eq!(
-            features.contains(&CompiledFeature::Acl),
-            cfg!(feature = "acl")
-        );
-        assert_eq!(
-            features.contains(&CompiledFeature::Xattr),
-            cfg!(feature = "xattr")
-        );
-        assert_eq!(
-            features.contains(&CompiledFeature::Zstd),
-            cfg!(feature = "zstd")
-        );
-        assert_eq!(
-            features.contains(&CompiledFeature::Iconv),
-            cfg!(feature = "iconv")
-        );
-        assert_eq!(
-            features.contains(&CompiledFeature::SdNotify),
-            cfg!(feature = "sd-notify")
-        );
+        for feature in CompiledFeature::ALL {
+            assert_eq!(features.contains(&feature), feature.is_enabled());
+        }
     }
 
     #[test]
     fn feature_labels_align_with_display() {
-        for feature in [
-            CompiledFeature::Acl,
-            CompiledFeature::Xattr,
-            CompiledFeature::Zstd,
-            CompiledFeature::Iconv,
-            CompiledFeature::SdNotify,
-        ] {
+        for feature in CompiledFeature::ALL {
             assert_eq!(feature.label(), feature.to_string());
         }
     }
@@ -294,11 +282,9 @@ mod tests {
     fn compiled_feature_labels_reflect_active_features() {
         let labels = compiled_feature_labels();
 
-        assert_eq!(labels.contains(&"ACLs"), cfg!(feature = "acl"));
-        assert_eq!(labels.contains(&"xattrs"), cfg!(feature = "xattr"));
-        assert_eq!(labels.contains(&"zstd"), cfg!(feature = "zstd"));
-        assert_eq!(labels.contains(&"iconv"), cfg!(feature = "iconv"));
-        assert_eq!(labels.contains(&"sd-notify"), cfg!(feature = "sd-notify"));
+        for feature in CompiledFeature::ALL {
+            assert_eq!(labels.contains(&feature.label()), feature.is_enabled());
+        }
     }
 
     #[test]
