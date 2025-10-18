@@ -3,6 +3,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
 use std::path::Path;
+use std::slice;
 use std::str::{self, FromStr};
 use std::sync::OnceLock;
 
@@ -59,7 +60,7 @@ impl Default for MessageScratch {
 /// locations, and role trailers. Callers obtain the structure through [`Message::as_segments`]
 /// and can then stream the slices into vectored writers, aggregate statistics, or reuse the
 /// layout when constructing custom buffers.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MessageSegments<'a> {
     segments: [IoSlice<'a>; MAX_MESSAGE_SEGMENTS],
     count: usize,
@@ -89,6 +90,51 @@ impl<'a> MessageSegments<'a> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    /// Returns an iterator over the populated vectored slices.
+    ///
+    /// The iterator yields the same slices returned by [`Self::as_slices`],
+    /// preserving their original ordering. This mirrors upstream rsync's
+    /// approach of rendering diagnostics by concatenating discrete segments
+    /// without reallocating. Consumers that prefer idiomatic iteration can
+    /// therefore avoid manual slice handling.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let rendered: Vec<u8> = {
+    ///     let segments = message.as_segments(&mut scratch, true);
+    ///     segments
+    ///         .iter()
+    ///         .flat_map(|slice| slice.as_ref().iter().copied())
+    ///         .collect()
+    /// };
+    ///
+    /// assert_eq!(rendered, message.to_line_bytes().unwrap());
+    /// ```
+    #[must_use]
+    pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
+        self.as_slices().iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a MessageSegments<'a> {
+    type Item = &'a IoSlice<'a>;
+    type IntoIter = slice::Iter<'a, IoSlice<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -1371,6 +1417,16 @@ mod tests {
     }
 
     #[test]
+    fn source_location_clone_preserves_path_and_line() {
+        let original = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "src/lib.rs", 42);
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
+        assert_eq!(cloned.path(), "crates/core/src/lib.rs");
+        assert_eq!(cloned.line(), 42);
+    }
+
+    #[test]
     fn normalize_preserves_relative_parent_segments() {
         let normalized = normalize_path(Path::new("../shared/src/lib.rs"));
         assert_eq!(normalized, "../shared/src/lib.rs");
@@ -1434,6 +1490,19 @@ mod tests {
     }
 
     #[test]
+    fn message_clone_preserves_rendering_and_metadata() {
+        let original = Message::error(12, "protocol error")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
+        assert_eq!(cloned.to_string(), original.to_string());
+        assert_eq!(cloned.code(), Some(12));
+        assert_eq!(cloned.role(), Some(Role::Sender));
+    }
+
+    #[test]
     fn render_to_matches_display_output() {
         let message = Message::error(35, "timeout in data send")
             .with_role(Role::Receiver)
@@ -1459,6 +1528,24 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn message_segments_iterator_covers_all_bytes() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let collected: Vec<u8> = {
+            let segments = message.as_segments(&mut scratch, true);
+            segments
+                .iter()
+                .flat_map(|slice| slice.as_ref().iter().copied())
+                .collect()
+        };
+
+        assert_eq!(collected, message.to_line_bytes().unwrap());
     }
 
     #[test]
