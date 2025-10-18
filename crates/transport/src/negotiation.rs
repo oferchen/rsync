@@ -24,6 +24,9 @@ pub struct NegotiatedStream<R> {
     buffer: NegotiationBuffer,
 }
 
+const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
+    "connection closed before rsync negotiation prologue was determined";
+
 #[derive(Clone, Debug)]
 struct NegotiationBuffer {
     sniffed_prefix_len: usize,
@@ -109,11 +112,13 @@ impl<R> NegotiatedStream<R> {
     /// Ensures the sniffed negotiation matches the expected style.
     ///
     /// The helper mirrors the checks performed by the binary and legacy
-    /// handshake wrappers, returning an [`io::ErrorKind::InvalidData`] error
-    /// with the supplied message when the peer advertises a different
-    /// negotiation style. Centralising the logic keeps the error strings used
-    /// across the transport crate in sync and avoids drift when additional
-    /// call sites are introduced.
+    /// handshake wrappers. When the sniffed style matches the expectation the
+    /// call succeeds. If the negotiation remains undecided it returns
+    /// [`io::ErrorKind::UnexpectedEof`] with the canonical transport error
+    /// message. Otherwise it produces an [`io::ErrorKind::InvalidData`] error
+    /// with the supplied message. Centralising the logic keeps the error
+    /// strings used across the transport crate in sync and avoids drift when
+    /// additional call sites are introduced.
     pub fn ensure_decision(
         &self,
         expected: NegotiationPrologue,
@@ -121,9 +126,10 @@ impl<R> NegotiatedStream<R> {
     ) -> io::Result<()> {
         match self.decision {
             decision if decision == expected => Ok(()),
-            NegotiationPrologue::NeedMoreData => {
-                unreachable!("negotiation sniffer fully classifies the prologue")
-            }
+            NegotiationPrologue::NeedMoreData => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                NEGOTIATION_PROLOGUE_UNDETERMINED_MSG,
+            )),
             _ => Err(io::Error::new(io::ErrorKind::InvalidData, error_message)),
         }
     }
@@ -1674,6 +1680,26 @@ mod tests {
             err.to_string(),
             "legacy daemon negotiation requires @RSYNCD: prefix"
         );
+    }
+
+    #[test]
+    fn ensure_decision_reports_undetermined_prologue() {
+        let stream = NegotiatedStream::from_raw_components(
+            Cursor::new(Vec::<u8>::new()),
+            NegotiationPrologue::NeedMoreData,
+            0,
+            0,
+            Vec::new(),
+        );
+
+        let err = stream
+            .ensure_decision(
+                NegotiationPrologue::Binary,
+                "binary negotiation requires binary prologue",
+            )
+            .expect_err("undetermined prologue must surface as EOF");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(err.to_string(), NEGOTIATION_PROLOGUE_UNDETERMINED_MSG);
     }
 
     #[test]
