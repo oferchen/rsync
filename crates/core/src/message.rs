@@ -163,30 +163,64 @@ impl<'a> MessageSegments<'a> {
         }
 
         if self.segment_count() > 1 {
-            loop {
-                match writer.write_vectored(slices) {
-                    Ok(written) if written == self.len() => return Ok(()),
+            let count = self.segment_count();
+            let mut start = 0usize;
+            let mut offset = 0usize;
+            let mut remaining = self.len();
+
+            while start < count && remaining > 0 {
+                if offset > 0 {
+                    let slice = slices[start].as_ref();
+                    let tail = &slice[offset..];
+                    writer.write_all(tail)?;
+                    remaining = remaining.saturating_sub(tail.len());
+                    start += 1;
+                    offset = 0;
+                    continue;
+                }
+
+                match writer.write_vectored(&slices[start..count]) {
+                    Ok(0) => break,
                     Ok(written) => {
-                        let mut remaining = written;
-
-                        for slice in slices {
-                            let data = slice.as_ref();
-                            if remaining >= data.len() {
-                                remaining -= data.len();
-                                continue;
-                            }
-
-                            writer.write_all(&data[remaining..])?;
-                            remaining = 0;
+                        debug_assert!(written <= remaining);
+                        remaining -= written;
+                        if remaining == 0 {
+                            return Ok(());
                         }
 
-                        return Ok(());
+                        let mut consumed = written;
+                        while consumed > 0 && start < count {
+                            let slice_len = slices[start].len();
+                            if consumed < slice_len {
+                                offset = consumed;
+                                break;
+                            }
+
+                            consumed -= slice_len;
+                            start += 1;
+                        }
                     }
                     Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
                     Err(err) => return Err(err),
                 }
             }
+
+            if remaining == 0 {
+                return Ok(());
+            }
+
+            if offset > 0 && start < count {
+                let slice = slices[start].as_ref();
+                writer.write_all(&slice[offset..])?;
+                start += 1;
+            }
+
+            for slice in &slices[start..count] {
+                writer.write_all(slice.as_ref())?;
+            }
+
+            return Ok(());
         }
 
         for slice in slices {
@@ -2012,9 +2046,9 @@ mod tests {
             .render_to_writer(&mut writer)
             .expect("fallback write succeeds");
 
-        assert_eq!(
-            writer.vectored_calls, 1,
-            "vectored path should be attempted once"
+        assert!(
+            writer.vectored_calls >= 1,
+            "vectored path should be attempted at least once"
         );
         assert!(
             writer.write_calls > 0,
@@ -2248,12 +2282,20 @@ mod tests {
         written: Vec<u8>,
         vectored_calls: usize,
         unsupported_once: bool,
+        vectored_limit: Option<usize>,
     }
 
     impl TrackingWriter {
         fn with_unsupported_once() -> Self {
             Self {
                 unsupported_once: true,
+                ..Self::default()
+            }
+        }
+
+        fn with_vectored_limit(limit: usize) -> Self {
+            Self {
+                vectored_limit: Some(limit),
                 ..Self::default()
             }
         }
@@ -2276,10 +2318,22 @@ mod tests {
                 ));
             }
 
+            let mut limit = self.vectored_limit.unwrap_or(usize::MAX);
             let mut total = 0usize;
             for buf in bufs {
-                self.written.extend_from_slice(buf.as_ref());
-                total += buf.len();
+                if limit == 0 {
+                    break;
+                }
+
+                let slice = buf.as_ref();
+                let take = slice.len().min(limit);
+                self.written.extend_from_slice(&slice[..take]);
+                total += take;
+                limit -= take;
+
+                if take < slice.len() {
+                    break;
+                }
             }
 
             Ok(total)
@@ -2328,5 +2382,25 @@ mod tests {
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 1);
+    }
+
+    #[test]
+    fn segments_write_to_retries_after_partial_vectored_write() {
+        let message = Message::error(35, "protocol generator aborted")
+            .with_role(Role::Generator)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, true);
+        let mut writer = TrackingWriter::with_vectored_limit(8);
+
+        segments
+            .write_to(&mut writer)
+            .expect("partial vectored writes should succeed");
+
+        drop(segments);
+
+        assert_eq!(writer.written, message.to_line_bytes().unwrap());
+        assert!(writer.vectored_calls >= 2);
     }
 }
