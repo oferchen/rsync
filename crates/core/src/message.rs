@@ -74,7 +74,29 @@ where
 /// The segments reference the message payload together with optional exit codes, source
 /// locations, and role trailers. Callers obtain the structure through [`Message::as_segments`]
 /// and can then stream the slices into vectored writers, aggregate statistics, or reuse the
-/// layout when constructing custom buffers.
+/// layout when constructing custom buffers. `MessageSegments` implements [`AsRef`] so the
+/// collected [`IoSlice`] values can be passed directly to APIs such as
+/// [`write_vectored`](IoWrite::write_vectored) without requiring an intermediate allocation.
+///
+/// # Examples
+///
+/// Convert the segments into a slice suitable for [`write_vectored`](IoWrite::write_vectored).
+///
+/// ```
+/// use rsync_core::{
+///     message::{Message, MessageScratch, Role},
+///     message_source,
+/// };
+///
+/// let mut scratch = MessageScratch::new();
+/// let message = Message::error(11, "error in file IO")
+///     .with_role(Role::Receiver)
+///     .with_source(message_source!());
+/// let segments = message.as_segments(&mut scratch, false);
+///
+/// let slices: &[std::io::IoSlice<'_>] = segments.as_ref();
+/// assert_eq!(slices.len(), segments.segment_count());
+/// ```
 #[derive(Clone, Debug)]
 pub struct MessageSegments<'a> {
     segments: [IoSlice<'a>; MAX_MESSAGE_SEGMENTS],
@@ -243,6 +265,12 @@ impl<'a> MessageSegments<'a> {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> AsRef<[IoSlice<'a>]> for MessageSegments<'a> {
+    fn as_ref(&self) -> &[IoSlice<'a>] {
+        self.as_slices()
     }
 }
 
@@ -2099,6 +2127,27 @@ mod tests {
             "sequential fallback must finish the message"
         );
         assert_eq!(String::from_utf8(writer.buffer).unwrap(), expected);
+    }
+
+    #[test]
+    fn segments_as_ref_exposes_slice_view() {
+        let mut scratch = MessageScratch::new();
+        let message = Message::error(35, "timeout waiting for daemon connection")
+            .with_role(Role::Sender)
+            .with_source(untracked_source());
+
+        let segments = message.as_segments(&mut scratch, false);
+        let slices = segments.as_ref();
+
+        assert_eq!(slices.len(), segments.segment_count());
+
+        let flattened: Vec<u8> = slices
+            .iter()
+            .flat_map(|slice| slice.as_ref())
+            .copied()
+            .collect();
+
+        assert_eq!(flattened, message.to_bytes().unwrap());
     }
 
     struct RecordingWriter {
