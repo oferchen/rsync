@@ -93,6 +93,41 @@ impl MessageFrame {
         Ok(Self { code, payload })
     }
 
+    /// Returns the multiplexed header that matches the current frame contents.
+    ///
+    /// The helper recomputes the header using the upstream rsync limits so that callers can
+    /// serialise the frame without reimplementing the validation logic. It is primarily useful
+    /// when the payload has been mutated through [`MessageFrame::payload_mut`], as the payload
+    /// length is re-checked each time. The returned header can then be passed to
+    /// [`MessageHeader::encode`] or [`MessageHeader::encode_into_slice`] to obtain the on-the-wire
+    /// representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when the payload length exceeds the 24-bit limit
+    /// enforced by upstream rsync, mirroring the error that [`send_msg`] would produce in the same
+    /// situation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{MessageCode, MessageFrame};
+    ///
+    /// # fn example() -> std::io::Result<()> {
+    /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
+    /// let header = frame.header()?;
+    ///
+    /// assert_eq!(header.code(), MessageCode::Info);
+    /// assert_eq!(header.payload_len(), 3);
+    /// # Ok(())
+    /// # }
+    /// # example().unwrap();
+    /// ```
+    pub fn header(&self) -> io::Result<MessageHeader> {
+        let payload_len = ensure_payload_length(self.payload.len())?;
+        MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)
+    }
+
     /// Returns the message code associated with the frame.
     #[must_use]
     #[inline]
@@ -183,9 +218,7 @@ impl MessageFrame {
         out.try_reserve(HEADER_LEN + self.payload.len())
             .map_err(map_allocation_error)?;
 
-        let payload_len = ensure_payload_length(self.payload.len())?;
-        let header =
-            MessageHeader::new(self.code, payload_len).map_err(map_envelope_error_for_input)?;
+        let header = self.header()?;
         out.extend_from_slice(&header.encode());
         out.extend_from_slice(&self.payload);
 
@@ -299,6 +332,27 @@ impl DerefMut for MessageFrame {
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
     let payload_len = ensure_payload_length(payload.len())?;
     let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
+    write_validated_message(writer, header, payload)
+}
+
+/// Sends an already constructed [`MessageFrame`] over `writer`.
+///
+/// The helper mirrors [`send_msg`] but allows callers that already decoded or constructed a
+/// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
+/// The payload length is recomputed through [`MessageFrame::header`] to catch mutations performed via
+/// [`DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
+/// path. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from an
+/// owned frame.
+pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
+    let header = frame.header()?;
+    write_validated_message(writer, header, frame.payload())
+}
+
+fn write_validated_message<W: Write + ?Sized>(
+    writer: &mut W,
+    header: MessageHeader,
+    payload: &[u8],
+) -> io::Result<()> {
     let header_bytes = header.encode();
 
     if payload.is_empty() {
@@ -306,19 +360,7 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
         return Ok(());
     }
 
-    write_all_vectored(writer, &header_bytes, payload)
-}
-
-/// Sends an already constructed [`MessageFrame`] over `writer`.
-///
-/// The helper mirrors [`send_msg`] but allows callers that already decoded or constructed a
-/// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
-/// The payload length has already been validated by [`MessageFrame::new`], so the function simply
-/// forwards to [`send_msg`] to reuse the upstream-compatible envelope encoding and vectored write
-/// behavior. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from
-/// an owned frame.
-pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
-    send_msg(writer, frame.code(), frame.payload())
+    write_all_vectored(writer, header_bytes.as_slice(), payload)
 }
 
 /// Receives the next multiplexed message from `reader`.
@@ -1081,6 +1123,28 @@ mod tests {
         assert_eq!(
             &buffer[..HEADER_LEN],
             &MessageHeader::new(frame.code(), 0).unwrap().encode()
+        );
+    }
+
+    #[test]
+    fn message_frame_header_reflects_current_payload_length() {
+        let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec()).expect("frame");
+        let header = frame.header().expect("header recomputation succeeds");
+
+        assert_eq!(header.code(), MessageCode::Info);
+        assert_eq!(header.payload_len(), 3);
+    }
+
+    #[test]
+    fn message_frame_header_detects_payload_growth_past_limit() {
+        let mut frame = MessageFrame::new(MessageCode::Data, Vec::new()).expect("frame");
+        frame.payload = vec![0u8; MAX_PAYLOAD_LENGTH as usize + 1];
+
+        let err = frame.header().expect_err("oversized payload must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            err.to_string().contains("multiplexed payload length"),
+            "error message should mention the payload limit"
         );
     }
 
