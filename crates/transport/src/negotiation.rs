@@ -193,7 +193,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
                         start += 1;
                     }
 
-                    break;
+                    continue;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
@@ -2569,18 +2569,20 @@ mod tests {
 
     struct PartialVectoredWriter {
         writes: Vec<u8>,
-        remaining: usize,
+        first_call_limit: usize,
         vectored_calls: usize,
         write_calls: usize,
+        first_call: bool,
     }
 
     impl PartialVectoredWriter {
-        fn new(limit: usize) -> Self {
+        fn new(first_call_limit: usize) -> Self {
             Self {
                 writes: Vec::new(),
-                remaining: limit,
+                first_call_limit,
                 vectored_calls: 0,
                 write_calls: 0,
+                first_call: true,
             }
         }
 
@@ -2606,22 +2608,33 @@ mod tests {
 
         fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
             self.vectored_calls += 1;
-            let mut remaining = self.remaining;
-            let mut written = 0usize;
 
-            for slice in bufs {
-                if remaining == 0 {
-                    break;
+            if self.first_call {
+                self.first_call = false;
+
+                let mut remaining = self.first_call_limit;
+                let mut written = 0usize;
+
+                for slice in bufs {
+                    if remaining == 0 {
+                        break;
+                    }
+
+                    let chunk = remaining.min(slice.len());
+                    self.writes.extend_from_slice(&slice[..chunk]);
+                    written += chunk;
+                    remaining -= chunk;
                 }
 
-                let chunk = remaining.min(slice.len());
-                self.writes.extend_from_slice(&slice[..chunk]);
-                written += chunk;
-                remaining -= chunk;
+                return Ok(written);
             }
 
-            self.remaining = 0;
-            Ok(written)
+            let mut total = 0usize;
+            for slice in bufs {
+                self.writes.extend_from_slice(slice);
+                total += slice.len();
+            }
+            Ok(total)
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -2730,8 +2743,8 @@ mod tests {
         expected.extend_from_slice(prefix);
         expected.extend_from_slice(remainder);
 
-        assert_eq!(writer.vectored_calls(), 1);
-        assert!(writer.write_calls() >= 1);
+        assert!(writer.vectored_calls() >= 2);
+        assert_eq!(writer.write_calls(), 0);
         assert_eq!(writer.writes(), expected.as_slice());
     }
 
