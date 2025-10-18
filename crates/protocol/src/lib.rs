@@ -131,7 +131,7 @@ mod negotiation;
 mod varint;
 mod version;
 
-pub use compatibility::CompatibilityFlags;
+pub use compatibility::{CompatibilityFlags, KnownCompatibilityFlag};
 pub use envelope::{
     EnvelopeError, HEADER_LEN as MESSAGE_HEADER_LEN, LogCode, LogCodeConversionError,
     MAX_PAYLOAD_LENGTH, MPLEX_BASE, MessageCode, MessageHeader, ParseLogCodeError,
