@@ -1068,6 +1068,49 @@ impl<T, E> TryMapInnerError<T, E> {
         let (error, original) = self.into_parts();
         TryMapInnerError::new(map(error), original)
     }
+
+    /// Transforms both the preserved error and original value in a single pass.
+    ///
+    /// The helper complements [`Self::map_error`] and [`Self::map_original`] by
+    /// allowing callers to adjust both captured pieces of state atomically. This
+    /// matches the needs of higher layers that downcast rich I/O errors while
+    /// simultaneously rewrapping the buffered transport. The closure receives
+    /// ownership of the stored error and original value and returns their
+    /// replacements. The resulting [`TryMapInnerError`] retains the transformed
+    /// components so callers can continue working with the preserved transport
+    /// data just as they would with the original error.
+    ///
+    /// # Examples
+    ///
+    /// Convert the stored error into an [`io::ErrorKind`] and turn the
+    /// preserved [`NegotiatedStream`] into [`NegotiatedStreamParts`] for later
+    /// reuse.
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{self, Cursor};
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let err = stream
+    ///     .try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+    ///         Err((io::Error::other("wrap failed"), cursor))
+    ///     })
+    ///     .expect_err("mapping fails");
+    ///
+    /// let mapped = err.map_parts(|error, stream| (error.kind(), stream.into_parts()));
+    /// assert_eq!(mapped.error(), &io::ErrorKind::Other);
+    /// assert_eq!(mapped.original().sniffed_prefix_len(), rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
+    /// ```
+    #[must_use]
+    pub fn map_parts<U, E2, F>(self, map: F) -> TryMapInnerError<U, E2>
+    where
+        F: FnOnce(E, T) -> (E2, U),
+    {
+        let (error, original) = self.into_parts();
+        let (error, original) = map(error, original);
+        TryMapInnerError::new(error, original)
+    }
 }
 
 impl<T, E: fmt::Debug> fmt::Debug for TryMapInnerError<T, E> {
@@ -3007,6 +3050,31 @@ mod tests {
         rebuilt
             .read_to_end(&mut replay)
             .expect("mapped original preserves replay bytes");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_error_map_parts_transforms_error_and_original() {
+        let legacy = b"@RSYNCD: 31.0\nlisting";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(|cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                Err((io::Error::other("boom"), cursor))
+            })
+            .expect_err("mapping fails");
+
+        let mapped = err.map_parts(|error, stream| (error.kind(), stream.into_parts()));
+        assert_eq!(mapped.error(), &io::ErrorKind::Other);
+
+        let parts = mapped.into_original();
+        assert_eq!(parts.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = Vec::new();
+        rebuilt
+            .read_to_end(&mut replay)
+            .expect("mapped parts preserve replay bytes");
         assert_eq!(replay, legacy);
     }
 
