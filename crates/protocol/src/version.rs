@@ -657,7 +657,7 @@ impl ProtocolVersion {
     /// assert!(ProtocolVersion::V30.uses_binary_negotiation());
     /// assert!(!ProtocolVersion::V29.uses_binary_negotiation());
     /// ```
-
+    ///
     /// Reports whether this protocol version still relies on the legacy ASCII
     /// daemon negotiation.
     ///
@@ -680,7 +680,7 @@ impl ProtocolVersion {
     /// assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
     /// assert!(!ProtocolVersion::V30.uses_legacy_ascii_negotiation());
     /// ```
-
+    ///
     /// Returns the numeric protocol identifiers supported by this
     /// implementation in newest-to-oldest order.
     ///
