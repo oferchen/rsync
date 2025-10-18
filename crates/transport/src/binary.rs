@@ -348,7 +348,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// let restored = err.into_original().into_handshake();
     /// assert_eq!(restored.remote_protocol(), remote);
     /// ```
-    #[must_use]
+    #[must_use = "handle the mapped handshake or propagate the error to preserve negotiation state"]
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,
