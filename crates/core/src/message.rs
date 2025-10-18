@@ -123,7 +123,6 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(rendered, message.to_line_bytes().unwrap());
     /// ```
-    #[must_use]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
