@@ -14,6 +14,10 @@ use std::io::{self, Read, Write};
 const LEGACY_GREETING_BUFFER_CAPACITY: usize = LEGACY_DAEMON_PREFIX_LEN + 7;
 
 /// Stack-allocated buffer used to render the legacy daemon greeting without allocating.
+///
+/// The buffer keeps previously written bytes until [`Self::clear`]
+/// is invoked, making it inexpensive to reuse across multiple negotiations when the
+/// caller wants to avoid repeated stack initialisation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LegacyGreetingBuffer {
     buf: [u8; LEGACY_GREETING_BUFFER_CAPACITY],
@@ -28,8 +32,38 @@ impl LegacyGreetingBuffer {
         }
     }
 
+    /// Returns the number of bytes currently stored in the buffer.
+    #[must_use]
+    const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Reports whether the buffer is empty.
+    #[must_use]
+    const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Clears the buffer without zeroing the underlying storage.
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    #[must_use]
     fn as_bytes(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+}
+
+impl Default for LegacyGreetingBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AsRef<[u8]> for LegacyGreetingBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 
@@ -346,14 +380,23 @@ where
     let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
     let mut banner = LegacyGreetingBuffer::new();
-    write_legacy_daemon_greeting(&mut banner, negotiated_protocol).map_err(|_| {
-        io::Error::new(
+    if write_legacy_daemon_greeting(&mut banner, negotiated_protocol).is_err() {
+        banner.clear();
+        return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "failed to format legacy daemon greeting",
-        )
-    })?;
+        ));
+    }
 
-    stream.write_all(banner.as_bytes())?;
+    let bytes = banner.as_ref();
+    if banner.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "legacy daemon greeting formatter produced empty banner",
+        ));
+    }
+
+    stream.write_all(&bytes[..banner.len()])?;
     stream.flush()?;
 
     Ok(LegacyDaemonHandshake {
@@ -777,11 +820,32 @@ mod tests {
     }
 
     #[test]
+    fn legacy_greeting_buffer_supports_reuse() {
+        let mut buffer = LegacyGreetingBuffer::default();
+        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
+            .expect("writing to stack buffer succeeds");
+
+        assert!(!buffer.is_empty());
+        let snapshot = buffer.as_ref().to_vec();
+        assert_eq!(buffer.len(), snapshot.len());
+
+        buffer.clear();
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+
+        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
+            .expect("writing after clear succeeds");
+        assert_eq!(buffer.as_ref(), snapshot.as_slice());
+    }
+
+    #[test]
     fn legacy_greeting_buffer_rejects_overflow() {
         let mut buffer = LegacyGreetingBuffer::new();
         let long = "@RSYNCD: 32.0 additional";
 
         assert!(buffer.write_str(long).is_err());
         assert!(buffer.as_bytes().is_empty());
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
     }
 }
