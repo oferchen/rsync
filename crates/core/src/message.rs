@@ -1155,6 +1155,59 @@ impl Message {
         })
     }
 
+    /// Returns the number of bytes in the rendered message without a trailing newline.
+    ///
+    /// The helper renders the message into thread-local scratch space and reports the total
+    /// length through [`MessageSegments::len`]. This allows call sites to reserve precise buffer
+    /// capacity before invoking [`Self::append_to_vec`] or [`Self::render_to_writer`], matching
+    /// upstream rsync's allocation discipline.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let mut buffer = Vec::with_capacity(message.byte_len());
+    /// message.append_to_vec(&mut buffer).unwrap();
+    ///
+    /// assert_eq!(buffer.len(), message.byte_len());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.with_segments(false, |segments| segments.len())
+    }
+
+    /// Returns the number of bytes in the rendered message including the trailing newline.
+    ///
+    /// The helper mirrors [`Self::byte_len`] but counts the additional byte appended by
+    /// [`Self::append_line_to_vec`] and [`Self::render_line_to_writer`]. Consumers that batch
+    /// diagnostics into shared buffers can therefore pre-reserve exactly enough capacity to avoid
+    /// incremental reallocations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let message = Message::warning("vanished").with_code(24);
+    /// let expected = message.to_line_bytes().unwrap();
+    ///
+    /// assert_eq!(message.line_byte_len(), expected.len());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn line_byte_len(&self) -> usize {
+        self.with_segments(true, |segments| segments.len())
+    }
+
     /// Creates a message with the provided severity and payload.
     ///
     /// Higher layers typically construct diagnostics through the severity-specific helpers such as
@@ -2499,6 +2552,17 @@ mod tests {
     }
 
     #[test]
+    fn byte_len_matches_rendered_length() {
+        let message = Message::error(35, "timeout waiting for daemon connection")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let rendered = message.to_bytes().expect("Vec<u8> writes are infallible");
+
+        assert_eq!(message.byte_len(), rendered.len());
+    }
+
+    #[test]
     fn to_line_bytes_appends_newline() {
         let message = Message::warning("vanished")
             .with_code(24)
@@ -2514,6 +2578,20 @@ mod tests {
         };
 
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn line_byte_len_matches_rendered_length() {
+        let message = Message::warning("some files vanished")
+            .with_code(24)
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let rendered = message
+            .to_line_bytes()
+            .expect("Vec<u8> writes are infallible");
+
+        assert_eq!(message.line_byte_len(), rendered.len());
     }
 
     #[test]
