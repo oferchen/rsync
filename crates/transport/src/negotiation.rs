@@ -1430,7 +1430,10 @@ pub struct NegotiatedStreamParts<R> {
 ///
 /// The structure preserves the original value so callers can continue using it after handling the
 /// error. This mirrors the ergonomics of APIs such as `BufReader::into_inner`, ensuring buffered
-/// negotiation bytes are not lost when a transformation cannot be completed.
+/// negotiation bytes are not lost when a transformation cannot be completed. The type implements
+/// [`Clone`] when both captured components support it and provides [`From`] conversions for
+/// `(error, original)` tuples, making it straightforward to shuttle the preserved pieces of state
+/// between APIs without spelling out [`TryMapInnerError::new`].
 ///
 /// # Examples
 ///
@@ -1477,6 +1480,7 @@ pub struct NegotiatedStreamParts<R> {
 /// assert!(format!("{err}").contains("Cursor"));
 /// assert!(format!("{err:#}").contains("recover via into_original"));
 /// ```
+#[derive(Clone)]
 pub struct TryMapInnerError<T, E> {
     error: E,
     original: T,
@@ -1754,6 +1758,22 @@ where
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.error)
+    }
+}
+
+impl<T, E> From<(E, T)> for TryMapInnerError<T, E> {
+    /// Creates an error wrapper from an `(error, original)` tuple.
+    #[inline]
+    fn from(parts: (E, T)) -> Self {
+        Self::new(parts.0, parts.1)
+    }
+}
+
+impl<T, E> From<TryMapInnerError<T, E>> for (E, T) {
+    /// Decomposes the wrapper into its preserved error and original value.
+    #[inline]
+    fn from(error: TryMapInnerError<T, E>) -> Self {
+        error.into_parts()
     }
 }
 
@@ -4730,6 +4750,47 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("mapped parts preserve replay bytes");
         assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_error_clone_preserves_components() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nreply")
+            .expect("sniff succeeds")
+            .into_parts();
+        let err = TryMapInnerError::new(String::from("clone"), parts.clone());
+
+        let cloned = err.clone();
+        assert_eq!(cloned.error(), "clone");
+        assert_eq!(cloned.original().buffered(), parts.buffered());
+        assert_eq!(err.original().buffered(), parts.buffered());
+    }
+
+    #[test]
+    fn try_map_inner_error_from_tuple_matches_constructor() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nreply")
+            .expect("sniff succeeds")
+            .into_parts();
+        let tuple_err: TryMapInnerError<_, _> = (io::Error::other("tuple"), parts.clone()).into();
+
+        assert_eq!(tuple_err.error().kind(), io::ErrorKind::Other);
+        assert_eq!(tuple_err.original().buffered(), parts.buffered());
+    }
+
+    #[test]
+    fn try_map_inner_error_into_tuple_recovers_parts() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nreply")
+            .expect("sniff succeeds")
+            .into_parts();
+        let err = TryMapInnerError::new(io::Error::other("into"), parts.clone());
+
+        let (error, original): (io::Error, _) =
+            TryMapInnerError::from((io::Error::other("shadow"), parts.clone())).into();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(original.buffered(), parts.buffered());
+
+        let (error, original): (io::Error, _) = err.into();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(original.buffered(), parts.buffered());
     }
 
     #[test]
