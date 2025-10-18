@@ -1105,19 +1105,10 @@ impl Message {
         scratch: &mut MessageScratch,
         include_newline: bool,
     ) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::with_capacity(
-            self.estimated_rendered_length_with_scratch(scratch, include_newline),
-        );
-        self.render_to_writer_inner(scratch, &mut buffer, include_newline)?;
+        let segments = self.as_segments(scratch, include_newline);
+        let mut buffer = Vec::with_capacity(segments.len());
+        segments.write_to(&mut buffer)?;
         Ok(buffer)
-    }
-
-    fn estimated_rendered_length_with_scratch(
-        &self,
-        scratch: &mut MessageScratch,
-        include_newline: bool,
-    ) -> usize {
-        self.as_segments(scratch, include_newline).len()
     }
 }
 
