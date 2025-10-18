@@ -115,9 +115,7 @@ where
 ///
 /// let segments = message.as_segments(&mut scratch, false);
 /// let mut flattened = Vec::new();
-/// for slice in segments {
-///     flattened.extend_from_slice(slice.as_ref());
-/// }
+/// segments.extend_vec(&mut flattened);
 ///
 /// assert_eq!(flattened, message.to_bytes().unwrap());
 /// ```
@@ -291,6 +289,47 @@ impl<'a> MessageSegments<'a> {
         }
 
         Ok(())
+    }
+
+    /// Extends the provided buffer with the rendered message bytes.
+    ///
+    /// The method reserves exactly the number of additional bytes required to
+    /// append the message and copies each segment into the buffer. It is a
+    /// convenience wrapper for callers that wish to accumulate multiple
+    /// diagnostics into a single [`Vec<u8>`] without going through the
+    /// [`Write`](IoWrite) trait.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let mut buffer = b"prefix: ".to_vec();
+    /// let prefix_len = buffer.len();
+    /// segments.extend_vec(&mut buffer);
+    ///
+    /// assert_eq!(&buffer[..prefix_len], b"prefix: ");
+    /// assert_eq!(&buffer[prefix_len..], message.to_bytes().unwrap().as_slice());
+    /// ```
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) {
+        if self.is_empty() {
+            return;
+        }
+
+        buffer.reserve(self.len());
+
+        for slice in self.as_slices() {
+            buffer.extend_from_slice(slice.as_ref());
+        }
     }
 }
 
@@ -1418,10 +1457,7 @@ impl Message {
         include_newline: bool,
     ) {
         let segments = self.as_segments(scratch, include_newline);
-        buffer.reserve(segments.len());
-        for slice in segments.iter() {
-            buffer.extend_from_slice(slice.as_ref());
-        }
+        segments.extend_vec(buffer);
     }
 }
 
@@ -2136,6 +2172,25 @@ mod tests {
         };
 
         assert_eq!(collected, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_extend_vec_appends_bytes() {
+        let message = Message::error(12, "example failure")
+            .with_role(Role::Server)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, false);
+        let mut buffer = b"prefix: ".to_vec();
+        let prefix_len = buffer.len();
+        segments.extend_vec(&mut buffer);
+
+        assert_eq!(&buffer[..prefix_len], b"prefix: ");
+        assert_eq!(
+            &buffer[prefix_len..],
+            message.to_bytes().unwrap().as_slice()
+        );
     }
 
     #[test]
