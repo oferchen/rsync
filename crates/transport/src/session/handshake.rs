@@ -8,6 +8,7 @@ use core::convert::TryFrom;
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
+use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
 use super::parts::SessionHandshakeParts;

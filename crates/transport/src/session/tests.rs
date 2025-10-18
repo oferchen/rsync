@@ -128,6 +128,51 @@ fn negotiate_session_detects_legacy_transport() {
 }
 
 #[test]
+fn session_handshake_rehydrates_sniffer_for_binary() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let mut bytes = binary_handshake_bytes(remote_version).to_vec();
+    bytes.extend_from_slice(b"payload");
+    let transport = MemoryTransport::new(&bytes);
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    handshake
+        .rehydrate_sniffer(&mut sniffer)
+        .expect("rehydration succeeds");
+
+    assert!(sniffer.is_binary());
+    assert_eq!(sniffer.buffered(), handshake.stream().buffered());
+    assert_eq!(
+        sniffer.sniffed_prefix_len(),
+        handshake.stream().sniffed_prefix_len()
+    );
+}
+
+#[test]
+fn session_handshake_rehydrates_sniffer_for_legacy() {
+    let mut bytes = b"@RSYNCD: 31.0\n".to_vec();
+    bytes.extend_from_slice(b"@RSYNCD: OK\n");
+    let transport = MemoryTransport::new(&bytes);
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
+
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    handshake
+        .rehydrate_sniffer(&mut sniffer)
+        .expect("rehydration succeeds");
+
+    assert!(sniffer.is_legacy());
+    assert_eq!(sniffer.buffered(), handshake.stream().buffered());
+    assert_eq!(
+        sniffer.sniffed_prefix_len(),
+        handshake.stream().sniffed_prefix_len()
+    );
+}
+
+#[test]
 fn negotiate_session_parts_exposes_binary_metadata() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
     let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
