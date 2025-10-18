@@ -30,6 +30,15 @@ pub(crate) fn remote_advertisement_was_clamped(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn negotiated_version_strategy() -> impl Strategy<Value = ProtocolVersion> {
+        let versions: Vec<ProtocolVersion> = ProtocolVersion::supported_versions_array()
+            .iter()
+            .copied()
+            .collect();
+        prop::sample::select(versions)
+    }
 
     #[test]
     fn detects_future_versions_encoded_in_u32() {
@@ -46,5 +55,27 @@ mod tests {
             ProtocolVersion::OLDEST.as_u8().into(),
             negotiated
         ));
+    }
+
+    proptest! {
+        #[test]
+        fn within_byte_range_matches_direct_comparison(
+            advertised in 0u32..=u8::MAX as u32,
+            negotiated in negotiated_version_strategy(),
+        ) {
+            let expected = (advertised as u8) > negotiated.as_u8();
+            prop_assert_eq!(
+                remote_advertisement_was_clamped(advertised, negotiated),
+                expected
+            );
+        }
+
+        #[test]
+        fn out_of_range_values_always_report_clamp(
+            advertised in (u8::MAX as u32 + 1)..=u32::MAX,
+            negotiated in negotiated_version_strategy(),
+        ) {
+            prop_assert!(remote_advertisement_was_clamped(advertised, negotiated));
+        }
     }
 }
