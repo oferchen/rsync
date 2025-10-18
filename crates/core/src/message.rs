@@ -664,6 +664,52 @@ impl Message {
         FmtWrite::write_char(writer, '\n')
     }
 
+    /// Returns the rendered message as a [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::render_to_writer`] but collects the output into an owned
+    /// buffer. It pre-allocates exactly enough capacity for the rendered message, avoiding
+    /// repeated reallocations even when exit codes, source locations, and role trailers are
+    /// attached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role}, message_source};
+    ///
+    /// let bytes = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!())
+    ///     .to_bytes()
+    ///     .expect("Vec<u8> writes are infallible");
+    ///
+    /// assert!(bytes.starts_with(b"rsync error:"));
+    /// assert!(bytes.ends_with(b"[sender=3.4.1-rust]"));
+    /// ```
+    pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
+        self.to_bytes_inner(false)
+    }
+
+    /// Returns the rendered message followed by a newline as a [`Vec<u8>`].
+    ///
+    /// This convenience API mirrors [`Self::render_line_to_writer`] and is primarily intended for
+    /// tests and logging adapters that prefer to work with owned byte buffers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let rendered = Message::warning("some files vanished")
+    ///     .with_code(24)
+    ///     .to_line_bytes()
+    ///     .expect("Vec<u8> writes are infallible");
+    ///
+    /// assert!(rendered.ends_with(b"\n"));
+    /// ```
+    pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
+        self.to_bytes_inner(true)
+    }
+
     /// Writes the rendered message into an [`io::Write`] implementor.
     ///
     /// This helper mirrors [`Self::render_to`] but operates on byte writers. It
@@ -808,6 +854,46 @@ impl Message {
         }
 
         Ok(())
+    }
+
+    fn to_bytes_inner(&self, include_newline: bool) -> io::Result<Vec<u8>> {
+        let mut buffer = Vec::with_capacity(self.estimated_rendered_length(include_newline));
+        self.render_to_writer_inner(&mut buffer, include_newline)?;
+        Ok(buffer)
+    }
+
+    fn estimated_rendered_length(&self, include_newline: bool) -> usize {
+        let mut len = b"rsync ".len() + self.severity.as_str().len() + b": ".len();
+        len += self.text.as_bytes().len();
+
+        if let Some(code) = self.code {
+            let mut digits = [0u8; 20];
+            len += b" (code ".len();
+            len += encode_signed_decimal(i64::from(code), &mut digits).len();
+            len += b")".len();
+        }
+
+        if let Some(source) = &self.source {
+            let mut digits = [0u8; 20];
+            len += b" at ".len();
+            len += source.path().as_bytes().len();
+            len += b":".len();
+            len += encode_unsigned_decimal(u64::from(source.line()), &mut digits).len();
+        }
+
+        if let Some(role) = self.role {
+            len += b" [".len();
+            len += role.as_str().len();
+            len += b"=".len();
+            len += VERSION_SUFFIX.len();
+            len += b"]".len();
+        }
+
+        if include_newline {
+            len += b"\n".len();
+        }
+
+        len
     }
 }
 
@@ -1293,6 +1379,36 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, format!("{}\n", message).into_bytes());
+    }
+
+    #[test]
+    fn to_bytes_matches_display_output() {
+        let message = Message::error(11, "read failure")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let rendered = message.to_bytes().expect("Vec<u8> writes are infallible");
+        let expected = message.to_string().into_bytes();
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn to_line_bytes_appends_newline() {
+        let message = Message::warning("vanished")
+            .with_code(24)
+            .with_source(message_source!());
+
+        let rendered = message
+            .to_line_bytes()
+            .expect("Vec<u8> writes are infallible");
+        let expected = {
+            let mut buf = message.to_string().into_bytes();
+            buf.push(b'\n');
+            buf
+        };
+
+        assert_eq!(rendered, expected);
     }
 
     struct FailingWriter;
