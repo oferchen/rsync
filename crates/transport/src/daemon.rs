@@ -70,11 +70,14 @@ impl AsRef<[u8]> for LegacyGreetingBuffer {
 impl FmtWrite for LegacyGreetingBuffer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         let bytes = s.as_bytes();
-        if self.len + bytes.len() > self.buf.len() {
+        let Some(end) = self.len.checked_add(bytes.len()) else {
+            return Err(fmt::Error);
+        };
+
+        if end > self.buf.len() {
             return Err(fmt::Error);
         }
 
-        let end = self.len + bytes.len();
         self.buf[self.len..end].copy_from_slice(bytes);
         self.len = end;
         Ok(())
@@ -847,5 +850,16 @@ mod tests {
         assert!(buffer.as_bytes().is_empty());
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
+    }
+
+    #[test]
+    fn legacy_greeting_buffer_detects_internal_len_overflow() {
+        let mut buffer = LegacyGreetingBuffer::new();
+        buffer.len = usize::MAX;
+
+        let result = buffer.write_str("@RSYNCD: 31.0\n");
+        assert!(result.is_err());
+        assert_eq!(buffer.len, usize::MAX);
+        assert!(buffer.buf.iter().all(|&byte| byte == 0));
     }
 }
