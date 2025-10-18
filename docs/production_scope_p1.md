@@ -67,10 +67,18 @@ This document freezes the mandatory scope that must reach green status before th
 ## Quality Gates
 - Test coverage ≥ 95% (lines and blocks)
 - CI jobs green across lint, tests, packaging, and parity checks
+- Exit-code oracle and golden parity harnesses green against upstream references
 
 ## Packaging & Artifacts
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
 - Systemd `rsyncd.service` unit
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
+
+## Deterministic Test Environment
+- `LC_ALL=C`
+- `TZ=UTC`
+- `COLUMNS=80`
+- `RSYNC_TEST_FIXED_TIME=1700000000`
+- `UMASK=022`
 
