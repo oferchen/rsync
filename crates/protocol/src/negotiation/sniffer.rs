@@ -225,6 +225,66 @@ impl NegotiationPrologueSniffer {
         &mut self.buffered
     }
 
+    /// Rehydrates the sniffer from a previously captured negotiation snapshot.
+    ///
+    /// The method restores the buffered transcript and cached negotiation
+    /// decision recorded during an earlier call to [`read_from`](Self::read_from)
+    /// without performing additional I/O. It mirrors the state that would have
+    /// been produced by sniffing the same bytes and calling
+    /// [`take_buffered`](Self::take_buffered), making it possible for higher
+    /// layers to store the negotiation replay data separately (for example
+    /// inside [`NegotiatedStreamParts`](crate::negotiation::NegotiatedStreamParts))
+    /// and later rebuild a sniffer for further parsing.
+    ///
+    /// `decision` must reflect the negotiated style (`Binary`, `LegacyAscii`, or
+    /// `NeedMoreData`). `sniffed_prefix_len` indicates how many of the buffered
+    /// bytes were required to classify the negotiation. Any additional payload
+    /// in `buffered` is preserved so helpers like
+    /// [`read_legacy_daemon_line`](Self::read_legacy_daemon_line) can replay it
+    /// verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] if the internal buffer cannot reserve enough
+    /// space for the supplied transcript. The sniffer is left in the reset
+    /// state when this occurs.
+    pub fn rehydrate_from_parts(
+        &mut self,
+        decision: NegotiationPrologue,
+        sniffed_prefix_len: usize,
+        buffered: &[u8],
+    ) -> Result<(), TryReserveError> {
+        self.reset();
+
+        self.buffered.try_reserve(buffered.len())?;
+        self.buffered.extend_from_slice(buffered);
+
+        let clamped_prefix = sniffed_prefix_len
+            .min(self.buffered.len())
+            .min(LEGACY_DAEMON_PREFIX_LEN);
+        if clamped_prefix > 0 {
+            let prefix = &self.buffered[..clamped_prefix];
+            let observed = self.detector.observe(prefix);
+            debug_assert!(
+                !decision.is_decided()
+                    || observed == decision
+                    || (decision.is_legacy() && observed == NegotiationPrologue::NeedMoreData),
+                "rehydrated decision {:?} does not match snapshot {:?}",
+                observed,
+                decision
+            );
+        } else {
+            debug_assert!(
+                !decision.is_decided(),
+                "non-empty decision {:?} requires at least one sniffed byte",
+                decision
+            );
+        }
+
+        self.prefix_bytes_retained = clamped_prefix;
+        Ok(())
+    }
+
     /// Consumes the sniffer and returns the owned buffer containing the bytes
     /// that were read while determining the negotiation style.
     ///

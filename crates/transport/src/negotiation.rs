@@ -1230,6 +1230,23 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.buffered()
     }
 
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
+    ///
+    /// The method mirrors the state captured during the initial prologue sniff,
+    /// allowing callers to rebuild a sniffer without replaying the underlying
+    /// transport. This keeps the high-level session APIs aligned with the
+    /// protocol crate helpers that operate on sniffers.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        sniffer.rehydrate_from_parts(
+            self.decision,
+            self.buffer.sniffed_prefix_len(),
+            self.buffer.buffered(),
+        )
+    }
+
     /// Copies the buffered negotiation data into a caller-provided vector without consuming it.
     ///
     /// The helper mirrors [`Self::buffered`] but writes the bytes into an owned [`Vec<u8>`], making
@@ -3960,6 +3977,70 @@ mod tests {
             .read_to_end(&mut remainder)
             .expect("reconstructed stream yields the remaining bytes");
         assert_eq!(remainder, b"NCD: 29.0\nrest");
+    }
+
+    #[test]
+    fn parts_rehydrate_sniffer_restores_binary_snapshot() {
+        let data = [0x42, 0x10, 0x11, 0x12];
+        let stream = sniff_bytes(&data).expect("sniff succeeds");
+        let decision = stream.decision();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        let prefix_len = stream.sniffed_prefix_len();
+        let mut snapshot = Vec::new();
+        stream
+            .copy_buffered_into_vec(&mut snapshot)
+            .expect("snapshot capture succeeds");
+
+        let parts = stream.into_parts();
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        parts
+            .rehydrate_sniffer(&mut sniffer)
+            .expect("rehydration succeeds");
+
+        assert_eq!(sniffer.buffered(), snapshot.as_slice());
+        assert_eq!(sniffer.sniffed_prefix_len(), prefix_len);
+        assert_eq!(
+            sniffer
+                .read_from(&mut Cursor::new(Vec::new()))
+                .expect("cached decision is returned"),
+            decision
+        );
+    }
+
+    #[test]
+    fn parts_rehydrate_sniffer_preserves_partial_legacy_state() {
+        let buffered = b"@RS".to_vec();
+        let decision = NegotiationPrologue::LegacyAscii;
+        let stream = NegotiatedStream::from_raw_components(
+            Cursor::new(Vec::<u8>::new()),
+            decision,
+            buffered.len(),
+            0,
+            buffered.clone(),
+        );
+        assert!(stream.sniffed_prefix_remaining() > 0);
+        let prefix_len = stream.sniffed_prefix_len();
+        let mut snapshot = Vec::new();
+        stream
+            .copy_buffered_into_vec(&mut snapshot)
+            .expect("snapshot capture succeeds");
+
+        let parts = stream.into_parts();
+        let expected_remaining = LEGACY_DAEMON_PREFIX_LEN.saturating_sub(prefix_len);
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        parts
+            .rehydrate_sniffer(&mut sniffer)
+            .expect("rehydration succeeds");
+
+        assert_eq!(sniffer.buffered(), snapshot.as_slice());
+        assert_eq!(sniffer.sniffed_prefix_len(), prefix_len);
+        assert_eq!(sniffer.decision(), Some(decision));
+        let expected_remaining_opt = (expected_remaining > 0).then_some(expected_remaining);
+        assert_eq!(sniffer.legacy_prefix_remaining(), expected_remaining_opt);
+        assert_eq!(
+            sniffer.requires_more_data(),
+            expected_remaining_opt.is_some()
+        );
     }
 
     #[test]
