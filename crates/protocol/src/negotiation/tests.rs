@@ -1467,9 +1467,9 @@ fn prologue_sniffer_reports_buffered_length() {
     assert_eq!(sniffer.buffered_len(), 5);
 
     let buffered = sniffer.take_buffered();
-    assert_eq!(buffered, b"@RSYN");
-    assert_eq!(sniffer.buffered_len(), 0);
-    assert_eq!(sniffer.buffered(), b"");
+    assert!(buffered.is_empty());
+    assert_eq!(sniffer.buffered_len(), 5);
+    assert_eq!(sniffer.buffered(), b"@RSYN");
 }
 
 #[test]
@@ -1778,6 +1778,51 @@ fn prologue_sniffer_take_buffered_into_includes_remainder_bytes() {
     assert_eq!(drained, expected.len());
     assert!(sniffer.buffered().is_empty());
     assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_variants_wait_for_complete_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let partial = &LEGACY_DAEMON_PREFIX.as_bytes()[..LEGACY_DAEMON_PREFIX_LEN - 1];
+
+    let (decision, consumed) = sniffer
+        .observe(partial)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, partial.len());
+    assert!(sniffer.requires_more_data());
+
+    let drained_vec = sniffer.take_buffered();
+    assert!(drained_vec.is_empty());
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
+
+    let mut reused = b"unchanged".to_vec();
+    let drained = sniffer
+        .take_buffered_into(&mut reused)
+        .expect("guarded transfer should succeed");
+    assert_eq!(drained, 0);
+    assert_eq!(reused, b"unchanged");
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
+
+    let mut scratch = [0xAA; LEGACY_DAEMON_PREFIX_LEN];
+    let copied = sniffer
+        .take_buffered_into_slice(&mut scratch)
+        .expect("guarded slice transfer should succeed");
+    assert_eq!(copied, 0);
+    assert!(scratch.iter().all(|&byte| byte == 0xAA));
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
+
+    let mut sink = Vec::new();
+    let written = sniffer
+        .take_buffered_into_writer(&mut sink)
+        .expect("guarded writer transfer should succeed");
+    assert_eq!(written, 0);
+    assert!(sink.is_empty());
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
 }
 
 #[test]
@@ -2867,11 +2912,26 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
     assert_eq!(cloned.requires_more_data(), sniffer.requires_more_data());
 
     let drained = sniffer.take_buffered();
-    assert_eq!(drained, partial_prefix);
-    assert!(sniffer.buffered().is_empty());
+    assert!(drained.is_empty());
+    assert_eq!(sniffer.buffered(), partial_prefix);
     assert!(sniffer.requires_more_data());
 
     let remaining_prefix = &LEGACY_DAEMON_PREFIX.as_bytes()[partial_len..];
+    let (original_decision, original_consumed) = sniffer
+        .observe(remaining_prefix)
+        .expect("buffer reservation succeeds");
+    assert_eq!(original_decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(original_consumed, remaining_prefix.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(sniffer.is_legacy());
+    assert!(!sniffer.requires_more_data());
+
+    let replay = sniffer.take_buffered();
+    assert_eq!(replay, LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(sniffer.buffered().is_empty());
+    assert!(!sniffer.requires_more_data());
+
+    assert_eq!(cloned.buffered(), partial_prefix);
     let (clone_decision, clone_consumed) = cloned
         .observe(remaining_prefix)
         .expect("buffer reservation succeeds");
@@ -2881,14 +2941,10 @@ fn prologue_sniffer_clone_preserves_state_and_buffer_independence() {
     assert!(cloned.is_legacy());
     assert!(!cloned.requires_more_data());
 
-    let replay = cloned.take_buffered();
-    assert_eq!(replay, LEGACY_DAEMON_PREFIX.as_bytes());
+    let cloned_replay = cloned.take_buffered();
+    assert_eq!(cloned_replay, LEGACY_DAEMON_PREFIX.as_bytes());
     assert!(cloned.buffered().is_empty());
     assert!(!cloned.requires_more_data());
-
-    assert!(sniffer.buffered().is_empty());
-    assert!(sniffer.requires_more_data());
-    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
 }
 
 #[test]

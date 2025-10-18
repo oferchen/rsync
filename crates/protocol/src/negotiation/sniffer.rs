@@ -310,9 +310,19 @@ impl NegotiationPrologueSniffer {
     /// sniffer. The internal storage is replaced with an empty vector whose
     /// capacity is capped at the canonical legacy prefix length so subsequent
     /// detections do not retain unbounded allocations while still satisfying the
-    /// workspace's buffer reuse guidance.
+    /// workspace's buffer reuse guidance. When the canonical prefix has not yet
+    /// been fully buffered, the method returns an empty vector and leaves the
+    /// sniffer untouched so the caller can continue reading without losing the
+    /// partially captured bytes.
     #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered(&mut self) -> Vec<u8> {
+        if self.requires_more_data() {
+            if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+                self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+            }
+            return Vec::new();
+        }
+
         let target_capacity = self.buffered.capacity().min(LEGACY_DAEMON_PREFIX_LEN);
         let mut drained = Vec::with_capacity(target_capacity);
         mem::swap(&mut self.buffered, &mut drained);
@@ -496,9 +506,18 @@ impl NegotiationPrologueSniffer {
     /// panicking so the transport layer can surface the failure as an I/O error. To avoid
     /// surprising the caller, the existing contents of `target` are only cleared after the
     /// reservation succeeds (or after the swap has taken place), mirroring upstream's failure
-    /// semantics where buffers remain untouched when memory is exhausted.
+    /// semantics where buffers remain untouched when memory is exhausted. When the canonical prefix
+    /// is still incomplete the helper returns `Ok(0)` without mutating either the destination or the
+    /// sniffer so the partially buffered bytes remain available for continued detection.
     #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        if self.requires_more_data() {
+            if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+                self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+            }
+            return Ok(0);
+        }
+
         let required = self.buffered.len();
 
         if target.capacity() < required {
@@ -527,12 +546,18 @@ impl NegotiationPrologueSniffer {
     /// and forward any remainder captured in the same read without constructing a temporary
     /// [`Vec`]. When `target` is too small to hold the buffered contents a
     /// [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains untouched so the
-    /// caller can retry after resizing their storage.
+    /// caller can retry after resizing their storage. If the canonical prefix is still incomplete
+    /// the helper returns `Ok(0)` without mutating either the destination or the sniffer to avoid
+    /// losing partially buffered bytes that are still required for negotiation detection.
     #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into_slice(
         &mut self,
         target: &mut [u8],
     ) -> Result<usize, BufferedPrefixTooSmall> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
         let required = self.buffered.len();
         if target.len() < required {
             return Err(BufferedPrefixTooSmall::new(required, target.len()));
@@ -570,9 +595,15 @@ impl NegotiationPrologueSniffer {
     /// I/O buffer or a [`Vec<u8>`](Vec) managed by a pooling layer. When writing succeeds the
     /// sniffer is reset for reuse while preserving the canonical capacity used for the legacy
     /// prefix. Should the writer report an error, the buffered bytes remain intact so the caller can
-    /// retry or surface the failure.
+    /// retry or surface the failure. If the canonical prefix has not yet been fully buffered the
+    /// helper returns `Ok(0)` without touching either the writer or the sniffer so the partially
+    /// captured bytes stay available for continued detection.
     #[must_use = "buffered negotiation bytes must be replayed"]
     pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
         target.write_all(&self.buffered)?;
         let written = self.buffered.len();
         self.reset_buffer_for_reuse();
