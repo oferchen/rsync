@@ -464,10 +464,7 @@ mod tests {
         let from_ref: Vec<_> = (&display).into_iter().copied().collect();
         assert_eq!(from_ref, display.features());
 
-        let from_mut: Vec<_> = (&mut display)
-            .into_iter()
-            .map(|feature| *feature)
-            .collect();
+        let from_mut: Vec<_> = (&mut display).into_iter().map(|feature| *feature).collect();
         assert_eq!(from_mut, display.features());
 
         let owned: Vec<_> = display.clone().into_iter().collect();
