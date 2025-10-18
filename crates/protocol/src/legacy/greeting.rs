@@ -159,6 +159,77 @@ impl LegacyDaemonGreetingOwned {
         self.subprotocol.is_some()
     }
 
+    /// Constructs an owned legacy daemon greeting from its parsed components.
+    ///
+    /// The helper mirrors [`parse_legacy_daemon_greeting_details`] by clamping
+    /// future protocol advertisements, normalising digest lists, and enforcing
+    /// the rule that protocol 31 and newer must include a fractional suffix.
+    /// This is primarily useful in tests that want to exercise higher layers
+    /// without round-tripping through string formatting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NegotiationError::UnsupportedVersion`] when the advertised
+    /// protocol falls outside the upstream range and
+    /// [`NegotiationError::MalformedLegacyGreeting`] when a required
+    /// subprotocol suffix is missing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+    ///
+    /// let greeting = LegacyDaemonGreetingOwned::from_parts(
+    ///     31,
+    ///     Some(0),
+    ///     Some(String::from("  md4 md5  ")),
+    /// )?;
+    ///
+    /// assert_eq!(
+    ///     greeting.protocol(),
+    ///     ProtocolVersion::from_supported(31).unwrap()
+    /// );
+    /// assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    /// assert!(greeting.has_digest_list());
+    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// ```
+    #[doc(alias = "@RSYNCD")]
+    pub fn from_parts(
+        advertised_protocol: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<String>,
+    ) -> Result<Self, NegotiationError> {
+        let digest_list = digest_list.and_then(|list| {
+            let trimmed = list.trim();
+            if trimmed.is_empty() {
+                None
+            } else if trimmed.len() == list.len() {
+                Some(list)
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+
+        if advertised_protocol >= 31 && subprotocol.is_none() {
+            let mut rendered = format!("{LEGACY_DAEMON_PREFIX} {advertised_protocol}");
+            if let Some(ref digest) = digest_list {
+                rendered.push(' ');
+                rendered.push_str(digest);
+            }
+            return Err(NegotiationError::MalformedLegacyGreeting { input: rendered });
+        }
+
+        let negotiated_byte = advertised_protocol.min(u32::from(u8::MAX)) as u8;
+        let protocol = ProtocolVersion::from_peer_advertisement(negotiated_byte)?;
+
+        Ok(Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        })
+    }
+
     /// Returns the digest list announced by the daemon, if any.
     #[must_use]
     pub fn digest_list(&self) -> Option<&str> {
@@ -588,6 +659,43 @@ mod tests {
         let digest = owned.into_digest_list();
 
         assert_eq!(digest, Some(String::from("md4")));
+    }
+
+    #[test]
+    fn from_parts_replicates_parser_behaviour() {
+        let constructed =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), Some(String::from("  md4   md5  ")))
+                .expect("construction should succeed");
+        let parsed = parse_legacy_daemon_greeting_owned("@RSYNCD: 31.0   md4   md5  \r\n")
+            .expect("parsing should succeed");
+
+        assert_eq!(constructed.protocol(), parsed.protocol());
+        assert_eq!(
+            constructed.advertised_protocol(),
+            parsed.advertised_protocol()
+        );
+        assert_eq!(constructed.subprotocol_raw(), parsed.subprotocol_raw());
+        assert_eq!(constructed.digest_list(), parsed.digest_list());
+    }
+
+    #[test]
+    fn from_parts_requires_subprotocol_for_newer_versions() {
+        let err = LegacyDaemonGreetingOwned::from_parts(31, None, Some(String::from("md4")))
+            .expect_err("missing subprotocol must error");
+        assert!(matches!(
+            err,
+            NegotiationError::MalformedLegacyGreeting { input } if input == "@RSYNCD: 31 md4"
+        ));
+    }
+
+    #[test]
+    fn from_parts_clamps_future_versions() {
+        let constructed = LegacyDaemonGreetingOwned::from_parts(999, Some(1), None)
+            .expect("future advertisement clamps");
+
+        assert_eq!(constructed.protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(constructed.advertised_protocol(), 999);
+        assert_eq!(constructed.subprotocol_raw(), Some(1));
     }
 
     #[test]
