@@ -1,5 +1,5 @@
-use crate::binary::BinaryHandshake;
-use crate::daemon::LegacyDaemonHandshake;
+use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
+use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
 use crate::handshake_util::remote_advertisement_was_clamped;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
 use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
@@ -237,6 +237,31 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
+    /// Consumes the parts structure, returning the binary handshake parts when available.
+    ///
+    /// The helper mirrors [`Self::into_binary`] but rebuilds the strongly typed
+    /// [`BinaryHandshakeParts`] wrapper so callers can reuse convenience
+    /// accessors without recreating the full [`BinaryHandshake`]. Returning the
+    /// original value on mismatch matches the ergonomics of [`TryFrom`]
+    /// conversions provided elsewhere in the crate.
+    pub fn into_binary_parts(self) -> Result<BinaryHandshakeParts<R>, SessionHandshakeParts<R>> {
+        match self {
+            SessionHandshakeParts::Binary {
+                remote_advertised_protocol,
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            } => Ok(BinaryHandshake::from_stream_parts(
+                remote_advertised_protocol,
+                remote_protocol,
+                negotiated_protocol,
+                stream,
+            )
+            .into_parts()),
+            SessionHandshakeParts::Legacy { .. } => Err(self),
+        }
+    }
+
     /// Consumes the parts structure, returning the legacy handshake components when available.
     pub fn into_legacy(
         self,
@@ -255,6 +280,31 @@ impl<R> SessionHandshakeParts<R> {
                 negotiated_protocol,
                 stream,
             } => Ok((server_greeting, negotiated_protocol, stream)),
+        }
+    }
+
+    /// Consumes the parts structure, returning the legacy handshake parts when available.
+    ///
+    /// The returned [`LegacyDaemonHandshakeParts`] retains the parsed greeting
+    /// and negotiated protocol while exposing the additional helper methods
+    /// implemented by the legacy-specific wrapper. Returning the original value
+    /// when the negotiation was binary mirrors the ergonomics of
+    /// [`Self::into_legacy`] and the [`TryFrom`] conversions below.
+    pub fn into_legacy_parts(
+        self,
+    ) -> Result<LegacyDaemonHandshakeParts<R>, SessionHandshakeParts<R>> {
+        match self {
+            SessionHandshakeParts::Binary { .. } => Err(self),
+            SessionHandshakeParts::Legacy {
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            } => Ok(LegacyDaemonHandshake::from_stream_parts(
+                server_greeting,
+                negotiated_protocol,
+                stream,
+            )
+            .into_parts()),
         }
     }
 
@@ -322,5 +372,21 @@ impl<R> TryFrom<SessionHandshakeParts<R>> for LegacyDaemonHandshake<R> {
             .map(|(server_greeting, negotiated, stream)| {
                 LegacyDaemonHandshake::from_stream_parts(server_greeting, negotiated, stream)
             })
+    }
+}
+
+impl<R> TryFrom<SessionHandshakeParts<R>> for BinaryHandshakeParts<R> {
+    type Error = SessionHandshakeParts<R>;
+
+    fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
+        parts.into_binary_parts()
+    }
+}
+
+impl<R> TryFrom<SessionHandshakeParts<R>> for LegacyDaemonHandshakeParts<R> {
+    type Error = SessionHandshakeParts<R>;
+
+    fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
+        parts.into_legacy_parts()
     }
 }

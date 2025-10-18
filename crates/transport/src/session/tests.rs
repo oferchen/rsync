@@ -1,10 +1,13 @@
 use super::*;
-use crate::binary::{BinaryHandshake, negotiate_binary_session};
-use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session};
+use crate::binary::{BinaryHandshake, BinaryHandshakeParts, negotiate_binary_session};
+use crate::daemon::{
+    LegacyDaemonHandshake, LegacyDaemonHandshakeParts, negotiate_legacy_daemon_session,
+};
 use crate::negotiation::{NEGOTIATION_PROLOGUE_UNDETERMINED_MSG, NegotiatedStream};
 use rsync_protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
+use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Write};
 
 #[derive(Clone, Debug)]
@@ -138,12 +141,21 @@ fn negotiate_session_parts_exposes_binary_metadata() {
     assert!(!parts.remote_protocol_was_clamped());
     assert!(!parts.local_protocol_was_capped());
 
-    let (remote_advertised, remote_protocol, negotiated_protocol, stream_parts) =
-        parts.into_binary().expect("binary parts");
+    let tuple_parts = parts
+        .clone()
+        .into_binary()
+        .expect("binary tuple parts available");
+    let (remote_advertised, remote_protocol, negotiated_protocol, _stream_parts_tuple) =
+        tuple_parts;
     assert_eq!(remote_advertised, u32::from(remote_version.as_u8()));
     assert_eq!(remote_protocol, remote_version);
     assert_eq!(negotiated_protocol, remote_version);
 
+    let binary_parts = BinaryHandshakeParts::try_from(parts).expect("binary parts conversion");
+    assert_eq!(binary_parts.remote_protocol(), remote_version);
+    assert_eq!(binary_parts.negotiated_protocol(), remote_version);
+
+    let stream_parts = binary_parts.into_stream_parts();
     let transport = stream_parts.into_stream().into_inner();
     assert_eq!(
         transport.writes(),
@@ -170,7 +182,11 @@ fn negotiate_session_parts_exposes_legacy_metadata() {
     );
     assert!(!parts.local_protocol_was_capped());
 
-    let (greeting, negotiated_protocol, stream_parts) = parts.into_legacy().expect("legacy parts");
+    let tuple_parts = parts
+        .clone()
+        .into_legacy()
+        .expect("legacy tuple parts available");
+    let (greeting, negotiated_protocol, _stream_parts_tuple) = tuple_parts;
     assert_eq!(greeting.advertised_protocol(), 31);
     assert_eq!(
         greeting.protocol(),
@@ -181,9 +197,35 @@ fn negotiate_session_parts_exposes_legacy_metadata() {
         ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
     );
 
+    let legacy_parts =
+        LegacyDaemonHandshakeParts::try_from(parts).expect("legacy parts conversion");
+    assert_eq!(legacy_parts.negotiated_protocol(), negotiated_protocol);
+    assert_eq!(
+        legacy_parts.server_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+
+    let stream_parts = legacy_parts.into_stream_parts();
     let transport = stream_parts.into_stream().into_inner();
     assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
     assert_eq!(transport.flushes(), 1);
+}
+
+#[test]
+fn try_from_parts_rejects_mismatched_variant() {
+    let transport = MemoryTransport::new(&binary_handshake_bytes(ProtocolVersion::NEWEST));
+    let parts =
+        negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
+
+    let err = LegacyDaemonHandshakeParts::try_from(parts.clone()).unwrap_err();
+    assert_eq!(err.decision(), NegotiationPrologue::Binary);
+
+    let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    let legacy_parts = negotiate_session_parts(legacy_transport, ProtocolVersion::NEWEST)
+        .expect("legacy parts succeed");
+
+    let err = BinaryHandshakeParts::try_from(legacy_parts.clone()).unwrap_err();
+    assert_eq!(err.decision(), NegotiationPrologue::LegacyAscii);
 }
 
 #[test]
