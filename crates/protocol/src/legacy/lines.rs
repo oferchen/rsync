@@ -21,6 +21,13 @@ pub enum LegacyDaemonMessage<'a> {
     /// Notification that the daemon is closing the legacy exchange
     /// (`@RSYNCD: EXIT`).
     Exit,
+    /// Capability advertisement emitted by legacy daemons (`@RSYNCD: CAP …`).
+    #[doc(alias = "@RSYNCD: CAP")]
+    Capabilities {
+        /// Raw capability string advertised by the daemon with ASCII
+        /// whitespace trimmed from both ends.
+        flags: &'a str,
+    },
     /// The daemon requires authentication before continuing. Upstream rsync
     /// includes the requested module name after the keyword (e.g.
     /// `@RSYNCD: AUTHREQD module`). The module is optional in practice because
@@ -98,6 +105,25 @@ pub fn parse_legacy_daemon_message(
                     Some(module)
                 };
                 return Ok(LegacyDaemonMessage::AuthRequired { module });
+            }
+
+            const CAP_KEYWORD: &str = "CAP";
+            if let Some(rest) = payload.strip_prefix(CAP_KEYWORD) {
+                if rest.is_empty()
+                    || !rest
+                        .as_bytes()
+                        .first()
+                        .is_some_and(|byte| byte.is_ascii_whitespace())
+                {
+                    return Ok(LegacyDaemonMessage::Other(payload));
+                }
+
+                let flags = rest.trim();
+                if flags.is_empty() {
+                    return Ok(LegacyDaemonMessage::Other(payload));
+                }
+
+                return Ok(LegacyDaemonMessage::Capabilities { flags });
             }
 
             Ok(LegacyDaemonMessage::Other(payload))
@@ -253,6 +279,39 @@ mod tests {
                 module: Some("module"),
             }
         );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_accepts_capabilities_keyword() {
+        let message = parse_legacy_daemon_message("@RSYNCD: CAP 0x1f 0x2\n").expect("keyword");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Capabilities { flags: "0x1f 0x2" }
+        );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_accepts_capabilities_with_extra_whitespace() {
+        let message = parse_legacy_daemon_message("@RSYNCD: CAP\t capabilities list  \r\n")
+            .expect("keyword with padding");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Capabilities {
+                flags: "capabilities list",
+            }
+        );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_rejects_capabilities_without_payload() {
+        let message = parse_legacy_daemon_message("@RSYNCD: CAP\n").expect("keyword");
+        assert_eq!(message, LegacyDaemonMessage::Other("CAP"));
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_rejects_capabilities_without_delimiter() {
+        let message = parse_legacy_daemon_message("@RSYNCD: CAPpayload\n").expect("keyword");
+        assert_eq!(message, LegacyDaemonMessage::Other("CAPpayload"));
     }
 
     #[test]

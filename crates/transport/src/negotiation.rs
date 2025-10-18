@@ -5569,6 +5569,22 @@ mod tests {
     }
 
     #[test]
+    fn read_and_parse_legacy_daemon_message_routes_capabilities() {
+        let mut stream = sniff_bytes(b"@RSYNCD: CAP 0x1f 0x2\n").expect("sniff succeeds");
+        let mut line = Vec::new();
+        match stream
+            .read_and_parse_legacy_daemon_message(&mut line)
+            .expect("message parses")
+        {
+            LegacyDaemonMessage::Capabilities { flags } => {
+                assert_eq!(flags, "0x1f 0x2");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(line, b"@RSYNCD: CAP 0x1f 0x2\n");
+    }
+
+    #[test]
     fn read_and_parse_legacy_daemon_message_routes_versions() {
         let mut stream = sniff_bytes(b"@RSYNCD: 29.0\n").expect("sniff succeeds");
         let mut line = Vec::new();
