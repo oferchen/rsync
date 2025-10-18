@@ -262,6 +262,7 @@ impl<R> NegotiatedStream<R> {
     /// Propagates [`TryReserveError`] when the destination vector cannot be grown to hold the
     /// buffered bytes. On failure `target` retains its previous contents so callers can recover or
     /// surface the allocation error.
+    #[must_use = "the returned length reports how many bytes were copied and whether allocation succeeded"]
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         self.buffer.copy_into_vec(target)
     }
@@ -304,6 +305,7 @@ impl<R> NegotiatedStream<R> {
     /// }
     /// assert_eq!(assembled, expected);
     /// ```
+    #[must_use = "the return value conveys whether the provided buffers were large enough"]
     pub fn copy_buffered_into_vectored(
         &self,
         bufs: &mut [IoSliceMut<'_>],
@@ -318,6 +320,7 @@ impl<R> NegotiatedStream<R> {
     /// their storage while keeping the sniffed bytes untouched. When the destination cannot hold
     /// the buffered data, a [`BufferedCopyTooSmall`] error is returned and the slice remains
     /// unchanged.
+    #[must_use = "the result indicates if the destination slice could hold the buffered bytes"]
     pub fn copy_buffered_into_slice(
         &self,
         target: &mut [u8],
@@ -330,6 +333,7 @@ impl<R> NegotiatedStream<R> {
     /// The helper mirrors [`Self::copy_buffered_into_slice`] but accepts a fixed-size array
     /// directly, allowing stack-allocated scratch storage to be reused without converting it into a
     /// mutable slice at the call site.
+    #[must_use = "the result indicates if the destination array could hold the buffered bytes"]
     pub fn copy_buffered_into_array<const N: usize>(
         &self,
         target: &mut [u8; N],
@@ -342,6 +346,7 @@ impl<R> NegotiatedStream<R> {
     /// The buffered bytes are written exactly once, mirroring upstream rsync's behaviour when the
     /// handshake transcript is echoed into logs or diagnostics. Any I/O error reported by the
     /// writer is propagated unchanged.
+    #[must_use = "the returned length reports how many bytes were written and surfaces I/O failures"]
     pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
         self.buffer.copy_all_into_writer(target)
     }
@@ -1004,6 +1009,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// decompose the stream into parts to observe the sniffed prefix and remainder while preserving
     /// the replay state. The destination is cleared before data is appended; if additional capacity
     /// is required a [`TryReserveError`] is returned and the original contents remain untouched.
+    #[must_use = "the returned length reports how many bytes were copied and whether allocation succeeded"]
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         self.buffer.copy_into_vec(target)
     }
@@ -1046,6 +1052,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// }
     /// assert_eq!(assembled, expected);
     /// ```
+    #[must_use = "the return value conveys whether the provided buffers were large enough"]
     pub fn copy_buffered_into_vectored(
         &self,
         bufs: &mut [IoSliceMut<'_>],
@@ -1054,6 +1061,7 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
+    #[must_use = "the result indicates if the destination slice could hold the buffered bytes"]
     pub fn copy_buffered_into_slice(
         &self,
         target: &mut [u8],
@@ -1062,6 +1070,7 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the buffered negotiation data into a caller-provided array without consuming it.
+    #[must_use = "the result indicates if the destination array could hold the buffered bytes"]
     pub fn copy_buffered_into_array<const N: usize>(
         &self,
         target: &mut [u8; N],
@@ -1070,6 +1079,7 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Streams the buffered negotiation data into the provided writer without consuming it.
+    #[must_use = "the returned length reports how many bytes were written and surfaces I/O failures"]
     pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
         self.buffer.copy_all_into_writer(target)
     }
