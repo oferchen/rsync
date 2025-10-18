@@ -23,7 +23,7 @@
 //! Encode and decode a set of compatibility flags from memory:
 //!
 //! ```
-//! use rsync_protocol::CompatibilityFlags;
+//! use rsync_protocol::{CompatibilityFlags, KnownCompatibilityFlag};
 //!
 //! let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
 //! let mut bytes = Vec::new();
@@ -31,6 +31,22 @@
 //! let (decoded, remainder) = CompatibilityFlags::decode_from_slice(&bytes).unwrap();
 //! assert_eq!(decoded, flags);
 //! assert!(remainder.is_empty());
+//! ```
+//!
+//! Collect compatibility flags from an iterator of known flag variants:
+//!
+//! ```
+//! use rsync_protocol::{CompatibilityFlags, KnownCompatibilityFlag};
+//!
+//! let flags: CompatibilityFlags = [
+//!     KnownCompatibilityFlag::IncRecurse,
+//!     KnownCompatibilityFlag::SafeFileList,
+//! ]
+//! .into_iter()
+//! .collect();
+//!
+//! assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+//! assert!(flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
 //! ```
 //!
 //! # See also
@@ -41,7 +57,7 @@
 use crate::varint::{decode_varint, encode_varint_to_vec, read_varint, write_varint};
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::iter::FusedIterator;
+use std::iter::{Extend, FromIterator, FusedIterator};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 /// Enumerates the compatibility flags defined by upstream rsync 3.4.1.
@@ -337,6 +353,30 @@ impl CompatibilityFlags {
     }
 }
 
+impl FromIterator<KnownCompatibilityFlag> for CompatibilityFlags {
+    /// Builds a [`CompatibilityFlags`] value from an iterator of known flag variants.
+    ///
+    /// The implementation mirrors upstream rsync's practice of folding optional
+    /// capabilities into a bitfield by OR-ing the corresponding bits. Duplicate
+    /// flags are ignored because they do not affect the resulting bit mask.
+    fn from_iter<I: IntoIterator<Item = KnownCompatibilityFlag>>(iter: I) -> Self {
+        let mut bits = 0u32;
+        for flag in iter {
+            bits |= flag.as_flag().bits();
+        }
+        Self::from_bits(bits)
+    }
+}
+
+impl Extend<KnownCompatibilityFlag> for CompatibilityFlags {
+    /// Adds each known flag yielded by the iterator to the bitfield.
+    fn extend<I: IntoIterator<Item = KnownCompatibilityFlag>>(&mut self, iter: I) {
+        for flag in iter {
+            *self |= flag.as_flag();
+        }
+    }
+}
+
 impl fmt::Debug for CompatibilityFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CompatibilityFlags")
@@ -488,6 +528,37 @@ mod tests {
                 KnownCompatibilityFlag::Id0Names,
             ]
         );
+    }
+
+    #[test]
+    fn collecting_known_flags_produces_expected_bitfield() {
+        let flags: CompatibilityFlags = [
+            KnownCompatibilityFlag::IncRecurse,
+            KnownCompatibilityFlag::ChecksumSeedFix,
+            KnownCompatibilityFlag::IncRecurse,
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            flags,
+            CompatibilityFlags::INC_RECURSE | CompatibilityFlags::CHECKSUM_SEED_FIX
+        );
+    }
+
+    #[test]
+    fn extend_adds_flags_without_clearing_existing_bits() {
+        let mut flags = CompatibilityFlags::INC_RECURSE;
+        flags.extend([
+            KnownCompatibilityFlag::SafeFileList,
+            KnownCompatibilityFlag::SafeFileList,
+            KnownCompatibilityFlag::Id0Names,
+        ]);
+
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
+        assert!(flags.contains(CompatibilityFlags::ID0_NAMES));
+        assert_eq!(flags.unknown_bits(), 0);
     }
 
     #[test]
