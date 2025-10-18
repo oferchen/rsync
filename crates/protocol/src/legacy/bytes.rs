@@ -135,6 +135,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_bytes_handles_capabilities() {
+        let message =
+            parse_legacy_daemon_message_bytes(b"@RSYNCD: CAP 0x1f 0x2\n").expect("keyword");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::Capabilities { flags: "0x1f 0x2" }
+        );
+    }
+
+    #[test]
     fn parse_legacy_daemon_greeting_bytes_details_captures_digest_list() {
         let greeting = parse_legacy_daemon_greeting_bytes_details(b"@RSYNCD: 31.0 md4 md5\n")
             .expect("digest list should parse");
