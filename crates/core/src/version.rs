@@ -177,21 +177,27 @@ pub fn compiled_feature_labels() -> Vec<&'static str> {
 }
 
 /// Iterator over [`CompiledFeature`] values that are enabled for the current build.
-#[derive(Clone, Debug, Default)]
+///
+/// The iterator caches the number of remaining enabled features so [`ExactSizeIterator::len`]
+/// and [`Iterator::size_hint`] both run in `O(1)` time without repeatedly scanning the
+/// static [`CompiledFeature::ALL`] table.
+#[derive(Clone, Debug)]
 pub struct CompiledFeaturesIter {
     index: usize,
+    remaining: usize,
 }
 
 impl CompiledFeaturesIter {
-    const fn new() -> Self {
-        Self { index: 0 }
-    }
-
-    fn remaining_enabled(&self) -> usize {
-        CompiledFeature::ALL[self.index..]
+    fn new() -> Self {
+        let remaining = CompiledFeature::ALL
             .iter()
             .filter(|feature| feature.is_enabled())
-            .count()
+            .count();
+
+        Self {
+            index: 0,
+            remaining,
+        }
     }
 }
 
@@ -204,26 +210,33 @@ impl Iterator for CompiledFeaturesIter {
             self.index += 1;
 
             if feature.is_enabled() {
+                self.remaining = self.remaining.saturating_sub(1);
                 return Some(feature);
             }
         }
 
+        self.remaining = 0;
         None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.remaining_enabled();
-        (remaining, Some(remaining))
+        (self.remaining, Some(self.remaining))
     }
 }
 
 impl ExactSizeIterator for CompiledFeaturesIter {
     fn len(&self) -> usize {
-        self.remaining_enabled()
+        self.remaining
     }
 }
 
 impl FusedIterator for CompiledFeaturesIter {}
+
+impl Default for CompiledFeaturesIter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Convenience formatter for the compiled feature list.
 ///
