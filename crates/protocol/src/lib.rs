@@ -139,7 +139,7 @@ pub use envelope::{
 };
 pub use error::NegotiationError;
 pub use legacy::{
-    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
+    DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
     format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
     parse_legacy_daemon_greeting_bytes, parse_legacy_daemon_greeting_bytes_details,
