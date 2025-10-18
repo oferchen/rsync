@@ -209,7 +209,7 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// wrapper first.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.server_protocol())
+        remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
     /// Reports whether the negotiated protocol was reduced by the caller-provided cap.
@@ -550,7 +550,7 @@ impl<R> LegacyDaemonHandshake<R> {
     /// Reports whether the remote daemon advertised a protocol newer than we support.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.server_protocol())
+        remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
