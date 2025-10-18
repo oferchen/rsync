@@ -192,6 +192,33 @@ impl MessageFrame {
         Ok(())
     }
 
+    /// Writes the frame into an [`io::Write`] implementor using the multiplexed envelope.
+    ///
+    /// The helper mirrors [`send_frame`] but lives on [`MessageFrame`] so callers that already own
+    /// the decoded frame do not need to split it manually into tag and payload slices. The payload
+    /// length is revalidated to guard against mutations performed through [`DerefMut`], and the
+    /// upstream vectored-write strategy is reused via [`send_msg`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::io;
+    /// use rsync_protocol::{MessageCode, MessageFrame};
+    ///
+    /// # fn example() -> io::Result<()> {
+    /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
+    /// let mut bytes = Vec::new();
+    /// frame.encode_into_writer(&mut bytes)?;
+    ///
+    /// assert_eq!(bytes.len(), 7);
+    /// # Ok(())
+    /// # }
+    /// # assert!(example().is_ok());
+    /// ```
+    pub fn encode_into_writer<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        send_frame(writer, self)
+    }
+
     /// Decodes a multiplexed frame from the beginning of `bytes`.
     ///
     /// The function mirrors [`recv_msg`] but operates on an in-memory slice, making it
@@ -288,7 +315,8 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
 /// The payload length has already been validated by [`MessageFrame::new`], so the function simply
 /// forwards to [`send_msg`] to reuse the upstream-compatible envelope encoding and vectored write
-/// behavior.
+/// behavior. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from
+/// an owned frame.
 pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
     send_msg(writer, frame.code(), frame.payload())
 }
@@ -1048,6 +1076,38 @@ mod tests {
 
         let mut buffer = Vec::new();
         send_frame(&mut buffer, &frame).expect("send_frame succeeds");
+
+        assert_eq!(buffer.len(), HEADER_LEN);
+        assert_eq!(
+            &buffer[..HEADER_LEN],
+            &MessageHeader::new(frame.code(), 0).unwrap().encode()
+        );
+    }
+
+    #[test]
+    fn encode_into_writer_matches_send_frame() {
+        let frame =
+            MessageFrame::new(MessageCode::Info, b"payload".to_vec()).expect("frame is valid");
+
+        let mut via_method = Vec::new();
+        frame
+            .encode_into_writer(&mut via_method)
+            .expect("method succeeds");
+
+        let mut via_function = Vec::new();
+        send_frame(&mut via_function, &frame).expect("send_frame succeeds");
+
+        assert_eq!(via_method, via_function);
+    }
+
+    #[test]
+    fn encode_into_writer_handles_empty_payloads() {
+        let frame = MessageFrame::new(MessageCode::Error, Vec::new()).expect("frame is valid");
+
+        let mut buffer = Vec::new();
+        frame
+            .encode_into_writer(&mut buffer)
+            .expect("method succeeds");
 
         assert_eq!(buffer.len(), HEADER_LEN);
         assert_eq!(
