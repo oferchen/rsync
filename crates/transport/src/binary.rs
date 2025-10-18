@@ -134,7 +134,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// the same diagnostics without rebuilding the wrapper first.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+        remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
     /// Reports whether the negotiated protocol was reduced by the caller-specified cap.
@@ -430,7 +430,7 @@ impl<R> BinaryHandshake<R> {
     /// Reports whether the remote peer advertised a protocol newer than we support.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+        remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
