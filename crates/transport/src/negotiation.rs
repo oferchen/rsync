@@ -120,10 +120,11 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///
     /// The helper prefers vectored I/O when the writer advertises support,
     /// mirroring upstream rsync's habit of emitting the replay prefix in a
-    /// single `writev` call. When vectored writes are unsupported or only
-    /// partially flush the buffered data, the method falls back to sequential
-    /// [`Write::write_all`] operations to ensure the entire transcript is
-    /// forwarded without duplication.
+    /// single `writev` call. Interruptions are transparently retried. When
+    /// vectored writes are unsupported or only partially flush the buffered
+    /// data, the method falls back to sequential [`Write::write_all`]
+    /// operations to ensure the entire transcript is forwarded without
+    /// duplication.
     ///
     /// # Examples
     ///
@@ -149,47 +150,80 @@ impl<'a> NegotiationBufferedSlices<'a> {
         }
 
         if self.count == 1 {
-            return writer.write_all(slices[0].as_ref());
+            writer.write_all(slices[0].as_ref())?;
+            return Ok(());
         }
 
-        match writer.write_vectored(slices) {
-            Ok(0) => Err(io::Error::from(io::ErrorKind::WriteZero)),
-            Ok(written) if written >= self.total_len => Ok(()),
-            Ok(written) => {
-                let mut remaining = written;
-                let mut index = 0usize;
+        let mut remaining = self.total_len;
+        let mut start = 0usize;
+        let mut vectored = self.segments;
 
-                while remaining > 0 && index < slices.len() {
-                    let slice = slices[index].as_ref();
-                    if remaining < slice.len() {
-                        writer.write_all(&slice[remaining..])?;
-                        remaining = 0;
-                        index += 1;
-                        break;
-                    } else {
-                        remaining -= slice.len();
-                        index += 1;
+        while remaining > 0 {
+            let tail = &mut vectored[start..self.count];
+            if tail.is_empty() {
+                break;
+            }
+
+            match writer.write_vectored(&*tail) {
+                Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+                Ok(written) => {
+                    debug_assert!(written <= remaining);
+                    remaining -= written;
+
+                    if remaining == 0 {
+                        return Ok(());
                     }
-                }
 
-                if remaining > 0 {
-                    return Err(io::Error::from(io::ErrorKind::WriteZero));
-                }
+                    let mut consumed = written;
+                    let mut index = start;
+                    while consumed > 0 && index < self.count {
+                        let slice_len = vectored[index].len();
+                        if consumed < slice_len {
+                            vectored[index].advance(consumed);
+                            consumed = 0;
+                        } else {
+                            vectored[index].advance(slice_len);
+                            consumed -= slice_len;
+                            index += 1;
+                        }
+                    }
 
-                for slice in &slices[index..] {
-                    writer.write_all(slice.as_ref())?;
-                }
+                    start = index;
+                    while start < self.count && vectored[start].is_empty() {
+                        start += 1;
+                    }
 
-                Ok(())
+                    break;
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
+                Err(err) => return Err(err),
             }
-            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-                for slice in slices {
-                    writer.write_all(slice.as_ref())?;
-                }
-                Ok(())
-            }
-            Err(err) => Err(err),
         }
+
+        if remaining == 0 {
+            return Ok(());
+        }
+
+        let mut consumed = self.total_len - remaining;
+
+        for slice in slices {
+            let bytes = slice.as_ref();
+
+            if consumed >= bytes.len() {
+                consumed -= bytes.len();
+                continue;
+            }
+
+            if consumed > 0 {
+                writer.write_all(&bytes[consumed..])?;
+                consumed = 0;
+            } else {
+                writer.write_all(bytes)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -2595,6 +2629,59 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct InterruptedVectoredWriter {
+        writes: Vec<u8>,
+        vectored_calls: usize,
+        write_calls: usize,
+        interrupted: bool,
+    }
+
+    impl InterruptedVectoredWriter {
+        fn writes(&self) -> &[u8] {
+            &self.writes
+        }
+
+        fn vectored_calls(&self) -> usize {
+            self.vectored_calls
+        }
+
+        fn write_calls(&self) -> usize {
+            self.write_calls
+        }
+    }
+
+    impl Write for InterruptedVectoredWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "vectored write interrupted",
+                ));
+            }
+
+            let mut total = 0usize;
+            for slice in bufs {
+                self.writes.extend_from_slice(slice);
+                total += slice.len();
+            }
+            Ok(total)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn negotiation_buffered_slices_write_to_prefers_vectored_io() {
         let prefix = b"@RSYNCD:";
@@ -2645,6 +2732,26 @@ mod tests {
 
         assert_eq!(writer.vectored_calls(), 1);
         assert!(writer.write_calls() >= 1);
+        assert_eq!(writer.writes(), expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_write_to_retries_after_interrupted_vectored_call() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" banner";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut writer = InterruptedVectoredWriter::default();
+
+        slices
+            .write_to(&mut writer)
+            .expect("write succeeds after retry");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(writer.vectored_calls(), 2);
+        assert_eq!(writer.write_calls(), 0);
         assert_eq!(writer.writes(), expected.as_slice());
     }
 
