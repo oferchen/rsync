@@ -59,6 +59,32 @@ impl BufferedCopyTooSmall {
     pub const fn provided(self) -> usize {
         self.provided
     }
+
+    /// Returns how many additional bytes would have been required for the copy to succeed.
+    ///
+    /// The difference is calculated with saturation to guard against inconsistent inputs. When the
+    /// error originates from helpers such as [`NegotiatedStream::copy_buffered_into_slice`], the
+    /// return value matches `required - provided`, mirroring the missing capacity reported by
+    /// upstream rsync diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let mut scratch = [0u8; 4];
+    /// let err = stream
+    ///     .copy_buffered_into_slice(&mut scratch)
+    ///     .expect_err("insufficient capacity must error");
+    /// assert_eq!(err.missing(), stream.buffered_len() - scratch.len());
+    /// ```
+    #[must_use]
+    pub const fn missing(self) -> usize {
+        self.required.saturating_sub(self.provided)
+    }
 }
 
 impl fmt::Display for BufferedCopyTooSmall {
@@ -1757,6 +1783,7 @@ mod tests {
 
         assert_eq!(err.required(), required);
         assert_eq!(err.provided(), prefix.len() + suffix.len());
+        assert_eq!(err.missing(), required - (prefix.len() + suffix.len()));
     }
 
     #[test]
@@ -1772,6 +1799,7 @@ mod tests {
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
+        assert_eq!(err.missing(), expected_len - scratch.len());
         assert_eq!(stream.buffered_remaining(), buffered_remaining);
     }
 
@@ -1788,6 +1816,7 @@ mod tests {
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
+        assert_eq!(err.missing(), expected_len - scratch.len());
         assert_eq!(stream.buffered_remaining(), buffered_remaining);
     }
 
@@ -1919,6 +1948,7 @@ mod tests {
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), first.len() + second.len());
+        assert_eq!(err.missing(), expected_len - (first.len() + second.len()));
     }
 
     #[test]
@@ -1935,6 +1965,7 @@ mod tests {
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
+        assert_eq!(err.missing(), expected_len - scratch.len());
     }
 
     #[test]
@@ -1951,6 +1982,7 @@ mod tests {
 
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), scratch.len());
+        assert_eq!(err.missing(), expected_len - scratch.len());
     }
 
     #[test]
