@@ -1,5 +1,7 @@
 use digest::Digest;
 
+use super::StrongDigest;
+
 /// Streaming MD5 hasher used by rsync when backward compatibility demands it.
 #[derive(Clone, Debug)]
 pub struct Md5 {
@@ -35,9 +37,25 @@ impl Md5 {
     /// Convenience helper that computes the MD5 digest for `data` in one shot.
     #[must_use]
     pub fn digest(data: &[u8]) -> [u8; 16] {
-        let mut hasher = Self::new();
-        hasher.update(data);
-        hasher.finalize()
+        <Self as StrongDigest>::digest(data)
+    }
+}
+
+impl StrongDigest for Md5 {
+    type Seed = ();
+    type Digest = [u8; 16];
+    const DIGEST_LEN: usize = 16;
+
+    fn with_seed((): Self::Seed) -> Self {
+        Md5::new()
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+
+    fn finalize(self) -> Self::Digest {
+        self.inner.finalize().into()
     }
 }
 

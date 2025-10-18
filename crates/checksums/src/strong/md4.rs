@@ -1,5 +1,7 @@
 use digest::Digest;
 
+use super::StrongDigest;
+
 /// Streaming MD4 hasher mirroring upstream rsync's default strong checksum.
 #[derive(Clone, Debug)]
 pub struct Md4 {
@@ -35,9 +37,25 @@ impl Md4 {
     /// Convenience helper that computes the MD4 digest for `data` in one shot.
     #[must_use]
     pub fn digest(data: &[u8]) -> [u8; 16] {
-        let mut hasher = Self::new();
-        hasher.update(data);
-        hasher.finalize()
+        <Self as StrongDigest>::digest(data)
+    }
+}
+
+impl StrongDigest for Md4 {
+    type Seed = ();
+    type Digest = [u8; 16];
+    const DIGEST_LEN: usize = 16;
+
+    fn with_seed((): Self::Seed) -> Self {
+        Md4::new()
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+
+    fn finalize(self) -> Self::Digest {
+        self.inner.finalize().into()
     }
 }
 

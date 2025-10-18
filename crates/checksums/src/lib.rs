@@ -15,8 +15,9 @@
 //!
 //! - [`rolling`] implements the Adler-32–style weak checksum (`rsum`) used for
 //!   block matching during delta transfers.
-//! - [`strong`] exposes MD4, MD5, and XXH64 digests that higher layers select
-//!   according to the negotiated protocol version.
+//! - [`strong`] exposes MD4, MD5, and XXH64 digests together with the
+//!   [`strong::StrongDigest`] trait that higher layers use to abstract over the
+//!   negotiated algorithm.
 //!
 //! The modules are intentionally small, allowing the workspace to enforce strict
 //! layering while keeping checksum-specific optimisations in one place.
