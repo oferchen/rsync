@@ -834,45 +834,8 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        struct Adapter<'a, W>(&'a mut W);
-
-        impl<W: fmt::Write> IoWrite for Adapter<'_, W> {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                let text = str::from_utf8(buf)
-                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-
-                self.0
-                    .write_str(text)
-                    .map_err(|_| io::Error::other("formatter error"))?;
-
-                Ok(buf.len())
-            }
-
-            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-                let mut written = 0usize;
-
-                for buf in bufs {
-                    self.write(buf.as_ref())?;
-                    written += buf.len();
-                }
-
-                Ok(written)
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-
-            fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
-                self.0
-                    .write_fmt(fmt)
-                    .map_err(|_| io::Error::other("formatter error"))
-            }
-        }
-
-        let mut adapter = Adapter(writer);
-        self.render_to_writer_inner(&mut adapter, false)
-            .map_err(|_| fmt::Error)
+        let mut scratch = MessageScratch::new();
+        self.render_to_with_scratch(&mut scratch, writer)
     }
 
     /// Renders the message followed by a newline into an arbitrary [`fmt::Write`] implementor.
@@ -898,8 +861,8 @@ impl Message {
     /// assert!(rendered.contains("[generator=3.4.1-rust]"));
     /// ```
     pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        self.render_to(writer)?;
-        FmtWrite::write_char(writer, '\n')
+        let mut scratch = MessageScratch::new();
+        self.render_line_to_with_scratch(&mut scratch, writer)
     }
 
     /// Returns the rendered message as a [`Vec<u8>`].
@@ -976,7 +939,8 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        self.render_to_writer_inner(writer, false)
+        let mut scratch = MessageScratch::new();
+        self.render_to_writer_with_scratch(&mut scratch, writer)
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -1002,16 +966,63 @@ impl Message {
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        self.render_to_writer_inner(writer, true)
+        let mut scratch = MessageScratch::new();
+        self.render_line_to_writer_with_scratch(&mut scratch, writer)
+    }
+
+    /// Streams the rendered message into an [`io::Write`] implementor using caller-provided scratch buffers.
+    ///
+    /// This variant avoids reinitialising [`MessageScratch`] storage for callers that need to emit
+    /// a high volume of diagnostics. Reusing the buffer removes the repeated zeroing performed by
+    /// [`MessageScratch::new`], matching upstream rsync's strategy of recycling stack-allocated
+    /// arrays when formatting error messages.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, MessageScratch}, rsync_error};
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let mut output = Vec::new();
+    ///
+    /// for code in [11, 12] {
+    ///     rsync_error!(code, "i/o failure")
+    ///         .render_to_writer_with_scratch(&mut scratch, &mut output)
+    ///         .unwrap();
+    /// }
+    ///
+    /// let rendered = String::from_utf8(output).unwrap();
+    /// assert!(rendered.contains("rsync error: i/o failure (code 11)"));
+    /// assert!(rendered.contains("rsync error: i/o failure (code 12)"));
+    /// ```
+    pub fn render_to_writer_with_scratch<W: IoWrite>(
+        &self,
+        scratch: &mut MessageScratch,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        self.render_to_writer_inner(scratch, writer, false)
+    }
+
+    /// Writes the rendered message followed by a newline while reusing caller-provided scratch buffers.
+    ///
+    /// The helper mirrors [`Self::render_line_to_writer`] but avoids repeated allocation or
+    /// zero-initialisation by accepting an existing [`MessageScratch`]. The newline terminator is
+    /// appended after the main message segments using the same buffer.
+    pub fn render_line_to_writer_with_scratch<W: IoWrite>(
+        &self,
+        scratch: &mut MessageScratch,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        self.render_to_writer_inner(scratch, writer, true)
     }
 
     fn render_to_writer_inner<W: IoWrite>(
         &self,
+        scratch: &mut MessageScratch,
         writer: &mut W,
         include_newline: bool,
     ) -> io::Result<()> {
-        let mut scratch = MessageScratch::new();
-        let segments = self.as_segments(&mut scratch, include_newline);
+        let segments = self.as_segments(scratch, include_newline);
         let slices = segments.as_slices();
 
         if segments.segment_count() > 1 {
@@ -1052,14 +1063,100 @@ impl Message {
     }
 
     fn to_bytes_inner(&self, include_newline: bool) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::with_capacity(self.estimated_rendered_length(include_newline));
-        self.render_to_writer_inner(&mut buffer, include_newline)?;
+        let mut scratch = MessageScratch::new();
+        self.to_bytes_with_scratch_inner(&mut scratch, include_newline)
+    }
+
+    fn to_bytes_with_scratch_inner(
+        &self,
+        scratch: &mut MessageScratch,
+        include_newline: bool,
+    ) -> io::Result<Vec<u8>> {
+        let mut buffer = Vec::with_capacity(
+            self.estimated_rendered_length_with_scratch(scratch, include_newline),
+        );
+        self.render_to_writer_inner(scratch, &mut buffer, include_newline)?;
         Ok(buffer)
     }
 
-    fn estimated_rendered_length(&self, include_newline: bool) -> usize {
-        let mut scratch = MessageScratch::new();
-        self.as_segments(&mut scratch, include_newline).len()
+    fn estimated_rendered_length_with_scratch(
+        &self,
+        scratch: &mut MessageScratch,
+        include_newline: bool,
+    ) -> usize {
+        self.as_segments(scratch, include_newline).len()
+    }
+}
+
+impl Message {
+    /// Renders the message into an arbitrary [`fmt::Write`] implementor while reusing scratch buffers.
+    ///
+    /// The helper mirrors [`Self::render_to`] but accepts an explicit [`MessageScratch`], allowing
+    /// callers that emit multiple diagnostics to amortise the buffer initialisation cost.
+    pub fn render_to_with_scratch<W: fmt::Write>(
+        &self,
+        scratch: &mut MessageScratch,
+        writer: &mut W,
+    ) -> fmt::Result {
+        struct Adapter<'a, W>(&'a mut W);
+
+        impl<W: fmt::Write> IoWrite for Adapter<'_, W> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                let text = str::from_utf8(buf)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+                self.0
+                    .write_str(text)
+                    .map_err(|_| io::Error::other("formatter error"))?;
+
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                let mut written = 0usize;
+
+                for buf in bufs {
+                    self.write(buf.as_ref())?;
+                    written += buf.len();
+                }
+
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
+                self.0
+                    .write_fmt(fmt)
+                    .map_err(|_| io::Error::other("formatter error"))
+            }
+        }
+
+        let mut adapter = Adapter(writer);
+        self.render_to_writer_inner(scratch, &mut adapter, false)
+            .map_err(|_| fmt::Error)
+    }
+
+    /// Renders the message followed by a newline into an [`fmt::Write`] implementor while reusing scratch buffers.
+    pub fn render_line_to_with_scratch<W: fmt::Write>(
+        &self,
+        scratch: &mut MessageScratch,
+        writer: &mut W,
+    ) -> fmt::Result {
+        self.render_to_with_scratch(scratch, writer)?;
+        FmtWrite::write_char(writer, '\n')
+    }
+
+    /// Collects the rendered message into a [`Vec<u8>`] while reusing caller-provided scratch buffers.
+    pub fn to_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
+        self.to_bytes_with_scratch_inner(scratch, false)
+    }
+
+    /// Collects the rendered message and a trailing newline into a [`Vec<u8>`] while reusing scratch buffers.
+    pub fn to_line_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
+        self.to_bytes_with_scratch_inner(scratch, true)
     }
 }
 
@@ -1533,6 +1630,45 @@ mod tests {
     }
 
     #[test]
+    fn render_to_writer_with_scratch_matches_fresh_scratch() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut reused = Vec::new();
+        message
+            .render_to_writer_with_scratch(&mut scratch, &mut reused)
+            .expect("writing into a vector never fails");
+
+        let mut baseline = Vec::new();
+        message
+            .render_to_writer(&mut baseline)
+            .expect("writing into a vector never fails");
+
+        assert_eq!(reused, baseline);
+    }
+
+    #[test]
+    fn scratch_supports_sequential_messages() {
+        let mut scratch = MessageScratch::new();
+        let mut output = Vec::new();
+
+        rsync_error!(23, "delta-transfer failure")
+            .render_line_to_writer_with_scratch(&mut scratch, &mut output)
+            .expect("writing into a vector never fails");
+
+        rsync_warning!("some files vanished")
+            .with_code(24)
+            .render_line_to_writer_with_scratch(&mut scratch, &mut output)
+            .expect("writing into a vector never fails");
+
+        let rendered = String::from_utf8(output).expect("messages are UTF-8");
+        assert!(rendered.lines().any(|line| line.contains("(code 23)")));
+        assert!(rendered.lines().any(|line| line.contains("(code 24)")));
+    }
+
+    #[test]
     fn message_segments_iterator_covers_all_bytes() {
         let message = Message::error(23, "delta-transfer failure")
             .with_role(Role::Receiver)
@@ -1560,6 +1696,26 @@ mod tests {
             .expect("rendering into a string never fails");
 
         assert_eq!(rendered, format!("{}\n", message));
+    }
+
+    #[test]
+    fn render_to_with_scratch_matches_standard_rendering() {
+        let message = Message::warning("soft limit reached")
+            .with_code(24)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut reused = String::new();
+        message
+            .render_to_with_scratch(&mut scratch, &mut reused)
+            .expect("rendering into a string never fails");
+
+        let mut baseline = String::new();
+        message
+            .render_to(&mut baseline)
+            .expect("rendering into a string never fails");
+
+        assert_eq!(reused, baseline);
     }
 
     #[test]
@@ -1651,6 +1807,22 @@ mod tests {
         };
 
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn to_bytes_with_scratch_matches_standard_rendering() {
+        let message = Message::info("protocol handshake complete").with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let reused = message
+            .to_line_bytes_with_scratch(&mut scratch)
+            .expect("Vec<u8> writes are infallible");
+
+        let baseline = message
+            .to_line_bytes()
+            .expect("Vec<u8> writes are infallible");
+
+        assert_eq!(reused, baseline);
     }
 
     struct FailingWriter;
