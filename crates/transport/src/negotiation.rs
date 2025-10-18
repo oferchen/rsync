@@ -302,6 +302,29 @@ impl<R> NegotiatedStream<R> {
         self.decision
     }
 
+    /// Reports whether the sniffed negotiation selected the binary protocol.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_binary`] while avoiding the
+    /// need for callers to inspect [`Self::decision`] directly. Binary sessions
+    /// correspond to remote-shell style negotiations introduced in protocol 30.
+    /// When the stream was negotiated through the legacy ASCII daemon flow the
+    /// method returns `false`.
+    #[must_use]
+    pub const fn is_binary(&self) -> bool {
+        self.decision.is_binary()
+    }
+
+    /// Reports whether the sniffed negotiation selected the legacy ASCII protocol.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_legacy`] so higher layers can
+    /// branch on the handshake style without matching on [`Self::decision`]. The
+    /// method returns `true` when the transport presented the canonical
+    /// `@RSYNCD:` prefix and `false` for binary negotiations.
+    #[must_use]
+    pub const fn is_legacy(&self) -> bool {
+        self.decision.is_legacy()
+    }
+
     /// Ensures the sniffed negotiation matches the expected style.
     ///
     /// The helper mirrors the checks performed by the binary and legacy
@@ -1460,6 +1483,27 @@ impl<R> NegotiatedStreamParts<R> {
     #[must_use]
     pub const fn decision(&self) -> NegotiationPrologue {
         self.decision
+    }
+
+    /// Reports whether the decomposed stream originated from a binary negotiation.
+    ///
+    /// This mirrors [`NegotiatedStream::is_binary`], allowing callers that work
+    /// with [`NegotiatedStreamParts`] to branch on the handshake style without
+    /// reconstructing the wrapper or inspecting [`Self::decision`] manually.
+    #[must_use]
+    pub const fn is_binary(&self) -> bool {
+        self.decision.is_binary()
+    }
+
+    /// Reports whether the decomposed stream originated from the legacy ASCII negotiation.
+    ///
+    /// The helper mirrors [`NegotiatedStream::is_legacy`], exposing the same
+    /// convenience for code that operates on [`NegotiatedStreamParts`]. It
+    /// returns `true` when the captured negotiation began with the canonical
+    /// `@RSYNCD:` prefix.
+    #[must_use]
+    pub const fn is_legacy(&self) -> bool {
+        self.decision.is_legacy()
     }
 
     /// Returns the captured negotiation prefix.
@@ -2682,6 +2726,32 @@ mod tests {
             .expect_err("undetermined prologue must surface as EOF");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         assert_eq!(err.to_string(), NEGOTIATION_PROLOGUE_UNDETERMINED_MSG);
+    }
+
+    #[test]
+    fn negotiated_stream_reports_handshake_style_helpers() {
+        let binary = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
+        assert!(binary.is_binary());
+        assert!(!binary.is_legacy());
+
+        let legacy = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        assert!(legacy.is_legacy());
+        assert!(!legacy.is_binary());
+    }
+
+    #[test]
+    fn negotiated_stream_parts_reports_handshake_style_helpers() {
+        let binary_parts = sniff_bytes(&[0x00, 0x12, 0x34])
+            .expect("sniff succeeds")
+            .into_parts();
+        assert!(binary_parts.is_binary());
+        assert!(!binary_parts.is_legacy());
+
+        let legacy_parts = sniff_bytes(b"@RSYNCD: 31.0\nrest")
+            .expect("sniff succeeds")
+            .into_parts();
+        assert!(legacy_parts.is_legacy());
+        assert!(!legacy_parts.is_binary());
     }
 
     #[test]

@@ -66,6 +66,8 @@ fn negotiate_session_detects_binary_transport() {
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
 
     assert_eq!(handshake.decision(), NegotiationPrologue::Binary);
+    assert!(handshake.is_binary());
+    assert!(!handshake.is_legacy());
     assert_eq!(handshake.negotiated_protocol(), remote_version);
     assert_eq!(handshake.remote_protocol(), remote_version);
     assert_eq!(
@@ -98,6 +100,8 @@ fn negotiate_session_detects_legacy_transport() {
         negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
 
     assert_eq!(handshake.decision(), NegotiationPrologue::LegacyAscii);
+    assert!(handshake.is_legacy());
+    assert!(!handshake.is_binary());
     assert_eq!(
         handshake.negotiated_protocol(),
         ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
@@ -181,6 +185,8 @@ fn negotiate_session_parts_exposes_binary_metadata() {
         negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
 
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    assert!(parts.is_binary());
+    assert!(!parts.is_legacy());
     assert_eq!(parts.remote_protocol(), remote_version);
     assert_eq!(parts.negotiated_protocol(), remote_version);
     assert!(!parts.remote_protocol_was_clamped());
@@ -293,6 +299,8 @@ fn negotiate_session_parts_exposes_legacy_metadata() {
         negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("legacy parts succeed");
 
     assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+    assert!(parts.is_legacy());
+    assert!(!parts.is_binary());
     assert_eq!(
         parts.remote_protocol(),
         ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
