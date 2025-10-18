@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
@@ -52,6 +53,20 @@ impl Default for MessageScratch {
     fn default() -> Self {
         Self::new()
     }
+}
+
+thread_local! {
+    static THREAD_LOCAL_SCRATCH: RefCell<MessageScratch> = RefCell::new(MessageScratch::new());
+}
+
+fn with_thread_local_scratch<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut MessageScratch) -> R,
+{
+    THREAD_LOCAL_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        f(&mut scratch)
+    })
 }
 
 /// Collection of slices that jointly render an [`Message`].
@@ -937,8 +952,7 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        let mut scratch = MessageScratch::new();
-        self.render_to_with_scratch(&mut scratch, writer)
+        with_thread_local_scratch(|scratch| self.render_to_with_scratch(scratch, writer))
     }
 
     /// Renders the message followed by a newline into an arbitrary [`fmt::Write`] implementor.
@@ -964,8 +978,7 @@ impl Message {
     /// assert!(rendered.contains("[generator=3.4.1-rust]"));
     /// ```
     pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        let mut scratch = MessageScratch::new();
-        self.render_line_to_with_scratch(&mut scratch, writer)
+        with_thread_local_scratch(|scratch| self.render_line_to_with_scratch(scratch, writer))
     }
 
     /// Returns the rendered message as a [`Vec<u8>`].
@@ -990,7 +1003,7 @@ impl Message {
     /// assert!(bytes.ends_with(b"[sender=3.4.1-rust]"));
     /// ```
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        self.to_bytes_inner(false)
+        with_thread_local_scratch(|scratch| self.to_bytes_with_scratch(scratch))
     }
 
     /// Returns the rendered message followed by a newline as a [`Vec<u8>`].
@@ -1011,7 +1024,7 @@ impl Message {
     /// assert!(rendered.ends_with(b"\n"));
     /// ```
     pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
-        self.to_bytes_inner(true)
+        with_thread_local_scratch(|scratch| self.to_line_bytes_with_scratch(scratch))
     }
 
     /// Writes the rendered message into an [`io::Write`] implementor.
@@ -1042,8 +1055,7 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        let mut scratch = MessageScratch::new();
-        self.render_to_writer_with_scratch(&mut scratch, writer)
+        with_thread_local_scratch(|scratch| self.render_to_writer_with_scratch(scratch, writer))
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -1069,8 +1081,9 @@ impl Message {
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        let mut scratch = MessageScratch::new();
-        self.render_line_to_writer_with_scratch(&mut scratch, writer)
+        with_thread_local_scratch(|scratch| {
+            self.render_line_to_writer_with_scratch(scratch, writer)
+        })
     }
 
     /// Streams the rendered message into an [`io::Write`] implementor using caller-provided scratch buffers.
@@ -1127,11 +1140,6 @@ impl Message {
     ) -> io::Result<()> {
         let segments = self.as_segments(scratch, include_newline);
         segments.write_to(writer)
-    }
-
-    fn to_bytes_inner(&self, include_newline: bool) -> io::Result<Vec<u8>> {
-        let mut scratch = MessageScratch::new();
-        self.to_bytes_with_scratch_inner(&mut scratch, include_newline)
     }
 
     fn to_bytes_with_scratch_inner(
@@ -1989,6 +1997,42 @@ mod tests {
 
         assert_eq!(writer.remaining_interrupts, 0);
         assert_eq!(writer.buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn render_to_writer_uses_thread_local_scratch_per_thread() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let message = Message::error(42, "per-thread scratch")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let barrier = Arc::new(Barrier::new(4));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let message = message.clone();
+
+                thread::spawn(move || {
+                    barrier.wait();
+                    let expected = message.to_string().into_bytes();
+
+                    for _ in 0..64 {
+                        let mut buffer = Vec::new();
+                        message
+                            .render_to_writer(&mut buffer)
+                            .expect("Vec<u8> writes are infallible");
+
+                        assert_eq!(buffer, expected);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("thread panicked");
+        }
     }
 
     #[test]
