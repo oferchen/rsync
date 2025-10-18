@@ -1,3 +1,4 @@
+use crate::handshake_util::remote_advertisement_was_clamped;
 use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
@@ -46,9 +47,7 @@ impl<R> BinaryHandshake<R> {
     /// Reports whether the remote peer advertised a protocol newer than we support.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        let advertised = self.remote_advertised_protocol();
-        let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
-        advertised_byte > self.remote_protocol.as_u8()
+        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.

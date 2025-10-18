@@ -1,5 +1,6 @@
 use crate::binary::BinaryHandshake;
 use crate::daemon::LegacyDaemonHandshake;
+use crate::handshake_util::remote_advertisement_was_clamped;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
 use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
 use std::convert::TryFrom;
@@ -260,7 +261,7 @@ impl<R> SessionHandshakeParts<R> {
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
     }
 
     /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
@@ -274,11 +275,6 @@ impl<R> SessionHandshakeParts<R> {
     pub fn into_handshake(self) -> SessionHandshake<R> {
         SessionHandshake::from_stream_parts(self)
     }
-}
-
-fn advertisement_was_clamped(advertised: u32, protocol: ProtocolVersion) -> bool {
-    let advertised_byte = u8::try_from(advertised).unwrap_or(u8::MAX);
-    advertised_byte > protocol.as_u8()
 }
 
 impl<R> From<BinaryHandshake<R>> for SessionHandshakeParts<R> {
