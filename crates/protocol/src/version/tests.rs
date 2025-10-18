@@ -753,7 +753,7 @@ fn supported_versions_iter_supports_nth_and_nth_back() {
 
     let penultimate = ProtocolVersion::from_supported_index(SUPPORTED_PROTOCOL_COUNT - 2)
         .expect("penultimate supported protocol should exist");
-    assert_eq!(iter.last(), Some(penultimate));
+    assert_eq!(iter.next_back(), Some(penultimate));
 }
 
 #[test]
@@ -813,7 +813,7 @@ fn supported_protocol_numbers_iter_supports_nth_and_nth_back() {
     );
 
     assert_eq!(
-        iter.last(),
+        iter.next_back(),
         Some(SUPPORTED_PROTOCOLS[SUPPORTED_PROTOCOL_COUNT - 2])
     );
 }

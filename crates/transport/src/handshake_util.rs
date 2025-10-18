@@ -47,10 +47,7 @@ mod tests {
     use proptest::prelude::*;
 
     fn negotiated_version_strategy() -> impl Strategy<Value = ProtocolVersion> {
-        let versions: Vec<ProtocolVersion> = ProtocolVersion::supported_versions_array()
-            .iter()
-            .copied()
-            .collect();
+        let versions: Vec<ProtocolVersion> = ProtocolVersion::supported_versions_array().to_vec();
         prop::sample::select(versions)
     }
 
