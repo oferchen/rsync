@@ -108,6 +108,122 @@ pub struct LegacyDaemonHandshake<R> {
     negotiated_protocol: ProtocolVersion,
 }
 
+/// Decomposed components of a [`LegacyDaemonHandshake`].
+///
+/// The structure groups the parsed greeting, negotiated protocol, and replaying
+/// stream parts so callers can temporarily take ownership of the components
+/// while instrumenting the transport.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::ProtocolVersion;
+/// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+/// use std::io::Cursor;
+///
+/// let transport = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+/// let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST).unwrap();
+///
+/// let parts = handshake.into_parts();
+/// assert_eq!(
+///     parts.server_protocol(),
+///     ProtocolVersion::from_supported(31).unwrap()
+/// );
+///
+/// let rebuilt = parts.into_handshake();
+/// assert_eq!(
+///     rebuilt.server_protocol(),
+///     ProtocolVersion::from_supported(31).unwrap()
+/// );
+/// ```
+#[doc(alias = "@RSYNCD")]
+#[derive(Clone, Debug)]
+pub struct LegacyDaemonHandshakeParts<R> {
+    server_greeting: LegacyDaemonGreetingOwned,
+    negotiated_protocol: ProtocolVersion,
+    stream: NegotiatedStreamParts<R>,
+}
+
+impl<R> LegacyDaemonHandshakeParts<R> {
+    const fn new(
+        server_greeting: LegacyDaemonGreetingOwned,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStreamParts<R>,
+    ) -> Self {
+        Self {
+            server_greeting,
+            negotiated_protocol,
+            stream,
+        }
+    }
+
+    /// Returns the parsed daemon greeting advertised by the server.
+    #[must_use]
+    pub const fn server_greeting(&self) -> &LegacyDaemonGreetingOwned {
+        &self.server_greeting
+    }
+
+    /// Returns the server protocol after clamping future advertisements.
+    #[must_use]
+    pub const fn server_protocol(&self) -> ProtocolVersion {
+        self.server_greeting.protocol()
+    }
+
+    /// Returns the raw protocol number advertised by the daemon.
+    #[must_use]
+    pub const fn remote_advertised_protocol(&self) -> u32 {
+        self.server_greeting.advertised_protocol()
+    }
+
+    /// Returns the negotiated protocol after applying the caller's cap.
+    #[must_use]
+    pub const fn negotiated_protocol(&self) -> ProtocolVersion {
+        self.negotiated_protocol
+    }
+
+    /// Returns the replaying stream parts captured during negotiation.
+    #[must_use]
+    pub const fn stream_parts(&self) -> &NegotiatedStreamParts<R> {
+        &self.stream
+    }
+
+    /// Returns a mutable reference to the replaying stream parts.
+    #[must_use]
+    pub fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+        &mut self.stream
+    }
+
+    /// Releases the structure and returns the replaying stream parts.
+    #[must_use]
+    pub fn into_stream_parts(self) -> NegotiatedStreamParts<R> {
+        self.stream
+    }
+
+    fn into_components(
+        self,
+    ) -> (
+        LegacyDaemonGreetingOwned,
+        ProtocolVersion,
+        NegotiatedStreamParts<R>,
+    ) {
+        (self.server_greeting, self.negotiated_protocol, self.stream)
+    }
+
+    fn from_components(
+        server_greeting: LegacyDaemonGreetingOwned,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStreamParts<R>,
+    ) -> Self {
+        Self::new(server_greeting, negotiated_protocol, stream)
+    }
+
+    /// Rebuilds a [`LegacyDaemonHandshake`] from the preserved components.
+    #[must_use]
+    pub fn into_handshake(self) -> LegacyDaemonHandshake<R> {
+        LegacyDaemonHandshake::from_parts(self)
+    }
+}
+
 impl<R> LegacyDaemonHandshake<R> {
     /// Returns the negotiated protocol version after applying the caller's cap.
     #[must_use]
@@ -178,6 +294,20 @@ impl<R> LegacyDaemonHandshake<R> {
         NegotiatedStream<R>,
     ) {
         (self.server_greeting, self.negotiated_protocol, self.stream)
+    }
+
+    /// Decomposes the handshake into a [`LegacyDaemonHandshakeParts`] structure.
+    #[must_use]
+    pub fn into_parts(self) -> LegacyDaemonHandshakeParts<R> {
+        let (server_greeting, negotiated_protocol, parts) = self.into_stream_parts();
+        LegacyDaemonHandshakeParts::from_components(server_greeting, negotiated_protocol, parts)
+    }
+
+    /// Reconstructs a [`LegacyDaemonHandshake`] from previously extracted parts.
+    #[must_use]
+    pub fn from_parts(parts: LegacyDaemonHandshakeParts<R>) -> Self {
+        let (server_greeting, negotiated_protocol, parts) = parts.into_components();
+        Self::from_stream_parts(server_greeting, negotiated_protocol, parts)
     }
 
     /// Reconstructs a [`LegacyDaemonHandshake`] from the parsed greeting, negotiated protocol,
@@ -644,6 +774,37 @@ mod tests {
         let inner = instrumented.into_inner();
         assert_eq!(inner.flushes(), 2);
         assert_eq!(inner.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    }
+
+    #[test]
+    fn into_parts_round_trips_legacy_handshake() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let parts = handshake.into_parts();
+        let expected_protocol = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        assert_eq!(parts.server_protocol(), expected_protocol);
+        assert_eq!(parts.negotiated_protocol(), expected_protocol);
+        assert_eq!(parts.remote_advertised_protocol(), 31);
+        assert_eq!(
+            parts.stream_parts().decision(),
+            NegotiationPrologue::LegacyAscii
+        );
+
+        let mut rebuilt = parts.into_handshake();
+        assert_eq!(rebuilt.server_protocol(), expected_protocol);
+        assert_eq!(rebuilt.negotiated_protocol(), expected_protocol);
+
+        rebuilt
+            .stream_mut()
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        rebuilt.stream_mut().flush().expect("flush propagates");
+
+        let transport = rebuilt.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 2);
+        assert_eq!(transport.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
     }
 
     #[test]

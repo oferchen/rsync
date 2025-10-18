@@ -29,6 +29,159 @@ pub struct BinaryHandshake<R> {
     negotiated_protocol: ProtocolVersion,
 }
 
+/// Decomposed components of a [`BinaryHandshake`].
+///
+/// The structure groups the negotiated metadata with the replaying stream parts,
+/// making it convenient to stage additional instrumentation around the transport
+/// before reconstituting the handshake.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::ProtocolVersion;
+/// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+/// use std::io::{Cursor, Read, Write};
+///
+/// #[derive(Debug)]
+/// struct Loopback {
+///     reader: Cursor<Vec<u8>>,
+///     written: Vec<u8>,
+/// }
+///
+/// impl Loopback {
+///     fn new(advertisement: [u8; 4]) -> Self {
+///         Self {
+///             reader: Cursor::new(advertisement.to_vec()),
+///             written: Vec::new(),
+///         }
+///     }
+/// }
+///
+/// impl Read for Loopback {
+///     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+///         self.reader.read(buf)
+///     }
+/// }
+///
+/// impl Write for Loopback {
+///     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+///         self.written.extend_from_slice(buf);
+///         Ok(buf.len())
+///     }
+///
+///     fn flush(&mut self) -> std::io::Result<()> {
+///         Ok(())
+///     }
+/// }
+///
+/// let protocol = ProtocolVersion::from_supported(31).unwrap();
+/// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
+/// let handshake = negotiate_binary_session(transport, protocol).unwrap();
+///
+/// let parts = handshake.into_parts();
+/// assert_eq!(parts.remote_protocol(), protocol);
+/// assert_eq!(parts.negotiated_protocol(), protocol);
+///
+/// let rebuilt = parts.into_handshake();
+/// assert_eq!(rebuilt.remote_protocol(), protocol);
+/// assert_eq!(rebuilt.negotiated_protocol(), protocol);
+/// ```
+#[derive(Clone, Debug)]
+pub struct BinaryHandshakeParts<R> {
+    remote_advertised: u32,
+    remote_protocol: ProtocolVersion,
+    negotiated_protocol: ProtocolVersion,
+    stream: NegotiatedStreamParts<R>,
+}
+
+impl<R> BinaryHandshakeParts<R> {
+    const fn new(
+        remote_advertised: u32,
+        remote_protocol: ProtocolVersion,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStreamParts<R>,
+    ) -> Self {
+        Self {
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        }
+    }
+
+    /// Returns the protocol number advertised by the remote peer before clamping.
+    #[must_use]
+    pub const fn remote_advertised_protocol(&self) -> u32 {
+        self.remote_advertised
+    }
+
+    /// Returns the remote protocol version after clamping future advertisements.
+    #[must_use]
+    pub const fn remote_protocol(&self) -> ProtocolVersion {
+        self.remote_protocol
+    }
+
+    /// Returns the negotiated protocol after applying the caller's cap.
+    #[must_use]
+    pub const fn negotiated_protocol(&self) -> ProtocolVersion {
+        self.negotiated_protocol
+    }
+
+    /// Returns the replaying stream parts captured during negotiation.
+    #[must_use]
+    pub const fn stream_parts(&self) -> &NegotiatedStreamParts<R> {
+        &self.stream
+    }
+
+    /// Returns a mutable reference to the replaying stream parts.
+    #[must_use]
+    pub fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+        &mut self.stream
+    }
+
+    /// Releases the structure and returns the replaying stream parts.
+    #[must_use]
+    pub fn into_stream_parts(self) -> NegotiatedStreamParts<R> {
+        self.stream
+    }
+
+    fn into_components(
+        self,
+    ) -> (
+        u32,
+        ProtocolVersion,
+        ProtocolVersion,
+        NegotiatedStreamParts<R>,
+    ) {
+        (
+            self.remote_advertised,
+            self.remote_protocol,
+            self.negotiated_protocol,
+            self.stream,
+        )
+    }
+
+    fn from_components(
+        remote_advertised: u32,
+        remote_protocol: ProtocolVersion,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStreamParts<R>,
+    ) -> Self {
+        Self::new(
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        )
+    }
+
+    /// Rebuilds a [`BinaryHandshake`] from the preserved components.
+    #[must_use]
+    pub fn into_handshake(self) -> BinaryHandshake<R> {
+        BinaryHandshake::from_parts(self)
+    }
+}
+
 impl<R> BinaryHandshake<R> {
     /// Returns the negotiated protocol version after clamping to the caller's
     /// desired cap and the remote peer's advertisement.
@@ -93,6 +246,32 @@ impl<R> BinaryHandshake<R> {
             self.remote_protocol,
             self.negotiated_protocol,
             self.stream,
+        )
+    }
+
+    /// Decomposes the handshake into a [`BinaryHandshakeParts`] structure.
+    #[must_use]
+    pub fn into_parts(self) -> BinaryHandshakeParts<R> {
+        let (remote_advertised, remote_protocol, negotiated_protocol, stream) =
+            self.into_stream_parts();
+        BinaryHandshakeParts::from_components(
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        )
+    }
+
+    /// Reconstructs a [`BinaryHandshake`] from previously extracted parts.
+    #[must_use]
+    pub fn from_parts(parts: BinaryHandshakeParts<R>) -> Self {
+        let (remote_advertised, remote_protocol, negotiated_protocol, stream) =
+            parts.into_components();
+        Self::from_stream_parts(
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
         )
     }
 
@@ -769,6 +948,41 @@ mod tests {
         rehydrated.stream_mut().flush().expect("flush propagates");
 
         let transport = rehydrated.into_stream().into_inner();
+        assert_eq!(transport.flushes(), 2);
+
+        let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+        expected.extend_from_slice(b"payload");
+        assert_eq!(transport.written(), expected.as_slice());
+    }
+
+    #[test]
+    fn into_parts_round_trips_binary_handshake() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = CountingTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let parts = handshake.into_parts();
+        assert_eq!(
+            parts.remote_advertised_protocol(),
+            u32::from(remote_version.as_u8())
+        );
+        assert_eq!(parts.remote_protocol(), remote_version);
+        assert_eq!(parts.negotiated_protocol(), remote_version);
+        assert_eq!(parts.stream_parts().decision(), NegotiationPrologue::Binary);
+
+        let mut rebuilt = parts.into_handshake();
+        assert_eq!(rebuilt.remote_protocol(), remote_version);
+        assert_eq!(rebuilt.negotiated_protocol(), remote_version);
+
+        rebuilt
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+        rebuilt.stream_mut().flush().expect("flush propagates");
+
+        let transport = rebuilt.into_stream().into_inner();
         assert_eq!(transport.flushes(), 2);
 
         let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();

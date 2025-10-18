@@ -69,11 +69,11 @@ mod negotiation;
 mod session;
 
 pub use binary::{
-    BinaryHandshake, negotiate_binary_session, negotiate_binary_session_from_stream,
-    negotiate_binary_session_with_sniffer,
+    BinaryHandshake, BinaryHandshakeParts, negotiate_binary_session,
+    negotiate_binary_session_from_stream, negotiate_binary_session_with_sniffer,
 };
 pub use daemon::{
-    LegacyDaemonHandshake, negotiate_legacy_daemon_session,
+    LegacyDaemonHandshake, LegacyDaemonHandshakeParts, negotiate_legacy_daemon_session,
     negotiate_legacy_daemon_session_from_stream, negotiate_legacy_daemon_session_with_sniffer,
 };
 pub use negotiation::{
