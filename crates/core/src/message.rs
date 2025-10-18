@@ -995,43 +995,58 @@ impl Message {
         })
     }
 
-    /// Creates an informational message.
+    /// Creates a message with the provided severity and payload.
+    ///
+    /// Higher layers typically construct diagnostics through the severity-specific helpers such as
+    /// [`Message::info`], [`Message::warning`], or [`Message::error`]. This constructor allows callers to
+    /// generate messages dynamically when the severity is only known at runtime—for example when
+    /// mapping upstream exit-code tables. The message starts without an associated exit code or
+    /// source location so additional context can be layered on afterwards.
+    ///
+    /// # Examples
+    ///
+    /// Build a warning message and attach an exit code once additional context becomes available.
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, Severity};
+    ///
+    /// let message = Message::new(Severity::Warning, "some files vanished").with_code(24);
+    ///
+    /// assert_eq!(message.severity(), Severity::Warning);
+    /// assert_eq!(message.code(), Some(24));
+    /// assert_eq!(message.text(), "some files vanished");
+    /// ```
     #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
-    pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
+    pub fn new<T: Into<Cow<'static, str>>>(severity: Severity, text: T) -> Self {
         Self {
-            severity: Severity::Info,
+            severity,
             code: None,
             text: text.into(),
             role: None,
             source: None,
         }
+    }
+
+    /// Creates an informational message.
+    #[inline]
+    #[must_use = "constructed messages must be emitted to reach users"]
+    pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
+        Self::new(Severity::Info, text)
     }
 
     /// Creates a warning message.
     #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn warning<T: Into<Cow<'static, str>>>(text: T) -> Self {
-        Self {
-            severity: Severity::Warning,
-            code: None,
-            text: text.into(),
-            role: None,
-            source: None,
-        }
+        Self::new(Severity::Warning, text)
     }
 
     /// Creates an error message with the provided exit code.
     #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn error<T: Into<Cow<'static, str>>>(code: i32, text: T) -> Self {
-        Self {
-            severity: Severity::Error,
-            code: Some(code),
-            text: text.into(),
-            role: None,
-            source: None,
-        }
+        Self::new(Severity::Error, text).with_code(code)
     }
 
     /// Returns the message severity.
@@ -1757,6 +1772,19 @@ mod tests {
     #[track_caller]
     fn tracked_rsync_info_macro() -> Message {
         rsync_info!("negotiation complete")
+    }
+
+    #[test]
+    fn message_new_allows_dynamic_severity() {
+        let warning = Message::new(Severity::Warning, "dynamic warning");
+        assert_eq!(warning.severity(), Severity::Warning);
+        assert_eq!(warning.code(), None);
+        assert_eq!(warning.text(), "dynamic warning");
+
+        let error = Message::new(Severity::Error, "dynamic error").with_code(23);
+        assert_eq!(error.severity(), Severity::Error);
+        assert_eq!(error.code(), Some(23));
+        assert_eq!(error.text(), "dynamic error");
     }
 
     #[test]
