@@ -1037,6 +1037,9 @@ impl Message {
                     Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                         continue;
                     }
+                    Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                        break;
+                    }
                     Err(err) => return Err(err),
                 }
             }
@@ -1781,6 +1784,27 @@ mod tests {
     }
 
     #[test]
+    fn render_to_writer_skips_vectored_when_writer_does_not_support_it() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Receiver)
+            .with_source(untracked_source());
+
+        let expected = message.to_string();
+
+        let mut writer = RecordingWriter::without_vectored();
+        message
+            .render_to_writer(&mut writer)
+            .expect("sequential write succeeds");
+
+        assert_eq!(writer.vectored_calls, 0, "vectored writes must be skipped");
+        assert!(
+            writer.write_calls > 0,
+            "sequential path should handle the message"
+        );
+        assert_eq!(String::from_utf8(writer.buffer).unwrap(), expected);
+    }
+
+    #[test]
     fn render_to_writer_falls_back_when_vectored_partial() {
         let message = Message::error(30, "timeout in data send/receive")
             .with_role(Role::Receiver)
@@ -1804,24 +1828,35 @@ mod tests {
         assert_eq!(String::from_utf8(writer.buffer).unwrap(), expected);
     }
 
-    #[derive(Default)]
     struct RecordingWriter {
         buffer: Vec<u8>,
         vectored_calls: usize,
         write_calls: usize,
         vectored_limit: Option<usize>,
+        supports_vectored: bool,
     }
 
     impl RecordingWriter {
         fn new() -> Self {
-            Self::default()
+            Self {
+                buffer: Vec::new(),
+                vectored_calls: 0,
+                write_calls: 0,
+                vectored_limit: None,
+                supports_vectored: true,
+            }
         }
 
         fn with_vectored_limit(limit: usize) -> Self {
-            Self {
-                vectored_limit: Some(limit),
-                ..Self::default()
-            }
+            let mut writer = Self::new();
+            writer.vectored_limit = Some(limit);
+            writer
+        }
+
+        fn without_vectored() -> Self {
+            let mut writer = Self::new();
+            writer.supports_vectored = false;
+            writer
         }
     }
 
@@ -1837,6 +1872,12 @@ mod tests {
         }
 
         fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            if !self.supports_vectored {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "vectored writes unsupported",
+                ));
+            }
             self.vectored_calls += 1;
 
             let mut to_write: usize = bufs.iter().map(|slice| slice.len()).sum();
