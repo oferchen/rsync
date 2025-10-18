@@ -97,6 +97,28 @@ where
 /// let slices: &[std::io::IoSlice<'_>] = segments.as_ref();
 /// assert_eq!(slices.len(), segments.segment_count());
 /// ```
+///
+/// Consume the segments to collect the rendered message into a contiguous buffer.
+///
+/// ```
+/// use rsync_core::{
+///     message::{Message, MessageScratch, Role},
+///     message_source,
+/// };
+///
+/// let mut scratch = MessageScratch::new();
+/// let message = Message::error(23, "delta-transfer failure")
+///     .with_role(Role::Sender)
+///     .with_source(message_source!());
+///
+/// let segments = message.as_segments(&mut scratch, false);
+/// let mut flattened = Vec::new();
+/// for slice in segments {
+///     flattened.extend_from_slice(slice.as_ref());
+/// }
+///
+/// assert_eq!(flattened, message.to_bytes().unwrap());
+/// ```
 #[derive(Clone, Debug)]
 pub struct MessageSegments<'a> {
     segments: [IoSlice<'a>; MAX_MESSAGE_SEGMENTS],
@@ -280,6 +302,15 @@ impl<'a> IntoIterator for &'a MessageSegments<'a> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a> IntoIterator for MessageSegments<'a> {
+    type Item = IoSlice<'a>;
+    type IntoIter = std::iter::Take<std::array::IntoIter<IoSlice<'a>, MAX_MESSAGE_SEGMENTS>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.segments.into_iter().take(self.count)
     }
 }
 
@@ -2148,6 +2179,34 @@ mod tests {
             .collect();
 
         assert_eq!(flattened, message.to_bytes().unwrap());
+    }
+
+    #[test]
+    fn segments_into_iter_collects_bytes() {
+        let mut scratch = MessageScratch::new();
+        let message = Message::warning("some files vanished")
+            .with_code(24)
+            .with_source(untracked_source());
+
+        let segments = message.as_segments(&mut scratch, true);
+        let mut flattened = Vec::new();
+
+        for slice in segments.clone() {
+            flattened.extend_from_slice(slice.as_ref());
+        }
+
+        assert_eq!(flattened, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn segments_into_iter_respects_segment_count() {
+        let mut scratch = MessageScratch::new();
+        let message = Message::info("protocol negotiation complete");
+
+        let segments = message.as_segments(&mut scratch, false);
+        let iter = segments.clone().into_iter();
+
+        assert_eq!(iter.count(), segments.segment_count());
     }
 
     struct RecordingWriter {
