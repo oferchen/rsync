@@ -40,6 +40,7 @@ pub struct MessageScratch {
 
 impl MessageScratch {
     /// Creates a new scratch buffer with zeroed storage.
+    #[inline]
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -50,6 +51,7 @@ impl MessageScratch {
 }
 
 impl Default for MessageScratch {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -128,24 +130,28 @@ pub struct MessageSegments<'a> {
 
 impl<'a> MessageSegments<'a> {
     /// Returns the populated slice view over the underlying [`IoSlice`] array.
+    #[inline]
     #[must_use]
     pub fn as_slices(&self) -> &[IoSlice<'a>] {
         &self.segments[..self.count]
     }
 
     /// Returns the total number of bytes covered by the message segments.
+    #[inline]
     #[must_use]
     pub const fn len(&self) -> usize {
         self.total_len
     }
 
     /// Reports the number of populated segments.
+    #[inline]
     #[must_use]
     pub const fn segment_count(&self) -> usize {
         self.count
     }
 
     /// Reports whether any slices were produced.
+    #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -182,6 +188,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(rendered, message.to_line_bytes().unwrap());
     /// ```
+    #[inline]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
@@ -302,6 +309,7 @@ impl<'a> MessageSegments<'a> {
 }
 
 impl<'a> AsRef<[IoSlice<'a>]> for MessageSegments<'a> {
+    #[inline]
     fn as_ref(&self) -> &[IoSlice<'a>] {
         self.as_slices()
     }
@@ -311,6 +319,7 @@ impl<'a> IntoIterator for &'a MessageSegments<'a> {
     type Item = &'a IoSlice<'a>;
     type IntoIter = slice::Iter<'a, IoSlice<'a>>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -320,6 +329,7 @@ impl<'a> IntoIterator for MessageSegments<'a> {
     type Item = IoSlice<'a>;
     type IntoIter = std::iter::Take<std::array::IntoIter<IoSlice<'a>, MAX_MESSAGE_SEGMENTS>>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.segments.into_iter().take(self.count)
     }
@@ -961,6 +971,7 @@ impl Message {
     }
 
     /// Creates an informational message.
+    #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
@@ -973,6 +984,7 @@ impl Message {
     }
 
     /// Creates a warning message.
+    #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn warning<T: Into<Cow<'static, str>>>(text: T) -> Self {
         Self {
@@ -985,6 +997,7 @@ impl Message {
     }
 
     /// Creates an error message with the provided exit code.
+    #[inline]
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn error<T: Into<Cow<'static, str>>>(code: i32, text: T) -> Self {
         Self {
@@ -997,36 +1010,42 @@ impl Message {
     }
 
     /// Returns the message severity.
+    #[inline]
     #[must_use]
     pub const fn severity(&self) -> Severity {
         self.severity
     }
 
     /// Returns the exit code associated with the message if present.
+    #[inline]
     #[must_use]
     pub const fn code(&self) -> Option<i32> {
         self.code
     }
 
     /// Returns the message payload text.
+    #[inline]
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
     /// Returns the role used in the trailer, if any.
+    #[inline]
     #[must_use]
     pub const fn role(&self) -> Option<Role> {
         self.role
     }
 
     /// Returns the recorded source location, if any.
+    #[inline]
     #[must_use]
     pub fn source(&self) -> Option<&SourceLocation> {
         self.source.as_ref()
     }
 
     /// Attaches a role trailer to the message.
+    #[inline]
     #[must_use = "the updated message must be emitted to retain the attached role"]
     pub fn with_role(mut self, role: Role) -> Self {
         self.role = Some(role);
@@ -1034,6 +1053,7 @@ impl Message {
     }
 
     /// Attaches a source location to the message.
+    #[inline]
     #[must_use = "the updated message must be emitted to retain the attached source"]
     pub fn with_source(mut self, source: SourceLocation) -> Self {
         self.source = Some(source);
@@ -1060,6 +1080,7 @@ impl Message {
     /// assert!(rendered.contains("(code 24)"));
     /// ```
     #[must_use = "the updated message must be emitted to retain the attached code"]
+    #[inline]
     pub fn with_code(mut self, code: i32) -> Self {
         self.code = Some(code);
         self
@@ -1087,6 +1108,7 @@ impl Message {
     /// assert!(rendered.contains("rsync error: example (code 12)"));
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
+    #[inline]
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
         with_thread_local_scratch(|scratch| self.render_to_with_scratch(scratch, writer))
     }
@@ -1113,6 +1135,7 @@ impl Message {
     /// assert!(rendered.ends_with('\n'));
     /// assert!(rendered.contains("[generator=3.4.1-rust]"));
     /// ```
+    #[inline]
     pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
         with_thread_local_scratch(|scratch| self.render_line_to_with_scratch(scratch, writer))
     }
@@ -1138,6 +1161,7 @@ impl Message {
     /// assert!(bytes.starts_with(b"rsync error:"));
     /// assert!(bytes.ends_with(b"[sender=3.4.1-rust]"));
     /// ```
+    #[inline]
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         with_thread_local_scratch(|scratch| self.to_bytes_with_scratch(scratch))
     }
@@ -1159,6 +1183,7 @@ impl Message {
     ///
     /// assert!(rendered.ends_with(b"\n"));
     /// ```
+    #[inline]
     pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
         with_thread_local_scratch(|scratch| self.to_line_bytes_with_scratch(scratch))
     }
@@ -1190,6 +1215,7 @@ impl Message {
     /// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
+    #[inline]
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         with_thread_local_scratch(|scratch| self.render_to_writer_with_scratch(scratch, writer))
     }
@@ -1216,6 +1242,7 @@ impl Message {
     /// assert!(rendered.ends_with('\n'));
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
+    #[inline]
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         with_thread_local_scratch(|scratch| {
             self.render_line_to_writer_with_scratch(scratch, writer)
