@@ -69,17 +69,18 @@ mod negotiation;
 mod session;
 
 pub use binary::{
-    BinaryHandshake, negotiate_binary_session, negotiate_binary_session_with_sniffer,
+    BinaryHandshake, negotiate_binary_session, negotiate_binary_session_from_stream,
+    negotiate_binary_session_with_sniffer,
 };
 pub use daemon::{
     LegacyDaemonHandshake, negotiate_legacy_daemon_session,
-    negotiate_legacy_daemon_session_with_sniffer,
+    negotiate_legacy_daemon_session_from_stream, negotiate_legacy_daemon_session_with_sniffer,
 };
 pub use negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
 pub use session::{
-    SessionHandshake, SessionHandshakeParts, negotiate_session, negotiate_session_parts,
-    negotiate_session_parts_with_sniffer, negotiate_session_with_sniffer,
+    SessionHandshake, SessionHandshakeParts, negotiate_session, negotiate_session_from_stream,
+    negotiate_session_parts, negotiate_session_parts_with_sniffer, negotiate_session_with_sniffer,
 };
