@@ -1,7 +1,9 @@
 use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
 use core::fmt::{self, Write as FmtWrite};
+use core::iter::FusedIterator;
 use std::borrow::ToOwned;
+use std::str::SplitAsciiWhitespace;
 
 /// Owned representation of a legacy ASCII daemon greeting.
 ///
@@ -94,6 +96,29 @@ impl<'a> LegacyDaemonGreeting<'a> {
     #[must_use]
     pub const fn has_digest_list(self) -> bool {
         self.digest_list.is_some()
+    }
+
+    /// Returns an iterator over the whitespace-separated digest tokens announced by the daemon.
+    ///
+    /// Upstream rsync uses the digest list to negotiate challenge/response algorithms during the
+    /// legacy ASCII handshake. The iterator splits the stored list on ASCII whitespace while
+    /// preserving the original token order, allowing higher layers to check for specific digests
+    /// without allocating intermediate buffers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::parse_legacy_daemon_greeting_details;
+    ///
+    /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
+    /// let tokens: Vec<_> = greeting.digest_tokens().collect();
+    ///
+    /// assert_eq!(tokens, ["md5", "md4"]);
+    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn digest_tokens(&self) -> DigestListTokens<'_> {
+        DigestListTokens::new(self.digest_list())
     }
 
     /// Converts the borrowed greeting into an owned representation.
@@ -242,6 +267,28 @@ impl LegacyDaemonGreetingOwned {
         self.digest_list.is_some()
     }
 
+    /// Returns an iterator over the whitespace-separated digest tokens announced by the daemon.
+    ///
+    /// This mirrors [`LegacyDaemonGreeting::digest_tokens`] while borrowing from the owned string,
+    /// making it convenient to inspect digest capabilities after the greeting has been detached from
+    /// the parsing buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationError};
+    ///
+    /// let greeting = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into()))?;
+    /// let tokens: Vec<_> = greeting.digest_tokens().collect();
+    ///
+    /// assert_eq!(tokens, ["md4", "md5"]);
+    /// # Ok::<_, NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn digest_tokens(&self) -> DigestListTokens<'_> {
+        DigestListTokens::new(self.digest_list())
+    }
+
     /// Returns a borrowed representation of the greeting.
     #[must_use]
     pub fn as_borrowed(&self) -> LegacyDaemonGreeting<'_> {
@@ -308,6 +355,47 @@ impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
         }
     }
 }
+
+/// Iterator over whitespace-separated digest tokens advertised by a legacy daemon.
+///
+/// Instances of this iterator are created via [`LegacyDaemonGreeting::digest_tokens`] or
+/// [`LegacyDaemonGreetingOwned::digest_tokens`]. The iterator yields each digest exactly once in the
+/// order received from the peer, matching upstream rsync's processing of the challenge/response list.
+#[derive(Clone, Debug)]
+pub struct DigestListTokens<'a> {
+    inner: Option<SplitAsciiWhitespace<'a>>,
+}
+
+impl<'a> DigestListTokens<'a> {
+    fn new(digest_list: Option<&'a str>) -> Self {
+        Self {
+            inner: digest_list.map(|list| list.split_ascii_whitespace()),
+        }
+    }
+}
+
+impl<'a> Iterator for DigestListTokens<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let iter = self.inner.as_mut()?;
+        match iter.next() {
+            Some(token) => Some(token),
+            None => {
+                self.inner = None;
+                None
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner
+            .as_ref()
+            .map_or((0, Some(0)), Iterator::size_hint)
+    }
+}
+
+impl<'a> FusedIterator for DigestListTokens<'a> {}
 
 /// Parses a legacy ASCII daemon greeting of the form `@RSYNCD: <version>`.
 ///
@@ -573,6 +661,20 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_greeting_digest_tokens_iterate_in_order() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 30.0 md5\tmd4\n")
+            .expect("digest list should parse");
+
+        let collected: Vec<_> = greeting.digest_tokens().collect();
+        assert_eq!(collected, ["md5", "md4"]);
+
+        let no_digest =
+            parse_legacy_daemon_greeting_details("@RSYNCD: 29\n").expect("no digest list");
+        let empty: Vec<_> = no_digest.digest_tokens().collect();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
     fn greeting_details_records_absence_of_subprotocol_for_old_versions() {
         let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 29\n")
             .expect("old protocols may omit subprotocol");
@@ -596,6 +698,21 @@ mod tests {
         assert_eq!(owned.subprotocol_raw(), Some(1));
         assert_eq!(owned.digest_list(), Some("md4"));
         assert!(owned.has_digest_list());
+    }
+
+    #[test]
+    fn owned_greeting_digest_tokens_iterate_in_order() {
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), Some(" md4  md5  md6".into()))
+                .expect("construction succeeds");
+
+        let collected: Vec<_> = greeting.digest_tokens().collect();
+        assert_eq!(collected, ["md4", "md5", "md6"]);
+
+        let no_digest =
+            LegacyDaemonGreetingOwned::from_parts(28, None, None).expect("no digest list");
+        let empty: Vec<_> = no_digest.digest_tokens().collect();
+        assert!(empty.is_empty());
     }
 
     #[test]

@@ -33,9 +33,9 @@ pub use bytes::{
 #[allow(unused_imports)]
 pub use greeting::write_legacy_daemon_greeting;
 pub use greeting::{
-    LegacyDaemonGreeting, LegacyDaemonGreetingOwned, format_legacy_daemon_greeting,
-    parse_legacy_daemon_greeting, parse_legacy_daemon_greeting_details,
-    parse_legacy_daemon_greeting_owned,
+    DigestListTokens, LegacyDaemonGreeting, LegacyDaemonGreetingOwned,
+    format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
+    parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
 };
 pub use lines::{
     LegacyDaemonMessage, parse_legacy_daemon_message, parse_legacy_error_message,

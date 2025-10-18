@@ -1,15 +1,15 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use rsync_protocol::{
-    CompatibilityFlags, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting,
-    LogCode, LogCodeConversionError, MessageCode, NegotiationError, NegotiationPrologue,
-    NegotiationPrologueSniffer, ParseLogCodeError, ParseNegotiationPrologueError,
-    ParseNegotiationPrologueErrorKind, ParseProtocolVersionErrorKind, ProtocolVersion,
-    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter,
-    SupportedVersionsIter, decode_varint, encode_varint_to_vec,
-    parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_greeting_details,
-    read_and_parse_legacy_daemon_greeting_details, read_varint, select_highest_mutual,
-    write_varint,
+    CompatibilityFlags, DigestListTokens, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
+    LegacyDaemonGreeting, LogCode, LogCodeConversionError, MessageCode, NegotiationError,
+    NegotiationPrologue, NegotiationPrologueSniffer, ParseLogCodeError,
+    ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
+    ParseProtocolVersionErrorKind, ProtocolVersion, ProtocolVersionAdvertisement,
+    SUPPORTED_PROTOCOL_BITMAP, SupportedProtocolNumbersIter, SupportedVersionsIter, decode_varint,
+    encode_varint_to_vec, parse_legacy_daemon_greeting_bytes_details,
+    parse_legacy_daemon_greeting_details, read_and_parse_legacy_daemon_greeting_details,
+    read_varint, select_highest_mutual, write_varint,
 };
 use std::iter::FusedIterator;
 use std::str::FromStr;
@@ -159,6 +159,26 @@ fn supported_protocol_bitmap_matches_helpers() {
         0,
         "no bits above newest supported version"
     );
+}
+
+#[test]
+fn digest_list_tokens_are_public_iterators() {
+    fn assert_traits<'a, I>(mut iter: I)
+    where
+        I: Iterator<Item = &'a str> + Clone + FusedIterator,
+    {
+        let mut clone = iter.clone();
+        assert_eq!(clone.next(), Some("md5"));
+        assert_eq!(clone.next(), Some("md4"));
+        assert!(clone.next().is_none());
+        assert!(iter.next().is_some());
+    }
+
+    let greeting =
+        parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n").expect("greeting parses");
+    let tokens = greeting.digest_tokens();
+    let _: DigestListTokens<'_> = tokens.clone();
+    assert_traits(tokens);
 }
 
 #[test]
