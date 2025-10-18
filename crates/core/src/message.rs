@@ -190,8 +190,8 @@ impl<'a> MessageSegments<'a> {
     ///
     /// The helper prefers vectored writes when the message spans multiple
     /// segments so downstream sinks receive the payload in a single
-    /// [`write_vectored`](IoWrite::write_vectored) call. When the writer either
-    /// reports that vectored I/O is unsupported or performs a partial write, the
+    /// [`write_vectored`](IoWrite::write_vectored) call. When the writer reports
+    /// that vectored I/O is unsupported or performs a partial write, the
     /// remaining bytes are flushed sequentially to mirror upstream rsync's
     /// formatting logic.
     ///
@@ -221,8 +221,9 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
-        if self.segment_count() > 1 {
-            let count = self.segment_count();
+        let count = self.segment_count();
+
+        if count > 1 {
             let mut start = 0usize;
             let mut offset = 0usize;
             let mut remaining = self.len();
@@ -2450,6 +2451,7 @@ mod tests {
         written: Vec<u8>,
         vectored_calls: usize,
         unsupported_once: bool,
+        always_unsupported: bool,
         vectored_limit: Option<usize>,
     }
 
@@ -2457,6 +2459,13 @@ mod tests {
         fn with_unsupported_once() -> Self {
             Self {
                 unsupported_once: true,
+                ..Self::default()
+            }
+        }
+
+        fn with_always_unsupported() -> Self {
+            Self {
+                always_unsupported: true,
                 ..Self::default()
             }
         }
@@ -2480,6 +2489,13 @@ mod tests {
 
             if self.unsupported_once {
                 self.unsupported_once = false;
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "no vectored support",
+                ));
+            }
+
+            if self.always_unsupported {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "no vectored support",
@@ -2561,6 +2577,26 @@ mod tests {
         let mut scratch = MessageScratch::new();
         let segments = message.as_segments(&mut scratch, false);
         let mut writer = TrackingWriter::with_unsupported_once();
+
+        segments
+            .write_to(&mut writer)
+            .expect("sequential fallback should succeed");
+
+        drop(segments);
+
+        assert_eq!(writer.written, message.to_bytes().unwrap());
+        assert_eq!(writer.vectored_calls, 1);
+    }
+
+    #[test]
+    fn segments_write_to_handles_persistent_unsupported_vectored_calls() {
+        let message = Message::error(124, "remote shell failed")
+            .with_role(Role::Client)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+        let mut writer = TrackingWriter::with_always_unsupported();
 
         segments
             .write_to(&mut writer)
