@@ -196,22 +196,17 @@ impl<'a> MessageSegments<'a> {
         self.count
     }
 
-    /// Reports whether any slices were produced.
-    #[inline]
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    /// Returns an iterator over the populated vectored slices.
+    /// Returns an iterator over the populated [`IoSlice`] values.
     ///
-    /// The iterator yields the same slices returned by [`Self::as_slices`],
-    /// preserving their original ordering. This mirrors upstream rsync's
-    /// approach of rendering diagnostics by concatenating discrete segments
-    /// without reallocating. Consumers that prefer idiomatic iteration can
-    /// therefore avoid manual slice handling.
+    /// The iterator traverses the same slices that [`Self::as_slices`] exposes, preserving their
+    /// original ordering so call sites can stream the message into custom sinks without allocating
+    /// intermediate buffers. This mirrors upstream rsync's behaviour where formatted messages are
+    /// emitted sequentially. The iterator borrows the segments, meaning the caller must keep the
+    /// [`MessageSegments`] instance alive for the duration of the iteration.
     ///
     /// # Examples
+    ///
+    /// Iterate over the segments to compute their cumulative length.
     ///
     /// ```
     /// use rsync_core::{
@@ -219,24 +214,25 @@ impl<'a> MessageSegments<'a> {
     ///     message_source,
     /// };
     ///
-    /// let mut scratch = MessageScratch::new();
     /// let message = Message::error(23, "delta-transfer failure")
     ///     .with_role(Role::Sender)
     ///     .with_source(message_source!());
+    /// let mut scratch = MessageScratch::new();
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let total: usize = segments.iter().map(|slice| slice.len()).sum();
     ///
-    /// let rendered: Vec<u8> = {
-    ///     let segments = message.as_segments(&mut scratch, true);
-    ///     segments
-    ///         .iter()
-    ///         .flat_map(|slice| slice.as_ref().iter().copied())
-    ///         .collect()
-    /// };
-    ///
-    /// assert_eq!(rendered, message.to_line_bytes().unwrap());
+    /// assert_eq!(total, segments.len());
     /// ```
     #[inline]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
+    }
+
+    /// Reports whether any slices were produced.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
     }
 
     /// Returns a mutable iterator over the populated vectored slices.
@@ -2317,6 +2313,20 @@ mod tests {
         };
 
         assert_eq!(collected, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_into_iterator_matches_iter() {
+        let message = Message::error(12, "example failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, true);
+        let via_method: Vec<usize> = segments.iter().map(|slice| slice.len()).collect();
+        let via_into: Vec<usize> = (&segments).into_iter().map(|slice| slice.len()).collect();
+
+        assert_eq!(via_method, via_into);
     }
 
     #[test]
