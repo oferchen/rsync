@@ -475,6 +475,45 @@ impl<R> NegotiatedStream<R> {
             .map_err(|err| err.map_original(NegotiatedStreamParts::into_stream))
     }
 
+    /// Clones the replaying stream by duplicating the inner reader through the provided closure.
+    ///
+    /// This mirrors the behaviour of transports such as [`std::net::TcpStream`], which expose a
+    /// [`try_clone`](std::net::TcpStream::try_clone) method instead of implementing [`Clone`]. The
+    /// buffered negotiation state is copied so both the original and the clone replay the captured
+    /// prefix and remainder independently. Any error returned by `clone_inner` is propagated
+    /// unchanged, leaving the original stream untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, Read};
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let mut cloned = stream
+    ///     .try_clone_with(|cursor| -> std::io::Result<_> { Ok(cursor.clone()) })
+    ///     .expect("cursor clone succeeds");
+    ///
+    /// let mut replay = Vec::new();
+    /// cloned
+    ///     .read_to_end(&mut replay)
+    ///     .expect("cloned stream replays buffered bytes");
+    /// assert_eq!(replay, b"@RSYNCD: 31.0\nreply");
+    /// ```
+    #[doc(alias = "try_clone")]
+    pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStream<T>, E>
+    where
+        F: FnOnce(&R) -> Result<T, E>,
+    {
+        let inner = clone_inner(&self.inner)?;
+        Ok(NegotiatedStream {
+            inner,
+            decision: self.decision,
+            buffer: self.buffer.clone(),
+        })
+    }
+
     /// Reconstructs a [`NegotiatedStream`] from previously extracted raw components.
     ///
     /// Callers typically pair this with [`Self::into_raw_parts`], allowing negotiation state to be
@@ -1245,6 +1284,48 @@ impl<R> NegotiatedStreamParts<R> {
                 },
             )),
         }
+    }
+
+    /// Clones the decomposed negotiation state using a caller-provided duplication strategy.
+    ///
+    /// The helper mirrors [`NegotiatedStream::try_clone_with`] while operating on extracted parts.
+    /// It is particularly useful when the inner transport exposes an inherent
+    /// [`try_clone`](std::net::TcpStream::try_clone)-style API instead of [`Clone`]. The buffered
+    /// negotiation bytes are copied so the original and cloned parts can be converted into replaying
+    /// streams without affecting each other's progress. Errors from `clone_inner` are propagated
+    /// unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, Read};
+    ///
+    /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 30.0\nhello".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .into_parts();
+    /// let mut cloned = parts
+    ///     .try_clone_with(|cursor| -> std::io::Result<_> { Ok(cursor.clone()) })
+    ///     .expect("cursor clone succeeds");
+    ///
+    /// let mut replay = Vec::new();
+    /// cloned
+    ///     .into_stream()
+    ///     .read_to_end(&mut replay)
+    ///     .expect("cloned parts replay buffered bytes");
+    /// assert_eq!(replay, b"@RSYNCD: 30.0\nhello");
+    /// ```
+    #[doc(alias = "try_clone")]
+    pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStreamParts<T>, E>
+    where
+        F: FnOnce(&R) -> Result<T, E>,
+    {
+        let inner = clone_inner(&self.inner)?;
+        Ok(NegotiatedStreamParts {
+            decision: self.decision,
+            buffer: self.buffer.clone(),
+            inner,
+        })
     }
 
     /// Reassembles a [`NegotiatedStream`] from the extracted components.
@@ -2430,6 +2511,51 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_try_clone_with_clones_inner_reader() {
+        let legacy = b"@RSYNCD: 31.0\nreply";
+        let mut stream = sniff_bytes(legacy).expect("sniff succeeds");
+        let expected_buffer = stream.buffered().to_vec();
+
+        let mut cloned = stream
+            .try_clone_with(|cursor| Ok::<Cursor<Vec<u8>>, io::Error>(cursor.clone()))
+            .expect("cursor clone succeeds");
+
+        assert_eq!(cloned.decision(), stream.decision());
+        assert_eq!(cloned.buffered(), expected_buffer.as_slice());
+
+        let mut cloned_replay = Vec::new();
+        cloned
+            .read_to_end(&mut cloned_replay)
+            .expect("cloned stream can replay handshake");
+        assert_eq!(cloned_replay, legacy);
+
+        let mut original_replay = Vec::new();
+        stream
+            .read_to_end(&mut original_replay)
+            .expect("original stream remains usable after clone");
+        assert_eq!(original_replay, legacy);
+    }
+
+    #[test]
+    fn negotiated_stream_try_clone_with_propagates_error_without_side_effects() {
+        let legacy = b"@RSYNCD: 31.0\nrest";
+        let mut stream = sniff_bytes(legacy).expect("sniff succeeds");
+        let expected_len = stream.buffered_len();
+
+        let err = stream
+            .try_clone_with(|_| Err::<Cursor<Vec<u8>>, io::Error>(io::Error::other("boom")))
+            .expect_err("clone should propagate errors");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(stream.buffered_len(), expected_len);
+
+        let mut replay = Vec::new();
+        stream
+            .read_to_end(&mut replay)
+            .expect("original stream remains readable after failed clone");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
     fn try_map_inner_on_parts_transforms_transport() {
         let legacy = b"@RSYNCD: 31.0\nrest";
         let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
@@ -2469,6 +2595,54 @@ mod tests {
         original
             .read_to_end(&mut replay)
             .expect("original stream still readable");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_try_clone_with_clones_inner_reader() {
+        let legacy = b"@RSYNCD: 30.0\nlisting";
+        let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
+        let expected_buffer = parts.buffered().to_vec();
+
+        let cloned = parts
+            .try_clone_with(|cursor| Ok::<Cursor<Vec<u8>>, io::Error>(cursor.clone()))
+            .expect("cursor clone succeeds");
+
+        assert_eq!(cloned.decision(), parts.decision());
+        assert_eq!(cloned.buffered(), expected_buffer.as_slice());
+
+        let mut cloned_stream = cloned.into_stream();
+        let mut cloned_replay = Vec::new();
+        cloned_stream
+            .read_to_end(&mut cloned_replay)
+            .expect("cloned parts replay buffered bytes");
+        assert_eq!(cloned_replay, legacy);
+
+        let mut original_stream = parts.clone().into_stream();
+        let mut original_replay = Vec::new();
+        original_stream
+            .read_to_end(&mut original_replay)
+            .expect("original parts remain usable after clone");
+        assert_eq!(original_replay, legacy);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_try_clone_with_propagates_error_without_side_effects() {
+        let legacy = b"@RSYNCD: 30.0\nlisting";
+        let parts = sniff_bytes(legacy).expect("sniff succeeds").into_parts();
+        let expected_len = parts.buffered_len();
+
+        let err = parts
+            .try_clone_with(|_| Err::<Cursor<Vec<u8>>, io::Error>(io::Error::other("boom")))
+            .expect_err("clone should propagate errors");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(parts.buffered_len(), expected_len);
+
+        let mut original_stream = parts.into_stream();
+        let mut replay = Vec::new();
+        original_stream
+            .read_to_end(&mut replay)
+            .expect("parts remain convertible to stream after failed clone");
         assert_eq!(replay, legacy);
     }
 
