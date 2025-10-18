@@ -375,6 +375,33 @@ impl Severity {
             Self::Error => "error",
         }
     }
+
+    /// Returns the canonical prefix rendered at the start of diagnostics.
+    ///
+    /// The string mirrors upstream rsync's output, combining the constant
+    /// `"rsync"` banner with the lowercase severity label and trailing
+    /// colon. Centralising the prefix ensures [`Message::as_segments`]
+    /// doesn't need to assemble the pieces manually, which avoids
+    /// additional vectored segments and keeps rendering logic in sync with
+    /// upstream expectations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Severity;
+    ///
+    /// assert_eq!(Severity::Info.prefix(), "rsync info: ");
+    /// assert_eq!(Severity::Warning.prefix(), "rsync warning: ");
+    /// assert_eq!(Severity::Error.prefix(), "rsync error: ");
+    /// ```
+    #[must_use]
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Info => "rsync info: ",
+            Self::Warning => "rsync warning: ",
+            Self::Error => "rsync error: ",
+        }
+    }
 }
 
 impl fmt::Display for Severity {
@@ -867,9 +894,7 @@ impl Message {
             total_len += slice.len();
         };
 
-        push(b"rsync ");
-        push(self.severity.as_str().as_bytes());
-        push(b": ");
+        push(self.severity.prefix().as_bytes());
         push(self.text.as_bytes());
 
         if let Some(code) = self.code {
@@ -2630,6 +2655,13 @@ mod tests {
         assert_eq!(Severity::Info.as_str(), "info");
         assert_eq!(Severity::Warning.as_str(), "warning");
         assert_eq!(Severity::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn severity_prefix_matches_expected_strings() {
+        assert_eq!(Severity::Info.prefix(), "rsync info: ");
+        assert_eq!(Severity::Warning.prefix(), "rsync warning: ");
+        assert_eq!(Severity::Error.prefix(), "rsync error: ");
     }
 
     #[test]
