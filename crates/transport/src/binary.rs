@@ -285,7 +285,22 @@ where
     negotiate_binary_session_from_stream(stream, desired_protocol)
 }
 
-pub(crate) fn negotiate_binary_session_from_stream<R>(
+/// Performs the binary negotiation using a pre-sniffed [`NegotiatedStream`].
+///
+/// Callers that already invoked [`sniff_negotiation_stream`] or supplied their
+/// own [`NegotiationPrologueSniffer`] can reuse the captured
+/// [`NegotiatedStream`] instead of repeating the prologue detection. The helper
+/// validates that the buffered prefix corresponds to the binary handshake,
+/// writes the caller's desired protocol advertisement, reads the peer's
+/// response, and returns the resulting [`BinaryHandshake`].
+///
+/// # Errors
+///
+/// - [`io::ErrorKind::InvalidData`] if the supplied stream represents a
+///   legacy ASCII negotiation or if the peer advertises a protocol outside the
+///   supported range.
+/// - Any I/O error reported while exchanging the protocol advertisements.
+pub fn negotiate_binary_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
 ) -> io::Result<BinaryHandshake<R>>

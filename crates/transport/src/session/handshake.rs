@@ -403,7 +403,20 @@ where
         .map(SessionHandshake::into_stream_parts)
 }
 
-fn negotiate_session_from_stream<R>(
+/// Negotiates an rsync session using a pre-sniffed [`NegotiatedStream`].
+///
+/// Callers that already possess the [`NegotiatedStream`] returned by
+/// [`sniff_negotiation_stream`](crate::sniff_negotiation_stream) (or its
+/// sniffer-backed variant) can use this helper to complete the handshake without
+/// repeating the prologue detection. The function dispatches to the binary or
+/// legacy negotiation path based on the recorded decision and returns the
+/// corresponding [`SessionHandshake`].
+///
+/// # Errors
+///
+/// Propagates any I/O error reported while driving the variant-specific
+/// negotiation helper.
+pub fn negotiate_session_from_stream<R>(
     stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
 ) -> io::Result<SessionHandshake<R>>

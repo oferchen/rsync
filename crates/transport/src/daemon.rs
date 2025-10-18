@@ -313,7 +313,21 @@ where
     negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
 }
 
-pub(crate) fn negotiate_legacy_daemon_session_from_stream<R>(
+/// Performs the legacy ASCII negotiation using a pre-sniffed [`NegotiatedStream`].
+///
+/// This helper accepts the [`NegotiatedStream`] produced by
+/// [`sniff_negotiation_stream`] (or its sniffer-backed counterpart) and drives
+/// the remainder of the daemon handshake without repeating the prologue
+/// detection. The stream is verified to contain the `@RSYNCD:` prefix before the
+/// greeting is parsed and echoed back to the server.
+///
+/// # Errors
+///
+/// - [`io::ErrorKind::InvalidData`] if the supplied stream does not represent a
+///   legacy daemon negotiation or if formatting the client banner fails.
+/// - Any I/O error reported while exchanging the greeting with the daemon.
+#[doc(alias = "@RSYNCD")]
+pub fn negotiate_legacy_daemon_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
 ) -> io::Result<LegacyDaemonHandshake<R>>
