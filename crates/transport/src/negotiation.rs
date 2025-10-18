@@ -156,6 +156,36 @@ impl<'a> NegotiationBufferedSlices<'a> {
         Ok(())
     }
 
+    /// Collects the buffered negotiation bytes into a freshly allocated [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::extend_vec`] but manages the allocation internally,
+    /// returning the replay prefix and payload as an owned buffer. This keeps call
+    /// sites concise when they only need the buffered transcript for comparison or
+    /// logging. Allocation failures propagate as [`TryReserveError`], matching the
+    /// behaviour of [`Self::extend_vec`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream =
+    ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///         .expect("sniff succeeds");
+    /// let slices = stream.buffered_vectored();
+    /// let replay = slices.to_vec()?;
+    ///
+    /// assert_eq!(replay, stream.buffered());
+    /// # Ok::<(), std::collections::TryReserveError>(())
+    /// ```
+    #[must_use]
+    pub fn to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        let mut buffer = Vec::new();
+        self.extend_vec(&mut buffer)?;
+        Ok(buffer)
+    }
+
     /// Streams the buffered negotiation data into the provided writer.
     ///
     /// The helper prefers vectored I/O when the writer advertises support,
@@ -3039,6 +3069,23 @@ mod tests {
         expected.extend_from_slice(prefix);
         expected.extend_from_slice(remainder);
         assert_eq!(&buffer[prefix_len..], expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_to_vec_collects_buffered_bytes() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" motd";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+
+        let collected = slices
+            .to_vec()
+            .expect("Vec<u8> growth should succeed for small transcripts");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(collected, expected);
     }
 
     #[test]
