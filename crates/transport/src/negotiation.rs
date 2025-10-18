@@ -2434,6 +2434,9 @@ impl NegotiationBuffer {
         let mut provided = 0usize;
         for buf in bufs.iter() {
             provided = provided.saturating_add(buf.len());
+            if provided >= required {
+                break;
+            }
         }
 
         if provided < required {
@@ -2472,6 +2475,9 @@ impl NegotiationBuffer {
         let mut provided = 0usize;
         for buf in bufs.iter() {
             provided = provided.saturating_add(buf.len());
+            if provided >= remaining.len() {
+                break;
+            }
         }
 
         if provided < remaining.len() {
@@ -3033,6 +3039,67 @@ mod tests {
         expected.extend_from_slice(prefix);
         expected.extend_from_slice(remainder);
         assert_eq!(&buffer[prefix_len..], expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffer_copy_all_vectored_avoids_touching_extra_buffers() {
+        let transcript = b"@RSYNCD:".to_vec();
+        let buffer = NegotiationBuffer::new(LEGACY_DAEMON_PREFIX_LEN, 0, transcript.clone());
+
+        let mut first = vec![0u8; 4];
+        let mut second = vec![0u8; transcript.len() - first.len()];
+        let mut extra = vec![0xAAu8; 6];
+
+        let copied = {
+            let mut bufs = [
+                IoSliceMut::new(first.as_mut_slice()),
+                IoSliceMut::new(second.as_mut_slice()),
+                IoSliceMut::new(extra.as_mut_slice()),
+            ];
+            buffer
+                .copy_all_into_vectored(&mut bufs)
+                .expect("copy should succeed with ample capacity")
+        };
+
+        assert_eq!(copied, transcript.len());
+        assert_eq!(first.as_slice(), &transcript[..first.len()]);
+        assert_eq!(second.as_slice(), &transcript[first.len()..]);
+        assert!(extra.iter().all(|byte| *byte == 0xAA));
+    }
+
+    #[test]
+    fn negotiation_buffer_copy_remaining_vectored_avoids_touching_extra_buffers() {
+        let transcript = b"@RSYNCD: handshake".to_vec();
+        let consumed = 3usize;
+        let buffer = NegotiationBuffer::new(LEGACY_DAEMON_PREFIX_LEN, consumed, transcript.clone());
+        let remaining_len = transcript.len() - consumed;
+
+        let first_len = remaining_len / 2 + 1;
+        let mut first = vec![0u8; first_len];
+        let mut second = vec![0u8; remaining_len - first_len];
+        let mut extra = vec![0xCCu8; 5];
+
+        let copied = {
+            let mut bufs = [
+                IoSliceMut::new(first.as_mut_slice()),
+                IoSliceMut::new(second.as_mut_slice()),
+                IoSliceMut::new(extra.as_mut_slice()),
+            ];
+            buffer
+                .copy_remaining_into_vectored(&mut bufs)
+                .expect("copy should succeed with ample capacity")
+        };
+
+        assert_eq!(copied, remaining_len);
+        assert_eq!(
+            first.as_slice(),
+            &transcript[consumed..consumed + first.len()]
+        );
+        assert_eq!(
+            second.as_slice(),
+            &transcript[consumed + first.len()..consumed + first.len() + second.len()]
+        );
+        assert!(extra.iter().all(|byte| *byte == 0xCC));
     }
 
     #[test]
