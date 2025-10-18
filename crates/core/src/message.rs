@@ -217,7 +217,7 @@ impl<'a> MessageSegments<'a> {
     pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         let slices = self.as_slices();
 
-        if slices.is_empty() || self.len() == 0 {
+        if slices.is_empty() || self.is_empty() {
             return Ok(());
         }
 
@@ -265,7 +265,7 @@ impl<'a> MessageSegments<'a> {
                     }
 
                     start = index;
-                    while start < count && vectored[start].len() == 0 {
+                    while start < count && vectored[start].is_empty() {
                         start += 1;
                     }
                 }
