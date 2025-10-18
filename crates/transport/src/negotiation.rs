@@ -138,20 +138,22 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///         .expect("sniff succeeds");
     /// let slices = stream.buffered_vectored();
     /// let mut replay = Vec::new();
-    /// slices.extend_vec(&mut replay);
+    /// slices.extend_vec(&mut replay)?;
     ///
     /// assert_eq!(replay, stream.buffered());
+    /// # Ok::<(), std::collections::TryReserveError>(())
     /// ```
-    pub fn extend_vec(&self, buffer: &mut Vec<u8>) {
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> Result<(), TryReserveError> {
         if self.is_empty() {
-            return;
+            return Ok(());
         }
 
-        buffer.reserve(self.total_len);
+        buffer.try_reserve(self.total_len)?;
 
         for slice in self.as_slices() {
             buffer.extend_from_slice(slice.as_ref());
         }
+        Ok(())
     }
 
     /// Streams the buffered negotiation data into the provided writer.
@@ -3021,7 +3023,9 @@ mod tests {
 
         let mut buffer = b"prefix: ".to_vec();
         let prefix_len = buffer.len();
-        slices.extend_vec(&mut buffer);
+        slices
+            .extend_vec(&mut buffer)
+            .expect("Vec<u8> growth should succeed for small transcripts");
 
         assert_eq!(&buffer[..prefix_len], b"prefix: ");
 
