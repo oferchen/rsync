@@ -20,7 +20,13 @@ use super::parts::SessionHandshakeParts;
 /// the negotiated style without re-sniffing the transport. Conversions are
 /// provided via [`From`] and [`TryFrom`] so variant-specific wrappers can be
 /// promoted or recovered ergonomically.
-#[derive(Debug)]
+///
+/// When the underlying transport implements [`Clone`], the session wrapper can
+/// also be cloned. The clone retains the negotiated metadata and replay buffer
+/// so both instances may continue processing without interfering with each
+/// other—useful for tooling that needs to inspect the transcript while keeping
+/// the original session active.
+#[derive(Clone, Debug)]
 pub enum SessionHandshake<R> {
     /// Binary remote-shell style negotiation (protocols ≥ 30).
     Binary(BinaryHandshake<R>),

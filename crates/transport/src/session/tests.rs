@@ -1,6 +1,6 @@
 use super::*;
-use crate::binary::BinaryHandshake;
-use crate::daemon::LegacyDaemonHandshake;
+use crate::binary::{BinaryHandshake, negotiate_binary_session};
+use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session};
 use rsync_protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
@@ -953,6 +953,134 @@ fn session_handshake_parts_clone_preserves_legacy_stream_state() {
     expected_clone.extend_from_slice(b"other\n");
     assert_eq!(cloned_transport.writes(), expected_clone.as_slice());
     assert_eq!(cloned_transport.flushes(), 1);
+}
+
+#[test]
+fn binary_handshake_clone_preserves_stream_state() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let mut handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+        .expect("binary handshake succeeds");
+
+    let _ = handshake
+        .stream_mut()
+        .read(&mut [0u8; 1])
+        .expect("reading from replay buffer never fails");
+    let consumed = handshake.stream().buffered_consumed();
+    let remaining = handshake.stream().buffered_remaining();
+
+    let cloned = handshake.clone();
+    assert_eq!(
+        cloned.negotiated_protocol(),
+        handshake.negotiated_protocol()
+    );
+    assert_eq!(cloned.remote_protocol(), handshake.remote_protocol());
+    assert_eq!(cloned.stream().buffered_consumed(), consumed);
+    assert_eq!(cloned.stream().buffered_remaining(), remaining);
+
+    let mut clone_stream = cloned.into_stream();
+    let mut clone_replay = Vec::new();
+    clone_stream
+        .read_to_end(&mut clone_replay)
+        .expect("cloned stream replays remaining bytes");
+    let clone_transport = clone_stream.into_inner();
+
+    let mut original_stream = handshake.into_stream();
+    let mut original_replay = Vec::new();
+    original_stream
+        .read_to_end(&mut original_replay)
+        .expect("original stream replays remaining bytes");
+    let original_transport = original_stream.into_inner();
+
+    assert_eq!(clone_replay, original_replay);
+    assert_eq!(clone_transport.writes(), original_transport.writes());
+    assert_eq!(clone_transport.flushes(), original_transport.flushes());
+}
+
+#[test]
+fn legacy_handshake_clone_preserves_stream_state() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let mut handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+        .expect("legacy handshake succeeds");
+
+    let _ = handshake
+        .stream_mut()
+        .read(&mut [0u8; 1])
+        .expect("reading from replay buffer never fails");
+    let consumed = handshake.stream().buffered_consumed();
+    let remaining = handshake.stream().buffered_remaining();
+
+    let cloned = handshake.clone();
+    assert_eq!(
+        cloned.negotiated_protocol(),
+        handshake.negotiated_protocol()
+    );
+    assert_eq!(cloned.server_protocol(), handshake.server_protocol());
+    assert_eq!(cloned.stream().buffered_consumed(), consumed);
+    assert_eq!(cloned.stream().buffered_remaining(), remaining);
+
+    let mut clone_stream = cloned.into_stream();
+    let mut clone_replay = Vec::new();
+    clone_stream
+        .read_to_end(&mut clone_replay)
+        .expect("cloned stream replays remaining bytes");
+    let clone_transport = clone_stream.into_inner();
+
+    let mut original_stream = handshake.into_stream();
+    let mut original_replay = Vec::new();
+    original_stream
+        .read_to_end(&mut original_replay)
+        .expect("original stream replays remaining bytes");
+    let original_transport = original_stream.into_inner();
+
+    assert_eq!(clone_replay, original_replay);
+    assert_eq!(clone_transport.writes(), original_transport.writes());
+    assert_eq!(clone_transport.flushes(), original_transport.flushes());
+}
+
+#[test]
+fn session_handshake_clone_preserves_stream_state() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let mut handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let _ = handshake
+        .stream_mut()
+        .read(&mut [0u8; 1])
+        .expect("reading from replay buffer never fails");
+    let consumed = handshake.stream().buffered_consumed();
+    let remaining = handshake.stream().buffered_remaining();
+
+    let cloned = handshake.clone();
+    assert_eq!(cloned.decision(), handshake.decision());
+    assert_eq!(
+        cloned.negotiated_protocol(),
+        handshake.negotiated_protocol()
+    );
+    assert_eq!(cloned.stream().buffered_consumed(), consumed);
+    assert_eq!(cloned.stream().buffered_remaining(), remaining);
+
+    let mut clone_stream = cloned.into_stream();
+    let mut clone_replay = Vec::new();
+    clone_stream
+        .read_to_end(&mut clone_replay)
+        .expect("cloned stream replays remaining bytes");
+    let clone_transport = clone_stream.into_inner();
+
+    let mut original_stream = handshake.into_stream();
+    let mut original_replay = Vec::new();
+    original_stream
+        .read_to_end(&mut original_replay)
+        .expect("original stream replays remaining bytes");
+    let original_transport = original_stream.into_inner();
+
+    assert_eq!(clone_replay, original_replay);
+    assert_eq!(clone_transport.writes(), original_transport.writes());
+    assert_eq!(clone_transport.flushes(), original_transport.flushes());
 }
 
 #[derive(Debug)]

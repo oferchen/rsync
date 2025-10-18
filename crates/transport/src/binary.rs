@@ -16,7 +16,12 @@ use std::io::{self, Read, Write};
 /// while retaining the replaying stream so higher layers can continue the
 /// exchange without losing buffered bytes consumed during negotiation
 /// detection.
-#[derive(Debug)]
+///
+/// When the underlying transport implements [`Clone`], the handshake can be
+/// cloned to stage multiple views of the same negotiated session. The cloned
+/// value retains the replay buffer and metadata so both instances continue in
+/// lockstep without rereading from the transport.
+#[derive(Clone, Debug)]
 pub struct BinaryHandshake<R> {
     stream: NegotiatedStream<R>,
     remote_advertised: u32,
