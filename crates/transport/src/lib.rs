@@ -77,8 +77,8 @@ pub use daemon::{
     negotiate_legacy_daemon_session_from_stream, negotiate_legacy_daemon_session_with_sniffer,
 };
 pub use negotiation::{
-    NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
-    sniff_negotiation_stream_with_sniffer,
+    BufferedCopyTooSmall, NegotiatedStream, NegotiatedStreamParts, TryMapInnerError,
+    sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
 pub use session::{
     SessionHandshake, SessionHandshakeParts, negotiate_session, negotiate_session_from_stream,

@@ -1978,10 +1978,16 @@ mod tests {
             combined.extend_from_slice(remainder_slice);
             combined
         };
-        assert_eq!(parts.buffered_remaining_slice(), expected_remaining.as_slice());
+        assert_eq!(
+            parts.buffered_remaining_slice(),
+            expected_remaining.as_slice()
+        );
 
         let rebuilt = parts.into_stream();
-        assert_eq!(rebuilt.buffered_remaining_slice(), expected_remaining.as_slice());
+        assert_eq!(
+            rebuilt.buffered_remaining_slice(),
+            expected_remaining.as_slice()
+        );
     }
 
     #[test]
