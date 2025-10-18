@@ -456,7 +456,14 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(collected, message.to_bytes().unwrap());
     /// ```
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::with_capacity(self.len());
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut buffer = Vec::new();
+        buffer
+            .try_reserve_exact(self.len())
+            .map_err(map_message_reserve_error)?;
         self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
