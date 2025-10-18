@@ -2199,6 +2199,66 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_helpers_accept_empty_buffers() {
+        let stream = NegotiatedStream::from_raw_parts(
+            Cursor::new(Vec::<u8>::new()),
+            NegotiationPrologue::Binary,
+            0,
+            0,
+            Vec::new(),
+        );
+
+        let mut cleared = vec![0xAA];
+        let copied_vec = stream
+            .copy_buffered_into_vec(&mut cleared)
+            .expect("copying into vec succeeds");
+        assert_eq!(copied_vec, 0);
+        assert!(cleared.is_empty());
+
+        let mut replaced = vec![0xBB];
+        let copied = stream
+            .copy_buffered_into(&mut replaced)
+            .expect("copying into vec succeeds");
+        assert_eq!(copied, 0);
+        assert!(replaced.is_empty());
+
+        let mut appended = b"log".to_vec();
+        let extended = stream
+            .extend_buffered_into_vec(&mut appended)
+            .expect("extending into vec succeeds");
+        assert_eq!(extended, 0);
+        assert_eq!(appended, b"log");
+
+        let mut slice = [0xCC; 4];
+        let copied_slice = stream
+            .copy_buffered_into_slice(&mut slice)
+            .expect("copying into slice succeeds");
+        assert_eq!(copied_slice, 0);
+        assert_eq!(slice, [0xCC; 4]);
+
+        let mut array = [0xDD; 2];
+        let copied_array = stream
+            .copy_buffered_into_array(&mut array)
+            .expect("copying into array succeeds");
+        assert_eq!(copied_array, 0);
+        assert_eq!(array, [0xDD; 2]);
+
+        let mut vectored = [IoSliceMut::new(&mut slice[..])];
+        let copied_vectored = stream
+            .copy_buffered_into_vectored(&mut vectored)
+            .expect("empty buffer copies successfully");
+        assert_eq!(copied_vectored, 0);
+        assert_eq!(slice, [0xCC; 4]);
+
+        let mut output = Vec::new();
+        let written = stream
+            .copy_buffered_into_writer(&mut output)
+            .expect("writing into vec succeeds");
+        assert_eq!(written, 0);
+        assert!(output.is_empty());
+    }
+
+    #[test]
     fn negotiated_stream_extend_buffered_into_vec_appends_bytes() {
         let stream = sniff_bytes(b"@RSYNCD: 31.0\nextend").expect("sniff succeeds");
         let expected = stream.buffered().to_vec();
@@ -2427,6 +2487,71 @@ mod tests {
         assert_eq!(target, expected);
         assert_eq!(target.capacity(), initial_capacity);
         assert_eq!(target.as_ptr(), initial_ptr);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_helpers_accept_empty_buffers() {
+        let stream = NegotiatedStream::from_raw_parts(
+            Cursor::new(Vec::<u8>::new()),
+            NegotiationPrologue::Binary,
+            0,
+            0,
+            Vec::new(),
+        );
+        let parts = stream.into_parts();
+
+        assert_eq!(parts.buffered_len(), 0);
+        assert_eq!(parts.sniffed_prefix_len(), 0);
+        assert!(parts.buffered().is_empty());
+
+        let mut cleared = vec![0xAA];
+        let copied_vec = parts
+            .copy_buffered_into_vec(&mut cleared)
+            .expect("copying into vec succeeds");
+        assert_eq!(copied_vec, 0);
+        assert!(cleared.is_empty());
+
+        let mut replaced = vec![0xBB];
+        let copied = parts
+            .copy_buffered_into(&mut replaced)
+            .expect("copying into vec succeeds");
+        assert_eq!(copied, 0);
+        assert!(replaced.is_empty());
+
+        let mut appended = b"log".to_vec();
+        let extended = parts
+            .extend_buffered_into_vec(&mut appended)
+            .expect("extending into vec succeeds");
+        assert_eq!(extended, 0);
+        assert_eq!(appended, b"log");
+
+        let mut slice = [0xCC; 4];
+        let copied_slice = parts
+            .copy_buffered_into_slice(&mut slice)
+            .expect("copying into slice succeeds");
+        assert_eq!(copied_slice, 0);
+        assert_eq!(slice, [0xCC; 4]);
+
+        let mut array = [0xDD; 2];
+        let copied_array = parts
+            .copy_buffered_into_array(&mut array)
+            .expect("copying into array succeeds");
+        assert_eq!(copied_array, 0);
+        assert_eq!(array, [0xDD; 2]);
+
+        let mut vectored = [IoSliceMut::new(&mut slice[..])];
+        let copied_vectored = parts
+            .copy_buffered_into_vectored(&mut vectored)
+            .expect("empty buffer copies successfully");
+        assert_eq!(copied_vectored, 0);
+        assert_eq!(slice, [0xCC; 4]);
+
+        let mut output = Vec::new();
+        let written = parts
+            .copy_buffered_into_writer(&mut output)
+            .expect("writing into vec succeeds");
+        assert_eq!(written, 0);
+        assert!(output.is_empty());
     }
 
     #[test]
