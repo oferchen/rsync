@@ -41,6 +41,7 @@ pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
     (OLDEST_SUPPORTED_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL);
 
 /// Errors that can occur while parsing a protocol version from a string.
+#[doc(alias = "--protocol")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParseProtocolVersionErrorKind {
     /// The provided string was empty after trimming ASCII whitespace.
@@ -56,6 +57,7 @@ pub enum ParseProtocolVersionErrorKind {
 }
 
 /// Error type returned when parsing a [`ProtocolVersion`] from text fails.
+#[doc(alias = "--protocol")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParseProtocolVersionError {
     kind: ParseProtocolVersionErrorKind,
@@ -112,6 +114,10 @@ impl std::error::Error for ParseProtocolVersionError {}
 
 /// A single negotiated rsync protocol version.
 ///
+/// The value typically originates from the [`--protocol`](https://download.samba.org/pub/rsync/rsync.1#opt--protocol)
+/// command-line flag or the protocol byte exchanged during the initial
+/// handshake.
+///
 /// # Examples
 ///
 /// Parse a version string using the `FromStr` implementation. The helper trims leading and trailing
@@ -126,6 +132,7 @@ impl std::error::Error for ParseProtocolVersionError {}
 /// assert_eq!(version.as_u8(), 31);
 /// # Ok::<_, rsync_protocol::ParseProtocolVersionError>(())
 /// ```
+#[doc(alias = "--protocol")]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolVersion(NonZeroU8);
 
@@ -641,6 +648,16 @@ impl ProtocolVersion {
         self.as_u8() >= Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
 
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// assert!(ProtocolVersion::V32.uses_binary_negotiation());
+    /// assert!(ProtocolVersion::V30.uses_binary_negotiation());
+    /// assert!(!ProtocolVersion::V29.uses_binary_negotiation());
+    /// ```
+
     /// Reports whether this protocol version still relies on the legacy ASCII
     /// daemon negotiation.
     ///
@@ -653,6 +670,16 @@ impl ProtocolVersion {
     pub const fn uses_legacy_ascii_negotiation(self) -> bool {
         self.as_u8() < Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
+
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// assert!(ProtocolVersion::V29.uses_legacy_ascii_negotiation());
+    /// assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
+    /// assert!(!ProtocolVersion::V30.uses_legacy_ascii_negotiation());
+    /// ```
 
     /// Returns the numeric protocol identifiers supported by this
     /// implementation in newest-to-oldest order.
