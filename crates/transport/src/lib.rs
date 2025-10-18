@@ -64,6 +64,7 @@
 
 mod binary;
 mod daemon;
+mod handshake_util;
 mod negotiation;
 mod session;
 
