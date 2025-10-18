@@ -272,7 +272,7 @@ impl<'a> MessageSegments<'a> {
 
         let mut consumed = self.len() - remaining;
 
-        for slice in slices {
+        for slice in &slices[start..] {
             let bytes = slice.as_ref();
 
             if consumed >= bytes.len() {
