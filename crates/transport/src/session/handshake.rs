@@ -415,7 +415,9 @@ where
 /// # Errors
 ///
 /// Propagates any I/O error reported while driving the variant-specific
-/// negotiation helper.
+/// negotiation helper. If the negotiation prologue was not fully determined
+/// the function returns [`io::ErrorKind::UnexpectedEof`] with the canonical
+/// transport error message used by [`NegotiatedStream::ensure_decision`].
 pub fn negotiate_session_from_stream<R>(
     stream: NegotiatedStream<R>,
     desired_protocol: ProtocolVersion,
@@ -432,8 +434,9 @@ where
             negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
                 .map(SessionHandshake::Legacy)
         }
-        NegotiationPrologue::NeedMoreData => {
-            unreachable!("negotiation sniffer fully classifies the prologue")
-        }
+        NegotiationPrologue::NeedMoreData => Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            crate::negotiation::NEGOTIATION_PROLOGUE_UNDETERMINED_MSG,
+        )),
     }
 }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::binary::{BinaryHandshake, negotiate_binary_session};
 use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session};
+use crate::negotiation::{NEGOTIATION_PROLOGUE_UNDETERMINED_MSG, NegotiatedStream};
 use rsync_protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
@@ -753,6 +754,23 @@ fn session_handshake_try_from_variant_impls_recover_wrappers() {
         }
         _ => panic!("binary session must return original handshake"),
     }
+}
+
+#[test]
+fn negotiate_session_from_stream_errors_when_undetermined() {
+    let transport = MemoryTransport::new(b"");
+    let undecided = NegotiatedStream::from_raw_parts(
+        transport,
+        NegotiationPrologue::NeedMoreData,
+        0,
+        0,
+        Vec::new(),
+    );
+
+    let err = negotiate_session_from_stream(undecided, ProtocolVersion::NEWEST)
+        .expect_err("undetermined prologue must error");
+    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(err.to_string(), NEGOTIATION_PROLOGUE_UNDETERMINED_MSG);
 }
 
 #[test]

@@ -30,7 +30,7 @@ pub struct NegotiatedStream<R> {
     buffer: NegotiationBuffer,
 }
 
-const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
+pub(crate) const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
     "connection closed before rsync negotiation prologue was determined";
 
 #[derive(Clone, Debug)]
