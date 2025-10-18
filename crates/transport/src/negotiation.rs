@@ -179,6 +179,34 @@ impl<R> NegotiatedStream<R> {
         self.buffer.copy_into_vec(target)
     }
 
+    /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
+    ///
+    /// The helper is identical to [`Self::copy_buffered_into_vec`] except that it preserves any
+    /// existing contents in `target`. This is useful for log buffers that accumulate handshake
+    /// transcripts alongside additional context. The vector reserves enough capacity to fit the
+    /// buffered bytes via [`Vec::try_reserve`]; on success the method returns the number of bytes
+    /// appended. The replay cursor remains unchanged so callers may continue reading from the
+    /// stream afterwards.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let mut log = b"log: ".to_vec();
+    /// stream
+    ///     .extend_buffered_into_vec(&mut log)
+    ///     .expect("vector can reserve space for replay bytes");
+    /// assert_eq!(log, b"log: @RSYNCD:");
+    /// ```
+    #[must_use = "the result reports whether additional capacity was successfully reserved"]
+    pub fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.extend_into_vec(target)
+    }
+
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
     /// The tuple mirrors the view exposed by [`NegotiationPrologueSniffer::buffered_split`],
@@ -967,6 +995,18 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.copy_into_vec(target)
     }
 
+    /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
+    ///
+    /// The helper mirrors [`NegotiatedStream::extend_buffered_into_vec`] but operates on decomposed
+    /// stream parts. Callers that temporarily separate the components can therefore continue to
+    /// accumulate handshake transcripts inside pre-existing log buffers. Additional capacity is
+    /// reserved via [`Vec::try_reserve`]; on success the appended length matches the buffered
+    /// payload and the replay cursor remains untouched.
+    #[must_use = "the result reports whether additional capacity was successfully reserved"]
+    pub fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.extend_into_vec(target)
+    }
+
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
     /// The tuple mirrors [`NegotiatedStream::buffered_split`], giving callers convenient access
@@ -1321,6 +1361,14 @@ impl NegotiationBuffer {
         target.clear();
         target.extend_from_slice(&self.buffered);
         Ok(target.len())
+    }
+
+    fn extend_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        let required = self.buffered.len();
+        target.try_reserve(required)?;
+
+        target.extend_from_slice(&self.buffered);
+        Ok(required)
     }
 
     fn copy_all_into_slice(&self, target: &mut [u8]) -> Result<usize, BufferedCopyTooSmall> {
@@ -1876,6 +1924,27 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_extend_buffered_into_vec_appends_bytes() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nextend").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut target = b"prefix: ".to_vec();
+        let initial_capacity = target.capacity();
+
+        let appended = stream
+            .extend_buffered_into_vec(&mut target)
+            .expect("vector can reserve space for replay bytes");
+
+        assert_eq!(appended, expected.len());
+        assert!(target.capacity() >= initial_capacity);
+        let mut expected_target = b"prefix: ".to_vec();
+        expected_target.extend_from_slice(&expected);
+        assert_eq!(target, expected_target);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+    }
+
+    #[test]
     fn negotiated_stream_copy_buffered_into_array_copies_bytes() {
         let mut stream = sniff_bytes(b"@RSYNCD: 31.0\narray").expect("sniff succeeds");
         let expected = stream.buffered().to_vec();
@@ -2063,6 +2132,29 @@ mod tests {
         assert_eq!(target, expected);
         assert_eq!(target.capacity(), initial_capacity);
         assert_eq!(target.as_ptr(), initial_ptr);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_extend_buffered_into_vec_appends_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\next parts")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+        let buffered_remaining = parts.buffered_remaining();
+
+        let mut target = b"parts: ".to_vec();
+        let initial_capacity = target.capacity();
+
+        let appended = parts
+            .extend_buffered_into_vec(&mut target)
+            .expect("vector can reserve space for replay bytes");
+
+        assert_eq!(appended, expected.len());
+        assert!(target.capacity() >= initial_capacity);
+        let mut expected_target = b"parts: ".to_vec();
+        expected_target.extend_from_slice(&expected);
+        assert_eq!(target, expected_target);
+        assert_eq!(parts.buffered_remaining(), buffered_remaining);
     }
 
     #[test]
