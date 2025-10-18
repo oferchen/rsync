@@ -120,6 +120,24 @@ pub enum KnownCompatibilityFlag {
 }
 
 impl KnownCompatibilityFlag {
+    /// Canonical ordering of compatibility flags defined by upstream rsync 3.4.1.
+    ///
+    /// The array lists variants in ascending bit order so it can be used to
+    /// populate [`CompatibilityFlags::ALL_KNOWN`] or iterate over every
+    /// capability without duplicating match statements. The ordering matches the
+    /// iteration semantics of [`CompatibilityFlags::iter_known`].
+    pub const ALL: [Self; 9] = [
+        Self::IncRecurse,
+        Self::SymlinkTimes,
+        Self::SymlinkIconv,
+        Self::SafeFileList,
+        Self::AvoidXattrOptimization,
+        Self::ChecksumSeedFix,
+        Self::InplacePartialDir,
+        Self::VarintFlistFlags,
+        Self::Id0Names,
+    ];
+
     /// Returns the [`CompatibilityFlags`] bit corresponding to the enum variant.
     #[must_use]
     pub const fn as_flag(self) -> CompatibilityFlags {
@@ -180,6 +198,11 @@ impl KnownCompatibilityFlag {
 }
 
 impl From<KnownCompatibilityFlag> for CompatibilityFlags {
+    /// Converts a single known compatibility flag into the corresponding bitfield value.
+    ///
+    /// The helper mirrors [`KnownCompatibilityFlag::as_flag`] and allows
+    /// callers to promote a variant into [`CompatibilityFlags`] without
+    /// repeating the mapping logic or match statements.
     fn from(flag: KnownCompatibilityFlag) -> Self {
         flag.as_flag()
     }
@@ -289,6 +312,9 @@ impl CompatibilityFlags {
     pub const VARINT_FLIST_FLAGS: Self = Self::new(1 << 7);
     /// File-list entries support id0 names (`CF_ID0_NAMES`).
     pub const ID0_NAMES: Self = Self::new(1 << 8);
+
+    /// Bitfield containing every compatibility flag recognised by this crate.
+    pub const ALL_KNOWN: Self = Self::new(Self::KNOWN_MASK);
 
     const KNOWN_MASK: u32 = Self::INC_RECURSE.bits
         | Self::SYMLINK_TIMES.bits
@@ -722,6 +748,35 @@ mod tests {
         assert!(flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
         assert!(flags.contains(CompatibilityFlags::ID0_NAMES));
         assert_eq!(flags.unknown_bits(), 0);
+    }
+
+    #[test]
+    fn all_constant_exposes_canonical_ordering() {
+        let expected: Vec<_> = KnownCompatibilityFlag::ALL.into_iter().collect();
+        let iterated: Vec<_> = CompatibilityFlags::ALL_KNOWN.iter_known().collect();
+
+        assert_eq!(iterated, expected);
+
+        let combined = KnownCompatibilityFlag::ALL
+            .into_iter()
+            .fold(CompatibilityFlags::EMPTY, |flags, flag| {
+                flags | flag.as_flag()
+            });
+
+        assert_eq!(combined, CompatibilityFlags::ALL_KNOWN);
+    }
+
+    #[test]
+    fn from_known_flag_promotes_variant_to_bitfield() {
+        let promoted = CompatibilityFlags::from(KnownCompatibilityFlag::SafeFileList);
+
+        assert_eq!(promoted, CompatibilityFlags::SAFE_FILE_LIST);
+        assert!(promoted.contains(CompatibilityFlags::SAFE_FILE_LIST));
+        assert!(
+            promoted
+                .iter_known()
+                .eq([KnownCompatibilityFlag::SafeFileList])
+        );
     }
 
     #[test]
