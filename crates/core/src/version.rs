@@ -189,10 +189,11 @@ pub struct CompiledFeaturesIter {
 
 impl CompiledFeaturesIter {
     fn new() -> Self {
-        let remaining = CompiledFeature::ALL
-            .iter()
-            .filter(|feature| feature.is_enabled())
-            .count();
+        let remaining = usize::from(CompiledFeature::Acl.is_enabled())
+            + usize::from(CompiledFeature::Xattr.is_enabled())
+            + usize::from(CompiledFeature::Zstd.is_enabled())
+            + usize::from(CompiledFeature::Iconv.is_enabled())
+            + usize::from(CompiledFeature::SdNotify.is_enabled());
 
         Self {
             index: 0,
