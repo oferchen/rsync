@@ -9,3 +9,6 @@ description = "Transport helpers for the Rust rsync reimplementation"
 
 [dependencies]
 rsync-protocol = { path = "../protocol" }
+
+[dev-dependencies]
+proptest = "1.4"
