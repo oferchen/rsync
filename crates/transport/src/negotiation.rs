@@ -297,6 +297,37 @@ impl<R> NegotiatedStream<R> {
         self.buffer.buffered_remaining()
     }
 
+    /// Returns the portion of the buffered negotiation data that has not been consumed yet.
+    ///
+    /// The slice begins at the current replay cursor and includes any unread bytes from the
+    /// sniffed negotiation prefix followed by buffered payload that arrived alongside the
+    /// detection prologue. It mirrors [`BufRead::fill_buf`] behaviour without requiring a mutable
+    /// reference, which is useful when callers only need to inspect the remaining transcript for
+    /// logging or diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{Cursor, Read};
+    ///
+    /// let mut stream =
+    ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///         .expect("sniff succeeds");
+    /// let expected = stream.buffered().to_vec();
+    /// assert_eq!(stream.buffered_remaining_slice(), expected.as_slice());
+    ///
+    /// let mut consumed = [0u8; 4];
+    /// stream
+    ///     .read_exact(&mut consumed)
+    ///     .expect("buffered bytes are readable");
+    /// assert_eq!(stream.buffered_remaining_slice(), &expected[4..]);
+    /// ```
+    #[must_use]
+    pub fn buffered_remaining_slice(&self) -> &[u8] {
+        self.buffer.buffered_remaining_slice()
+    }
+
     /// Releases the wrapper and returns its components.
     #[must_use]
     pub fn into_parts(self) -> NegotiatedStreamParts<R> {
@@ -1100,6 +1131,16 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.buffered_remaining()
     }
 
+    /// Returns the portion of the buffered negotiation data that has not been consumed yet.
+    ///
+    /// The slice starts at the current replay cursor and mirrors what would be produced next if the
+    /// parts were turned back into a [`NegotiatedStream`] and read from. This is useful when the
+    /// parts are temporarily inspected for diagnostics without rebuilding the wrapper.
+    #[must_use]
+    pub fn buffered_remaining_slice(&self) -> &[u8] {
+        self.buffer.buffered_remaining_slice()
+    }
+
     /// Returns the length of the sniffed negotiation prefix.
     #[must_use]
     pub const fn sniffed_prefix_len(&self) -> usize {
@@ -1426,6 +1467,10 @@ impl NegotiationBuffer {
 
     fn remaining_slice(&self) -> &[u8] {
         &self.buffered[self.buffered_pos..]
+    }
+
+    fn buffered_remaining_slice(&self) -> &[u8] {
+        self.remaining_slice()
     }
 
     fn copy_into(&mut self, buf: &mut [u8]) -> usize {
@@ -1875,6 +1920,68 @@ mod tests {
         let parts = stream.into_parts();
         assert_eq!(parts.buffered_consumed(), total - 1);
         assert_eq!(parts.buffered_remaining(), 1);
+    }
+
+    #[test]
+    fn negotiated_stream_buffered_remaining_slice_tracks_consumption() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+
+        let expected = {
+            let (prefix, remainder) = stream.buffered_split();
+            let mut combined = Vec::new();
+            combined.extend_from_slice(prefix);
+            combined.extend_from_slice(remainder);
+            combined
+        };
+        assert_eq!(stream.buffered_remaining_slice(), expected.as_slice());
+
+        let mut prefix = [0u8; 5];
+        stream
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed first");
+        let expected_after = {
+            let (prefix_slice, remainder_slice) = stream.buffered_split();
+            let mut combined = Vec::new();
+            combined.extend_from_slice(prefix_slice);
+            combined.extend_from_slice(remainder_slice);
+            combined
+        };
+        assert_eq!(stream.buffered_remaining_slice(), expected_after.as_slice());
+
+        let mut remainder = Vec::new();
+        stream
+            .read_to_end(&mut remainder)
+            .expect("remaining buffered bytes are replayed");
+        let expected_final = {
+            let (prefix_slice, remainder_slice) = stream.buffered_split();
+            let mut combined = Vec::new();
+            combined.extend_from_slice(prefix_slice);
+            combined.extend_from_slice(remainder_slice);
+            combined
+        };
+        assert_eq!(stream.buffered_remaining_slice(), expected_final.as_slice());
+        assert!(expected_final.is_empty());
+    }
+
+    #[test]
+    fn parts_buffered_remaining_slice_matches_stream_state() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nreply").expect("sniff succeeds");
+        let mut prefix = [0u8; 4];
+        stream
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed");
+        let parts = stream.into_parts();
+        let expected_remaining = {
+            let (prefix_slice, remainder_slice) = parts.buffered_split();
+            let mut combined = Vec::new();
+            combined.extend_from_slice(prefix_slice);
+            combined.extend_from_slice(remainder_slice);
+            combined
+        };
+        assert_eq!(parts.buffered_remaining_slice(), expected_remaining.as_slice());
+
+        let rebuilt = parts.into_stream();
+        assert_eq!(rebuilt.buffered_remaining_slice(), expected_remaining.as_slice());
     }
 
     #[test]
