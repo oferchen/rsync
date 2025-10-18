@@ -426,7 +426,7 @@ impl IntoIterator for CompatibilityFlags {
     }
 }
 
-impl<'a> IntoIterator for &'a CompatibilityFlags {
+impl IntoIterator for &CompatibilityFlags {
     type Item = KnownCompatibilityFlag;
     type IntoIter = KnownCompatibilityFlagsIter;
 
@@ -435,7 +435,7 @@ impl<'a> IntoIterator for &'a CompatibilityFlags {
     }
 }
 
-impl<'a> IntoIterator for &'a mut CompatibilityFlags {
+impl IntoIterator for &mut CompatibilityFlags {
     type Item = KnownCompatibilityFlag;
     type IntoIter = KnownCompatibilityFlagsIter;
 
