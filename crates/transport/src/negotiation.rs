@@ -780,6 +780,20 @@ impl<R> NegotiatedStream<R> {
     }
 
     /// Releases the wrapper and returns its components.
+    ///
+    /// The conversion can also be performed via [`From`] and [`Into`], enabling
+    /// callers to decompose the replaying stream without invoking this method
+    /// directly.
+    ///
+    /// ```
+    /// use rsync_transport::{sniff_negotiation_stream, NegotiatedStreamParts};
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let parts: NegotiatedStreamParts<_> = stream.into();
+    /// assert!(parts.is_legacy());
+    /// ```
     #[must_use]
     pub fn into_parts(self) -> NegotiatedStreamParts<R> {
         NegotiatedStreamParts {
@@ -2136,7 +2150,20 @@ impl<R> NegotiatedStreamParts<R> {
     /// Callers can temporarily inspect or adjust the buffered negotiation
     /// state (for example, updating transport-level settings on the inner
     /// reader) and then continue consuming data through the replaying wrapper
-    /// without cloning the sniffed bytes.
+    /// without cloning the sniffed bytes. The same reconstruction is available
+    /// through [`From`] and [`Into`], allowing callers to rebuild the replaying
+    /// stream via trait-based conversions.
+    ///
+    /// ```
+    /// use rsync_transport::{sniff_negotiation_stream, NegotiatedStream};
+    /// use std::io::Cursor;
+    ///
+    /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .into_parts();
+    /// let stream = NegotiatedStream::from(parts);
+    /// assert!(stream.is_legacy());
+    /// ```
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
         NegotiatedStream::from_buffer(self.inner, self.decision, self.buffer)
@@ -2153,6 +2180,18 @@ impl<R> NegotiatedStreamParts<R> {
         let (decision, buffer, inner) = self.into_components();
         let (sniffed_prefix_len, buffered_pos, buffered) = buffer.into_raw_parts();
         (decision, sniffed_prefix_len, buffered_pos, buffered, inner)
+    }
+}
+
+impl<R> From<NegotiatedStream<R>> for NegotiatedStreamParts<R> {
+    fn from(stream: NegotiatedStream<R>) -> Self {
+        stream.into_parts()
+    }
+}
+
+impl<R> From<NegotiatedStreamParts<R>> for NegotiatedStream<R> {
+    fn from(parts: NegotiatedStreamParts<R>) -> Self {
+        parts.into_stream()
     }
 }
 
@@ -3144,6 +3183,68 @@ mod tests {
             rebuilt.buffered_remaining_slice(),
             expected_remaining.as_slice()
         );
+    }
+
+    #[test]
+    fn negotiated_stream_into_parts_trait_matches_method() {
+        let mut via_method = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let mut via_trait = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+
+        let mut prefix = [0u8; 3];
+        via_method
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed");
+        via_trait
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed");
+
+        let parts_method = via_method.into_parts();
+        let parts_trait: NegotiatedStreamParts<_> = via_trait.into();
+
+        assert_eq!(parts_method.decision(), parts_trait.decision());
+        assert_eq!(parts_method.buffered(), parts_trait.buffered());
+        assert_eq!(
+            parts_method.buffered_consumed(),
+            parts_trait.buffered_consumed()
+        );
+    }
+
+    #[test]
+    fn negotiated_stream_parts_into_stream_trait_matches_method() {
+        let data = b"@RSYNCD: 31.0\npayload";
+
+        let mut expected_stream = sniff_bytes(data).expect("sniff succeeds");
+        let mut expected_prefix = [0u8; 5];
+        expected_stream
+            .read_exact(&mut expected_prefix)
+            .expect("buffered prefix is replayed");
+        let mut expected_output = Vec::new();
+        expected_stream
+            .read_to_end(&mut expected_output)
+            .expect("remainder is readable");
+
+        let mut original = sniff_bytes(data).expect("sniff succeeds");
+        let mut prefix = [0u8; 5];
+        original
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is replayed");
+        let parts = original.into_parts();
+        let clone = parts.clone();
+
+        let mut via_method = clone.into_stream();
+        let mut method_output = Vec::new();
+        via_method
+            .read_to_end(&mut method_output)
+            .expect("method conversion retains bytes");
+
+        let mut via_trait: NegotiatedStream<_> = parts.into();
+        let mut trait_output = Vec::new();
+        via_trait
+            .read_to_end(&mut trait_output)
+            .expect("trait conversion retains bytes");
+
+        assert_eq!(method_output, expected_output);
+        assert_eq!(trait_output, expected_output);
     }
 
     #[test]
