@@ -124,6 +124,33 @@ impl<R> NegotiatedStream<R> {
         self.buffer.buffered()
     }
 
+    /// Copies the buffered negotiation data into a caller-provided vector without consuming it.
+    ///
+    /// The helper mirrors [`Self::buffered`] but writes into an owned [`Vec<u8>`], allowing callers
+    /// to reuse heap storage between sessions. Any additional capacity required to hold the
+    /// buffered bytes is reserved via [`Vec::try_reserve`], so allocation failures are surfaced
+    /// through [`TryReserveError`]. The vector is cleared before the bytes are appended, matching
+    /// upstream rsync's behaviour where replay buffers replace any previous contents.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let mut replay = Vec::new();
+    /// stream
+    ///     .copy_buffered_into_vec(&mut replay)
+    ///     .expect("vector can reserve space for replay bytes");
+    /// assert_eq!(replay.as_slice(), stream.buffered());
+    /// ```
+    #[must_use = "the result reports whether the replay vector had sufficient capacity"]
+    pub fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.copy_into_vec(target)
+    }
+
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
     /// The tuple mirrors the view exposed by [`NegotiationPrologueSniffer::buffered_split`],
@@ -882,6 +909,34 @@ impl<R> NegotiatedStreamParts<R> {
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
         self.buffer.buffered()
+    }
+
+    /// Copies the buffered negotiation data into a caller-provided vector without consuming it.
+    ///
+    /// The helper mirrors [`Self::buffered`] but writes the bytes into an owned [`Vec<u8>`], making
+    /// it straightforward to persist handshake transcripts or reuse heap storage across sessions.
+    /// The vector is cleared before the data is appended. Any additional capacity required to
+    /// complete the copy is reserved using [`Vec::try_reserve`], with allocation failures reported
+    /// via [`TryReserveError`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .into_parts();
+    /// let mut replay = Vec::with_capacity(4);
+    /// parts
+    ///     .copy_buffered_into_vec(&mut replay)
+    ///     .expect("vector can reserve space for replay bytes");
+    /// assert_eq!(replay.as_slice(), parts.buffered());
+    /// ```
+    #[must_use = "the result reports whether the replay vector had sufficient capacity"]
+    pub fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer.copy_into_vec(target)
     }
 
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
@@ -1726,6 +1781,26 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_buffered_into_vec_copies_bytes() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nreplay").expect("sniff succeeds");
+        let expected = stream.buffered().to_vec();
+
+        let mut target = Vec::with_capacity(expected.len() + 8);
+        target.extend_from_slice(b"junk data");
+        let initial_capacity = target.capacity();
+        let initial_ptr = target.as_ptr();
+
+        let copied = stream
+            .copy_buffered_into_vec(&mut target)
+            .expect("copying into vec succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(target, expected);
+        assert_eq!(target.capacity(), initial_capacity);
+        assert_eq!(target.as_ptr(), initial_ptr);
+    }
+
+    #[test]
     fn negotiated_stream_copy_buffered_into_array_copies_bytes() {
         let mut stream = sniff_bytes(b"@RSYNCD: 31.0\narray").expect("sniff succeeds");
         let expected = stream.buffered().to_vec();
@@ -1891,6 +1966,28 @@ mod tests {
             .read_exact(&mut replay)
             .expect("rebuilt stream still replays buffered bytes after slice copy");
         assert_eq!(replay, expected);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_vec_copies_bytes() {
+        let parts = sniff_bytes(b"@RSYNCD: 30.0\nlisting")
+            .expect("sniff succeeds")
+            .into_parts();
+        let expected = parts.buffered().to_vec();
+
+        let mut target = Vec::with_capacity(expected.len() + 8);
+        target.extend_from_slice(b"junk data");
+        let initial_capacity = target.capacity();
+        let initial_ptr = target.as_ptr();
+
+        let copied = parts
+            .copy_buffered_into_vec(&mut target)
+            .expect("copying into vec succeeds");
+
+        assert_eq!(copied, expected.len());
+        assert_eq!(target, expected);
+        assert_eq!(target.capacity(), initial_capacity);
+        assert_eq!(target.as_ptr(), initial_ptr);
     }
 
     #[test]
