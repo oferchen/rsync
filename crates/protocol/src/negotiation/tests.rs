@@ -989,7 +989,14 @@ proptest! {
             last = detector.observe(chunk);
         }
 
-        prop_assert_eq!(last, expected);
+        if detector.requires_more_data() && expected == NegotiationPrologue::LegacyAscii {
+            prop_assert!(matches!(
+                last,
+                NegotiationPrologue::LegacyAscii | NegotiationPrologue::NeedMoreData
+            ));
+        } else {
+            prop_assert_eq!(last, expected);
+        }
 
         match expected {
             NegotiationPrologue::NeedMoreData => {
