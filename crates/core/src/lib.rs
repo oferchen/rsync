@@ -11,11 +11,13 @@
 //!
 //! # Design
 //!
-//! The current surface consists of the [`message`] module. It implements
-//! [`Message`] together with helpers such as [`message::message_source`] for
-//! capturing repo-relative source locations. Higher layers construct messages
-//! through this API to ensure trailer roles and version suffixes are formatted
-//! consistently.
+//! The current surface consists of the [`message`] and [`version`] modules. The
+//! message facade implements [`Message`] together with helpers such as
+//! [`message::message_source`] for capturing repo-relative source locations.
+//! Higher layers construct messages through this API to ensure trailer roles and
+//! version suffixes are formatted consistently. The [`version`] module exposes
+//! the canonical `3.4.1-rust` identifier and the optional capability set used by
+//! the workspace when rendering `--version` output.
 //!
 //! # Invariants
 //!
@@ -58,3 +60,5 @@
 
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
+/// Version constants and capability helpers used by CLI and daemon entry points.
+pub mod version;
