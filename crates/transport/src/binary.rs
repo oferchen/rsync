@@ -658,6 +658,20 @@ mod tests {
     }
 
     #[test]
+    fn negotiate_binary_session_accepts_max_u32_advertisement() {
+        let transport = MemoryTransport::new(&u32::MAX.to_le_bytes());
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("maximum u32 advertisement clamps to newest protocol");
+
+        assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
+    }
+
+    #[test]
     fn negotiate_binary_session_applies_cap() {
         let remote_version = ProtocolVersion::NEWEST;
         let desired = ProtocolVersion::from_supported(30).expect("30 supported");
