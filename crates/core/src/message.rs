@@ -428,6 +428,38 @@ impl<'a> MessageSegments<'a> {
         }
         Ok(())
     }
+
+    /// Collects the message segments into a freshly allocated [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::extend_vec`] but manages the buffer lifecycle
+    /// internally, returning the rendered bytes directly. This keeps call sites
+    /// concise when they only need an owned copy of the message without
+    /// providing scratch storage up front. Allocation failures propagate as
+    /// [`io::ErrorKind::OutOfMemory`] so diagnostics remain actionable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let collected = segments.to_vec().expect("allocation succeeds");
+    ///
+    /// assert_eq!(collected, message.to_bytes().unwrap());
+    /// ```
+    pub fn to_vec(&self) -> io::Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        self.extend_vec(&mut buffer)?;
+        Ok(buffer)
+    }
 }
 
 impl<'a> AsRef<[IoSlice<'a>]> for MessageSegments<'a> {
@@ -2321,6 +2353,34 @@ mod tests {
             &buffer[prefix_len..],
             message.to_bytes().unwrap().as_slice()
         );
+    }
+
+    #[test]
+    fn message_segments_to_vec_collects_bytes() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, false);
+        let collected = segments
+            .to_vec()
+            .expect("allocating the rendered message succeeds");
+
+        assert_eq!(collected, message.to_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_to_vec_respects_newline_flag() {
+        let message = Message::warning("vanished file").with_code(24);
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, true);
+        let collected = segments
+            .to_vec()
+            .expect("allocating the rendered message succeeds");
+
+        assert_eq!(collected, message.to_line_bytes().unwrap());
     }
 
     #[test]
