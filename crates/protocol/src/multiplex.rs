@@ -1,6 +1,7 @@
 use core::ops::{Deref, DerefMut};
 use std::collections::TryReserveError;
 use std::io::{self, IoSlice, Read, Write};
+use std::iter::FusedIterator;
 use std::slice;
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageCode, MessageHeader};
@@ -79,6 +80,90 @@ impl<'a> BorrowedMessageFrame<'a> {
         ))
     }
 }
+
+/// Iterator over multiplexed frames encoded in a contiguous byte slice.
+///
+/// [`BorrowedMessageFrames`] repeatedly invokes
+/// [`BorrowedMessageFrame::decode_from_slice`] to yield borrowed views of each
+/// frame stored in the underlying slice. The iterator stops once every frame has
+/// been decoded or an error is encountered. Callers can inspect
+/// [`BorrowedMessageFrames::remainder`] to determine whether trailing bytes are
+/// left over after iteration completes.
+///
+/// # Examples
+///
+/// ```
+/// # use rsync_protocol::{BorrowedMessageFrames, MessageCode, MessageHeader};
+/// # fn example() -> std::io::Result<()> {
+/// let mut bytes = Vec::new();
+/// let header = MessageHeader::new(MessageCode::Info, 3).expect("payload fits in header");
+/// bytes.extend_from_slice(&header.encode());
+/// bytes.extend_from_slice(b"abc");
+/// let header = MessageHeader::new(MessageCode::Error, 0).expect("payload fits in header");
+/// bytes.extend_from_slice(&header.encode());
+///
+/// let mut iter = BorrowedMessageFrames::new(&bytes);
+/// let first = iter.next().unwrap()?;
+/// assert_eq!(first.code(), MessageCode::Info);
+/// assert_eq!(first.payload(), b"abc");
+/// let second = iter.next().unwrap()?;
+/// assert_eq!(second.code(), MessageCode::Error);
+/// assert!(second.payload().is_empty());
+/// assert!(iter.next().is_none());
+/// assert!(iter.remainder().is_empty());
+/// # Ok(())
+/// # }
+/// # example().unwrap();
+/// ```
+#[derive(Clone, Debug)]
+pub struct BorrowedMessageFrames<'a> {
+    remaining: &'a [u8],
+    finished: bool,
+}
+
+impl<'a> BorrowedMessageFrames<'a> {
+    /// Creates an iterator that borrows frames from the provided byte slice.
+    #[must_use]
+    #[inline]
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            remaining: bytes,
+            finished: false,
+        }
+    }
+
+    /// Returns the bytes that have not yet been consumed by the iterator.
+    #[must_use]
+    #[inline]
+    pub const fn remainder(&self) -> &'a [u8] {
+        self.remaining
+    }
+}
+
+impl<'a> Iterator for BorrowedMessageFrames<'a> {
+    type Item = io::Result<BorrowedMessageFrame<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished || self.remaining.is_empty() {
+            self.finished = true;
+            return None;
+        }
+
+        match BorrowedMessageFrame::decode_from_slice(self.remaining) {
+            Ok((frame, remainder)) => {
+                self.remaining = remainder;
+                Some(Ok(frame))
+            }
+            Err(err) => {
+                self.remaining = &[];
+                self.finished = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+impl<'a> FusedIterator for BorrowedMessageFrames<'a> {}
 
 /// A decoded multiplexed message consisting of the tag and payload bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1040,6 +1125,76 @@ mod tests {
             err.to_string(),
             "input slice contains 1 trailing byte after multiplexed frame"
         );
+    }
+
+    #[test]
+    fn borrowed_message_frames_iterates_over_sequence() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&encode_frame(MessageCode::Info, b"abc"));
+        bytes.extend_from_slice(&encode_frame(MessageCode::Warning, b""));
+
+        let mut iter = BorrowedMessageFrames::new(&bytes);
+
+        let first = iter
+            .next()
+            .expect("first frame present")
+            .expect("decode succeeds");
+        assert_eq!(first.code(), MessageCode::Info);
+        assert_eq!(first.payload(), b"abc");
+
+        let second = iter
+            .next()
+            .expect("second frame present")
+            .expect("decode succeeds");
+        assert_eq!(second.code(), MessageCode::Warning);
+        assert!(second.payload().is_empty());
+
+        assert!(iter.next().is_none());
+        assert!(iter.remainder().is_empty());
+    }
+
+    #[test]
+    fn borrowed_message_frames_reports_decode_error() {
+        let mut bytes = encode_frame(MessageCode::Info, b"abc");
+        let mut truncated = encode_frame(MessageCode::Error, b"payload");
+        truncated.pop();
+        bytes.extend_from_slice(&truncated);
+
+        let mut iter = BorrowedMessageFrames::new(&bytes);
+
+        let first = iter
+            .next()
+            .expect("first frame present")
+            .expect("decode succeeds");
+        assert_eq!(first.code(), MessageCode::Info);
+
+        let err = iter
+            .next()
+            .expect("error surfaced")
+            .expect_err("decode should fail due to truncation");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn borrowed_message_frames_reports_trailing_bytes() {
+        let mut bytes = encode_frame(MessageCode::Info, b"abc");
+        bytes.push(0xAA);
+
+        let mut iter = BorrowedMessageFrames::new(&bytes);
+
+        let frame = iter
+            .next()
+            .expect("frame present")
+            .expect("decode succeeds");
+        assert_eq!(frame.code(), MessageCode::Info);
+
+        let err = iter
+            .next()
+            .expect("error returned")
+            .expect_err("trailing byte should be reported");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(iter.next().is_none());
     }
 
     #[test]

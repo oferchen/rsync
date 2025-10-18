@@ -150,7 +150,8 @@ pub use legacy::{
     parse_legacy_warning_message_bytes, write_legacy_daemon_greeting,
 };
 pub use multiplex::{
-    BorrowedMessageFrame, MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg,
+    BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, recv_msg, recv_msg_into, send_frame,
+    send_msg,
 };
 pub use negotiation::{
     BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
