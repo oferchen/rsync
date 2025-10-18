@@ -153,6 +153,11 @@ impl fmt::Display for CompiledFeature {
 ///
 /// let collected: Vec<_> = compiled_features_iter().collect();
 /// assert_eq!(collected, compiled_features());
+///
+/// let mut expected = collected.clone();
+/// expected.reverse();
+/// let reversed: Vec<_> = compiled_features_iter().rev().collect();
+/// assert_eq!(reversed, expected);
 /// ```
 #[must_use]
 pub fn compiled_features_iter() -> CompiledFeaturesIter {
@@ -180,10 +185,13 @@ pub fn compiled_feature_labels() -> Vec<&'static str> {
 ///
 /// The iterator caches the number of remaining enabled features so [`ExactSizeIterator::len`]
 /// and [`Iterator::size_hint`] both run in `O(1)` time without repeatedly scanning the
-/// static [`CompiledFeature::ALL`] table.
+/// static [`CompiledFeature::ALL`] table. It also implements [`DoubleEndedIterator`],
+/// allowing callers to traverse the active feature set in reverse order when generating
+/// diagnostics that list the newest capabilities first.
 #[derive(Clone, Debug)]
 pub struct CompiledFeaturesIter {
     index: usize,
+    back: usize,
     remaining: usize,
 }
 
@@ -197,6 +205,7 @@ impl CompiledFeaturesIter {
 
         Self {
             index: 0,
+            back: CompiledFeature::ALL.len(),
             remaining,
         }
     }
@@ -206,7 +215,7 @@ impl Iterator for CompiledFeaturesIter {
     type Item = CompiledFeature;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.index < CompiledFeature::ALL.len() {
+        while self.index < self.back {
             let feature = CompiledFeature::ALL[self.index];
             self.index += 1;
 
@@ -217,6 +226,7 @@ impl Iterator for CompiledFeaturesIter {
         }
 
         self.remaining = 0;
+        self.index = self.back;
         None
     }
 
@@ -228,6 +238,24 @@ impl Iterator for CompiledFeaturesIter {
 impl ExactSizeIterator for CompiledFeaturesIter {
     fn len(&self) -> usize {
         self.remaining
+    }
+}
+
+impl DoubleEndedIterator for CompiledFeaturesIter {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        while self.index < self.back {
+            self.back -= 1;
+            let feature = CompiledFeature::ALL[self.back];
+
+            if feature.is_enabled() {
+                self.remaining = self.remaining.saturating_sub(1);
+                return Some(feature);
+            }
+        }
+
+        self.remaining = 0;
+        self.back = self.index;
+        None
     }
 }
 
@@ -393,6 +421,16 @@ mod tests {
     }
 
     #[test]
+    fn compiled_features_iter_rev_matches_reverse_order() {
+        let forward: Vec<_> = compiled_features_iter().collect();
+        let mut expected = forward.clone();
+        expected.reverse();
+
+        let backward: Vec<_> = compiled_features_iter().rev().collect();
+        assert_eq!(backward, expected);
+    }
+
+    #[test]
     fn compiled_features_iter_is_fused_and_updates_len() {
         let mut iter = compiled_features_iter();
         let (lower, upper) = iter.size_hint();
@@ -408,5 +446,15 @@ mod tests {
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next(), None);
         assert_eq!(iter.len(), 0);
+
+        let mut rev_iter = compiled_features_iter();
+        while rev_iter.next_back().is_some() {
+            let (lower, upper) = rev_iter.size_hint();
+            assert_eq!(Some(lower), upper);
+            assert_eq!(rev_iter.len(), lower);
+        }
+
+        assert_eq!(rev_iter.next_back(), None);
+        assert_eq!(rev_iter.len(), 0);
     }
 }
