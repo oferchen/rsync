@@ -2430,6 +2430,36 @@ fn prologue_sniffer_reset_restores_canonical_capacity_after_shrink() {
 }
 
 #[test]
+fn prologue_sniffer_try_reserve_buffered_grows_capacity() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let initial_capacity = sniffer.buffered_storage().capacity();
+
+    sniffer
+        .try_reserve_buffered(LEGACY_DAEMON_PREFIX_LEN * 3)
+        .expect("reservation should succeed for modest growth");
+
+    assert!(sniffer.buffered().is_empty());
+    assert!(sniffer.requires_more_data());
+    assert!(
+        sniffer.buffered_storage().capacity() >= initial_capacity.max(LEGACY_DAEMON_PREFIX_LEN * 3),
+        "buffer capacity must accommodate the requested additional bytes"
+    );
+}
+
+#[test]
+fn prologue_sniffer_try_reserve_buffered_reports_overflow() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let err = sniffer
+        .try_reserve_buffered(usize::MAX)
+        .expect_err("overflowing reservation must error");
+
+    let rendered = format!("{err:?}");
+    assert!(rendered.contains("CapacityOverflow"));
+    assert!(sniffer.buffered().is_empty());
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_slice_reports_small_buffer() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer
