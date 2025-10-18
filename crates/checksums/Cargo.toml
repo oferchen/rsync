@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 md4 = { version = "0.10", default-features = false, features = ["std"] }
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
-xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64"] }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 
 [dev-dependencies]
 proptest = "1.4"

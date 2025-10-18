@@ -2,8 +2,8 @@
 //!
 //! Upstream rsync negotiates the strong checksum algorithm based on the protocol
 //! version and compile-time feature set. This module exposes streaming wrappers
-//! for MD4, MD5, and XXH64 so higher layers can compose the desired strategy
-//! without reimplementing the hashing primitives.
+//! for MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers can compose the
+//! desired strategy without reimplementing the hashing primitives.
 
 mod md4;
 mod md5;
@@ -11,7 +11,7 @@ mod xxhash;
 
 pub use md4::Md4;
 pub use md5::Md5;
-pub use xxhash::Xxh64;
+pub use xxhash::{Xxh3, Xxh3_128, Xxh64};
 
 /// Trait implemented by strong checksum algorithms used by rsync.
 ///
@@ -74,7 +74,7 @@ pub trait StrongDigest: Sized {
 
 #[cfg(test)]
 mod tests {
-    use super::{Md4, Md5, StrongDigest, Xxh64};
+    use super::{Md4, Md5, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
     #[test]
     fn md5_trait_round_trip_matches_inherent_api() {
@@ -108,5 +108,29 @@ mod tests {
             digest.as_ref(),
             <Xxh64 as StrongDigest>::digest_with_seed(seed, input).as_ref()
         );
+    }
+
+    #[test]
+    fn xxh3_trait_matches_inherent_api() {
+        let seed = 77_u64;
+        let input = b"xxh3-64";
+
+        let mut via_trait: Xxh3 = StrongDigest::with_seed(seed);
+        via_trait.update(input);
+        let trait_digest = via_trait.finalize();
+
+        assert_eq!(trait_digest.as_ref(), Xxh3::digest(seed, input).as_ref());
+    }
+
+    #[test]
+    fn xxh3_128_trait_matches_inherent_api() {
+        let seed = 987_u64;
+        let input = b"xxh3-128";
+
+        let mut via_trait: Xxh3_128 = StrongDigest::with_seed(seed);
+        via_trait.update(input);
+        let trait_digest = via_trait.finalize();
+
+        assert_eq!(trait_digest.as_ref(), Xxh3_128::digest(seed, input).as_ref());
     }
 }
