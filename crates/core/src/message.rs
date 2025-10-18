@@ -272,6 +272,16 @@ impl<'a> MessageSegments<'a> {
 
         let mut consumed = self.len() - remaining;
 
+        if start > 0 {
+            let consumed_prefix = slices[..start]
+                .iter()
+                .map(|slice| slice.len())
+                .sum::<usize>();
+
+            debug_assert!(consumed >= consumed_prefix);
+            consumed -= consumed_prefix;
+        }
+
         for slice in &slices[start..] {
             let bytes = slice.as_ref();
 
