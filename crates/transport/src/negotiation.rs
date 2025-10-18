@@ -112,6 +112,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     }
 
     /// Returns an iterator over the populated slices.
+    #[must_use]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
@@ -155,16 +156,11 @@ impl<'a> NegotiationBufferedSlices<'a> {
         }
 
         let mut remaining = self.total_len;
-        let mut start = 0usize;
         let mut vectored = self.segments;
+        let mut segments: &mut [IoSlice<'_>] = &mut vectored[..self.count];
 
-        while remaining > 0 {
-            let tail = &mut vectored[start..self.count];
-            if tail.is_empty() {
-                break;
-            }
-
-            match writer.write_vectored(&*tail) {
+        while !segments.is_empty() && remaining > 0 {
+            match writer.write_vectored(&*segments) {
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
                 Ok(written) => {
                     debug_assert!(written <= remaining);
@@ -174,26 +170,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
                         return Ok(());
                     }
 
-                    let mut consumed = written;
-                    let mut index = start;
-                    while consumed > 0 && index < self.count {
-                        let slice_len = vectored[index].len();
-                        if consumed < slice_len {
-                            vectored[index].advance(consumed);
-                            consumed = 0;
-                        } else {
-                            vectored[index].advance(slice_len);
-                            consumed -= slice_len;
-                            index += 1;
-                        }
-                    }
-
-                    start = index;
-                    while start < self.count && vectored[start].is_empty() {
-                        start += 1;
-                    }
-
-                    continue;
+                    IoSlice::advance_slices(&mut segments, written);
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
