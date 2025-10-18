@@ -46,6 +46,25 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Reports whether the session negotiated the binary remote-shell protocol.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_binary`], allowing callers
+    /// to branch on the handshake style without matching on [`Self`]
+    /// explicitly. Binary negotiations correspond to protocols 30 and newer.
+    #[must_use]
+    pub const fn is_binary(&self) -> bool {
+        matches!(self, Self::Binary(_))
+    }
+
+    /// Reports whether the session negotiated the legacy ASCII daemon protocol.
+    ///
+    /// The helper mirrors [`NegotiationPrologue::is_legacy`] and returns `true`
+    /// when the handshake flowed through the `@RSYNCD:` daemon exchange.
+    #[must_use]
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
+    }
+
     /// Returns the negotiated protocol version after applying the caller cap.
     #[must_use]
     pub fn negotiated_protocol(&self) -> ProtocolVersion {
