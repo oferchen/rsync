@@ -17,7 +17,13 @@ use rsync_protocol::{
 /// buffered data is replayed before any further reads from the inner stream,
 /// mirroring upstream rsync's behavior where the detection prefix is fed back
 /// into the parsing logic.
-#[derive(Debug)]
+///
+/// When the inner reader implements [`Clone`], the entire [`NegotiatedStream`]
+/// can be cloned. The clone retains the buffered negotiation bytes and replay
+/// cursor so both instances continue independently—matching upstream helpers
+/// that occasionally need to inspect the handshake transcript while preserving
+/// the original transport for continued use.
+#[derive(Clone, Debug)]
 pub struct NegotiatedStream<R> {
     inner: R,
     decision: NegotiationPrologue,
@@ -2731,6 +2737,45 @@ mod tests {
         let (prefix, remainder) = parts.buffered_split();
         assert_eq!(prefix, b"\x00");
         assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn negotiated_stream_clone_preserves_buffer_progress() {
+        let data = b"@RSYNCD: 30.0\nrest";
+        let mut stream = sniff_bytes(data).expect("sniff succeeds");
+
+        let mut prefix = [0u8; 5];
+        stream
+            .read_exact(&mut prefix)
+            .expect("read_exact consumes part of the buffered prefix");
+        assert_eq!(&prefix, b"@RSYN");
+
+        let remaining_before_clone = stream.buffered_remaining();
+        let consumed_before_clone = stream.buffered_consumed();
+
+        let mut cloned = stream.clone();
+        assert_eq!(cloned.decision(), stream.decision());
+        assert_eq!(cloned.buffered_remaining(), remaining_before_clone);
+        assert_eq!(cloned.buffered_consumed(), consumed_before_clone);
+        assert_eq!(
+            cloned.sniffed_prefix_remaining(),
+            stream.sniffed_prefix_remaining()
+        );
+
+        let mut cloned_replay = Vec::new();
+        cloned
+            .read_to_end(&mut cloned_replay)
+            .expect("cloned stream replays remaining bytes");
+
+        assert_eq!(stream.buffered_remaining(), remaining_before_clone);
+        assert_eq!(stream.buffered_consumed(), consumed_before_clone);
+
+        let mut original_replay = Vec::new();
+        stream
+            .read_to_end(&mut original_replay)
+            .expect("original stream still replays bytes");
+
+        assert_eq!(cloned_replay, original_replay);
     }
 
     #[test]
