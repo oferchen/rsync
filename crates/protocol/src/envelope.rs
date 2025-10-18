@@ -331,6 +331,14 @@ impl fmt::Display for LogCodeConversionError {
 
 impl std::error::Error for LogCodeConversionError {}
 
+impl TryFrom<LogCode> for MessageCode {
+    type Error = LogCodeConversionError;
+
+    fn try_from(value: LogCode) -> Result<Self, LogCodeConversionError> {
+        MessageCode::from_log_code(value).ok_or(LogCodeConversionError::NoMessageEquivalent(value))
+    }
+}
+
 impl MessageCode {
     /// Alias constant representing the legacy `MSG_FLUSH` identifier.
     ///
@@ -499,6 +507,16 @@ impl MessageCode {
     }
 }
 
+impl TryFrom<MessageCode> for LogCode {
+    type Error = LogCodeConversionError;
+
+    fn try_from(value: MessageCode) -> Result<Self, LogCodeConversionError> {
+        value
+            .log_code()
+            .ok_or(LogCodeConversionError::NoLogEquivalent(value))
+    }
+}
+
 impl fmt::Display for MessageCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
@@ -545,24 +563,6 @@ impl FromStr for MessageCode {
 impl From<MessageCode> for u8 {
     fn from(value: MessageCode) -> Self {
         value.as_u8()
-    }
-}
-
-impl TryFrom<LogCode> for MessageCode {
-    type Error = LogCodeConversionError;
-
-    fn try_from(value: LogCode) -> Result<Self, LogCodeConversionError> {
-        MessageCode::from_log_code(value).ok_or(LogCodeConversionError::NoMessageEquivalent(value))
-    }
-}
-
-impl TryFrom<MessageCode> for LogCode {
-    type Error = LogCodeConversionError;
-
-    fn try_from(value: MessageCode) -> Result<Self, LogCodeConversionError> {
-        value
-            .log_code()
-            .ok_or(LogCodeConversionError::NoLogEquivalent(value))
     }
 }
 
@@ -781,6 +781,42 @@ mod tests {
 
         assert_eq!(HEADER.code(), MessageCode::Info);
         assert_eq!(HEADER.payload_len(), 42);
+    }
+
+    #[test]
+    fn try_from_log_code_converts_logging_variants() {
+        for &log in LogCode::all() {
+            match log {
+                LogCode::None => {
+                    let err = MessageCode::try_from(log).expect_err("FNONE has no multiplexed tag");
+                    assert_eq!(
+                        err,
+                        LogCodeConversionError::NoMessageEquivalent(LogCode::None)
+                    );
+                }
+                _ => {
+                    let message = MessageCode::try_from(log).expect("log code has multiplexed tag");
+                    assert_eq!(message.log_code(), Some(log));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn try_from_message_code_rejects_non_logging_variants() {
+        for &code in MessageCode::all() {
+            match code.log_code() {
+                Some(log) => {
+                    let parsed = LogCode::try_from(code).expect("logging code maps to log code");
+                    assert_eq!(parsed, log);
+                }
+                None => {
+                    let err =
+                        LogCode::try_from(code).expect_err("non-logging message lacks log code");
+                    assert_eq!(err, LogCodeConversionError::NoLogEquivalent(code));
+                }
+            }
+        }
     }
 
     #[test]
