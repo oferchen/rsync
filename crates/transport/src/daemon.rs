@@ -33,12 +33,6 @@ impl LegacyGreetingBuffer {
         }
     }
 
-    /// Returns the number of bytes currently stored in the buffer.
-    #[must_use]
-    const fn len(&self) -> usize {
-        self.len
-    }
-
     /// Reports whether the buffer is empty.
     #[must_use]
     const fn is_empty(&self) -> bool {
@@ -53,6 +47,32 @@ impl LegacyGreetingBuffer {
     #[must_use]
     fn as_bytes(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+
+    /// Renders a canonical legacy daemon greeting into the buffer.
+    ///
+    /// The helper clears any existing contents before delegating to
+    /// [`write_legacy_daemon_greeting`], ensuring reused buffers never retain
+    /// stale bytes from previous negotiations. On success the borrowed slice
+    /// exposes the freshly written banner; on failure the buffer is cleared so
+    /// callers can retry without observing partially formatted data.
+    #[must_use = "callers typically forward the rendered greeting to the daemon"]
+    fn render_greeting(&mut self, version: ProtocolVersion) -> Result<&[u8], fmt::Error> {
+        self.clear();
+
+        match write_legacy_daemon_greeting(self, version) {
+            Ok(()) => {
+                debug_assert!(
+                    !self.is_empty(),
+                    "successful greeting rendering must populate the buffer",
+                );
+                Ok(self.as_bytes())
+            }
+            Err(err) => {
+                self.clear();
+                Err(err)
+            }
+        }
     }
 }
 
@@ -780,23 +800,21 @@ where
     let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
     let mut banner = LegacyGreetingBuffer::new();
-    if write_legacy_daemon_greeting(&mut banner, negotiated_protocol).is_err() {
-        banner.clear();
-        return Err(io::Error::new(
+    let bytes = banner.render_greeting(negotiated_protocol).map_err(|_| {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             "failed to format legacy daemon greeting",
-        ));
-    }
+        )
+    })?;
 
-    let bytes = banner.as_ref();
-    if banner.is_empty() {
+    if bytes.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "legacy daemon greeting formatter produced empty banner",
         ));
     }
 
-    stream.write_all(&bytes[..banner.len()])?;
+    stream.write_all(bytes)?;
     stream.flush()?;
 
     Ok(LegacyDaemonHandshake {
@@ -1384,11 +1402,12 @@ mod tests {
     #[test]
     fn legacy_greeting_buffer_matches_formatter() {
         let mut buffer = LegacyGreetingBuffer::new();
-        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
+        let rendered = buffer
+            .render_greeting(ProtocolVersion::NEWEST)
             .expect("writing to stack buffer succeeds");
 
         assert_eq!(
-            buffer.as_bytes(),
+            rendered,
             format_legacy_daemon_greeting(ProtocolVersion::NEWEST).as_bytes()
         );
     }
@@ -1396,20 +1415,17 @@ mod tests {
     #[test]
     fn legacy_greeting_buffer_supports_reuse() {
         let mut buffer = LegacyGreetingBuffer::default();
-        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
-            .expect("writing to stack buffer succeeds");
+        let first = buffer
+            .render_greeting(ProtocolVersion::NEWEST)
+            .expect("writing to stack buffer succeeds")
+            .to_vec();
 
-        assert!(!buffer.is_empty());
-        let snapshot = buffer.as_ref().to_vec();
-        assert_eq!(buffer.len(), snapshot.len());
+        assert_eq!(buffer.as_bytes().len(), first.len());
 
-        buffer.clear();
-        assert!(buffer.is_empty());
-        assert_eq!(buffer.len(), 0);
-
-        write_legacy_daemon_greeting(&mut buffer, ProtocolVersion::NEWEST)
-            .expect("writing after clear succeeds");
-        assert_eq!(buffer.as_ref(), snapshot.as_slice());
+        let second = buffer
+            .render_greeting(ProtocolVersion::NEWEST)
+            .expect("writing after reuse succeeds");
+        assert_eq!(second, first.as_slice());
     }
 
     #[test]
@@ -1420,7 +1436,7 @@ mod tests {
         assert!(buffer.write_str(long).is_err());
         assert!(buffer.as_bytes().is_empty());
         assert!(buffer.is_empty());
-        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.as_bytes().len(), 0);
     }
 
     #[test]
