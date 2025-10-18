@@ -2859,6 +2859,33 @@ mod tests {
     }
 
     #[test]
+    fn try_map_inner_error_map_original_transforms_preserved_value() {
+        let legacy = b"@RSYNCD: 31.0\nmotd\n";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        let mapped = err.map_original(NegotiatedStream::into_parts);
+        assert_eq!(mapped.error().kind(), io::ErrorKind::Other);
+
+        let parts = mapped.into_original();
+        assert_eq!(parts.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+
+        let mut rebuilt = parts.into_stream();
+        let mut replay = Vec::new();
+        rebuilt
+            .read_to_end(&mut replay)
+            .expect("mapped original preserves replay bytes");
+        assert_eq!(replay, legacy);
+    }
+
+    #[test]
     fn try_map_inner_error_mut_accessors_preserve_state() {
         let legacy = b"@RSYNCD: 31.0\n";
         let stream = sniff_bytes(legacy).expect("sniff succeeds");
