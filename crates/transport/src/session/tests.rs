@@ -921,6 +921,47 @@ fn session_handshake_parts_clone_preserves_binary_stream_state() {
 }
 
 #[test]
+fn session_handshake_into_conversion_matches_method_for_binary() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let via_method = handshake.clone().into_stream_parts();
+    let via_into: SessionHandshakeParts<_> = handshake.into();
+
+    assert_eq!(via_into.decision(), NegotiationPrologue::Binary);
+    assert_eq!(via_into.negotiated_protocol(), remote_version);
+    assert_eq!(via_into.remote_protocol(), remote_version);
+    assert_eq!(
+        via_into.remote_advertised_protocol(),
+        u32::from(remote_version.as_u8())
+    );
+    assert!(via_into.server_greeting().is_none());
+
+    assert_eq!(via_into.decision(), via_method.decision());
+    assert_eq!(
+        via_into.negotiated_protocol(),
+        via_method.negotiated_protocol()
+    );
+    assert_eq!(via_into.remote_protocol(), via_method.remote_protocol());
+    assert_eq!(
+        via_into.remote_advertised_protocol(),
+        via_method.remote_advertised_protocol()
+    );
+
+    let reconstructed: SessionHandshake<_> = via_into.clone().into();
+    assert_eq!(reconstructed.decision(), NegotiationPrologue::Binary);
+    assert_eq!(reconstructed.negotiated_protocol(), remote_version);
+    assert_eq!(reconstructed.remote_protocol(), remote_version);
+    assert_eq!(
+        reconstructed.remote_advertised_protocol(),
+        u32::from(remote_version.as_u8())
+    );
+}
+
+#[test]
 fn session_handshake_parts_clone_preserves_legacy_stream_state() {
     let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
 
@@ -971,6 +1012,43 @@ fn session_handshake_parts_clone_preserves_legacy_stream_state() {
     expected_clone.extend_from_slice(b"other\n");
     assert_eq!(cloned_transport.writes(), expected_clone.as_slice());
     assert_eq!(cloned_transport.flushes(), 1);
+}
+
+#[test]
+fn session_handshake_into_conversion_matches_method_for_legacy() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
+
+    let via_method = handshake.clone().into_stream_parts();
+    let via_into: SessionHandshakeParts<_> = handshake.into();
+
+    assert_eq!(via_into.decision(), NegotiationPrologue::LegacyAscii);
+    let negotiated = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    assert_eq!(via_into.negotiated_protocol(), negotiated);
+    assert_eq!(via_into.remote_protocol(), negotiated);
+    assert_eq!(
+        via_into.remote_advertised_protocol(),
+        u32::from(negotiated.as_u8())
+    );
+    assert!(via_into.server_greeting().is_some());
+
+    assert_eq!(via_into.decision(), via_method.decision());
+    assert_eq!(
+        via_into.negotiated_protocol(),
+        via_method.negotiated_protocol()
+    );
+    assert_eq!(via_into.remote_protocol(), via_method.remote_protocol());
+    assert_eq!(
+        via_into.remote_advertised_protocol(),
+        via_method.remote_advertised_protocol()
+    );
+
+    let reconstructed: SessionHandshake<_> = via_into.clone().into();
+    assert_eq!(reconstructed.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(reconstructed.negotiated_protocol(), negotiated);
+    assert!(reconstructed.server_greeting().is_some());
 }
 
 #[test]
