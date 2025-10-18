@@ -93,7 +93,7 @@ impl<'a> MessageSegments<'a> {
 }
 
 /// Version tag appended to message trailers.
-pub const VERSION_SUFFIX: &str = "3.4.1-rust";
+pub const VERSION_SUFFIX: &str = crate::version::RUST_VERSION;
 
 /// Severity of a user-visible message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

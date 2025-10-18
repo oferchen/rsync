@@ -9,3 +9,11 @@ repository = "https://github.com/oferchen/rsync"
 build = "build.rs"
 
 [dependencies]
+
+[features]
+default = []
+acl = []
+xattr = []
+zstd = []
+iconv = []
+sd-notify = []
