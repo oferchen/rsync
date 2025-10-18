@@ -106,6 +106,28 @@ impl<R> NegotiatedStream<R> {
         self.decision
     }
 
+    /// Ensures the sniffed negotiation matches the expected style.
+    ///
+    /// The helper mirrors the checks performed by the binary and legacy
+    /// handshake wrappers, returning an [`io::ErrorKind::InvalidData`] error
+    /// with the supplied message when the peer advertises a different
+    /// negotiation style. Centralising the logic keeps the error strings used
+    /// across the transport crate in sync and avoids drift when additional
+    /// call sites are introduced.
+    pub fn ensure_decision(
+        &self,
+        expected: NegotiationPrologue,
+        error_message: &'static str,
+    ) -> io::Result<()> {
+        match self.decision {
+            decision if decision == expected => Ok(()),
+            NegotiationPrologue::NeedMoreData => {
+                unreachable!("negotiation sniffer fully classifies the prologue")
+            }
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, error_message)),
+        }
+    }
+
     /// Returns the bytes that were required to classify the negotiation prologue.
     #[must_use]
     pub fn sniffed_prefix(&self) -> &[u8] {
@@ -1625,6 +1647,33 @@ mod tests {
 
         let parts = stream.into_parts();
         assert!(!parts.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn ensure_decision_accepts_matching_style() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        stream
+            .ensure_decision(
+                NegotiationPrologue::LegacyAscii,
+                "legacy daemon negotiation requires @RSYNCD: prefix",
+            )
+            .expect("legacy decision matches expectation");
+    }
+
+    #[test]
+    fn ensure_decision_rejects_mismatched_style() {
+        let stream = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
+        let err = stream
+            .ensure_decision(
+                NegotiationPrologue::LegacyAscii,
+                "legacy daemon negotiation requires @RSYNCD: prefix",
+            )
+            .expect_err("binary decision must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "legacy daemon negotiation requires @RSYNCD: prefix"
+        );
     }
 
     #[test]

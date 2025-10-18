@@ -264,20 +264,6 @@ where
     R: Read + Write,
 {
     let stream = sniff_negotiation_stream(reader)?;
-
-    match stream.decision() {
-        NegotiationPrologue::LegacyAscii => {}
-        NegotiationPrologue::Binary => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "legacy daemon negotiation requires @RSYNCD: prefix",
-            ));
-        }
-        NegotiationPrologue::NeedMoreData => {
-            unreachable!("sniffer must fully classify the negotiation prologue")
-        }
-    }
-
     negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
 }
 
@@ -297,20 +283,6 @@ where
     R: Read + Write,
 {
     let stream = sniff_negotiation_stream_with_sniffer(reader, sniffer)?;
-
-    match stream.decision() {
-        NegotiationPrologue::LegacyAscii => {}
-        NegotiationPrologue::Binary => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "legacy daemon negotiation requires @RSYNCD: prefix",
-            ));
-        }
-        NegotiationPrologue::NeedMoreData => {
-            unreachable!("sniffer must fully classify the negotiation prologue")
-        }
-    }
-
     negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
 }
 
@@ -321,6 +293,11 @@ pub(crate) fn negotiate_legacy_daemon_session_from_stream<R>(
 where
     R: Read + Write,
 {
+    stream.ensure_decision(
+        NegotiationPrologue::LegacyAscii,
+        "legacy daemon negotiation requires @RSYNCD: prefix",
+    )?;
+
     let mut line = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN + 32);
     let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
     let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
