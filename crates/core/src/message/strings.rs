@@ -15,8 +15,10 @@
 //! through [`exit_code_message`] and can immediately convert them into a
 //! [`Message`] via [`ExitCodeMessage::to_message`] or the blanket
 //! [`From<ExitCodeMessage>`](ExitCodeMessage#impl-From%3CExitCodeMessage%3E-for-Message)
-//! implementation. This mirrors the behaviour of upstream rsync where exit code
-//! 24 emits a warning while all other entries are treated as errors.
+//! implementation. When only the severity is required, use
+//! [`exit_code_severity`] to query the table without materialising a full
+//! [`Message`]. This mirrors the behaviour of upstream rsync where exit code 24
+//! emits a warning while all other entries are treated as errors.
 //!
 //! # Invariants
 //!
@@ -59,6 +61,18 @@
 //!
 //! assert_eq!(message.code(), Some(23));
 //! assert_eq!(message.severity(), Severity::Error);
+//! ```
+//!
+//! Inspect the severity classification without constructing a full
+//! [`ExitCodeMessage`].
+//!
+//! ```
+//! use rsync_core::message::strings::exit_code_severity;
+//! use rsync_core::message::Severity;
+//!
+//! assert_eq!(exit_code_severity(24), Some(Severity::Warning));
+//! assert_eq!(exit_code_severity(23), Some(Severity::Error));
+//! assert_eq!(exit_code_severity(7), None);
 //! ```
 //!
 //! # See also
@@ -208,6 +222,31 @@ pub const fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
     None
 }
 
+/// Returns the severity classification for the provided exit code, if known.
+///
+/// The helper allows higher layers to branch on rsync's canonical error vs
+/// warning split without constructing a full [`ExitCodeMessage`]. The result is
+/// derived from the same lookup table used by [`exit_code_message`], ensuring
+/// both helpers stay in sync.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::message::strings::exit_code_severity;
+/// use rsync_core::message::Severity;
+///
+/// assert_eq!(exit_code_severity(24), Some(Severity::Warning));
+/// assert_eq!(exit_code_severity(23), Some(Severity::Error));
+/// assert_eq!(exit_code_severity(0), None);
+/// ```
+#[must_use]
+pub const fn exit_code_severity(code: i32) -> Option<Severity> {
+    match exit_code_message(code) {
+        Some(template) => Some(template.severity()),
+        None => None,
+    }
+}
+
 /// Returns the full table of known exit-code templates.
 ///
 /// The slice mirrors upstream rsync's `rerr_names` array, including the
@@ -290,6 +329,17 @@ mod tests {
         assert_eq!(slice.len(), EXIT_CODE_TABLE.len());
         assert_eq!(slice.first(), EXIT_CODE_TABLE.first());
         assert_eq!(slice.last(), EXIT_CODE_TABLE.last());
+    }
+
+    #[test]
+    fn exit_code_severity_matches_templates() {
+        assert_eq!(exit_code_severity(24), Some(Severity::Warning));
+        assert_eq!(exit_code_severity(23), Some(Severity::Error));
+        assert_eq!(exit_code_severity(7), None);
+
+        for entry in EXIT_CODE_TABLE {
+            assert_eq!(exit_code_severity(entry.code()), Some(entry.severity()));
+        }
     }
 
     #[test]
