@@ -588,6 +588,23 @@ mod tests {
     }
 
     #[test]
+    fn negotiate_clamps_max_u32_advertisement() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 4294967295.0\n");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        assert_eq!(handshake.server_greeting().advertised_protocol(), u32::MAX);
+        assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
+        assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
+
+        let transport = handshake.into_stream().into_inner();
+        assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
+    }
+
+    #[test]
     fn negotiate_rejects_binary_prefix() {
         let transport = MemoryTransport::new(&[0x00, 0x20, 0x00, 0x00]);
         match negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST) {
