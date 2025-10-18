@@ -8,7 +8,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 ## Blocking Differences
 
 - **No client or daemon binaries**
-  - *Impact*: Users cannot execute transfers because `bin/rsync` and `bin/rsyncd`
+  - *Impact*: Users cannot execute transfers because `bin/oc-rsync` and `bin/oc-rsyncd`
     are absent.
   - *Removal plan*: Introduce the `cli` and `daemon` crates described in the
     workspace layout, ensure they invoke the shared `core` facade, and verify
