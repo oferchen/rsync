@@ -58,8 +58,13 @@ impl FmtWrite for LegacyGreetingBuffer {
 /// The structure exposes the negotiated protocol version together with the
 /// parsed greeting metadata while retaining the replaying stream so higher
 /// layers can continue consuming control messages or file lists.
+///
+/// When the underlying transport implements [`Clone`], the handshake can be
+/// cloned to stage multiple consumers for the same negotiated session. The
+/// replay buffer, greeting, and negotiated protocol are duplicated so both
+/// instances progress independently without rereading from the transport.
 #[doc(alias = "@RSYNCD")]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LegacyDaemonHandshake<R> {
     stream: NegotiatedStream<R>,
     server_greeting: LegacyDaemonGreetingOwned,
