@@ -49,6 +49,27 @@
 //! assert!(flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
 //! ```
 //!
+//! Iterate over the known compatibility flags set within a bitfield using the
+//! standard iterator protocol:
+//!
+//! ```
+//! use rsync_protocol::{CompatibilityFlags, KnownCompatibilityFlag};
+//!
+//! let flags = CompatibilityFlags::INC_RECURSE
+//!     | CompatibilityFlags::CHECKSUM_SEED_FIX
+//!     | CompatibilityFlags::VARINT_FLIST_FLAGS;
+//!
+//! let collected: Vec<_> = flags.into_iter().collect();
+//! assert_eq!(
+//!     collected,
+//!     vec![
+//!         KnownCompatibilityFlag::IncRecurse,
+//!         KnownCompatibilityFlag::ChecksumSeedFix,
+//!         KnownCompatibilityFlag::VarintFlistFlags,
+//!     ]
+//! );
+//! ```
+//!
 //! # See also
 //!
 //! - [`crate::varint`] for the encoding and decoding primitives used by the
@@ -396,6 +417,33 @@ impl Extend<KnownCompatibilityFlag> for CompatibilityFlags {
     }
 }
 
+impl IntoIterator for CompatibilityFlags {
+    type Item = KnownCompatibilityFlag;
+    type IntoIter = KnownCompatibilityFlagsIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_known()
+    }
+}
+
+impl<'a> IntoIterator for &'a CompatibilityFlags {
+    type Item = KnownCompatibilityFlag;
+    type IntoIter = KnownCompatibilityFlagsIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (*self).iter_known()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut CompatibilityFlags {
+    type Item = KnownCompatibilityFlag;
+    type IntoIter = KnownCompatibilityFlagsIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (*self).iter_known()
+    }
+}
+
 impl fmt::Debug for CompatibilityFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CompatibilityFlags")
@@ -615,6 +663,44 @@ mod tests {
         assert!(flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
         assert!(flags.contains(CompatibilityFlags::ID0_NAMES));
         assert_eq!(flags.unknown_bits(), 0);
+    }
+
+    #[test]
+    fn into_iter_collects_known_flags() {
+        let flags = CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let collected: Vec<_> = flags.into_iter().collect();
+        assert_eq!(
+            collected,
+            vec![
+                KnownCompatibilityFlag::IncRecurse,
+                KnownCompatibilityFlag::ChecksumSeedFix,
+                KnownCompatibilityFlag::VarintFlistFlags,
+            ]
+        );
+    }
+
+    #[test]
+    fn into_iter_for_references_matches_owned_iteration() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+
+        let owned: Vec<_> = flags.into_iter().collect();
+        let shared: Vec<_> = (&flags).into_iter().collect();
+        let mut clone = flags;
+        let mut shared_mut: Vec<_> = (&mut clone).into_iter().collect();
+
+        assert_eq!(owned, shared);
+        assert_eq!(shared, shared_mut);
+        shared_mut.reverse();
+        assert_eq!(
+            shared_mut,
+            vec![
+                KnownCompatibilityFlag::SafeFileList,
+                KnownCompatibilityFlag::IncRecurse
+            ]
+        );
     }
 
     #[test]
