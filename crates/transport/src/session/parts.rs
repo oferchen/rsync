@@ -335,6 +335,19 @@ impl<R> SessionHandshakeParts<R> {
     pub fn into_handshake(self) -> SessionHandshake<R> {
         SessionHandshake::from_stream_parts(self)
     }
+
+    /// Releases the parts structure and returns the underlying transport.
+    ///
+    /// Buffered negotiation bytes captured during sniffing are discarded. Use
+    /// [`SessionHandshakeParts::into_handshake`] or
+    /// [`SessionHandshakeParts::into_stream`] when the replay data must be
+    /// preserved. This convenience wrapper mirrors
+    /// [`NegotiatedStream::into_inner`](crate::NegotiatedStream::into_inner)
+    /// for callers that only require continued access to the raw transport.
+    #[must_use]
+    pub fn into_inner(self) -> R {
+        self.into_stream().into_inner()
+    }
 }
 
 impl<R> From<BinaryHandshake<R>> for SessionHandshakeParts<R> {
