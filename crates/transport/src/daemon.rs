@@ -138,6 +138,28 @@ impl<R> LegacyDaemonHandshake<R> {
         (self.server_greeting, self.negotiated_protocol, self.stream)
     }
 
+    /// Reconstructs a [`LegacyDaemonHandshake`] from the parsed greeting, negotiated protocol,
+    /// and replaying stream returned by [`Self::into_components`].
+    ///
+    /// Debug builds assert that the supplied stream captured a legacy ASCII negotiation so a binary
+    /// session cannot be rewrapped accidentally. Higher layers can therefore temporarily take
+    /// ownership of the components—for example to wrap the transport with timeouts—before
+    /// reassembling the handshake without replaying the daemon greeting.
+    #[must_use]
+    pub fn from_components(
+        server_greeting: LegacyDaemonGreetingOwned,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStream<R>,
+    ) -> Self {
+        debug_assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+
+        Self {
+            stream,
+            server_greeting,
+            negotiated_protocol,
+        }
+    }
+
     /// Maps the inner transport while keeping the negotiated metadata intact.
     ///
     /// The helper mirrors [`NegotiatedStream::map_inner`], making it convenient to
@@ -697,6 +719,30 @@ mod tests {
         let mut expected = format_legacy_daemon_greeting(negotiated);
         expected.push_str("@RSYNCD: OK\n");
         assert_eq!(transport.written(), expected.as_bytes());
+    }
+
+    #[test]
+    fn legacy_handshake_round_trips_from_components() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let expected_buffer = handshake.stream().buffered().to_vec();
+        let greeting = handshake.server_greeting().clone();
+        let negotiated_protocol = handshake.negotiated_protocol();
+        let stream = handshake.into_stream();
+
+        let rebuilt =
+            LegacyDaemonHandshake::from_components(greeting.clone(), negotiated_protocol, stream);
+
+        assert_eq!(rebuilt.server_greeting(), &greeting);
+        assert_eq!(rebuilt.negotiated_protocol(), negotiated_protocol);
+        assert_eq!(
+            rebuilt.stream().decision(),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
     }
 
     #[test]

@@ -91,6 +91,29 @@ impl<R> BinaryHandshake<R> {
         )
     }
 
+    /// Reconstructs a [`BinaryHandshake`] from its components.
+    ///
+    /// The helper complements [`Self::into_components`] by allowing callers to temporarily extract
+    /// the handshake metadata and replaying stream and later rebuild the wrapper without rerunning
+    /// the negotiation. Debug builds assert that the supplied stream captured a binary negotiation
+    /// so mismatched variants are detected early.
+    #[must_use]
+    pub fn from_components(
+        remote_advertised: u32,
+        remote_protocol: ProtocolVersion,
+        negotiated_protocol: ProtocolVersion,
+        stream: NegotiatedStream<R>,
+    ) -> Self {
+        debug_assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+
+        Self {
+            stream,
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+        }
+    }
+
     /// Maps the inner transport while preserving the negotiated metadata.
     ///
     /// This helper forwards to [`NegotiatedStream::map_inner`], allowing callers to
@@ -430,6 +453,34 @@ mod tests {
             self.flushes += 1;
             self.inner.flush()
         }
+    }
+
+    #[test]
+    fn binary_handshake_round_trips_from_components() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let expected_buffer = handshake.stream().buffered().to_vec();
+        let remote_advertised = handshake.remote_advertised_protocol();
+        let remote_protocol = handshake.remote_protocol();
+        let negotiated_protocol = handshake.negotiated_protocol();
+        let stream = handshake.into_stream();
+
+        let rebuilt = BinaryHandshake::from_components(
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        );
+
+        assert_eq!(rebuilt.remote_advertised_protocol(), remote_advertised);
+        assert_eq!(rebuilt.remote_protocol(), remote_protocol);
+        assert_eq!(rebuilt.negotiated_protocol(), negotiated_protocol);
+        assert_eq!(rebuilt.stream().decision(), NegotiationPrologue::Binary);
+        assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
     }
 
     fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
