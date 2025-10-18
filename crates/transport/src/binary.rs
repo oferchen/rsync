@@ -264,18 +264,10 @@ pub(crate) fn negotiate_binary_session_from_stream<R>(
 where
     R: Read + Write,
 {
-    match stream.decision() {
-        NegotiationPrologue::Binary => {}
-        NegotiationPrologue::LegacyAscii => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "binary negotiation requires binary prologue",
-            ));
-        }
-        NegotiationPrologue::NeedMoreData => {
-            unreachable!("sniffer fully classifies the negotiation prologue");
-        }
-    }
+    stream.ensure_decision(
+        NegotiationPrologue::Binary,
+        "binary negotiation requires binary prologue",
+    )?;
 
     let mut advertisement = [0u8; 4];
     let desired = desired_protocol.as_u8();
