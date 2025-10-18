@@ -352,6 +352,19 @@ impl<'a> MessageSegments<'a> {
 
         let mut consumed = self.len() - remaining;
 
+        if start > 0 {
+            let skip = start.min(slices.len());
+            for slice in &slices[..skip] {
+                let len = slice.len();
+                if consumed >= len {
+                    consumed -= len;
+                } else {
+                    consumed = 0;
+                    break;
+                }
+            }
+        }
+
         for slice in &slices[start..] {
             let bytes = slice.as_ref();
 
@@ -3283,6 +3296,27 @@ mod tests {
             segments
                 .write_to(&mut writer)
                 .expect("sequential fallback should succeed after partial vectored writes");
+        }
+
+        assert_eq!(writer.written, message.to_bytes().unwrap());
+        assert_eq!(writer.vectored_calls, 2);
+        assert!(writer.fallback_writes >= 1);
+    }
+
+    #[test]
+    fn segments_write_to_handles_cross_slice_progress_before_unsupported_vectored_call() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut writer = PartialThenUnsupportedWriter::new(18);
+
+        {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect("sequential fallback should succeed after cross-slice progress");
         }
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
