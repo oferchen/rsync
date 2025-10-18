@@ -251,6 +251,156 @@ impl<'a> IntoIterator for &'a NegotiationBufferedSlices<'a> {
     }
 }
 
+trait NegotiationBufferAccess {
+    fn buffer_ref(&self) -> &NegotiationBuffer;
+
+    #[inline]
+    fn buffered(&self) -> &[u8] {
+        self.buffer_ref().buffered()
+    }
+
+    #[inline]
+    fn sniffed_prefix(&self) -> &[u8] {
+        self.buffer_ref().sniffed_prefix()
+    }
+
+    #[inline]
+    fn buffered_remainder(&self) -> &[u8] {
+        self.buffer_ref().buffered_remainder()
+    }
+
+    #[inline]
+    fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer_ref().buffered_vectored()
+    }
+
+    #[inline]
+    fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer_ref().copy_into_vec(target)
+    }
+
+    #[inline]
+    fn copy_buffered_remaining_into_vec(
+        &self,
+        target: &mut Vec<u8>,
+    ) -> Result<usize, TryReserveError> {
+        self.buffer_ref().copy_remaining_into_vec(target)
+    }
+
+    #[inline]
+    fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer_ref().extend_into_vec(target)
+    }
+
+    #[inline]
+    fn extend_buffered_remaining_into_vec(
+        &self,
+        target: &mut Vec<u8>,
+    ) -> Result<usize, TryReserveError> {
+        self.buffer_ref().extend_remaining_into_vec(target)
+    }
+
+    #[inline]
+    fn buffered_split(&self) -> (&[u8], &[u8]) {
+        self.buffer_ref().buffered_split()
+    }
+
+    #[inline]
+    fn buffered_len(&self) -> usize {
+        self.buffer_ref().buffered_len()
+    }
+
+    #[inline]
+    fn buffered_consumed(&self) -> usize {
+        self.buffer_ref().buffered_consumed()
+    }
+
+    #[inline]
+    fn sniffed_prefix_remaining(&self) -> usize {
+        self.buffer_ref().sniffed_prefix_remaining()
+    }
+
+    #[inline]
+    fn legacy_prefix_complete(&self) -> bool {
+        self.buffer_ref().legacy_prefix_complete()
+    }
+
+    #[inline]
+    fn buffered_remaining(&self) -> usize {
+        self.buffer_ref().buffered_remaining()
+    }
+
+    #[inline]
+    fn buffered_remaining_slice(&self) -> &[u8] {
+        self.buffer_ref().buffered_remaining_slice()
+    }
+
+    #[inline]
+    fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer_ref().buffered_remaining_vectored()
+    }
+
+    #[inline]
+    fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        self.buffer_ref().copy_into_vec(target)
+    }
+
+    #[inline]
+    fn copy_buffered_into_vectored(
+        &self,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_all_into_vectored(bufs)
+    }
+
+    #[inline]
+    fn copy_buffered_remaining_into_vectored(
+        &self,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_remaining_into_vectored(bufs)
+    }
+
+    #[inline]
+    fn copy_buffered_into_slice(&self, target: &mut [u8]) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_all_into_slice(target)
+    }
+
+    #[inline]
+    fn copy_buffered_remaining_into_slice(
+        &self,
+        target: &mut [u8],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_remaining_into_slice(target)
+    }
+
+    #[inline]
+    fn copy_buffered_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_all_into_array(target)
+    }
+
+    #[inline]
+    fn copy_buffered_remaining_into_array<const N: usize>(
+        &self,
+        target: &mut [u8; N],
+    ) -> Result<usize, BufferedCopyTooSmall> {
+        self.buffer_ref().copy_remaining_into_array(target)
+    }
+
+    #[inline]
+    fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
+        self.buffer_ref().copy_all_into_writer(target)
+    }
+
+    #[inline]
+    fn copy_buffered_remaining_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
+        self.buffer_ref().copy_remaining_into_writer(target)
+    }
+}
+
 pub(crate) const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
     "connection closed before rsync negotiation prologue was determined";
 
@@ -329,6 +479,13 @@ impl fmt::Display for BufferedCopyTooSmall {
 
 impl std::error::Error for BufferedCopyTooSmall {}
 
+impl<R> NegotiationBufferAccess for NegotiatedStream<R> {
+    #[inline]
+    fn buffer_ref(&self) -> &NegotiationBuffer {
+        &self.buffer
+    }
+}
+
 impl<R> NegotiatedStream<R> {
     /// Returns the negotiation style determined while sniffing the transport.
     #[must_use]
@@ -387,19 +544,19 @@ impl<R> NegotiatedStream<R> {
     /// Returns the bytes that were required to classify the negotiation prologue.
     #[must_use]
     pub fn sniffed_prefix(&self) -> &[u8] {
-        self.buffer.sniffed_prefix()
+        NegotiationBufferAccess::sniffed_prefix(self)
     }
 
     /// Returns the unread bytes buffered beyond the sniffed negotiation prefix.
     #[must_use]
     pub fn buffered_remainder(&self) -> &[u8] {
-        self.buffer.buffered_remainder()
+        NegotiationBufferAccess::buffered_remainder(self)
     }
 
     /// Returns the bytes captured during negotiation sniffing, including the prefix and remainder.
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
-        self.buffer.buffered()
+        NegotiationBufferAccess::buffered(self)
     }
 
     /// Returns the buffered negotiation data split into vectored slices.
@@ -409,7 +566,7 @@ impl<R> NegotiatedStream<R> {
     /// slices directly to [`Write::write_vectored`] without copying the buffered bytes.
     #[must_use]
     pub fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
-        self.buffer.buffered_vectored()
+        NegotiationBufferAccess::buffered_vectored(self)
     }
 
     /// Copies the buffered negotiation data into a caller-provided vector without consuming it.
@@ -436,7 +593,7 @@ impl<R> NegotiatedStream<R> {
     /// ```
     #[must_use = "the result reports whether the replay vector had sufficient capacity"]
     pub fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.copy_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_into_vec(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into `target` without consuming it.
@@ -451,7 +608,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut Vec<u8>,
     ) -> Result<usize, TryReserveError> {
-        self.buffer.copy_remaining_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_vec(self, target)
     }
 
     /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
@@ -479,7 +636,7 @@ impl<R> NegotiatedStream<R> {
     /// ```
     #[must_use = "the result reports whether additional capacity was successfully reserved"]
     pub fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.extend_into_vec(target)
+        NegotiationBufferAccess::extend_buffered_into_vec(self, target)
     }
 
     /// Appends the unread portion of the buffered negotiation transcript to `target` without consuming it.
@@ -493,7 +650,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut Vec<u8>,
     ) -> Result<usize, TryReserveError> {
-        self.buffer.extend_remaining_into_vec(target)
+        NegotiationBufferAccess::extend_buffered_remaining_into_vec(self, target)
     }
 
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
@@ -505,13 +662,13 @@ impl<R> NegotiatedStream<R> {
     /// arrived alongside the detection bytes and remains buffered.
     #[must_use]
     pub fn buffered_split(&self) -> (&[u8], &[u8]) {
-        self.buffer.buffered_split()
+        NegotiationBufferAccess::buffered_split(self)
     }
 
     /// Returns the total number of buffered bytes staged for replay.
     #[must_use]
     pub fn buffered_len(&self) -> usize {
-        self.buffer.buffered_len()
+        NegotiationBufferAccess::buffered_len(self)
     }
 
     /// Returns how many buffered bytes have already been replayed.
@@ -536,7 +693,7 @@ impl<R> NegotiatedStream<R> {
     /// ```
     #[must_use]
     pub fn buffered_consumed(&self) -> usize {
-        self.buffer.buffered_consumed()
+        NegotiationBufferAccess::buffered_consumed(self)
     }
 
     /// Returns the length of the sniffed negotiation prefix.
@@ -559,7 +716,7 @@ impl<R> NegotiatedStream<R> {
     /// directly on the inner transport.
     #[must_use]
     pub fn sniffed_prefix_remaining(&self) -> usize {
-        self.buffer.sniffed_prefix_remaining()
+        NegotiationBufferAccess::sniffed_prefix_remaining(self)
     }
 
     /// Reports whether the canonical legacy negotiation prefix has been fully buffered.
@@ -571,13 +728,13 @@ impl<R> NegotiatedStream<R> {
     /// prefix into the legacy greeting parser without issuing additional reads from the transport.
     #[must_use]
     pub fn legacy_prefix_complete(&self) -> bool {
-        self.buffer.legacy_prefix_complete()
+        NegotiationBufferAccess::legacy_prefix_complete(self)
     }
 
     /// Returns the remaining number of buffered bytes that have not yet been read.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
-        self.buffer.buffered_remaining()
+        NegotiationBufferAccess::buffered_remaining(self)
     }
 
     /// Returns the portion of the buffered negotiation data that has not been consumed yet.
@@ -608,7 +765,7 @@ impl<R> NegotiatedStream<R> {
     /// ```
     #[must_use]
     pub fn buffered_remaining_slice(&self) -> &[u8] {
-        self.buffer.buffered_remaining_slice()
+        NegotiationBufferAccess::buffered_remaining_slice(self)
     }
 
     /// Returns the unread portion of the buffered negotiation data as vectored slices.
@@ -619,7 +776,7 @@ impl<R> NegotiatedStream<R> {
     /// buffered payload.
     #[must_use]
     pub fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
-        self.buffer.buffered_remaining_vectored()
+        NegotiationBufferAccess::buffered_remaining_vectored(self)
     }
 
     /// Releases the wrapper and returns its components.
@@ -678,7 +835,7 @@ impl<R> NegotiatedStream<R> {
     /// surface the allocation error.
     #[must_use = "the returned length reports how many bytes were copied and whether allocation succeeded"]
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.copy_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_into(self, target)
     }
 
     /// Copies the buffered negotiation data into the provided vectored buffers without consuming it.
@@ -724,7 +881,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         bufs: &mut [IoSliceMut<'_>],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_vectored(bufs)
+        NegotiationBufferAccess::copy_buffered_into_vectored(self, bufs)
     }
 
     /// Copies the unread portion of the buffered negotiation data into the provided vectored buffers without consuming it.
@@ -733,7 +890,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         bufs: &mut [IoSliceMut<'_>],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_vectored(bufs)
+        NegotiationBufferAccess::copy_buffered_remaining_into_vectored(self, bufs)
     }
 
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
@@ -748,7 +905,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut [u8],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_slice(target)
+        NegotiationBufferAccess::copy_buffered_into_slice(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into `target` without consuming it.
@@ -761,7 +918,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut [u8],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_slice(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_slice(self, target)
     }
 
     /// Copies the buffered negotiation data into a caller-provided array without consuming it.
@@ -774,7 +931,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut [u8; N],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_array(target)
+        NegotiationBufferAccess::copy_buffered_into_array(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into a caller-provided array without consuming it.
@@ -783,7 +940,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut [u8; N],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_array(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_array(self, target)
     }
 
     /// Streams the buffered negotiation data into the provided writer without consuming it.
@@ -793,7 +950,7 @@ impl<R> NegotiatedStream<R> {
     /// writer is propagated unchanged.
     #[must_use = "the returned length reports how many bytes were written and surfaces I/O failures"]
     pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
-        self.buffer.copy_all_into_writer(target)
+        NegotiationBufferAccess::copy_buffered_into_writer(self, target)
     }
 
     /// Streams the unread portion of the buffered negotiation data into the provided writer.
@@ -802,7 +959,7 @@ impl<R> NegotiatedStream<R> {
         &self,
         target: &mut W,
     ) -> io::Result<usize> {
-        self.buffer.copy_remaining_into_writer(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_writer(self, target)
     }
 
     /// Transforms the inner reader while preserving the buffered negotiation state.
@@ -1512,6 +1669,13 @@ where
     }
 }
 
+impl<R> NegotiationBufferAccess for NegotiatedStreamParts<R> {
+    #[inline]
+    fn buffer_ref(&self) -> &NegotiationBuffer {
+        &self.buffer
+    }
+}
+
 impl<R> NegotiatedStreamParts<R> {
     /// Returns the negotiation style that was detected.
     #[must_use]
@@ -1543,25 +1707,25 @@ impl<R> NegotiatedStreamParts<R> {
     /// Returns the captured negotiation prefix.
     #[must_use]
     pub fn sniffed_prefix(&self) -> &[u8] {
-        self.buffer.sniffed_prefix()
+        NegotiationBufferAccess::sniffed_prefix(self)
     }
 
     /// Returns the buffered remainder.
     #[must_use]
     pub fn buffered_remainder(&self) -> &[u8] {
-        self.buffer.buffered_remainder()
+        NegotiationBufferAccess::buffered_remainder(self)
     }
 
     /// Returns the buffered bytes captured during sniffing.
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
-        self.buffer.buffered()
+        NegotiationBufferAccess::buffered(self)
     }
 
     /// Returns the buffered negotiation data split into vectored slices.
     #[must_use]
     pub fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
-        self.buffer.buffered_vectored()
+        NegotiationBufferAccess::buffered_vectored(self)
     }
 
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
@@ -1606,7 +1770,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// ```
     #[must_use = "the result reports whether the replay vector had sufficient capacity"]
     pub fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.copy_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_into_vec(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into a caller-provided vector without consuming it.
@@ -1615,7 +1779,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut Vec<u8>,
     ) -> Result<usize, TryReserveError> {
-        self.buffer.copy_remaining_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_vec(self, target)
     }
 
     /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
@@ -1627,7 +1791,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// payload and the replay cursor remains untouched.
     #[must_use = "the result reports whether additional capacity was successfully reserved"]
     pub fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.extend_into_vec(target)
+        NegotiationBufferAccess::extend_buffered_into_vec(self, target)
     }
 
     /// Appends the unread portion of the buffered negotiation transcript to `target` without consuming it.
@@ -1636,7 +1800,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut Vec<u8>,
     ) -> Result<usize, TryReserveError> {
-        self.buffer.extend_remaining_into_vec(target)
+        NegotiationBufferAccess::extend_buffered_remaining_into_vec(self, target)
     }
 
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
@@ -1646,13 +1810,13 @@ impl<R> NegotiatedStreamParts<R> {
     /// bytes.
     #[must_use]
     pub fn buffered_split(&self) -> (&[u8], &[u8]) {
-        self.buffer.buffered_split()
+        NegotiationBufferAccess::buffered_split(self)
     }
 
     /// Returns the total number of bytes captured during sniffing.
     #[must_use]
     pub fn buffered_len(&self) -> usize {
-        self.buffer.buffered_len()
+        NegotiationBufferAccess::buffered_len(self)
     }
 
     /// Returns how many buffered bytes had already been replayed when the stream was decomposed.
@@ -1678,13 +1842,13 @@ impl<R> NegotiatedStreamParts<R> {
     /// ```
     #[must_use]
     pub fn buffered_consumed(&self) -> usize {
-        self.buffer.buffered_consumed()
+        NegotiationBufferAccess::buffered_consumed(self)
     }
 
     /// Returns how many buffered bytes remain unread.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
-        self.buffer.buffered_remaining()
+        NegotiationBufferAccess::buffered_remaining(self)
     }
 
     /// Returns the portion of the buffered negotiation data that has not been consumed yet.
@@ -1694,13 +1858,13 @@ impl<R> NegotiatedStreamParts<R> {
     /// parts are temporarily inspected for diagnostics without rebuilding the wrapper.
     #[must_use]
     pub fn buffered_remaining_slice(&self) -> &[u8] {
-        self.buffer.buffered_remaining_slice()
+        NegotiationBufferAccess::buffered_remaining_slice(self)
     }
 
     /// Returns the unread portion of the buffered negotiation data as vectored slices.
     #[must_use]
     pub fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
-        self.buffer.buffered_remaining_vectored()
+        NegotiationBufferAccess::buffered_remaining_vectored(self)
     }
 
     /// Returns the length of the sniffed negotiation prefix.
@@ -1716,7 +1880,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// reconstructing a [`NegotiatedStream`].
     #[must_use]
     pub fn sniffed_prefix_remaining(&self) -> usize {
-        self.buffer.sniffed_prefix_remaining()
+        NegotiationBufferAccess::sniffed_prefix_remaining(self)
     }
 
     /// Reports whether the canonical legacy negotiation prefix has been fully buffered.
@@ -1727,7 +1891,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// otherwise (including for binary sessions).
     #[must_use]
     pub fn legacy_prefix_complete(&self) -> bool {
-        self.buffer.legacy_prefix_complete()
+        NegotiationBufferAccess::legacy_prefix_complete(self)
     }
 
     /// Returns the inner reader.
@@ -1782,7 +1946,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// is required a [`TryReserveError`] is returned and the original contents remain untouched.
     #[must_use = "the returned length reports how many bytes were copied and whether allocation succeeded"]
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        self.buffer.copy_into_vec(target)
+        NegotiationBufferAccess::copy_buffered_into(self, target)
     }
 
     /// Copies the buffered negotiation data into the provided vectored buffers without consuming it.
@@ -1828,7 +1992,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         bufs: &mut [IoSliceMut<'_>],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_vectored(bufs)
+        NegotiationBufferAccess::copy_buffered_into_vectored(self, bufs)
     }
 
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
@@ -1837,7 +2001,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut [u8],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_slice(target)
+        NegotiationBufferAccess::copy_buffered_into_slice(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into `target` without consuming it.
@@ -1846,7 +2010,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut [u8],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_slice(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_slice(self, target)
     }
 
     /// Copies the buffered negotiation data into a caller-provided array without consuming it.
@@ -1855,7 +2019,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut [u8; N],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_all_into_array(target)
+        NegotiationBufferAccess::copy_buffered_into_array(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into a caller-provided array without consuming it.
@@ -1864,13 +2028,13 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut [u8; N],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_array(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_array(self, target)
     }
 
     /// Streams the buffered negotiation data into the provided writer without consuming it.
     #[must_use = "the returned length reports how many bytes were written and surfaces I/O failures"]
     pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
-        self.buffer.copy_all_into_writer(target)
+        NegotiationBufferAccess::copy_buffered_into_writer(self, target)
     }
 
     /// Streams the unread portion of the buffered negotiation data into the provided writer.
@@ -1879,7 +2043,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         target: &mut W,
     ) -> io::Result<usize> {
-        self.buffer.copy_remaining_into_writer(target)
+        NegotiationBufferAccess::copy_buffered_remaining_into_writer(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into the provided vectored buffers without consuming it.
@@ -1888,7 +2052,7 @@ impl<R> NegotiatedStreamParts<R> {
         &self,
         bufs: &mut [IoSliceMut<'_>],
     ) -> Result<usize, BufferedCopyTooSmall> {
-        self.buffer.copy_remaining_into_vectored(bufs)
+        NegotiationBufferAccess::copy_buffered_remaining_into_vectored(self, bufs)
     }
 
     /// Attempts to transform the inner reader while preserving the buffered negotiation state.
