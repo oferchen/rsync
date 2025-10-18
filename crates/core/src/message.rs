@@ -382,9 +382,10 @@ impl<'a> MessageSegments<'a> {
 
     /// Extends the provided buffer with the rendered message bytes.
     ///
-    /// The method reserves exactly the number of additional bytes required to
-    /// append the message and copies each segment into the buffer. It is a
-    /// convenience wrapper for callers that wish to accumulate multiple
+    /// The method ensures enough capacity for the rendered message by using
+    /// [`Vec::try_reserve_exact`], avoiding the exponential growth strategy of
+    /// [`Vec::try_reserve`]. It then copies each segment into the buffer. This
+    /// keeps allocations tight for call sites that accumulate multiple
     /// diagnostics into a single [`Vec<u8>`] without going through the
     /// [`Write`](IoWrite) trait.
     ///
@@ -415,9 +416,12 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
-        buffer
-            .try_reserve(self.len())
-            .map_err(map_message_reserve_error)?;
+        let required = self.len();
+        if buffer.capacity().saturating_sub(buffer.len()) < required {
+            buffer
+                .try_reserve_exact(required)
+                .map_err(map_message_reserve_error)?;
+        }
 
         for slice in self.iter() {
             buffer.extend_from_slice(slice.as_ref());
@@ -452,7 +456,7 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(collected, message.to_bytes().unwrap());
     /// ```
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::new();
+        let mut buffer = Vec::with_capacity(self.len());
         self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
@@ -2416,6 +2420,26 @@ mod tests {
             &buffer[prefix_len..],
             message.to_bytes().unwrap().as_slice()
         );
+    }
+
+    #[test]
+    fn message_segments_extend_vec_noop_for_empty_segments() {
+        let segments = MessageSegments {
+            segments: [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS],
+            count: 0,
+            total_len: 0,
+        };
+
+        let mut buffer = b"static prefix".to_vec();
+        let expected = buffer.clone();
+        let capacity = buffer.capacity();
+
+        segments
+            .extend_vec(&mut buffer)
+            .expect("empty segments should not alter the buffer");
+
+        assert_eq!(buffer, expected);
+        assert_eq!(buffer.capacity(), capacity);
     }
 
     #[test]
