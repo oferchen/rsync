@@ -1,6 +1,5 @@
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
-use crate::handshake_util::remote_advertisement_was_clamped;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
@@ -15,31 +14,18 @@ use super::handshake::SessionHandshake;
 /// temporarily take ownership of the buffered negotiation bytes while keeping
 /// the negotiated protocol metadata. The parts can be converted back into a
 /// [`SessionHandshake`] via [`SessionHandshake::from_stream_parts`] or the
-/// [`From`] implementation. Variant-specific conversions are also exposed via
-/// [`From`] and [`TryFrom`] so binary or legacy wrappers can be promoted or
-/// recovered without manual pattern matching.
+/// [`From`] implementation. The enum directly embeds
+/// [`BinaryHandshakeParts`] and [`LegacyDaemonHandshakeParts`], delegating to
+/// their helpers so protocol diagnostics remain centralised in the
+/// variant-specific implementations. Variant-specific conversions are also
+/// exposed via [`From`] and [`TryFrom`] so binary or legacy wrappers can be
+/// promoted or recovered without manual pattern matching.
 #[derive(Clone, Debug)]
 pub enum SessionHandshakeParts<R> {
     /// Binary handshake metadata and replaying stream parts.
-    Binary {
-        /// Protocol number advertised by the remote peer before clamping.
-        remote_advertised_protocol: u32,
-        /// Protocol advertised by the remote peer.
-        remote_protocol: ProtocolVersion,
-        /// Protocol negotiated after applying the caller cap.
-        negotiated_protocol: ProtocolVersion,
-        /// Replaying stream parts containing the sniffed negotiation bytes.
-        stream: NegotiatedStreamParts<R>,
-    },
+    Binary(BinaryHandshakeParts<R>),
     /// Legacy daemon handshake metadata and replaying stream parts.
-    Legacy {
-        /// Parsed legacy daemon greeting announced by the server.
-        server_greeting: LegacyDaemonGreetingOwned,
-        /// Protocol negotiated after applying the caller cap.
-        negotiated_protocol: ProtocolVersion,
-        /// Replaying stream parts containing the sniffed negotiation bytes.
-        stream: NegotiatedStreamParts<R>,
-    },
+    Legacy(LegacyDaemonHandshakeParts<R>),
 }
 
 impl<R> SessionHandshakeParts<R> {
@@ -47,8 +33,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub const fn decision(&self) -> NegotiationPrologue {
         match self {
-            SessionHandshakeParts::Binary { .. } => NegotiationPrologue::Binary,
-            SessionHandshakeParts::Legacy { .. } => NegotiationPrologue::LegacyAscii,
+            SessionHandshakeParts::Binary(_) => NegotiationPrologue::Binary,
+            SessionHandshakeParts::Legacy(_) => NegotiationPrologue::LegacyAscii,
         }
     }
 
@@ -56,14 +42,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn negotiated_protocol(&self) -> ProtocolVersion {
         match self {
-            SessionHandshakeParts::Binary {
-                negotiated_protocol,
-                ..
-            }
-            | SessionHandshakeParts::Legacy {
-                negotiated_protocol,
-                ..
-            } => *negotiated_protocol,
+            SessionHandshakeParts::Binary(parts) => parts.negotiated_protocol(),
+            SessionHandshakeParts::Legacy(parts) => parts.negotiated_protocol(),
         }
     }
 
@@ -71,12 +51,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn remote_protocol(&self) -> ProtocolVersion {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_protocol, ..
-            } => *remote_protocol,
-            SessionHandshakeParts::Legacy {
-                server_greeting, ..
-            } => server_greeting.protocol(),
+            SessionHandshakeParts::Binary(parts) => parts.remote_protocol(),
+            SessionHandshakeParts::Legacy(parts) => parts.server_protocol(),
         }
     }
 
@@ -84,13 +60,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn remote_advertised_protocol(&self) -> u32 {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                ..
-            } => *remote_advertised_protocol,
-            SessionHandshakeParts::Legacy {
-                server_greeting, ..
-            } => server_greeting.advertised_protocol(),
+            SessionHandshakeParts::Binary(parts) => parts.remote_advertised_protocol(),
+            SessionHandshakeParts::Legacy(parts) => parts.remote_advertised_protocol(),
         }
     }
 
@@ -98,10 +69,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
         match self {
-            SessionHandshakeParts::Binary { .. } => None,
-            SessionHandshakeParts::Legacy {
-                server_greeting, ..
-            } => Some(server_greeting),
+            SessionHandshakeParts::Binary(_) => None,
+            SessionHandshakeParts::Legacy(parts) => Some(parts.server_greeting()),
         }
     }
 
@@ -109,8 +78,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn stream(&self) -> &NegotiatedStreamParts<R> {
         match self {
-            SessionHandshakeParts::Binary { stream, .. }
-            | SessionHandshakeParts::Legacy { stream, .. } => stream,
+            SessionHandshakeParts::Binary(parts) => parts.stream_parts(),
+            SessionHandshakeParts::Legacy(parts) => parts.stream_parts(),
         }
     }
 
@@ -118,8 +87,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn stream_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
         match self {
-            SessionHandshakeParts::Binary { stream, .. }
-            | SessionHandshakeParts::Legacy { stream, .. } => stream,
+            SessionHandshakeParts::Binary(parts) => parts.stream_parts_mut(),
+            SessionHandshakeParts::Legacy(parts) => parts.stream_parts_mut(),
         }
     }
 
@@ -127,8 +96,8 @@ impl<R> SessionHandshakeParts<R> {
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
         match self {
-            SessionHandshakeParts::Binary { stream, .. }
-            | SessionHandshakeParts::Legacy { stream, .. } => stream.into_stream(),
+            SessionHandshakeParts::Binary(parts) => parts.into_stream_parts().into_stream(),
+            SessionHandshakeParts::Legacy(parts) => parts.into_stream_parts().into_stream(),
         }
     }
 
@@ -147,26 +116,12 @@ impl<R> SessionHandshakeParts<R> {
         F: FnOnce(R) -> T,
     {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            } => SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream: stream.map_inner(map),
-            },
-            SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            } => SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream: stream.map_inner(map),
-            },
+            SessionHandshakeParts::Binary(parts) => {
+                SessionHandshakeParts::Binary(parts.map_stream_inner(map))
+            }
+            SessionHandshakeParts::Legacy(parts) => {
+                SessionHandshakeParts::Legacy(parts.map_stream_inner(map))
+            }
         }
     }
 
@@ -179,43 +134,14 @@ impl<R> SessionHandshakeParts<R> {
         F: FnOnce(R) -> Result<T, (E, R)>,
     {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            } => stream
-                .try_map_inner(map)
-                .map(|stream| SessionHandshakeParts::Binary {
-                    remote_advertised_protocol,
-                    remote_protocol,
-                    negotiated_protocol,
-                    stream,
-                })
-                .map_err(|err| {
-                    err.map_original(|stream| SessionHandshakeParts::Binary {
-                        remote_advertised_protocol,
-                        remote_protocol,
-                        negotiated_protocol,
-                        stream,
-                    })
-                }),
-            SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            } => match stream.try_map_inner(map) {
-                Ok(stream) => Ok(SessionHandshakeParts::Legacy {
-                    server_greeting,
-                    negotiated_protocol,
-                    stream,
-                }),
-                Err(err) => Err(err.map_original(|stream| SessionHandshakeParts::Legacy {
-                    server_greeting,
-                    negotiated_protocol,
-                    stream,
-                })),
-            },
+            SessionHandshakeParts::Binary(parts) => parts
+                .try_map_stream_inner(map)
+                .map(SessionHandshakeParts::Binary)
+                .map_err(|err| err.map_original(SessionHandshakeParts::Binary)),
+            SessionHandshakeParts::Legacy(parts) => parts
+                .try_map_stream_inner(map)
+                .map(SessionHandshakeParts::Legacy)
+                .map_err(|err| err.map_original(SessionHandshakeParts::Legacy)),
         }
     }
 
@@ -232,18 +158,14 @@ impl<R> SessionHandshakeParts<R> {
         SessionHandshakeParts<R>,
     > {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            } => Ok((
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            )),
-            SessionHandshakeParts::Legacy { .. } => Err(self),
+            SessionHandshakeParts::Binary(parts) => {
+                let remote_advertised = parts.remote_advertised_protocol();
+                let remote_protocol = parts.remote_protocol();
+                let negotiated = parts.negotiated_protocol();
+                let stream = parts.into_stream_parts();
+                Ok((remote_advertised, remote_protocol, negotiated, stream))
+            }
+            SessionHandshakeParts::Legacy(parts) => Err(SessionHandshakeParts::Legacy(parts)),
         }
     }
 
@@ -256,19 +178,8 @@ impl<R> SessionHandshakeParts<R> {
     /// conversions provided elsewhere in the crate.
     pub fn into_binary_parts(self) -> Result<BinaryHandshakeParts<R>, SessionHandshakeParts<R>> {
         match self {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            } => Ok(BinaryHandshake::from_stream_parts(
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            )
-            .into_parts()),
-            SessionHandshakeParts::Legacy { .. } => Err(self),
+            SessionHandshakeParts::Binary(parts) => Ok(parts),
+            SessionHandshakeParts::Legacy(parts) => Err(SessionHandshakeParts::Legacy(parts)),
         }
     }
 
@@ -284,12 +195,11 @@ impl<R> SessionHandshakeParts<R> {
         SessionHandshakeParts<R>,
     > {
         match self {
-            SessionHandshakeParts::Binary { .. } => Err(self),
-            SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            } => Ok((server_greeting, negotiated_protocol, stream)),
+            SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
+            SessionHandshakeParts::Legacy(parts) => {
+                let (greeting, negotiated, stream) = parts.into_handshake().into_stream_parts();
+                Ok((greeting, negotiated, stream))
+            }
         }
     }
 
@@ -304,36 +214,40 @@ impl<R> SessionHandshakeParts<R> {
         self,
     ) -> Result<LegacyDaemonHandshakeParts<R>, SessionHandshakeParts<R>> {
         match self {
-            SessionHandshakeParts::Binary { .. } => Err(self),
-            SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            } => Ok(LegacyDaemonHandshake::from_stream_parts(
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            )
-            .into_parts()),
+            SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
+            SessionHandshakeParts::Legacy(parts) => Ok(parts),
         }
     }
 
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+        match self {
+            SessionHandshakeParts::Binary(parts) => parts.remote_protocol_was_clamped(),
+            SessionHandshakeParts::Legacy(parts) => parts.remote_protocol_was_clamped(),
+        }
     }
 
     /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
-        self.negotiated_protocol() < self.remote_protocol()
+        match self {
+            SessionHandshakeParts::Binary(parts) => parts.local_protocol_was_capped(),
+            SessionHandshakeParts::Legacy(parts) => parts.local_protocol_was_capped(),
+        }
     }
 
     /// Reassembles a [`SessionHandshake`] from the stored components.
     #[must_use]
     pub fn into_handshake(self) -> SessionHandshake<R> {
-        SessionHandshake::from_stream_parts(self)
+        match self {
+            SessionHandshakeParts::Binary(parts) => {
+                SessionHandshake::Binary(BinaryHandshake::from_parts(parts))
+            }
+            SessionHandshakeParts::Legacy(parts) => {
+                SessionHandshake::Legacy(LegacyDaemonHandshake::from_parts(parts))
+            }
+        }
     }
 
     /// Releases the parts structure and returns the underlying transport.
@@ -352,25 +266,13 @@ impl<R> SessionHandshakeParts<R> {
 
 impl<R> From<BinaryHandshake<R>> for SessionHandshakeParts<R> {
     fn from(handshake: BinaryHandshake<R>) -> Self {
-        let (remote_advertised_protocol, remote_protocol, negotiated_protocol, stream) =
-            handshake.into_stream_parts();
-        SessionHandshakeParts::Binary {
-            remote_advertised_protocol,
-            remote_protocol,
-            negotiated_protocol,
-            stream,
-        }
+        SessionHandshakeParts::Binary(handshake.into_parts())
     }
 }
 
 impl<R> From<LegacyDaemonHandshake<R>> for SessionHandshakeParts<R> {
     fn from(handshake: LegacyDaemonHandshake<R>) -> Self {
-        let (server_greeting, negotiated_protocol, stream) = handshake.into_stream_parts();
-        SessionHandshakeParts::Legacy {
-            server_greeting,
-            negotiated_protocol,
-            stream,
-        }
+        SessionHandshakeParts::Legacy(handshake.into_parts())
     }
 }
 
@@ -378,11 +280,10 @@ impl<R> TryFrom<SessionHandshakeParts<R>> for BinaryHandshake<R> {
     type Error = SessionHandshakeParts<R>;
 
     fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
-        parts
-            .into_binary()
-            .map(|(remote_advertised, remote, negotiated, stream)| {
-                BinaryHandshake::from_stream_parts(remote_advertised, remote, negotiated, stream)
-            })
+        match parts {
+            SessionHandshakeParts::Binary(parts) => Ok(BinaryHandshake::from_parts(parts)),
+            SessionHandshakeParts::Legacy(parts) => Err(SessionHandshakeParts::Legacy(parts)),
+        }
     }
 }
 
@@ -390,11 +291,10 @@ impl<R> TryFrom<SessionHandshakeParts<R>> for LegacyDaemonHandshake<R> {
     type Error = SessionHandshakeParts<R>;
 
     fn try_from(parts: SessionHandshakeParts<R>) -> Result<Self, Self::Error> {
-        parts
-            .into_legacy()
-            .map(|(server_greeting, negotiated, stream)| {
-                LegacyDaemonHandshake::from_stream_parts(server_greeting, negotiated, stream)
-            })
+        match parts {
+            SessionHandshakeParts::Legacy(parts) => Ok(LegacyDaemonHandshake::from_parts(parts)),
+            SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
+        }
     }
 }
 
