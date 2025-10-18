@@ -27,6 +27,20 @@ pub(crate) fn remote_advertisement_was_clamped(
     advertised_byte > negotiated.as_u8()
 }
 
+/// Reports whether the caller capped the negotiated protocol below the value announced by the peer.
+///
+/// Upstream rsync allows users to limit the negotiated protocol via `--protocol`. When the limit is
+/// lower than the peer's selected version the final handshake runs at the caller's cap. Centralising
+/// the comparison keeps the binary and legacy negotiation code paths in sync so diagnostics describing
+/// locally capped sessions remain identical regardless of transport style.
+#[must_use]
+pub(crate) fn local_cap_reduced_protocol(
+    remote: ProtocolVersion,
+    negotiated: ProtocolVersion,
+) -> bool {
+    negotiated < remote
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +90,15 @@ mod tests {
             negotiated in negotiated_version_strategy(),
         ) {
             prop_assert!(remote_advertisement_was_clamped(advertised, negotiated));
+        }
+
+        #[test]
+        fn local_cap_detection_matches_direct_comparison(
+            remote in negotiated_version_strategy(),
+            negotiated in negotiated_version_strategy(),
+        ) {
+            let expected = negotiated < remote;
+            prop_assert_eq!(local_cap_reduced_protocol(remote, negotiated), expected);
         }
     }
 }
