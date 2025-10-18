@@ -155,6 +155,98 @@ pub fn compiled_feature_labels() -> Vec<&'static str> {
         .collect()
 }
 
+/// Convenience formatter for the compiled feature list.
+///
+/// The wrapper retains the feature ordering produced by [`compiled_features`] and implements
+/// [`Display`](fmt::Display) so callers can render the list into user-facing banners without
+/// duplicating join logic. Upstream rsync prints optional capabilities as a space-separated
+/// string, which this helper reproduces exactly.
+///
+/// # Examples
+///
+/// Format two features into the canonical `--version` string layout:
+///
+/// ```
+/// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+///
+/// let display = CompiledFeaturesDisplay::new(vec![
+///     CompiledFeature::Acl,
+///     CompiledFeature::Xattr,
+/// ]);
+///
+/// assert_eq!(display.to_string(), "ACLs xattrs");
+/// assert_eq!(display.features(), &[CompiledFeature::Acl, CompiledFeature::Xattr]);
+/// ```
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CompiledFeaturesDisplay {
+    features: Vec<CompiledFeature>,
+}
+
+impl CompiledFeaturesDisplay {
+    /// Creates a display wrapper from an explicit feature list.
+    ///
+    /// The input order is preserved so higher layers can render capability groups in the same
+    /// sequence they would appear in upstream rsync output.
+    #[must_use]
+    pub fn new(features: Vec<CompiledFeature>) -> Self {
+        Self { features }
+    }
+
+    /// Returns the underlying feature slice.
+    #[must_use]
+    pub fn features(&self) -> &[CompiledFeature] {
+        &self.features
+    }
+
+    /// Reports whether the feature list is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.features.is_empty()
+    }
+}
+
+impl fmt::Display for CompiledFeaturesDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut iter = self.features.iter();
+
+        if let Some(first) = iter.next() {
+            fmt::Display::fmt(first, f)?;
+            for feature in iter {
+                f.write_str(" ")?;
+                fmt::Display::fmt(feature, f)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Returns a [`CompiledFeaturesDisplay`] reflecting the active feature set.
+///
+/// This helper is intended for rendering `--version` banners and other user-visible diagnostics
+/// where upstream rsync prints a space-separated capability list. The returned wrapper can be
+/// formatted directly or inspected programmatically.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::version::compiled_features_display;
+///
+/// let display = compiled_features_display();
+/// let rendered = display.to_string();
+///
+/// if display.is_empty() {
+///     assert!(rendered.is_empty());
+/// } else {
+///     let words: Vec<_> = rendered.split_whitespace().collect();
+///     assert_eq!(words.len(), display.features().len());
+/// }
+/// ```
+#[must_use]
+pub fn compiled_features_display() -> CompiledFeaturesDisplay {
+    CompiledFeaturesDisplay::new(compiled_features())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +299,31 @@ mod tests {
         assert_eq!(labels.contains(&"zstd"), cfg!(feature = "zstd"));
         assert_eq!(labels.contains(&"iconv"), cfg!(feature = "iconv"));
         assert_eq!(labels.contains(&"sd-notify"), cfg!(feature = "sd-notify"));
+    }
+
+    #[test]
+    fn compiled_features_display_reflects_active_features() {
+        let display = compiled_features_display();
+        assert_eq!(display.features(), compiled_features().as_slice());
+        assert_eq!(display.is_empty(), compiled_features().is_empty());
+    }
+
+    #[test]
+    fn compiled_features_display_formats_space_separated_list() {
+        let display = CompiledFeaturesDisplay::new(vec![
+            CompiledFeature::Acl,
+            CompiledFeature::Xattr,
+            CompiledFeature::Iconv,
+        ]);
+
+        assert_eq!(display.to_string(), "ACLs xattrs iconv");
+    }
+
+    #[test]
+    fn compiled_features_display_handles_empty_list() {
+        let display = CompiledFeaturesDisplay::new(Vec::new());
+
+        assert!(display.is_empty());
+        assert!(display.to_string().is_empty());
     }
 }
