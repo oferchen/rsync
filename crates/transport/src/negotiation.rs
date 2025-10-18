@@ -112,7 +112,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     }
 
     /// Returns an iterator over the populated slices.
-    #[must_use]
+    #[must_use = "callers must iterate to observe the buffered slices"]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
