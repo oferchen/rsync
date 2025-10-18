@@ -442,9 +442,8 @@ fn write_all_vectored<W: Write + ?Sized>(
     let mut use_vectored = true;
 
     'outer: while !header.is_empty() || !payload.is_empty() {
-        let written;
-        if use_vectored {
-            written = loop {
+        let written = if use_vectored {
+            loop {
                 let result = if header.is_empty() {
                     let slice = IoSlice::new(payload);
                     writer.write_vectored(slice::from_ref(&slice))
@@ -474,9 +473,9 @@ fn write_all_vectored<W: Write + ?Sized>(
                     }
                     Err(err) => return Err(err),
                 }
-            };
+            }
         } else {
-            written = loop {
+            loop {
                 let buffer = if !header.is_empty() { header } else { payload };
                 match writer.write(buffer) {
                     Ok(0) => {
@@ -489,8 +488,8 @@ fn write_all_vectored<W: Write + ?Sized>(
                     Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
                     Err(err) => return Err(err),
                 }
-            };
-        }
+            }
+        };
 
         let mut remaining = written;
         if !header.is_empty() {
