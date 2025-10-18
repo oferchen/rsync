@@ -3059,9 +3059,11 @@ mod tests {
         let stream = sniff_bytes(legacy).expect("sniff succeeds");
 
         let err = stream
-            .try_map_inner(|cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
-                Err((io::Error::other("boom"), cursor))
-            })
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("boom"), cursor))
+                },
+            )
             .expect_err("mapping fails");
 
         let mapped = err.map_parts(|error, stream| (error.kind(), stream.into_parts()));
