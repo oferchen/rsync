@@ -56,7 +56,7 @@ impl Default for MessageScratch {
 }
 
 thread_local! {
-    static THREAD_LOCAL_SCRATCH: RefCell<MessageScratch> = RefCell::new(MessageScratch::new());
+    static THREAD_LOCAL_SCRATCH: RefCell<MessageScratch> = const { RefCell::new(MessageScratch::new()) };
 }
 
 fn with_thread_local_scratch<F, R>(f: F) -> R
