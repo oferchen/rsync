@@ -468,7 +468,36 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         }
     }
 
-    fn into_components(
+    /// Decomposes the parts structure into the parsed greeting, negotiated protocol, and
+    /// replaying stream.
+    ///
+    /// The tuple mirrors [`LegacyDaemonHandshake::into_components`] but operates on the decomposed
+    /// representation returned by [`LegacyDaemonHandshake::into_parts`]. Higher layers can therefore
+    /// inspect the greeting metadata or wrap the replaying stream without first rebuilding the full
+    /// handshake wrapper.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{NegotiationPrologue, ProtocolVersion};
+    /// use rsync_transport::negotiate_legacy_daemon_session;
+    /// use std::io::Cursor;
+    ///
+    /// let transport = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+    /// let parts = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+    ///     .expect("legacy negotiation succeeds")
+    ///     .into_parts();
+    ///
+    /// let expected_protocol = parts.server_protocol();
+    /// let (greeting, negotiated_protocol, stream_parts) = parts.into_components();
+    ///
+    /// assert_eq!(greeting.protocol(), expected_protocol);
+    /// assert_eq!(negotiated_protocol, expected_protocol);
+    /// assert_eq!(stream_parts.decision(), NegotiationPrologue::LegacyAscii);
+    /// assert_eq!(stream_parts.sniffed_prefix_len(), rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
+    /// ```
+    #[must_use]
+    pub fn into_components(
         self,
     ) -> (
         LegacyDaemonGreetingOwned,
@@ -1335,6 +1364,30 @@ mod tests {
             transport.written(),
             format_legacy_daemon_greeting(negotiated).as_bytes()
         );
+    }
+
+    #[test]
+    fn legacy_handshake_parts_into_components_matches_accessors() {
+        let desired = ProtocolVersion::from_supported(30).expect("protocol 30 supported");
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+        let parts = negotiate_legacy_daemon_session(transport, desired)
+            .expect("handshake should succeed")
+            .into_parts();
+
+        let expected_greeting = parts.server_greeting().clone();
+        let expected_negotiated = parts.negotiated_protocol();
+        let expected_consumed = parts.stream_parts().buffered_consumed();
+        let expected_buffer = parts.stream_parts().buffered().to_vec();
+
+        let (greeting, negotiated, stream_parts) = parts.into_components();
+
+        assert_eq!(greeting, expected_greeting);
+        assert_eq!(negotiated, expected_negotiated);
+        assert_eq!(stream_parts.decision(), NegotiationPrologue::LegacyAscii);
+        assert_eq!(stream_parts.sniffed_prefix(), b"@RSYNCD:");
+        assert_eq!(stream_parts.buffered_consumed(), expected_consumed);
+        assert_eq!(stream_parts.buffered(), expected_buffer.as_slice());
     }
 
     #[test]

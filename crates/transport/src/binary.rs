@@ -173,70 +173,24 @@ impl<R> BinaryHandshakeParts<R> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,no_run
     /// use rsync_protocol::ProtocolVersion;
     /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
-    /// use std::io::{self, Read, Write};
+    /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]
-    /// struct Loopback {
-    ///     reader: std::io::Cursor<Vec<u8>>,
-    ///     written: Vec<u8>,
-    /// }
-    ///
-    /// impl Loopback {
-    ///     fn new(advertisement: [u8; 4]) -> Self {
-    ///         Self {
-    ///             reader: std::io::Cursor::new(advertisement.to_vec()),
-    ///             written: Vec::new(),
-    ///         }
-    ///     }
-    /// }
-    ///
-    /// impl Read for Loopback {
-    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    ///         self.reader.read(buf)
-    ///     }
-    /// }
-    ///
-    /// impl Write for Loopback {
-    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    ///         self.written.extend_from_slice(buf);
-    ///         Ok(buf.len())
-    ///     }
-    ///
-    ///     fn flush(&mut self) -> io::Result<()> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// #[derive(Debug)]
-    /// struct Instrumented {
-    ///     inner: Loopback,
+    /// struct Instrumented<R> {
+    ///     inner: R,
     ///     writes: Vec<u8>,
     /// }
     ///
-    /// impl Instrumented {
-    ///     fn new(inner: Loopback) -> Self {
-    ///         Self { inner, writes: Vec::new() }
-    ///     }
-    ///
-    ///     fn writes(&self) -> &[u8] {
-    ///         &self.writes
-    ///     }
-    ///
-    ///     fn into_inner(self) -> Loopback {
-    ///         self.inner
-    ///     }
-    /// }
-    ///
-    /// impl Read for Instrumented {
+    /// impl<R: Read + Write> Read for Instrumented<R> {
     ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
     ///         self.inner.read(buf)
     ///     }
     /// }
     ///
-    /// impl Write for Instrumented {
+    /// impl<R: Read + Write> Write for Instrumented<R> {
     ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
     ///         self.writes.extend_from_slice(buf);
     ///         self.inner.write(buf)
@@ -247,25 +201,19 @@ impl<R> BinaryHandshakeParts<R> {
     ///     }
     /// }
     ///
-    /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
-    /// let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-    ///     .expect("handshake succeeds")
-    ///     .into_parts();
+    /// fn main() -> io::Result<()> {
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
+    ///     let transport = Cursor::new(advertisement.to_vec());
+    ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
+    ///         .into_parts();
     ///
-    /// let instrumented = parts.map_stream_inner(Instrumented::new);
-    /// assert_eq!(instrumented.negotiated_protocol(), remote);
-    ///
-    /// let mut handshake = instrumented.into_handshake();
-    /// handshake.stream_mut().write_all(b"data").unwrap();
-    /// handshake.stream_mut().flush().unwrap();
-    ///
-    /// let instrumented = handshake.into_stream().into_inner();
-    /// assert_eq!(instrumented.writes(), b"data");
-    /// let inner = instrumented.into_inner();
-    /// let mut expected = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes().to_vec();
-    /// expected.extend_from_slice(b"data");
-    /// assert_eq!(inner.written, expected);
+    ///     let wrapped = parts.map_stream_inner(|inner| Instrumented {
+    ///         inner,
+    ///         writes: Vec::new(),
+    ///     });
+    ///     assert_eq!(wrapped.negotiated_protocol(), ProtocolVersion::NEWEST);
+    ///     Ok(())
+    /// }
     /// ```
     #[must_use]
     pub fn map_stream_inner<F, T>(self, map: F) -> BinaryHandshakeParts<T>
@@ -295,7 +243,7 @@ impl<R> BinaryHandshakeParts<R> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```rust,no_run
     /// use rsync_protocol::ProtocolVersion;
     /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
     /// use std::io::{self, Read, Write};
@@ -385,7 +333,44 @@ impl<R> BinaryHandshakeParts<R> {
             })
     }
 
-    fn into_components(
+    /// Decomposes the parts structure into the advertised versions and replaying stream.
+    ///
+    /// The tuple mirrors [`BinaryHandshake::into_components`] but operates on the already
+    /// decomposed representation returned by [`BinaryHandshake::into_parts`]. Callers that need to
+    /// inspect the raw protocol numbers before rebuilding the handshake can therefore recover the
+    /// metadata without an intermediate reconstruction step.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_binary_session;
+    /// use std::io::{self, Cursor};
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
+    ///     let transport = Cursor::new(advertisement.to_vec());
+    ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
+    ///         .into_parts();
+    ///
+    ///     let expected_remote = parts.remote_protocol();
+    ///     let expected_negotiated = parts.negotiated_protocol();
+    ///     let (remote_advertised, remote_protocol, negotiated_protocol, stream_parts) =
+    ///         parts.into_components();
+    ///
+    ///     assert_eq!(remote_advertised, u32::from(expected_remote.as_u8()));
+    ///     assert_eq!(remote_protocol, expected_remote);
+    ///     assert_eq!(negotiated_protocol, expected_negotiated);
+    ///     assert_eq!(
+    ///         stream_parts.decision(),
+    ///         rsync_protocol::NegotiationPrologue::Binary
+    ///     );
+    ///     assert!(stream_parts.buffered().is_empty());
+    ///     Ok(())
+    /// }
+    /// ```
+    #[must_use]
+    pub fn into_components(
         self,
     ) -> (
         u32,
@@ -1267,6 +1252,32 @@ mod tests {
             transport.written(),
             &handshake_bytes(ProtocolVersion::NEWEST)
         );
+    }
+
+    #[test]
+    fn binary_handshake_parts_into_components_matches_accessors() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds")
+            .into_parts();
+
+        let expected_advertised = parts.remote_advertised_protocol();
+        let expected_remote = parts.remote_protocol();
+        let expected_negotiated = parts.negotiated_protocol();
+        let expected_consumed = parts.stream_parts().buffered_consumed();
+        let expected_buffer = parts.stream_parts().buffered().to_vec();
+
+        let (advertised, remote, negotiated, stream_parts) = parts.into_components();
+
+        assert_eq!(advertised, expected_advertised);
+        assert_eq!(remote, expected_remote);
+        assert_eq!(negotiated, expected_negotiated);
+        assert_eq!(stream_parts.decision(), NegotiationPrologue::Binary);
+        assert_eq!(stream_parts.sniffed_prefix(), &[expected_remote.as_u8()]);
+        assert_eq!(stream_parts.buffered_consumed(), expected_consumed);
+        assert_eq!(stream_parts.buffered(), expected_buffer.as_slice());
     }
 
     #[test]

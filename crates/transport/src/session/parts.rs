@@ -178,10 +178,8 @@ impl<R> SessionHandshakeParts<R> {
     > {
         match self {
             SessionHandshakeParts::Binary(parts) => {
-                let remote_advertised = parts.remote_advertised_protocol();
-                let remote_protocol = parts.remote_protocol();
-                let negotiated = parts.negotiated_protocol();
-                let stream = parts.into_stream_parts();
+                let (remote_advertised, remote_protocol, negotiated, stream) =
+                    parts.into_components();
                 Ok((remote_advertised, remote_protocol, negotiated, stream))
             }
             SessionHandshakeParts::Legacy(parts) => Err(SessionHandshakeParts::Legacy(parts)),
@@ -216,7 +214,7 @@ impl<R> SessionHandshakeParts<R> {
         match self {
             SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
             SessionHandshakeParts::Legacy(parts) => {
-                let (greeting, negotiated, stream) = parts.into_handshake().into_stream_parts();
+                let (greeting, negotiated, stream) = parts.into_components();
                 Ok((greeting, negotiated, stream))
             }
         }
