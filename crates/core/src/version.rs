@@ -197,11 +197,10 @@ pub struct CompiledFeaturesIter {
 
 impl CompiledFeaturesIter {
     fn new() -> Self {
-        let remaining = usize::from(CompiledFeature::Acl.is_enabled())
-            + usize::from(CompiledFeature::Xattr.is_enabled())
-            + usize::from(CompiledFeature::Zstd.is_enabled())
-            + usize::from(CompiledFeature::Iconv.is_enabled())
-            + usize::from(CompiledFeature::SdNotify.is_enabled());
+        let remaining = CompiledFeature::ALL
+            .into_iter()
+            .filter(|feature| feature.is_enabled())
+            .count();
 
         Self {
             index: 0,
@@ -435,6 +434,9 @@ mod tests {
         let mut iter = compiled_features_iter();
         let (lower, upper) = iter.size_hint();
         assert_eq!(Some(lower), upper);
+        let expected = compiled_features();
+        assert_eq!(lower, expected.len());
+        assert_eq!(iter.len(), expected.len());
         assert_eq!(iter.len(), lower);
 
         while iter.next().is_some() {
