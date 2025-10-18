@@ -523,7 +523,12 @@ where
     stream.read_exact(&mut remote_buf)?;
     let remote_advertised = u32::from_le_bytes(remote_buf);
 
-    let remote_byte = u8::try_from(remote_advertised).unwrap_or(u8::MAX);
+    let remote_byte = u8::try_from(remote_advertised).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "binary negotiation protocol identifier outside supported range",
+        )
+    })?;
 
     let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_byte) {
         Ok(protocol) => protocol,
@@ -846,36 +851,24 @@ mod tests {
     }
 
     #[test]
-    fn negotiate_binary_session_accepts_protocols_beyond_u8() {
+    fn negotiate_binary_session_rejects_protocols_beyond_u8() {
         let future_version = 0x0001_0200u32;
         let transport = MemoryTransport::new(&future_version.to_le_bytes());
 
-        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-            .expect("future ints clamp");
+        let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect_err("future ints beyond u8 must be rejected");
 
-        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
-        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-        assert_eq!(handshake.remote_advertised_protocol(), future_version);
-
-        let parts = handshake.into_parts();
-        assert!(parts.remote_protocol_was_clamped());
-        assert!(!parts.local_protocol_was_capped());
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
-    fn negotiate_binary_session_accepts_max_u32_advertisement() {
+    fn negotiate_binary_session_rejects_u32_max_advertisement() {
         let transport = MemoryTransport::new(&u32::MAX.to_le_bytes());
 
-        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-            .expect("maximum u32 advertisement clamps to newest protocol");
+        let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect_err("maximum u32 advertisement must be rejected");
 
-        assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
-        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
-        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-
-        let parts = handshake.into_parts();
-        assert!(parts.remote_protocol_was_clamped());
-        assert!(!parts.local_protocol_was_capped());
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
