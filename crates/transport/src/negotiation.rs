@@ -2022,6 +2022,26 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_copy_buffered_into_vectored_preserves_buffers_on_error() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nshort").expect("sniff succeeds");
+        let buffered_remaining = stream.buffered_remaining();
+
+        let mut prefix = [0x11u8; 4];
+        let mut suffix = [0x22u8; 3];
+        let original_prefix = prefix;
+        let original_suffix = suffix;
+        let mut bufs = [IoSliceMut::new(&mut prefix), IoSliceMut::new(&mut suffix)];
+
+        stream
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect_err("insufficient capacity must error");
+
+        assert_eq!(prefix, original_prefix);
+        assert_eq!(suffix, original_suffix);
+        assert_eq!(stream.buffered_remaining(), buffered_remaining);
+    }
+
+    #[test]
     fn negotiated_stream_copy_buffered_into_slice_reports_small_buffer() {
         let stream = sniff_bytes(b"@RSYNCD: 30.0\nrest").expect("sniff succeeds");
         let expected_len = stream.buffered_len();
@@ -2229,6 +2249,30 @@ mod tests {
         assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), first.len() + second.len());
         assert_eq!(err.missing(), expected_len - (first.len() + second.len()));
+    }
+
+    #[test]
+    fn negotiated_stream_parts_copy_buffered_into_vectored_preserves_buffers_on_error() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nlimited")
+            .expect("sniff succeeds")
+            .into_parts();
+        let buffered_snapshot = parts.buffered().to_vec();
+        let consumed_before = parts.buffered_consumed();
+
+        let mut first = [0x11u8; 4];
+        let mut second = [0x22u8; 3];
+        let original_first = first;
+        let original_second = second;
+        let mut bufs = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+
+        parts
+            .copy_buffered_into_vectored(&mut bufs)
+            .expect_err("insufficient capacity must error");
+
+        assert_eq!(first, original_first);
+        assert_eq!(second, original_second);
+        assert_eq!(parts.buffered(), buffered_snapshot.as_slice());
+        assert_eq!(parts.buffered_consumed(), consumed_before);
     }
 
     #[test]
