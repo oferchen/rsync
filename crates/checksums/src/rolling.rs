@@ -370,6 +370,12 @@ impl RollingChecksum {
     }
 
     /// Returns the current state as a structured digest.
+    ///
+    /// Callers that prefer trait-based conversions may also use
+    /// [`RollingDigest::from`] with either an owned or borrowed
+    /// [`RollingChecksum`] thanks to the blanket [`From`] implementations
+    /// provided by this crate. The method remains the canonical way to extract
+    /// the digest without moving the checksum out of its owner.
     #[must_use]
     pub fn digest(&self) -> RollingDigest {
         RollingDigest {
@@ -384,6 +390,20 @@ impl From<RollingDigest> for RollingChecksum {
     /// Converts a [`RollingDigest`] back into a [`RollingChecksum`] state.
     fn from(digest: RollingDigest) -> Self {
         Self::from_digest(digest)
+    }
+}
+
+impl From<RollingChecksum> for RollingDigest {
+    /// Converts an owned [`RollingChecksum`] into its corresponding digest.
+    fn from(checksum: RollingChecksum) -> Self {
+        checksum.digest()
+    }
+}
+
+impl From<&RollingChecksum> for RollingDigest {
+    /// Converts a borrowed [`RollingChecksum`] into its corresponding digest.
+    fn from(checksum: &RollingChecksum) -> Self {
+        checksum.digest()
     }
 }
 
@@ -693,6 +713,19 @@ mod tests {
         assert_eq!(restored.digest(), digest);
         assert_eq!(restored.value(), checksum.value());
         assert_eq!(restored.len(), checksum.len());
+    }
+
+    #[test]
+    fn digest_from_trait_impls_matches_inherent_method() {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(b"trait conversions");
+
+        let expected = checksum.digest();
+        let via_ref: RollingDigest = (&checksum).into();
+        let via_owned: RollingDigest = checksum.clone().into();
+
+        assert_eq!(via_ref, expected);
+        assert_eq!(via_owned, expected);
     }
 
     #[test]
