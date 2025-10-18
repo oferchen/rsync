@@ -1,4 +1,4 @@
-use crate::handshake_util::remote_advertisement_was_clamped;
+use crate::handshake_util::{local_cap_reduced_protocol, remote_advertisement_was_clamped};
 use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
@@ -143,7 +143,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// parts structure is inspected before reconstructing the full handshake.
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
-        self.negotiated_protocol() < self.remote_protocol()
+        local_cap_reduced_protocol(self.remote_protocol(), self.negotiated_protocol())
     }
 
     /// Returns the replaying stream parts captured during negotiation.
@@ -457,7 +457,7 @@ impl<R> BinaryHandshake<R> {
     /// parity with the C implementation.
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
-        self.negotiated_protocol < self.remote_protocol
+        local_cap_reduced_protocol(self.remote_protocol, self.negotiated_protocol)
     }
 
     /// Returns a shared reference to the replaying stream.
