@@ -8,6 +8,90 @@ use std::sync::OnceLock;
 
 pub mod strings;
 
+const MAX_MESSAGE_SEGMENTS: usize = 18;
+
+/// Scratch buffers used when producing vectored message segments.
+///
+/// Instances of this type are supplied to [`Message::as_segments`] so the helper can encode
+/// decimal exit codes and line numbers without allocating temporary [`String`] values. The
+/// buffers are stack-allocated and reusable, making it cheap for higher layers to render
+/// multiple messages in succession without paying repeated allocation costs.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::{message::{Message, Role, MessageScratch}, message_source};
+///
+/// let mut scratch = MessageScratch::new();
+/// let message = Message::error(23, "delta-transfer failure")
+///     .with_role(Role::Sender)
+///     .with_source(message_source!());
+/// let segments = message.as_segments(&mut scratch, false);
+///
+/// assert_eq!(segments.len(), message.to_bytes().unwrap().len());
+/// ```
+#[derive(Clone, Debug)]
+pub struct MessageScratch {
+    code_digits: [u8; 20],
+    line_digits: [u8; 20],
+}
+
+impl MessageScratch {
+    /// Creates a new scratch buffer with zeroed storage.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            code_digits: [0; 20],
+            line_digits: [0; 20],
+        }
+    }
+}
+
+impl Default for MessageScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Collection of slices that jointly render an [`Message`].
+///
+/// The segments reference the message payload together with optional exit codes, source
+/// locations, and role trailers. Callers obtain the structure through [`Message::as_segments`]
+/// and can then stream the slices into vectored writers, aggregate statistics, or reuse the
+/// layout when constructing custom buffers.
+#[derive(Debug)]
+pub struct MessageSegments<'a> {
+    segments: [IoSlice<'a>; MAX_MESSAGE_SEGMENTS],
+    count: usize,
+    total_len: usize,
+}
+
+impl<'a> MessageSegments<'a> {
+    /// Returns the populated slice view over the underlying [`IoSlice`] array.
+    #[must_use]
+    pub fn as_slices(&self) -> &[IoSlice<'a>] {
+        &self.segments[..self.count]
+    }
+
+    /// Returns the total number of bytes covered by the message segments.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.total_len
+    }
+
+    /// Reports the number of populated segments.
+    #[must_use]
+    pub const fn segment_count(&self) -> usize {
+        self.count
+    }
+
+    /// Reports whether any slices were produced.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+}
+
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = "3.4.1-rust";
 
@@ -468,6 +552,115 @@ pub struct Message {
 }
 
 impl Message {
+    /// Returns the vectored representation of the rendered message.
+    ///
+    /// The helper exposes the same slices used internally when emitting the message into an
+    /// [`io::Write`] implementor. Callers that need to integrate with custom buffered pipelines can
+    /// reuse the returned segments with [`Write::write_vectored`], avoiding redundant allocations or
+    /// per-segment formatting logic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    /// use std::io::{self, Write};
+    ///
+    /// struct VecWriter(Vec<u8>);
+    ///
+    /// impl Write for VecWriter {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.0.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    ///
+    ///     fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+    ///         for slice in bufs {
+    ///             self.0.extend_from_slice(slice);
+    ///         }
+    ///         Ok(bufs.iter().map(|slice| slice.len()).sum())
+    ///     }
+    /// }
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let segments = message.as_segments(&mut scratch, true);
+    ///
+    /// let mut writer = VecWriter(Vec::new());
+    /// writer.write_vectored(segments.as_slices()).unwrap();
+    ///
+    /// assert_eq!(writer.0, message.to_line_bytes().unwrap());
+    /// ```
+    #[must_use]
+    pub fn as_segments<'a>(
+        &'a self,
+        scratch: &'a mut MessageScratch,
+        include_newline: bool,
+    ) -> MessageSegments<'a> {
+        let mut segments: [IoSlice<'a>; MAX_MESSAGE_SEGMENTS] =
+            [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS];
+        let mut count = 0usize;
+        let mut total_len = 0usize;
+
+        let mut push = |slice: &'a [u8]| {
+            debug_assert!(
+                count < segments.len(),
+                "message segments exceeded allocation"
+            );
+            segments[count] = IoSlice::new(slice);
+            count += 1;
+            total_len += slice.len();
+        };
+
+        push(b"rsync ");
+        push(self.severity.as_str().as_bytes());
+        push(b": ");
+        push(self.text.as_bytes());
+
+        if let Some(code) = self.code {
+            push(b" (code ");
+            let digits = encode_signed_decimal(i64::from(code), &mut scratch.code_digits);
+            push(digits.as_bytes());
+            push(b")");
+        }
+
+        if let Some(source) = &self.source {
+            push(b" at ");
+            push(source.path().as_bytes());
+            push(b":");
+            let digits =
+                encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
+            push(digits.as_bytes());
+        }
+
+        if let Some(role) = self.role {
+            push(b" [");
+            push(role.as_str().as_bytes());
+            push(b"=");
+            push(VERSION_SUFFIX.as_bytes());
+            push(b"]");
+        }
+
+        if include_newline {
+            push(b"\n");
+        }
+
+        MessageSegments {
+            segments,
+            count,
+            total_len,
+        }
+    }
+
     /// Creates an informational message.
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
@@ -772,63 +965,17 @@ impl Message {
         writer: &mut W,
         include_newline: bool,
     ) -> io::Result<()> {
-        const MAX_SEGMENTS: usize = 18;
+        let mut scratch = MessageScratch::new();
+        let segments = self.as_segments(&mut scratch, include_newline);
+        let slices = segments.as_slices();
 
-        let mut segments: [IoSlice<'_>; MAX_SEGMENTS] = [IoSlice::new(&[]); MAX_SEGMENTS];
-        let mut segment_count = 0usize;
-        let mut total_len = 0usize;
-
-        macro_rules! push_segment {
-            ($expr:expr) => {{
-                let slice: &[u8] = $expr;
-                segments[segment_count] = IoSlice::new(slice);
-                segment_count += 1;
-                total_len += slice.len();
-            }};
-        }
-
-        let mut code_buffer = [0u8; 20];
-        let mut line_buffer = [0u8; 20];
-
-        push_segment!(b"rsync ");
-        push_segment!(self.severity.as_str().as_bytes());
-        push_segment!(b": ");
-        push_segment!(self.text.as_bytes());
-
-        if let Some(code) = self.code {
-            push_segment!(b" (code ");
-            let digits = encode_signed_decimal(i64::from(code), &mut code_buffer);
-            push_segment!(digits.as_bytes());
-            push_segment!(b")");
-        }
-
-        if let Some(source) = &self.source {
-            push_segment!(b" at ");
-            push_segment!(source.path().as_bytes());
-            push_segment!(b":");
-            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut line_buffer);
-            push_segment!(digits.as_bytes());
-        }
-
-        if let Some(role) = self.role {
-            push_segment!(b" [");
-            push_segment!(role.as_str().as_bytes());
-            push_segment!(b"=");
-            push_segment!(VERSION_SUFFIX.as_bytes());
-            push_segment!(b"]");
-        }
-
-        if include_newline {
-            push_segment!(b"\n");
-        }
-
-        if segment_count > 1 {
+        if segments.segment_count() > 1 {
             loop {
-                match writer.write_vectored(&segments[..segment_count]) {
-                    Ok(written) if written == total_len => return Ok(()),
+                match writer.write_vectored(slices) {
+                    Ok(written) if written == segments.len() => return Ok(()),
                     Ok(written) => {
                         let mut remaining = written;
-                        for slice in &segments[..segment_count] {
+                        for slice in slices {
                             let data = slice.as_ref();
                             if remaining >= data.len() {
                                 remaining -= data.len();
@@ -849,7 +996,7 @@ impl Message {
             }
         }
 
-        for slice in &segments[..segment_count] {
+        for slice in slices {
             writer.write_all(slice.as_ref())?;
         }
 
@@ -863,37 +1010,8 @@ impl Message {
     }
 
     fn estimated_rendered_length(&self, include_newline: bool) -> usize {
-        let mut len = b"rsync ".len() + self.severity.as_str().len() + b": ".len();
-        len += self.text.as_bytes().len();
-
-        if let Some(code) = self.code {
-            let mut digits = [0u8; 20];
-            len += b" (code ".len();
-            len += encode_signed_decimal(i64::from(code), &mut digits).len();
-            len += b")".len();
-        }
-
-        if let Some(source) = &self.source {
-            let mut digits = [0u8; 20];
-            len += b" at ".len();
-            len += source.path().as_bytes().len();
-            len += b":".len();
-            len += encode_unsigned_decimal(u64::from(source.line()), &mut digits).len();
-        }
-
-        if let Some(role) = self.role {
-            len += b" [".len();
-            len += role.as_str().len();
-            len += b"=".len();
-            len += VERSION_SUFFIX.len();
-            len += b"]".len();
-        }
-
-        if include_newline {
-            len += b"\n".len();
-        }
-
-        len
+        let mut scratch = MessageScratch::new();
+        self.as_segments(&mut scratch, include_newline).len()
     }
 }
 
@@ -1367,6 +1485,41 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn segments_match_rendered_output() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, true);
+
+        let mut aggregated = Vec::new();
+        for slice in segments.as_slices() {
+            aggregated.extend_from_slice(slice.as_ref());
+        }
+
+        assert_eq!(aggregated, message.to_line_bytes().unwrap());
+        assert_eq!(segments.len(), aggregated.len());
+        assert!(segments.segment_count() > 1);
+    }
+
+    #[test]
+    fn segments_handle_messages_without_optional_fields() {
+        let message = Message::info("protocol handshake complete");
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+
+        let mut combined = Vec::new();
+        for slice in segments.as_slices() {
+            combined.extend_from_slice(slice.as_ref());
+        }
+
+        assert_eq!(combined, message.to_bytes().unwrap());
+        assert_eq!(segments.segment_count(), segments.as_slices().len());
+        assert!(!segments.is_empty());
     }
 
     #[test]
