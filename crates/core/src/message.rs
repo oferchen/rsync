@@ -229,10 +229,8 @@ impl<'a> MessageSegments<'a> {
         }
 
         let mut remaining = self.len();
-        let mut consumed_total = 0usize;
         let mut start = 0usize;
-        let mut vectored = [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS];
-        vectored[..count].copy_from_slice(slices);
+        let mut vectored = self.segments;
 
         while remaining > 0 {
             let tail = &mut vectored[start..count];
@@ -246,7 +244,6 @@ impl<'a> MessageSegments<'a> {
                 }
                 Ok(written) => {
                     debug_assert!(written <= remaining);
-                    consumed_total += written;
                     remaining -= written;
 
                     if remaining == 0 {
@@ -282,7 +279,7 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
-        let mut consumed = consumed_total;
+        let mut consumed = self.len() - remaining;
 
         for slice in slices {
             let bytes = slice.as_ref();
