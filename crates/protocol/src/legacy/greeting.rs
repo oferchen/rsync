@@ -95,6 +95,33 @@ impl<'a> LegacyDaemonGreeting<'a> {
     pub const fn has_digest_list(self) -> bool {
         self.digest_list.is_some()
     }
+
+    /// Converts the borrowed greeting into an owned representation.
+    ///
+    /// Legacy negotiation flows often parse the greeting while the underlying
+    /// buffer is still borrowed from a network reader. Higher layers may need
+    /// to retain the metadata after the buffer is recycled, in which case the
+    /// owned variant avoids cloning individual fields one by one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{
+    ///     parse_legacy_daemon_greeting_details, LegacyDaemonGreetingOwned,
+    /// };
+    ///
+    /// let borrowed = parse_legacy_daemon_greeting_details("@RSYNCD: 29.1 md4\n")?;
+    /// let owned: LegacyDaemonGreetingOwned = borrowed.into_owned();
+    ///
+    /// assert_eq!(owned.advertised_protocol(), 29);
+    /// assert_eq!(owned.subprotocol_raw(), Some(1));
+    /// assert_eq!(owned.digest_list(), Some("md4"));
+    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn into_owned(self) -> LegacyDaemonGreetingOwned {
+        self.into()
+    }
 }
 
 impl LegacyDaemonGreetingOwned {
@@ -153,6 +180,50 @@ impl LegacyDaemonGreetingOwned {
             subprotocol: self.subprotocol,
             digest_list: self.digest_list.as_deref(),
         }
+    }
+
+    /// Decomposes the greeting into its individual fields without cloning.
+    ///
+    /// The helper is useful when higher layers need to stash the advertised
+    /// protocol, subprotocol, and digest list separately. Consuming `self`
+    /// allows the digest list to be moved out of the structure rather than
+    /// cloned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
+    ///
+    /// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 30.5 md5\n")?;
+    /// let (protocol, advertised, subprotocol, digest) = owned.into_parts();
+    ///
+    /// assert_eq!(protocol, ProtocolVersion::from_supported(30).unwrap());
+    /// assert_eq!(advertised, 30);
+    /// assert_eq!(subprotocol, Some(5));
+    /// assert_eq!(digest, Some(String::from("md5")));
+    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn into_parts(self) -> (ProtocolVersion, u32, Option<u32>, Option<String>) {
+        let Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        } = self;
+
+        (protocol, advertised_protocol, subprotocol, digest_list)
+    }
+
+    /// Consumes the greeting and returns the optional digest list without
+    /// cloning.
+    ///
+    /// When the caller only needs the digest list, this convenience helper
+    /// avoids unpacking the rest of the fields via [`Self::into_parts`].
+    #[must_use]
+    pub fn into_digest_list(self) -> Option<String> {
+        let Self { digest_list, .. } = self;
+        digest_list
     }
 }
 
@@ -484,6 +555,39 @@ mod tests {
         assert_eq!(owned.subprotocol_raw(), None);
         assert!(owned.digest_list().is_none());
         assert!(!owned.has_digest_list());
+    }
+
+    #[test]
+    fn borrowed_into_owned_preserves_metadata_without_cloning() {
+        let borrowed = parse_legacy_daemon_greeting_details("@RSYNCD: 30.7 md5\n")
+            .expect("greeting should parse");
+        let owned = borrowed.into_owned();
+
+        assert_eq!(owned.protocol(), borrowed.protocol());
+        assert_eq!(owned.advertised_protocol(), borrowed.advertised_protocol());
+        assert_eq!(owned.subprotocol_raw(), borrowed.subprotocol_raw());
+        assert_eq!(owned.digest_list(), borrowed.digest_list());
+    }
+
+    #[test]
+    fn into_parts_moves_digest_list_without_extra_allocations() {
+        let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 28.1 md4 md5\n")
+            .expect("owned parsing should succeed");
+        let (protocol, advertised, subprotocol, digest) = owned.into_parts();
+
+        assert_eq!(protocol, ProtocolVersion::from_supported(28).unwrap());
+        assert_eq!(advertised, 28);
+        assert_eq!(subprotocol, Some(1));
+        assert_eq!(digest, Some(String::from("md4 md5")));
+    }
+
+    #[test]
+    fn into_digest_list_consumes_greeting() {
+        let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 29.9 md4\n")
+            .expect("owned parsing should succeed");
+        let digest = owned.into_digest_list();
+
+        assert_eq!(digest, Some(String::from("md4")));
     }
 
     #[test]
