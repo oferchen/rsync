@@ -136,6 +136,27 @@ impl KnownCompatibilityFlag {
         }
     }
 
+    /// Returns the canonical upstream identifier for the compatibility flag.
+    ///
+    /// The returned string mirrors the `CF_*` constant names used by the C
+    /// implementation. Keeping the mapping centralised avoids repeating switch
+    /// statements across the workspace when rendering diagnostics that need to
+    /// match upstream wording.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::IncRecurse => "CF_INC_RECURSE",
+            Self::SymlinkTimes => "CF_SYMLINK_TIMES",
+            Self::SymlinkIconv => "CF_SYMLINK_ICONV",
+            Self::SafeFileList => "CF_SAFE_FLIST",
+            Self::AvoidXattrOptimization => "CF_AVOID_XATTR_OPTIM",
+            Self::ChecksumSeedFix => "CF_CHKSUM_SEED_FIX",
+            Self::InplacePartialDir => "CF_INPLACE_PARTIAL_DIR",
+            Self::VarintFlistFlags => "CF_VARINT_FLIST_FLAGS",
+            Self::Id0Names => "CF_ID0_NAMES",
+        }
+    }
+
     const fn from_bits(bits: u32) -> Option<Self> {
         match bits {
             _ if bits == CompatibilityFlags::INC_RECURSE.bits => Some(Self::IncRecurse),
@@ -161,6 +182,12 @@ impl KnownCompatibilityFlag {
 impl From<KnownCompatibilityFlag> for CompatibilityFlags {
     fn from(flag: KnownCompatibilityFlag) -> Self {
         flag.as_flag()
+    }
+}
+
+impl fmt::Display for KnownCompatibilityFlag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -427,6 +454,33 @@ impl fmt::Debug for CompatibilityFlags {
         f.debug_struct("CompatibilityFlags")
             .field("bits", &format_args!("0x{:x}", self.bits))
             .finish()
+    }
+}
+
+impl fmt::Display for CompatibilityFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            return f.write_str("CF_NONE");
+        }
+
+        let mut first = true;
+        for flag in self.iter_known() {
+            if !first {
+                f.write_str(" | ")?;
+            }
+            first = false;
+            fmt::Display::fmt(&flag, f)?;
+        }
+
+        let unknown = self.unknown_bits();
+        if unknown != 0 {
+            if !first {
+                f.write_str(" | ")?;
+            }
+            write!(f, "unknown(0x{unknown:x})")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -721,5 +775,39 @@ mod tests {
         flags |= CompatibilityFlags::SYMLINK_ICONV;
         assert!(flags.contains(CompatibilityFlags::SYMLINK_ICONV));
         assert!(!flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn known_flag_name_matches_display_output() {
+        for flag in [
+            KnownCompatibilityFlag::IncRecurse,
+            KnownCompatibilityFlag::SymlinkTimes,
+            KnownCompatibilityFlag::SymlinkIconv,
+            KnownCompatibilityFlag::SafeFileList,
+            KnownCompatibilityFlag::AvoidXattrOptimization,
+            KnownCompatibilityFlag::ChecksumSeedFix,
+            KnownCompatibilityFlag::InplacePartialDir,
+            KnownCompatibilityFlag::VarintFlistFlags,
+            KnownCompatibilityFlag::Id0Names,
+        ] {
+            assert_eq!(flag.name(), flag.to_string());
+        }
+    }
+
+    #[test]
+    fn compatibility_flags_display_lists_known_and_unknown_bits() {
+        let known = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+        assert_eq!(known.to_string(), "CF_INC_RECURSE | CF_SAFE_FLIST");
+
+        let unknown_only = CompatibilityFlags::from_bits(1 << 12);
+        assert_eq!(unknown_only.to_string(), "unknown(0x1000)");
+
+        let mixed = known | CompatibilityFlags::from_bits(1 << 20);
+        assert_eq!(
+            mixed.to_string(),
+            "CF_INC_RECURSE | CF_SAFE_FLIST | unknown(0x100000)"
+        );
+
+        assert_eq!(CompatibilityFlags::EMPTY.to_string(), "CF_NONE");
     }
 }
