@@ -20,7 +20,7 @@ layers (CLI, core, engine, daemon) land.
   the correct handshake style, clamps the protocol, and exposes unified access
   to the replaying transport. Tests cover binary, legacy, shared sniffer reuse,
   and mapping the inner transport, confirming that the helper matches upstream
-  orchestration semantics for the implemented scope.【F:crates/transport/src/session.rs†L1-L214】【F:crates/transport/src/session.rs†L220-L342】
+  orchestration semantics for the implemented scope.【F:crates/transport/src/session/handshake.rs†L1-L237】【F:crates/transport/src/session/tests.rs†L1-L342】
 
 ## Checksums
 
