@@ -48,8 +48,10 @@ impl<'a> BorrowedMessageFrame<'a> {
     /// Decodes a multiplexed frame from the beginning of `bytes` without cloning the payload.
     ///
     /// The returned tuple contains the borrowed frame and a slice pointing at the remaining bytes.
-    /// Callers that require an owned representation can use [`BorrowedMessageFrame::into_owned`] on
-    /// the borrowed value. Invalid headers or truncated payloads surface the same errors as
+    /// Callers that require the slice to contain exactly one frame can use
+    /// [`BorrowedMessageFrame::try_from`] to receive an error when trailing data is present. Callers
+    /// that require an owned representation can use [`BorrowedMessageFrame::into_owned`] on the
+    /// borrowed value. Invalid headers or truncated payloads surface the same errors as
     /// [`MessageFrame::decode_from_slice`].
     ///
     /// # Examples
@@ -302,10 +304,20 @@ impl std::convert::TryFrom<&[u8]> for MessageFrame {
         if remainder.is_empty() {
             Ok(frame)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "input slice contains trailing data after multiplexed frame",
-            ))
+            Err(trailing_frame_data_error(remainder.len()))
+        }
+    }
+}
+
+impl<'a> std::convert::TryFrom<&'a [u8]> for BorrowedMessageFrame<'a> {
+    type Error = io::Error;
+
+    fn try_from(bytes: &'a [u8]) -> Result<Self, Self::Error> {
+        let (frame, remainder) = BorrowedMessageFrame::decode_from_slice(bytes)?;
+        if remainder.is_empty() {
+            Ok(frame)
+        } else {
+            Err(trailing_frame_data_error(remainder.len()))
         }
     }
 }
@@ -429,6 +441,14 @@ fn truncated_payload_error(expected: usize, actual: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::UnexpectedEof,
         format!("multiplexed payload truncated: expected {expected} bytes but received {actual}"),
+    )
+}
+
+fn trailing_frame_data_error(trailing: usize) -> io::Error {
+    let unit = if trailing == 1 { "byte" } else { "bytes" };
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("input slice contains {trailing} trailing {unit} after multiplexed frame"),
     )
 }
 
@@ -962,6 +982,11 @@ mod tests {
         let owned = MessageFrame::try_from(encoded.as_slice()).expect("owned decode succeeds");
         assert_eq!(borrowed.code(), owned.code());
         assert_eq!(borrowed.payload(), owned.payload());
+
+        let borrowed_exact =
+            BorrowedMessageFrame::try_from(encoded.as_slice()).expect("borrowed decode succeeds");
+        assert_eq!(borrowed_exact.code(), owned.code());
+        assert_eq!(borrowed_exact.payload(), owned.payload());
     }
 
     #[test]
@@ -997,6 +1022,24 @@ mod tests {
 
         let err = MessageFrame::try_from(bytes.as_slice()).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "input slice contains 2 trailing bytes after multiplexed frame"
+        );
+    }
+
+    #[test]
+    fn borrowed_message_frame_try_from_rejects_trailing_bytes() {
+        let frame = encode_frame(MessageCode::Info, b"hello");
+        let mut bytes = frame.clone();
+        bytes.push(0xAA);
+
+        let err = BorrowedMessageFrame::try_from(bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "input slice contains 1 trailing byte after multiplexed frame"
+        );
     }
 
     #[test]
