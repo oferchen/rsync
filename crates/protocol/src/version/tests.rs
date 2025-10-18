@@ -1116,6 +1116,34 @@ fn protocol_version_from_str_reports_error_kinds() {
 }
 
 #[test]
+fn parse_protocol_version_error_display_matches_variants() {
+    let empty = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Empty);
+    assert_eq!(empty.to_string(), "protocol version string is empty");
+
+    let invalid = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::InvalidDigit);
+    assert_eq!(
+        invalid.to_string(),
+        "protocol version must be an unsigned integer"
+    );
+
+    let negative = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Negative);
+    assert_eq!(negative.to_string(), "protocol version cannot be negative");
+
+    let overflow = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Overflow);
+    assert_eq!(overflow.to_string(), "protocol version value exceeds u8::MAX");
+
+    let (oldest, newest) = ProtocolVersion::supported_range_bounds();
+    let unsupported =
+        ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(27));
+    assert_eq!(
+        unsupported.to_string(),
+        format!(
+            "protocol version 27 is outside the supported range {oldest}-{newest}"
+        )
+    );
+}
+
+#[test]
 fn protocol_versions_are_hashable() {
     use std::collections::HashSet;
 
