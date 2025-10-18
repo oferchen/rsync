@@ -240,7 +240,7 @@ impl<'a> MessageSegments<'a> {
         let mut vectored = self.segments;
 
         while remaining > 0 {
-            let tail = &mut vectored[start..count];
+            let mut tail = &mut vectored[start..count];
             if tail.is_empty() {
                 break;
             }
@@ -257,24 +257,10 @@ impl<'a> MessageSegments<'a> {
                         return Ok(());
                     }
 
-                    let mut consumed = written;
-                    let mut index = start;
-                    while consumed > 0 && index < count {
-                        let slice_len = vectored[index].len();
-                        if consumed < slice_len {
-                            vectored[index].advance(consumed);
-                            consumed = 0;
-                        } else {
-                            vectored[index].advance(slice_len);
-                            consumed -= slice_len;
-                            index += 1;
-                        }
-                    }
-
-                    start = index;
-                    while start < count && vectored[start].is_empty() {
-                        start += 1;
-                    }
+                    let before_len = tail.len();
+                    IoSlice::advance_slices(&mut tail, written);
+                    let consumed_slices = before_len - tail.len();
+                    start += consumed_slices;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
