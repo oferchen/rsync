@@ -8,6 +8,7 @@ use core::convert::TryFrom;
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
+use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
 use super::parts::SessionHandshakeParts;
@@ -128,6 +129,22 @@ impl<R> SessionHandshake<R> {
         match self {
             Self::Binary(handshake) => handshake.into_stream(),
             Self::Legacy(handshake) => handshake.into_stream(),
+        }
+    }
+
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the buffered negotiation bytes.
+    ///
+    /// The helper delegates to the underlying handshake variant, preserving the ergonomics offered
+    /// by [`BinaryHandshake`] and [`LegacyDaemonHandshake`]. Callers that operate at the aggregated
+    /// session layer can therefore rebuild sniffers without unpacking the enum or replaying the
+    /// transport.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        match self {
+            Self::Binary(handshake) => handshake.rehydrate_sniffer(sniffer),
+            Self::Legacy(handshake) => handshake.rehydrate_sniffer(sniffer),
         }
     }
 
