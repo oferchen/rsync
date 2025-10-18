@@ -1089,7 +1089,7 @@ mod tests {
         let err = parts
             .try_map_stream_inner(
                 |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
-                    Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), inner))
+                    Err((io::Error::other("wrap failed"), inner))
                 },
             )
             .expect_err("mapping fails");
