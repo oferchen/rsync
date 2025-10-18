@@ -3199,14 +3199,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, true);
         let mut writer = TrackingWriter::default();
 
-        segments
-            .write_to(&mut writer)
-            .expect("writing into a vector never fails");
-
-        drop(segments);
+        {
+            let segments = message.as_segments(&mut scratch, true);
+            segments
+                .write_to(&mut writer)
+                .expect("writing into a vector never fails");
+        }
 
         assert_eq!(writer.written, message.to_line_bytes().unwrap());
         assert!(writer.vectored_calls >= 1);
@@ -3219,14 +3219,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, false);
         let mut writer = TrackingWriter::with_unsupported_once();
 
-        segments
-            .write_to(&mut writer)
-            .expect("sequential fallback should succeed");
-
-        drop(segments);
+        {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect("sequential fallback should succeed");
+        }
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 1);
@@ -3239,14 +3239,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, false);
         let mut writer = TrackingWriter::with_always_unsupported();
 
-        segments
-            .write_to(&mut writer)
-            .expect("sequential fallback should succeed");
-
-        drop(segments);
+        {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect("sequential fallback should succeed");
+        }
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 1);
@@ -3259,14 +3259,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, true);
         let mut writer = TrackingWriter::with_vectored_limit(8);
 
-        segments
-            .write_to(&mut writer)
-            .expect("partial vectored writes should succeed");
-
-        drop(segments);
+        {
+            let segments = message.as_segments(&mut scratch, true);
+            segments
+                .write_to(&mut writer)
+                .expect("partial vectored writes should succeed");
+        }
 
         assert_eq!(writer.written, message.to_line_bytes().unwrap());
         assert!(writer.vectored_calls >= 2);
@@ -3279,14 +3279,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, false);
         let mut writer = PartialThenUnsupportedWriter::new(8);
 
-        segments
-            .write_to(&mut writer)
-            .expect("sequential fallback should succeed after partial vectored writes");
-
-        drop(segments);
+        {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect("sequential fallback should succeed after partial vectored writes");
+        }
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 2);
@@ -3300,12 +3300,14 @@ mod tests {
             .with_source(message_source!());
 
         let mut scratch = MessageScratch::new();
-        let segments = message.as_segments(&mut scratch, false);
         let mut writer = ZeroProgressWriter::default();
 
-        let err = segments
-            .write_to(&mut writer)
-            .expect_err("zero-length vectored write must error");
+        let err = {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect_err("zero-length vectored write must error")
+        };
 
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
         assert_eq!(writer.write_calls, 0, "sequential writes should not run");
