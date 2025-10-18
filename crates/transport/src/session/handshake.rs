@@ -123,6 +123,24 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
+    ///
+    /// The helper mirrors the variant-specific [`BinaryHandshake::rehydrate_sniffer`] and
+    /// [`LegacyDaemonHandshake::rehydrate_sniffer`] methods, allowing callers to rebuild sniffers
+    /// without matching on the enum or replaying the underlying transport. The replay buffer and
+    /// sniffed prefix length recorded during negotiation are forwarded to the shared
+    /// [`NegotiationPrologueSniffer::rehydrate_from_parts`] logic, ensuring the reconstructed
+    /// sniffer observes the same transcript as the original detection pass.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        match self {
+            Self::Binary(handshake) => handshake.rehydrate_sniffer(sniffer),
+            Self::Legacy(handshake) => handshake.rehydrate_sniffer(sniffer),
+        }
+    }
+
     /// Releases the wrapper and returns the replaying stream.
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
