@@ -164,6 +164,227 @@ impl<R> BinaryHandshakeParts<R> {
         self.stream
     }
 
+    /// Maps the inner transport while keeping the negotiated metadata intact.
+    ///
+    /// This mirrors [`BinaryHandshake::map_stream_inner`] but operates on the decomposed
+    /// parts, allowing callers to wrap the underlying transport before rebuilding the
+    /// handshake. The replay buffer and negotiated protocols are preserved so higher
+    /// layers can continue consuming the stream without rerunning the negotiation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+    /// use std::io::{self, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct Loopback {
+    ///     reader: std::io::Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertisement: [u8; 4]) -> Self {
+    ///         Self {
+    ///             reader: std::io::Cursor::new(advertisement.to_vec()),
+    ///             written: Vec::new(),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// #[derive(Debug)]
+    /// struct Instrumented {
+    ///     inner: Loopback,
+    ///     writes: Vec<u8>,
+    /// }
+    ///
+    /// impl Instrumented {
+    ///     fn new(inner: Loopback) -> Self {
+    ///         Self { inner, writes: Vec::new() }
+    ///     }
+    ///
+    ///     fn writes(&self) -> &[u8] {
+    ///         &self.writes
+    ///     }
+    ///
+    ///     fn into_inner(self) -> Loopback {
+    ///         self.inner
+    ///     }
+    /// }
+    ///
+    /// impl Read for Instrumented {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.inner.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Instrumented {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.writes.extend_from_slice(buf);
+    ///         self.inner.write(buf)
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         self.inner.flush()
+    ///     }
+    /// }
+    ///
+    /// let remote = ProtocolVersion::from_supported(31).unwrap();
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
+    /// let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+    ///     .expect("handshake succeeds")
+    ///     .into_parts();
+    ///
+    /// let instrumented = parts.map_stream_inner(Instrumented::new);
+    /// assert_eq!(instrumented.negotiated_protocol(), remote);
+    ///
+    /// let mut handshake = instrumented.into_handshake();
+    /// handshake.stream_mut().write_all(b"data").unwrap();
+    /// handshake.stream_mut().flush().unwrap();
+    ///
+    /// let instrumented = handshake.into_stream().into_inner();
+    /// assert_eq!(instrumented.writes(), b"data");
+    /// let inner = instrumented.into_inner();
+    /// let mut expected = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes().to_vec();
+    /// expected.extend_from_slice(b"data");
+    /// assert_eq!(inner.written, expected);
+    /// ```
+    #[must_use]
+    pub fn map_stream_inner<F, T>(self, map: F) -> BinaryHandshakeParts<T>
+    where
+        F: FnOnce(R) -> T,
+    {
+        let Self {
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        } = self;
+
+        BinaryHandshakeParts::from_components(
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream.map_inner(map),
+        )
+    }
+
+    /// Attempts to transform the inner transport while preserving the negotiated metadata.
+    ///
+    /// On success the new transport replaces the previous one and the replay buffer remains
+    /// available. If the mapping fails, the original parts structure is returned alongside the
+    /// error so callers can continue using the negotiated session without repeating the handshake.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+    /// use std::io::{self, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct Loopback {
+    ///     reader: std::io::Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertisement: [u8; 4]) -> Self {
+    ///         Self {
+    ///             reader: std::io::Cursor::new(advertisement.to_vec()),
+    ///             written: Vec::new(),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let remote = ProtocolVersion::from_supported(31).unwrap();
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
+    /// let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+    ///     .expect("handshake succeeds")
+    ///     .into_parts();
+    ///
+    /// let err = parts
+    ///     .try_map_stream_inner(|inner| -> Result<Loopback, (io::Error, Loopback)> {
+    ///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), inner))
+    ///     })
+    ///     .expect_err("mapping fails");
+    /// assert_eq!(err.error().kind(), io::ErrorKind::Other);
+    ///
+    /// let restored = err.into_original().into_handshake();
+    /// assert_eq!(restored.remote_protocol(), remote);
+    /// ```
+    #[must_use]
+    pub fn try_map_stream_inner<F, T, E>(
+        self,
+        map: F,
+    ) -> Result<BinaryHandshakeParts<T>, TryMapInnerError<BinaryHandshakeParts<R>, E>>
+    where
+        F: FnOnce(R) -> Result<T, (E, R)>,
+    {
+        let Self {
+            remote_advertised,
+            remote_protocol,
+            negotiated_protocol,
+            stream,
+        } = self;
+
+        stream
+            .try_map_inner(map)
+            .map(|stream| {
+                BinaryHandshakeParts::from_components(
+                    remote_advertised,
+                    remote_protocol,
+                    negotiated_protocol,
+                    stream,
+                )
+            })
+            .map_err(|err| {
+                err.map_original(|stream| {
+                    BinaryHandshakeParts::from_components(
+                        remote_advertised,
+                        remote_protocol,
+                        negotiated_protocol,
+                        stream,
+                    )
+                })
+            })
+    }
+
     fn into_components(
         self,
     ) -> (
@@ -797,6 +1018,89 @@ mod tests {
         let instrumented = handshake.into_stream().into_inner();
         assert_eq!(instrumented.writes(), b"payload");
         assert_eq!(instrumented.flushes(), 1);
+    }
+
+    #[test]
+    fn parts_map_stream_inner_transforms_transport() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds")
+            .into_parts();
+        assert_eq!(parts.remote_protocol(), remote_version);
+
+        let mapped = parts.map_stream_inner(InstrumentedTransport::new);
+        assert_eq!(mapped.remote_protocol(), remote_version);
+
+        let mut handshake = mapped.into_handshake();
+        handshake
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+        handshake.stream_mut().flush().expect("flush propagates");
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"payload");
+        assert_eq!(instrumented.flushes(), 1);
+
+        let inner = instrumented.into_inner();
+        let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+        expected.extend_from_slice(b"payload");
+        assert_eq!(inner.written(), expected.as_slice());
+    }
+
+    #[test]
+    fn parts_try_map_stream_inner_transforms_transport() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds")
+            .into_parts();
+
+        let mapped = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Ok(InstrumentedTransport::new(inner))
+                },
+            )
+            .expect("mapping succeeds");
+        assert_eq!(mapped.remote_protocol(), remote_version);
+
+        let mut handshake = mapped.into_handshake();
+        handshake
+            .stream_mut()
+            .write_all(b"payload")
+            .expect("write propagates");
+
+        let instrumented = handshake.into_stream().into_inner();
+        assert_eq!(instrumented.writes(), b"payload");
+    }
+
+    #[test]
+    fn parts_try_map_stream_inner_preserves_original_on_error() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
+        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+
+        let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds")
+            .into_parts();
+
+        let err = parts
+            .try_map_stream_inner(
+                |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
+                    Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), inner))
+                },
+            )
+            .expect_err("mapping fails");
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+
+        let restored = err.into_original();
+        assert_eq!(restored.remote_protocol(), remote_version);
+
+        let remapped = restored.map_stream_inner(InstrumentedTransport::new);
+        assert_eq!(remapped.remote_protocol(), remote_version);
     }
 
     #[test]
