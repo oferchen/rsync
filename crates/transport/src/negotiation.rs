@@ -39,7 +39,9 @@ pub struct NegotiatedStream<R> {
 /// Consumers obtain instances via [`NegotiatedStream::buffered_vectored`],
 /// [`NegotiatedStream::buffered_remaining_vectored`], or their counterparts on
 /// [`NegotiatedStreamParts`]. The iterator interface allows the slices to be passed directly to
-/// [`Write::write_vectored`] without allocating intermediate buffers.
+/// [`Write::write_vectored`] without allocating intermediate buffers, flattened into a
+/// [`Vec<u8>`] via [`extend_vec`](NegotiationBufferedSlices::extend_vec), or iterated over
+/// using the standard `IntoIterator` trait implementations.
 ///
 /// # Examples
 ///
@@ -115,6 +117,41 @@ impl<'a> NegotiationBufferedSlices<'a> {
     #[must_use = "callers must iterate to observe the buffered slices"]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
+    }
+
+    /// Extends the provided buffer with the buffered negotiation bytes.
+    ///
+    /// The helper reserves exactly enough additional capacity to append the
+    /// replay prefix and payload while preserving their original ordering. This
+    /// mirrors [`write_to`](Self::write_to) but avoids going through the
+    /// [`Write`] trait when callers simply need an owned [`Vec<u8>`] for later
+    /// comparison.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream =
+    ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///         .expect("sniff succeeds");
+    /// let slices = stream.buffered_vectored();
+    /// let mut replay = Vec::new();
+    /// slices.extend_vec(&mut replay);
+    ///
+    /// assert_eq!(replay, stream.buffered());
+    /// ```
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) {
+        if self.is_empty() {
+            return;
+        }
+
+        buffer.reserve(self.total_len);
+
+        for slice in self.as_slices() {
+            buffer.extend_from_slice(slice.as_ref());
+        }
     }
 
     /// Streams the buffered negotiation data into the provided writer.
@@ -210,21 +247,21 @@ impl<'a> AsRef<[IoSlice<'a>]> for NegotiationBufferedSlices<'a> {
     }
 }
 
-impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
-    type Item = IoSlice<'a>;
-    type IntoIter = std::iter::Take<std::array::IntoIter<IoSlice<'a>, 2>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.segments.into_iter().take(self.count)
-    }
-}
-
 impl<'a> IntoIterator for &'a NegotiationBufferedSlices<'a> {
     type Item = &'a IoSlice<'a>;
     type IntoIter = slice::Iter<'a, IoSlice<'a>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
+    type Item = IoSlice<'a>;
+    type IntoIter = std::iter::Take<std::array::IntoIter<IoSlice<'a>, 2>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.segments.into_iter().take(self.count)
     }
 }
 
@@ -2977,6 +3014,55 @@ mod tests {
     }
 
     #[test]
+    fn negotiation_buffered_slices_extend_vec_appends_buffered_bytes() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" motd";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+
+        let mut buffer = b"prefix: ".to_vec();
+        let prefix_len = buffer.len();
+        slices.extend_vec(&mut buffer);
+
+        assert_eq!(&buffer[..prefix_len], b"prefix: ");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+        assert_eq!(&buffer[prefix_len..], expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_into_iter_over_reference_yields_segments() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" reply";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+
+        let collected: Vec<u8> = (&slices)
+            .into_iter()
+            .flat_map(|slice| slice.as_ref().iter().copied())
+            .collect();
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_into_iter_consumes_segments() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" banner";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+
+        let lengths: Vec<usize> = slices
+            .into_iter()
+            .map(|slice| slice.as_ref().len())
+            .collect();
+
+        assert_eq!(lengths, vec![prefix.len(), remainder.len()]);
+    }
+
+    #[test]
     fn sniff_negotiation_detects_binary_prefix() {
         let mut stream = sniff_bytes(&[0x00, 0x12, 0x34]).expect("sniff succeeds");
         assert_eq!(stream.decision(), NegotiationPrologue::Binary);
@@ -4654,9 +4740,11 @@ mod tests {
         let stream = sniff_bytes(legacy).expect("sniff succeeds");
 
         let err = stream
-            .try_map_inner(|cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
-                Err((io::Error::other("boom"), cursor))
-            })
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("boom"), cursor))
+                },
+            )
             .expect_err("mapping fails");
 
         let (error, mut original) = err.into_parts();
