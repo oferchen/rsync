@@ -3,7 +3,6 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
-use core::convert::TryFrom;
 use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
 use std::collections::TryReserveError;
@@ -735,8 +734,9 @@ where
 /// # Errors
 ///
 /// - [`io::ErrorKind::InvalidData`] if the supplied stream represents a
-///   legacy ASCII negotiation or if the peer advertises a protocol outside the
-///   supported range.
+///   legacy ASCII negotiation or if the peer advertises a protocol below the
+///   supported range. Future versions are clamped to the newest supported
+///   value like upstream rsync.
 /// - Any I/O error reported while exchanging the protocol advertisements.
 pub fn negotiate_binary_session_from_stream<R>(
     mut stream: NegotiatedStream<R>,
@@ -763,12 +763,7 @@ where
     stream.read_exact(&mut remote_buf)?;
     let remote_advertised = u32::from_le_bytes(remote_buf);
 
-    let remote_byte = u8::try_from(remote_advertised).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "binary negotiation protocol identifier outside supported range",
-        )
-    })?;
+    let remote_byte = remote_advertised.min(u32::from(u8::MAX)) as u8;
 
     let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_byte) {
         Ok(protocol) => protocol,
@@ -1174,24 +1169,32 @@ mod tests {
     }
 
     #[test]
-    fn negotiate_binary_session_rejects_protocols_beyond_u8() {
+    fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
         let future_version = 0x0001_0200u32;
         let transport = MemoryTransport::new(&future_version.to_le_bytes());
 
-        let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-            .expect_err("future ints beyond u8 must be rejected");
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("future advertisements beyond u8 clamp to newest");
 
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(handshake.remote_advertised_protocol(), future_version);
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
     }
 
     #[test]
-    fn negotiate_binary_session_rejects_u32_max_advertisement() {
+    fn negotiate_binary_session_clamps_u32_max_advertisement() {
         let transport = MemoryTransport::new(&u32::MAX.to_le_bytes());
 
-        let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-            .expect_err("maximum u32 advertisement must be rejected");
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("maximum u32 advertisement clamps to newest");
 
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
+        assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
+        assert!(handshake.remote_protocol_was_clamped());
+        assert!(!handshake.local_protocol_was_capped());
     }
 
     #[test]
