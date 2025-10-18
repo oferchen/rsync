@@ -64,8 +64,13 @@ where
     F: FnOnce(&mut MessageScratch) -> R,
 {
     THREAD_LOCAL_SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        f(&mut scratch)
+        match scratch.try_borrow_mut() {
+            Ok(mut scratch) => f(&mut scratch),
+            Err(_) => {
+                let mut fallback = MessageScratch::new();
+                f(&mut fallback)
+            }
+        }
     })
 }
 
