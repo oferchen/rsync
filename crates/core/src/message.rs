@@ -134,6 +134,11 @@ impl<'a> MessageSegments<'a> {
         &self.segments[..self.count]
     }
 
+    #[inline]
+    fn as_slices_mut(&mut self) -> &mut [IoSlice<'a>] {
+        &mut self.segments[..self.count]
+    }
+
     /// Returns the total number of bytes covered by the message segments.
     #[inline]
     #[must_use]
@@ -189,6 +194,38 @@ impl<'a> MessageSegments<'a> {
     #[inline]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
+    }
+
+    /// Returns a mutable iterator over the populated vectored slices.
+    ///
+    /// This mirrors [`Self::iter`] but yields mutable references so callers can
+    /// adjust slice boundaries prior to issuing writes. The iterator maintains
+    /// the original ordering so diagnostics remain byte-identical to upstream
+    /// rsync.
+    ///
+    /// # Examples
+    ///
+    /// Iterate mutably over the slices and confirm they are all non-empty.
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let mut segments = message.as_segments(&mut scratch, false);
+    ///
+    /// for slice in &mut segments {
+    ///     assert!(!slice.as_ref().is_empty());
+    /// }
+    /// ```
+    #[inline]
+    pub fn iter_mut(&mut self) -> slice::IterMut<'_, IoSlice<'a>> {
+        self.as_slices_mut().iter_mut()
     }
 
     /// Streams the message segments into the provided writer.
@@ -327,7 +364,7 @@ impl<'a> MessageSegments<'a> {
 
         buffer.reserve(self.len());
 
-        for slice in self.as_slices() {
+        for slice in self.iter() {
             buffer.extend_from_slice(slice.as_ref());
         }
     }
@@ -347,6 +384,16 @@ impl<'a> IntoIterator for &'a MessageSegments<'a> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut MessageSegments<'a> {
+    type Item = &'a mut IoSlice<'a>;
+    type IntoIter = slice::IterMut<'a, IoSlice<'a>>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
@@ -2172,6 +2219,21 @@ mod tests {
         };
 
         assert_eq!(collected, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_mut_iterator_covers_all_bytes() {
+        let message = Message::error(24, "partial transfer").with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let mut segments = message.as_segments(&mut scratch, false);
+        let mut total_len = 0;
+
+        for slice in &mut segments {
+            total_len += slice.as_ref().len();
+        }
+
+        assert_eq!(total_len, message.to_bytes().unwrap().len());
     }
 
     #[test]
