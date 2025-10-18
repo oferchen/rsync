@@ -165,6 +165,82 @@ fn negotiate_session_parts_exposes_binary_metadata() {
 }
 
 #[test]
+fn session_into_inner_returns_binary_transport() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let mut raw = handshake.into_inner();
+    assert_eq!(
+        raw.writes(),
+        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+    );
+    assert_eq!(raw.flushes(), 1);
+
+    let mut replay = Vec::new();
+    raw.read_to_end(&mut replay)
+        .expect("remaining bytes readable");
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn session_into_inner_returns_legacy_transport() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
+
+    let mut raw = handshake.into_inner();
+    assert_eq!(raw.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(raw.flushes(), 1);
+
+    let mut replay = Vec::new();
+    raw.read_to_end(&mut replay)
+        .expect("remaining bytes readable");
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn session_parts_into_inner_returns_binary_transport() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let parts =
+        negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
+
+    let mut raw = parts.into_inner();
+    assert_eq!(
+        raw.writes(),
+        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+    );
+    assert_eq!(raw.flushes(), 1);
+
+    let mut replay = Vec::new();
+    raw.read_to_end(&mut replay)
+        .expect("remaining bytes readable");
+    assert!(replay.is_empty());
+}
+
+#[test]
+fn session_parts_into_inner_returns_legacy_transport() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let parts =
+        negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("legacy parts succeed");
+
+    let mut raw = parts.into_inner();
+    assert_eq!(raw.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(raw.flushes(), 1);
+
+    let mut replay = Vec::new();
+    raw.read_to_end(&mut replay)
+        .expect("remaining bytes readable");
+    assert!(replay.is_empty());
+}
+
+#[test]
 fn negotiate_session_parts_exposes_legacy_metadata() {
     let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
 

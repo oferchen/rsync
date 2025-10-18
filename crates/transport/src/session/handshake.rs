@@ -131,6 +131,75 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Releases the handshake and returns the underlying transport.
+    ///
+    /// Any buffered negotiation bytes captured during the sniffing phase are
+    /// discarded. Call [`SessionHandshake::into_stream`] or
+    /// [`SessionHandshake::into_stream_parts`] when the replay data must be
+    /// preserved for subsequent consumers. The helper mirrors
+    /// [`NegotiatedStream::into_inner`](crate::NegotiatedStream::into_inner)
+    /// and is intended for scenarios where the caller has already consumed or
+    /// logged the handshake transcript and only needs to continue using the
+    /// raw transport.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_session;
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct Loopback {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     writes: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertisement: [u8; 4]) -> Self {
+    ///         Self {
+    ///             reader: Cursor::new(advertisement.to_vec()),
+    ///             writes: Vec::new(),
+    ///         }
+    ///     }
+    ///
+    ///     fn writes(&self) -> &[u8] {
+    ///         &self.writes
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.writes.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let protocol = ProtocolVersion::from_supported(31).unwrap();
+    /// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
+    /// let raw = negotiate_session(transport, protocol)
+    ///     .unwrap()
+    ///     .into_inner();
+    ///
+    /// // The returned transport is the original stream, including any bytes the
+    /// // client wrote while negotiating.
+    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_le_bytes());
+    /// ```
+    #[must_use]
+    pub fn into_inner(self) -> R {
+        self.into_stream().into_inner()
+    }
+
     /// Maps the inner transport while preserving the negotiated metadata.
     ///
     /// The returned handshake replaces `self`; callers must use the value to
