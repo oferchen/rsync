@@ -660,7 +660,7 @@ macro_rules! tracked_message_source {
 /// Constructs an error [`Message`] with the provided exit code and payload.
 ///
 /// The macro mirrors upstream diagnostics by automatically attaching the
-/// call-site [`SourceLocation`] using [`macro@message_source`]. It accepts either a
+/// call-site [`SourceLocation`] using [`macro@tracked_message_source`]. It accepts either a
 /// string literal/`Cow<'static, str>` payload or a [`format!`] style template.
 /// Callers can further customise the returned [`Message`] by chaining helpers
 /// such as [`Message::with_role`].
@@ -692,19 +692,21 @@ macro_rules! tracked_message_source {
 macro_rules! rsync_error {
     ($code:expr, $text:expr $(,)?) => {{
         $crate::message::Message::error($code, $text)
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
     ($code:expr, $fmt:expr, $($arg:tt)+ $(,)?) => {{
         $crate::message::Message::error($code, format!($fmt, $($arg)+))
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
 }
 
 /// Constructs a warning [`Message`] from the provided payload.
 ///
 /// Like [`macro@rsync_error`], the macro records the call-site source location so
-/// diagnostics include repo-relative paths. Additional context, such as exit
-/// codes, can be attached using [`Message::with_code`].
+/// diagnostics include repo-relative paths. The macro relies on
+/// [`macro@tracked_message_source`], meaning callers annotated with
+/// `#[track_caller]` automatically propagate their invocation site. Additional
+/// context, such as exit codes, can be attached using [`Message::with_code`].
 ///
 /// # Examples
 ///
@@ -722,11 +724,11 @@ macro_rules! rsync_error {
 macro_rules! rsync_warning {
     ($text:expr $(,)?) => {{
         $crate::message::Message::warning($text)
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
     ($fmt:expr, $($arg:tt)+ $(,)?) => {{
         $crate::message::Message::warning(format!($fmt, $($arg)+))
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
 }
 
@@ -735,7 +737,9 @@ macro_rules! rsync_warning {
 /// The macro is a convenience wrapper around [`Message::info`] that automatically
 /// attaches the call-site source location. Upstream rsync typically omits source
 /// locations for informational output, but retaining the metadata simplifies
-/// debugging and keeps the API consistent across severities.
+/// debugging and keeps the API consistent across severities. As with the other
+/// message macros, [`macro@tracked_message_source`] ensures `#[track_caller]`
+/// annotations propagate the original invocation site into diagnostics.
 ///
 /// # Examples
 ///
@@ -750,11 +754,11 @@ macro_rules! rsync_warning {
 macro_rules! rsync_info {
     ($text:expr $(,)?) => {{
         $crate::message::Message::info($text)
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
     ($fmt:expr, $($arg:tt)+ $(,)?) => {{
         $crate::message::Message::info(format!($fmt, $($arg)+))
-            .with_source($crate::message_source!())
+            .with_source($crate::tracked_message_source!())
     }};
 }
 
@@ -1573,6 +1577,21 @@ mod tests {
     #[track_caller]
     fn untracked_source() -> SourceLocation {
         message_source!()
+    }
+
+    #[track_caller]
+    fn tracked_rsync_error_macro() -> Message {
+        rsync_error!(23, "delta-transfer failure")
+    }
+
+    #[track_caller]
+    fn tracked_rsync_warning_macro() -> Message {
+        rsync_warning!("some files vanished")
+    }
+
+    #[track_caller]
+    fn tracked_rsync_info_macro() -> Message {
+        rsync_info!("negotiation complete")
     }
 
     #[test]
@@ -2518,12 +2537,32 @@ mod tests {
     }
 
     #[test]
+    fn rsync_error_macro_honors_track_caller() {
+        let expected_line = line!() + 1;
+        let message = tracked_rsync_error_macro();
+        let source = message.source().expect("macro records source location");
+
+        assert_eq!(source.line(), expected_line);
+        assert!(source.path().ends_with("crates/core/src/message.rs"));
+    }
+
+    #[test]
     fn rsync_warning_macro_supports_format_arguments() {
         let message = rsync_warning!("vanished {count} files", count = 2).with_code(24);
 
         assert_eq!(message.severity(), Severity::Warning);
         assert_eq!(message.code(), Some(24));
         assert_eq!(message.text(), "vanished 2 files");
+    }
+
+    #[test]
+    fn rsync_warning_macro_honors_track_caller() {
+        let expected_line = line!() + 1;
+        let message = tracked_rsync_warning_macro();
+        let source = message.source().expect("macro records source location");
+
+        assert_eq!(source.line(), expected_line);
+        assert!(source.path().ends_with("crates/core/src/message.rs"));
     }
 
     #[test]
@@ -2534,6 +2573,16 @@ mod tests {
         assert_eq!(message.code(), None);
         assert_eq!(message.text(), "protocol 32 negotiated");
         assert!(message.source().is_some());
+    }
+
+    #[test]
+    fn rsync_info_macro_honors_track_caller() {
+        let expected_line = line!() + 1;
+        let message = tracked_rsync_info_macro();
+        let source = message.source().expect("macro records source location");
+
+        assert_eq!(source.line(), expected_line);
+        assert!(source.path().ends_with("crates/core/src/message.rs"));
     }
 
     #[test]
