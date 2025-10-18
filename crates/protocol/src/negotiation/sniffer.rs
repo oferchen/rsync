@@ -158,6 +158,30 @@ impl NegotiationPrologueSniffer {
         self.buffered.len()
     }
 
+    /// Ensures the internal buffer can accommodate additional buffered bytes without reallocating.
+    ///
+    /// The method forwards to [`Vec::try_reserve`], reserving space for `additional` more bytes on
+    /// top of the existing buffered length. This mirrors upstream rsync's strategy of preparing a
+    /// scratch buffer large enough to hold both the `@RSYNCD:` marker and any extra data captured
+    /// while classifying the negotiation style. When paired with connection pools the helper makes
+    /// it possible to amortize allocation costs across sessions while still propagating
+    /// [`TryReserveError`] values when the allocator cannot satisfy the request.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::NegotiationPrologueSniffer;
+    ///
+    /// let mut sniffer = NegotiationPrologueSniffer::new();
+    /// sniffer
+    ///     .try_reserve_buffered(64)
+    ///     .expect("reservation grows the replay buffer");
+    /// assert!(sniffer.buffered().is_empty());
+    /// ```
+    pub fn try_reserve_buffered(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.buffered.try_reserve(additional)
+    }
+
     /// Returns the number of bytes that were required to classify the negotiation prologue.
     ///
     /// The value mirrors [`NegotiationPrologueDetector::buffered_len`], allowing callers to
