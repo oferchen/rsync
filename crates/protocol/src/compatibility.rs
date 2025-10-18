@@ -336,27 +336,15 @@ impl CompatibilityFlags {
     ///
     /// # Errors
     ///
-    /// Propagates any error produced by the underlying writer.
+    /// Propagates any error produced by the underlying writer. The encoding mirrors upstream rsync
+    /// by reinterpreting the raw bitfield as a signed 32-bit integer, ensuring bits that extend into
+    /// the sign position are preserved.
     pub fn write_to<W: Write>(self, writer: &mut W) -> io::Result<()> {
-        if self.bits > i32::MAX as u32 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "compatibility flags exceed 31-bit encoding range",
-            ));
-        }
-
         write_varint(writer, self.bits as i32)
     }
 
     /// Appends the encoded flags to `out` using the varint wire format.
     pub fn encode_to_vec(self, out: &mut Vec<u8>) -> io::Result<()> {
-        if self.bits > i32::MAX as u32 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "compatibility flags exceed 31-bit encoding range",
-            ));
-        }
-
         encode_varint_to_vec(self.bits as i32, out);
         Ok(())
     }
@@ -365,30 +353,20 @@ impl CompatibilityFlags {
     ///
     /// # Errors
     ///
-    /// Returns [`io::ErrorKind::InvalidData`] when the encoded value is negative or exceeds the
-    /// supported 32-bit range.
+    /// Propagates I/O errors reported by [`read_varint`]. The helper mirrors upstream rsync by
+    /// reinterpreting negative `i32` values using two's-complement semantics so future
+    /// compatibility bits that extend into the sign position are preserved.
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         let value = read_varint(reader)?;
-        if value < 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "compatibility flags must not be negative",
-            ));
-        }
-
         Ok(Self::new(value as u32))
     }
 
     /// Decodes a compatibility flag bitfield from the beginning of `bytes` and returns the remaining slice.
+    ///
+    /// Negative integers are interpreted using two's-complement semantics so that encoded bitfields
+    /// with sign-bit extensions round-trip exactly like the upstream C implementation.
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
         let (value, remainder) = decode_varint(bytes)?;
-        if value < 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "compatibility flags must not be negative",
-            ));
-        }
-
         Ok((Self::new(value as u32), remainder))
     }
 }
@@ -704,12 +682,22 @@ mod tests {
     }
 
     #[test]
-    fn read_from_rejects_negative_values() {
-        let encoded = [0xFFu8];
+    fn read_from_preserves_high_bit_flags() {
+        let flags = CompatibilityFlags::from_bits(0x8000_0001);
+        let mut encoded = Vec::new();
+        flags
+            .encode_to_vec(&mut encoded)
+            .expect("encoding succeeds");
+
         let mut cursor = io::Cursor::new(&encoded[..]);
-        let err = CompatibilityFlags::read_from(&mut cursor)
-            .expect_err("negative values must be rejected");
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let decoded = CompatibilityFlags::read_from(&mut cursor)
+            .expect("two's-complement values must round-trip");
+        assert_eq!(decoded.bits(), flags.bits());
+
+        let (from_slice, remainder) =
+            CompatibilityFlags::decode_from_slice(&encoded).expect("slice decoding succeeds");
+        assert_eq!(from_slice.bits(), flags.bits());
+        assert!(remainder.is_empty());
     }
 
     #[test]
