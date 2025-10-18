@@ -1,4 +1,5 @@
 use core::fmt;
+use std::io::{self, Read};
 
 /// Errors that can occur while updating the rolling checksum state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +98,9 @@ pub struct RollingChecksum {
 }
 
 impl RollingChecksum {
+    /// Default buffer length used by [`update_reader`](Self::update_reader).
+    pub const DEFAULT_READER_BUFFER_LEN: usize = 32 * 1024;
+
     /// Creates a new rolling checksum with zeroed state.
     #[must_use]
     pub const fn new() -> Self {
@@ -187,6 +191,86 @@ impl RollingChecksum {
         self.s1 = s1 & 0xffff;
         self.s2 = s2 & 0xffff;
         self.len = self.len.saturating_add(chunk.len());
+    }
+
+    /// Updates the checksum by consuming data from an [`io::Read`] implementation.
+    ///
+    /// The method repeatedly fills `buffer` and forwards the consumed bytes to
+    /// [`update`](Self::update). It returns the total number of bytes read so
+    /// callers can validate that the expected amount of data was processed.
+    ///
+    /// Providing an empty buffer is rejected to avoid an infinite read loop on
+    /// streams that yield zero-byte reads. The buffer is reused for each read
+    /// operation, making the helper allocation-free and suitable for tight
+    /// transfer loops.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when `buffer` is empty and
+    /// otherwise propagates any error reported by the underlying reader.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingChecksum;
+    /// use std::io::Cursor;
+    ///
+    /// let data = b"streamed input";
+    /// let mut cursor = Cursor::new(&data[..]);
+    /// let mut checksum = RollingChecksum::new();
+    /// let mut buffer = [0u8; 4];
+    /// let read = checksum
+    ///     .update_reader_with_buffer(&mut cursor, &mut buffer)
+    ///     .expect("reader succeeds");
+    /// assert_eq!(read, data.len() as u64);
+    /// assert_eq!(checksum.digest(), {
+    ///     let mut manual = RollingChecksum::new();
+    ///     manual.update(data);
+    ///     manual.digest()
+    /// });
+    /// ```
+    pub fn update_reader_with_buffer<R: Read>(
+        &mut self,
+        reader: &mut R,
+        buffer: &mut [u8],
+    ) -> io::Result<u64> {
+        if buffer.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "rolling checksum reader buffer must not be empty",
+            ));
+        }
+
+        let mut total = 0u64;
+
+        loop {
+            let read = reader.read(buffer)?;
+            if read == 0 {
+                break;
+            }
+
+            self.update(&buffer[..read]);
+            total += read as u64;
+        }
+
+        Ok(total)
+    }
+
+    /// Updates the checksum by reading from `reader` using an internal buffer.
+    ///
+    /// This is a convenience wrapper around
+    /// [`update_reader_with_buffer`](Self::update_reader_with_buffer) that
+    /// allocates a stack buffer of
+    /// [`DEFAULT_READER_BUFFER_LEN`](Self::DEFAULT_READER_BUFFER_LEN) bytes.
+    /// The method is useful for tests and simple call sites that do not manage
+    /// their own scratch space.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`io::Error`] produced by the underlying reader.
+    pub fn update_reader<R: Read>(&mut self, reader: &mut R) -> io::Result<u64> {
+        let mut buffer = [0u8; Self::DEFAULT_READER_BUFFER_LEN];
+        self.update_reader_with_buffer(reader, &mut buffer)
     }
 
     /// Updates the checksum by recomputing the state for a fresh block.
@@ -473,6 +557,7 @@ mod tests {
     use super::*;
 
     use proptest::prelude::*;
+    use std::io::{self, Cursor};
 
     fn reference_digest(data: &[u8]) -> RollingDigest {
         let mut s1: u64 = 0;
@@ -740,6 +825,57 @@ mod tests {
             checksum.digest(),
             RollingDigest::new(checksum.s1 as u16, checksum.s2 as u16, checksum.len)
         );
+    }
+
+    #[test]
+    fn update_reader_matches_manual_update() {
+        let data = b"rolling checksum stream input";
+        let mut cursor = Cursor::new(&data[..]);
+
+        let mut streamed = RollingChecksum::new();
+        let read = streamed
+            .update_reader(&mut cursor)
+            .expect("reading from cursor succeeds");
+        assert_eq!(read, data.len() as u64);
+
+        let mut manual = RollingChecksum::new();
+        manual.update(data);
+
+        assert_eq!(streamed.digest(), manual.digest());
+        assert_eq!(streamed.value(), manual.value());
+    }
+
+    #[test]
+    fn update_reader_with_buffer_accepts_small_buffers() {
+        let data = b"chunked rolling checksum input";
+        let mut cursor = Cursor::new(&data[..]);
+        let mut checksum = RollingChecksum::new();
+        let mut buffer = [0u8; 3];
+
+        let read = checksum
+            .update_reader_with_buffer(&mut cursor, &mut buffer)
+            .expect("buffered read succeeds");
+
+        assert_eq!(read, data.len() as u64);
+
+        let mut manual = RollingChecksum::new();
+        manual.update(data);
+
+        assert_eq!(checksum.digest(), manual.digest());
+        assert_eq!(checksum.value(), manual.value());
+    }
+
+    #[test]
+    fn update_reader_with_buffer_rejects_empty_scratch() {
+        let mut checksum = RollingChecksum::new();
+        let mut cursor = Cursor::new(&b""[..]);
+        let mut empty: [u8; 0] = [];
+
+        let err = checksum
+            .update_reader_with_buffer(&mut cursor, &mut empty)
+            .expect_err("empty buffer must fail");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     proptest! {
