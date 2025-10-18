@@ -126,6 +126,75 @@ impl<'a> MessageSegments<'a> {
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
+
+    /// Streams the message segments into the provided writer.
+    ///
+    /// The helper prefers vectored writes when the message spans multiple
+    /// segments so downstream sinks receive the payload in a single
+    /// [`write_vectored`](IoWrite::write_vectored) call. When the writer either
+    /// reports that vectored I/O is unsupported or performs a partial write, the
+    /// remaining bytes are flushed sequentially to mirror upstream rsync's
+    /// formatting logic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let message = Message::error(12, "example")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    ///
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let mut buffer = Vec::new();
+    /// segments.write_to(&mut buffer).unwrap();
+    ///
+    /// assert_eq!(buffer, message.to_bytes().unwrap());
+    /// ```
+    pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
+        let slices = self.as_slices();
+
+        if slices.is_empty() {
+            return Ok(());
+        }
+
+        if self.segment_count() > 1 {
+            loop {
+                match writer.write_vectored(slices) {
+                    Ok(written) if written == self.len() => return Ok(()),
+                    Ok(written) => {
+                        let mut remaining = written;
+
+                        for slice in slices {
+                            let data = slice.as_ref();
+                            if remaining >= data.len() {
+                                remaining -= data.len();
+                                continue;
+                            }
+
+                            writer.write_all(&data[remaining..])?;
+                            remaining = 0;
+                        }
+
+                        return Ok(());
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+
+        for slice in slices {
+            writer.write_all(slice.as_ref())?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<'a> IntoIterator for &'a MessageSegments<'a> {
@@ -1023,43 +1092,7 @@ impl Message {
         include_newline: bool,
     ) -> io::Result<()> {
         let segments = self.as_segments(scratch, include_newline);
-        let slices = segments.as_slices();
-
-        if segments.segment_count() > 1 {
-            loop {
-                match writer.write_vectored(slices) {
-                    Ok(written) if written == segments.len() => return Ok(()),
-                    Ok(written) => {
-                        let mut remaining = written;
-                        for slice in slices {
-                            let data = slice.as_ref();
-                            if remaining >= data.len() {
-                                remaining -= data.len();
-                                continue;
-                            }
-
-                            writer.write_all(&data[remaining..])?;
-                            remaining = 0;
-                        }
-
-                        return Ok(());
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                        continue;
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-                        break;
-                    }
-                    Err(err) => return Err(err),
-                }
-            }
-        }
-
-        for slice in slices {
-            writer.write_all(slice.as_ref())?;
-        }
-
-        Ok(())
+        segments.write_to(writer)
     }
 
     fn to_bytes_inner(&self, include_newline: bool) -> io::Result<Vec<u8>> {
@@ -2217,5 +2250,92 @@ mod tests {
         append_normalized_os_str(&mut rendered, OsStr::new("dir/sub"));
 
         assert_eq!(rendered, "dir/sub");
+    }
+
+    #[derive(Default)]
+    struct TrackingWriter {
+        written: Vec<u8>,
+        vectored_calls: usize,
+        unsupported_once: bool,
+    }
+
+    impl TrackingWriter {
+        fn with_unsupported_once() -> Self {
+            Self {
+                unsupported_once: true,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl io::Write for TrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+
+            if self.unsupported_once {
+                self.unsupported_once = false;
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "no vectored support",
+                ));
+            }
+
+            let mut total = 0usize;
+            for buf in bufs {
+                self.written.extend_from_slice(buf.as_ref());
+                total += buf.len();
+            }
+
+            Ok(total)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn segments_write_to_prefers_vectored_io() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, true);
+        let mut writer = TrackingWriter::default();
+
+        segments
+            .write_to(&mut writer)
+            .expect("writing into a vector never fails");
+
+        drop(segments);
+
+        assert_eq!(writer.written, message.to_line_bytes().unwrap());
+        assert!(writer.vectored_calls >= 1);
+    }
+
+    #[test]
+    fn segments_write_to_falls_back_after_unsupported_vectored_call() {
+        let message = Message::error(30, "timeout in data send/receive")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+        let mut writer = TrackingWriter::with_unsupported_once();
+
+        segments
+            .write_to(&mut writer)
+            .expect("sequential fallback should succeed");
+
+        drop(segments);
+
+        assert_eq!(writer.written, message.to_bytes().unwrap());
+        assert_eq!(writer.vectored_calls, 1);
     }
 }
