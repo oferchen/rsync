@@ -228,6 +228,32 @@ impl SourceLocation {
         &self.path
     }
 
+    /// Reports whether the stored path is relative to the workspace root.
+    ///
+    /// Paths pointing to files within the repository are normalised to a
+    /// workspace-relative representation, matching upstream rsync's practice of
+    /// omitting redundant prefixes in diagnostics. When the path escapes the
+    /// workspace (for example when the caller provides an absolute path outside
+    /// the repository), the method returns `false` to signal that the location is
+    /// already absolute.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::SourceLocation;
+    ///
+    /// let inside = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "src/lib.rs", 12);
+    /// assert!(inside.is_workspace_relative());
+    ///
+    /// let outside = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "/tmp/outside.rs", 7);
+    /// assert!(!outside.is_workspace_relative());
+    /// ```
+    #[must_use]
+    pub fn is_workspace_relative(&self) -> bool {
+        let path = Path::new(self.path());
+        !path.has_root()
+    }
+
     /// Returns the line number recorded for the message.
     #[must_use]
     pub const fn line(&self) -> u32 {
@@ -1042,6 +1068,7 @@ mod tests {
         assert_eq!(path, "crates/core/src/message.rs");
         assert!(!path.contains('\\'));
         assert!(source.line() > 0);
+        assert!(source.is_workspace_relative());
     }
 
     #[test]
@@ -1057,6 +1084,7 @@ mod tests {
         let source = SourceLocation::from_parts(manifest_dir, "/tmp/outside.rs", 42);
 
         assert!(std::path::Path::new(source.path()).is_absolute());
+        assert!(!source.is_workspace_relative());
     }
 
     #[test]
@@ -1128,6 +1156,14 @@ mod tests {
 
         assert!(Path::new(source.path()).is_absolute());
         assert_eq!(source.path(), normalize_path(&absolute));
+    }
+
+    #[test]
+    fn workspace_root_path_is_marked_relative() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), ".", 5);
+
+        assert_eq!(source.path(), "crates/core");
+        assert!(source.is_workspace_relative());
     }
 
     #[test]
