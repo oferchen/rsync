@@ -1,5 +1,13 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
+
+fn canonicalize_or_fallback(path: PathBuf) -> PathBuf {
+    match fs::canonicalize(&path) {
+        Ok(resolved) => resolved,
+        Err(_) => path,
+    }
+}
 
 fn workspace_root(manifest_dir: &Path) -> PathBuf {
     if let Some(workspace_dir) = env::var_os("CARGO_WORKSPACE_DIR") {
@@ -9,18 +17,18 @@ fn workspace_root(manifest_dir: &Path) -> PathBuf {
         }
 
         if candidate.is_dir() {
-            return candidate;
+            return canonicalize_or_fallback(candidate);
         }
     }
 
     for ancestor in manifest_dir.ancestors() {
         let candidate = ancestor.join("Cargo.lock");
         if candidate.is_file() {
-            return ancestor.to_path_buf();
+            return canonicalize_or_fallback(ancestor.to_path_buf());
         }
     }
 
-    manifest_dir.to_path_buf()
+    canonicalize_or_fallback(manifest_dir.to_path_buf())
 }
 
 fn main() {
