@@ -144,6 +144,12 @@ impl From<KnownCompatibilityFlag> for CompatibilityFlags {
 }
 
 /// Iterator over the known compatibility flags set within a [`CompatibilityFlags`] value.
+///
+/// [`Iterator::next`] yields flags in ascending bit order (lowest bit first) so
+/// callers observe the same ordering exposed by [`CompatibilityFlags::iter_known`].
+/// The iterator also implements [`DoubleEndedIterator`], allowing reverse
+/// traversal via [`Iterator::next_back`] without allocating intermediate
+/// collections.
 #[derive(Clone, Debug)]
 pub struct KnownCompatibilityFlagsIter {
     remaining: u32,
@@ -184,6 +190,19 @@ impl ExactSizeIterator for KnownCompatibilityFlagsIter {
 }
 
 impl FusedIterator for KnownCompatibilityFlagsIter {}
+
+impl DoubleEndedIterator for KnownCompatibilityFlagsIter {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+
+        let bit_index = u32::BITS - 1 - self.remaining.leading_zeros();
+        let bit_mask = 1u32 << bit_index;
+        self.remaining &= !bit_mask;
+        KnownCompatibilityFlag::from_bits(bit_mask)
+    }
+}
 
 /// Bitfield that encodes rsync compatibility flags exchanged after protocol negotiation.
 ///
@@ -526,6 +545,43 @@ mod tests {
             vec![
                 KnownCompatibilityFlag::SafeFileList,
                 KnownCompatibilityFlag::Id0Names,
+            ]
+        );
+    }
+
+    #[test]
+    fn iter_known_supports_double_ended_iteration() {
+        let flags = CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::ID0_NAMES;
+
+        let mut iter = flags.iter_known();
+        assert_eq!(iter.len(), 3);
+        assert_eq!(iter.next_back(), Some(KnownCompatibilityFlag::Id0Names));
+        assert_eq!(iter.len(), 2);
+        assert_eq!(iter.next(), Some(KnownCompatibilityFlag::IncRecurse));
+        assert_eq!(iter.len(), 1);
+        assert_eq!(iter.next_back(), Some(KnownCompatibilityFlag::SafeFileList));
+        assert_eq!(iter.len(), 0);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn iter_known_rev_collects_descending_order() {
+        let flags = CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+            | CompatibilityFlags::ID0_NAMES;
+
+        let collected: Vec<_> = flags.iter_known().rev().collect();
+        assert_eq!(
+            collected,
+            vec![
+                KnownCompatibilityFlag::Id0Names,
+                KnownCompatibilityFlag::VarintFlistFlags,
+                KnownCompatibilityFlag::ChecksumSeedFix,
+                KnownCompatibilityFlag::IncRecurse,
             ]
         );
     }
