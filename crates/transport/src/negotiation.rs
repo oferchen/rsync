@@ -179,7 +179,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// assert_eq!(replay, stream.buffered());
     /// # Ok::<(), std::collections::TryReserveError>(())
     /// ```
-    #[must_use]
+    #[must_use = "the returned vector owns the buffered negotiation transcript"]
     pub fn to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         let mut buffer = Vec::new();
         self.extend_vec(&mut buffer)?;
