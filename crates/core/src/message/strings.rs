@@ -177,11 +177,7 @@ impl From<ExitCodeMessage> for Message {
 }
 
 fn message_from_template(template: ExitCodeMessage) -> Message {
-    match template.severity {
-        Severity::Info => Message::info(template.text).with_code(template.code),
-        Severity::Warning => Message::warning(template.text).with_code(template.code),
-        Severity::Error => Message::error(template.code, template.text),
-    }
+    Message::new(template.severity, template.text).with_code(template.code)
 }
 
 /// Returns the canonical template for the provided exit code, if known.
