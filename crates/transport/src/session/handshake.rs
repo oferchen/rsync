@@ -317,22 +317,10 @@ impl<R> SessionHandshake<R> {
     pub fn into_stream_parts(self) -> SessionHandshakeParts<R> {
         match self {
             SessionHandshake::Binary(handshake) => {
-                let (remote_advertised_protocol, remote_protocol, negotiated_protocol, parts) =
-                    handshake.into_stream_parts();
-                SessionHandshakeParts::Binary {
-                    remote_advertised_protocol,
-                    remote_protocol,
-                    negotiated_protocol,
-                    stream: parts,
-                }
+                SessionHandshakeParts::Binary(handshake.into_parts())
             }
             SessionHandshake::Legacy(handshake) => {
-                let (server_greeting, negotiated_protocol, parts) = handshake.into_stream_parts();
-                SessionHandshakeParts::Legacy {
-                    server_greeting,
-                    negotiated_protocol,
-                    stream: parts,
-                }
+                SessionHandshakeParts::Legacy(handshake.into_parts())
             }
         }
     }
@@ -347,26 +335,12 @@ impl<R> SessionHandshake<R> {
     #[must_use]
     pub fn from_stream_parts(parts: SessionHandshakeParts<R>) -> Self {
         match parts {
-            SessionHandshakeParts::Binary {
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            } => SessionHandshake::Binary(BinaryHandshake::from_stream_parts(
-                remote_advertised_protocol,
-                remote_protocol,
-                negotiated_protocol,
-                stream,
-            )),
-            SessionHandshakeParts::Legacy {
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            } => SessionHandshake::Legacy(LegacyDaemonHandshake::from_stream_parts(
-                server_greeting,
-                negotiated_protocol,
-                stream,
-            )),
+            SessionHandshakeParts::Binary(parts) => {
+                SessionHandshake::Binary(BinaryHandshake::from_parts(parts))
+            }
+            SessionHandshakeParts::Legacy(parts) => {
+                SessionHandshake::Legacy(LegacyDaemonHandshake::from_parts(parts))
+            }
         }
     }
 }

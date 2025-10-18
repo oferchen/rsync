@@ -650,15 +650,11 @@ fn session_handshake_parts_round_trip_binary_handshake() {
     assert!(parts.server_greeting().is_none());
     assert_eq!(parts.stream().decision(), NegotiationPrologue::Binary);
 
-    let (remote_advertised_protocol, remote_protocol, negotiated_protocol, stream_parts) =
-        parts.into_binary().expect("binary parts available");
-
-    let parts = SessionHandshakeParts::Binary {
-        remote_advertised_protocol,
-        remote_protocol,
-        negotiated_protocol,
-        stream: stream_parts.map_inner(InstrumentedTransport::new),
-    };
+    let binary_parts = parts
+        .into_binary_parts()
+        .expect("binary parts available")
+        .map_stream_inner(InstrumentedTransport::new);
+    let parts = SessionHandshakeParts::Binary(binary_parts);
 
     let handshake = SessionHandshake::from_stream_parts(parts);
     let mut binary = handshake
@@ -695,14 +691,8 @@ fn session_handshake_parts_try_map_transforms_transport() {
     assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     assert!(!parts.local_protocol_was_capped());
-    let parts = parts.into_binary().expect("binary parts available");
-
-    let parts = SessionHandshakeParts::Binary {
-        remote_advertised_protocol: parts.0,
-        remote_protocol: parts.1,
-        negotiated_protocol: parts.2,
-        stream: parts.3,
-    };
+    let parts =
+        SessionHandshakeParts::Binary(parts.into_binary_parts().expect("binary parts available"));
 
     let parts = parts
         .try_map_stream_inner(
@@ -735,14 +725,8 @@ fn session_handshake_parts_try_map_preserves_original_on_error() {
     assert!(!handshake.local_protocol_was_capped());
     let parts = handshake.into_stream_parts();
     assert!(!parts.local_protocol_was_capped());
-    let parts = parts.into_binary().expect("binary parts available");
-
-    let parts = SessionHandshakeParts::Binary {
-        remote_advertised_protocol: parts.0,
-        remote_protocol: parts.1,
-        negotiated_protocol: parts.2,
-        stream: parts.3,
-    };
+    let parts =
+        SessionHandshakeParts::Binary(parts.into_binary_parts().expect("binary parts available"));
 
     let err = parts
         .try_map_stream_inner(
@@ -782,14 +766,11 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
     assert_eq!(server.advertised_protocol(), 31);
     assert_eq!(parts.stream().decision(), NegotiationPrologue::LegacyAscii);
 
-    let (server_greeting, negotiated_protocol, stream_parts) =
-        parts.into_legacy().expect("legacy parts available");
-
-    let parts = SessionHandshakeParts::Legacy {
-        server_greeting,
-        negotiated_protocol,
-        stream: stream_parts.map_inner(InstrumentedTransport::new),
-    };
+    let legacy_parts = parts
+        .into_legacy_parts()
+        .expect("legacy parts available")
+        .map_stream_inner(InstrumentedTransport::new);
+    let parts = SessionHandshakeParts::Legacy(legacy_parts);
 
     let handshake = SessionHandshake::from_stream_parts(parts);
     let mut legacy = handshake
@@ -971,7 +952,7 @@ fn session_handshake_parts_try_from_variants_recover_wrappers() {
     assert_eq!(binary.remote_protocol(), remote_version);
 
     match LegacyDaemonHandshake::try_from(binary_parts) {
-        Err(SessionHandshakeParts::Binary { .. }) => {}
+        Err(SessionHandshakeParts::Binary(_)) => {}
         _ => panic!("binary parts must return original value"),
     }
 
@@ -983,7 +964,7 @@ fn session_handshake_parts_try_from_variants_recover_wrappers() {
     assert_eq!(legacy.server_greeting().advertised_protocol(), 31);
 
     match BinaryHandshake::try_from(legacy_parts) {
-        Err(SessionHandshakeParts::Legacy { .. }) => {}
+        Err(SessionHandshakeParts::Legacy(_)) => {}
         _ => panic!("legacy parts must return original value"),
     }
 }
