@@ -271,7 +271,9 @@ impl Default for CompiledFeaturesIter {
 /// The wrapper retains the feature ordering produced by [`compiled_features`] and implements
 /// [`Display`](fmt::Display) so callers can render the list into user-facing banners without
 /// duplicating join logic. Upstream rsync prints optional capabilities as a space-separated
-/// string, which this helper reproduces exactly.
+/// string, which this helper reproduces exactly. The type also implements [`IntoIterator`]
+/// for owned and borrowed values, making it easy to reuse the collected feature set when
+/// rendering additional diagnostics or driving conditional logic.
 ///
 /// # Examples
 ///
@@ -287,6 +289,22 @@ impl Default for CompiledFeaturesIter {
 ///
 /// assert_eq!(display.to_string(), "ACLs xattrs");
 /// assert_eq!(display.features(), &[CompiledFeature::Acl, CompiledFeature::Xattr]);
+/// ```
+///
+/// Iterate over the features using the [`IntoIterator`] implementations:
+///
+/// ```
+/// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+///
+/// let display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
+///
+/// for feature in &display {
+///     assert_eq!(*feature, CompiledFeature::Acl);
+/// }
+///
+/// let mut owned = display.clone().into_iter();
+/// assert_eq!(owned.next(), Some(CompiledFeature::Acl));
+/// assert!(owned.next().is_none());
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CompiledFeaturesDisplay {
@@ -329,6 +347,36 @@ impl fmt::Display for CompiledFeaturesDisplay {
         }
 
         Ok(())
+    }
+}
+
+impl IntoIterator for CompiledFeaturesDisplay {
+    type Item = CompiledFeature;
+    type IntoIter = std::vec::IntoIter<CompiledFeature>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.features.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a CompiledFeaturesDisplay {
+    type Item = &'a CompiledFeature;
+    type IntoIter = std::slice::Iter<'a, CompiledFeature>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.features.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut CompiledFeaturesDisplay {
+    type Item = &'a mut CompiledFeature;
+    type IntoIter = std::slice::IterMut<'a, CompiledFeature>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.features.iter_mut()
     }
 }
 
@@ -403,6 +451,27 @@ mod tests {
         ]);
 
         assert_eq!(display.to_string(), "ACLs xattrs iconv");
+    }
+
+    #[test]
+    fn compiled_features_display_into_iter_exposes_features() {
+        let mut display = CompiledFeaturesDisplay::new(vec![
+            CompiledFeature::Acl,
+            CompiledFeature::Xattr,
+            CompiledFeature::Iconv,
+        ]);
+
+        let from_ref: Vec<_> = (&display).into_iter().copied().collect();
+        assert_eq!(from_ref, display.features());
+
+        let from_mut: Vec<_> = (&mut display)
+            .into_iter()
+            .map(|feature| *feature)
+            .collect();
+        assert_eq!(from_mut, display.features());
+
+        let owned: Vec<_> = display.clone().into_iter().collect();
+        assert_eq!(owned, display.features());
     }
 
     #[test]
