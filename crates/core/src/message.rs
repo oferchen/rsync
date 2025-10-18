@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, PrefixComponent};
 use std::slice;
 use std::str::{self, FromStr};
 use std::sync::OnceLock;
@@ -1543,14 +1543,14 @@ fn workspace_root_path() -> Option<&'static Path> {
 fn normalize_path(path: &Path) -> String {
     use std::path::Component;
 
-    let mut prefix: Option<OsString> = None;
+    let mut prefix: Option<String> = None;
     let is_absolute = path.is_absolute();
     let mut segments: Vec<OsString> = Vec::new();
 
     for component in path.components() {
         match component {
             Component::Prefix(value) => {
-                prefix = Some(value.as_os_str().to_os_string());
+                prefix = Some(normalize_prefix_component(value));
             }
             Component::RootDir => {
                 // Root components are handled via the `is_absolute` flag to avoid
@@ -1574,7 +1574,7 @@ fn normalize_path(path: &Path) -> String {
     let mut normalized = String::new();
 
     if let Some(prefix) = prefix {
-        append_normalized_os_str(&mut normalized, prefix.as_os_str());
+        normalized.push_str(&prefix);
     }
 
     if is_absolute && !normalized.ends_with('/') {
@@ -1596,6 +1596,37 @@ fn normalize_path(path: &Path) -> String {
         String::from(".")
     } else {
         normalized
+    }
+}
+
+fn normalize_prefix_component(prefix: PrefixComponent<'_>) -> String {
+    use std::path::Prefix;
+
+    match prefix.kind() {
+        Prefix::VerbatimDisk(disk) | Prefix::Disk(disk) => {
+            let mut rendered = String::with_capacity(2);
+            let letter = char::from(disk).to_ascii_uppercase();
+            rendered.push(letter);
+            rendered.push(':');
+            rendered
+        }
+        Prefix::VerbatimUNC(server, share) | Prefix::UNC(server, share) => {
+            let mut rendered = String::from("//");
+            append_normalized_os_str(&mut rendered, server);
+            rendered.push('/');
+            append_normalized_os_str(&mut rendered, share);
+            rendered
+        }
+        Prefix::DeviceNS(ns) => {
+            let mut rendered = String::from("//./");
+            append_normalized_os_str(&mut rendered, ns);
+            rendered
+        }
+        Prefix::Verbatim(component) => {
+            let mut rendered = String::new();
+            append_normalized_os_str(&mut rendered, component);
+            rendered
+        }
     }
 }
 
@@ -1874,6 +1905,20 @@ mod tests {
     fn normalize_windows_drive_paths_standardizes_separators() {
         let normalized = normalize_path(Path::new(r"C:\foo\bar\baz.txt"));
         assert_eq!(normalized, "C:/foo/bar/baz.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_verbatim_disk_paths_drop_unc_prefix() {
+        let normalized = normalize_path(Path::new(r"\\?\C:\foo\bar"));
+        assert_eq!(normalized, "C:/foo/bar");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_verbatim_unc_paths_match_standard_unc_rendering() {
+        let normalized = normalize_path(Path::new(r"\\?\UNC\server\share\dir"));
+        assert_eq!(normalized, "//server/share/dir");
     }
 
     #[test]
