@@ -68,7 +68,7 @@
 use super::{Message, Severity};
 
 /// Sorted table mirroring upstream `rerr_names` entries.
-const EXIT_CODE_TABLE: &[ExitCodeMessage] = &[
+const EXIT_CODE_TABLE: [ExitCodeMessage; 25] = [
     ExitCodeMessage::new(Severity::Error, 1, "syntax or usage error"),
     ExitCodeMessage::new(Severity::Error, 2, "protocol incompatibility"),
     ExitCodeMessage::new(
@@ -171,13 +171,41 @@ fn message_from_template(template: ExitCodeMessage) -> Message {
 }
 
 /// Returns the canonical template for the provided exit code, if known.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::message::strings::exit_code_message;
+///
+/// let template = exit_code_message(35).expect("code 35 is mapped");
+/// assert_eq!(template.code(), 35);
+///
+/// // `exit_code_message` is a `const fn`, so lookups can happen at compile time.
+/// const REMOTE_SHELL_FAILURE: Option<rsync_core::message::strings::ExitCodeMessage> =
+///     exit_code_message(124);
+/// assert!(REMOTE_SHELL_FAILURE.is_some());
+/// ```
 #[doc(alias = "rerr_names")]
 #[must_use]
-pub fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
-    EXIT_CODE_TABLE
-        .binary_search_by_key(&code, |entry| entry.code())
-        .ok()
-        .map(|index| EXIT_CODE_TABLE[index])
+pub const fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
+    let mut low = 0;
+    let mut high = EXIT_CODE_TABLE.len();
+
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let entry = EXIT_CODE_TABLE[mid];
+        let entry_code = entry.code();
+
+        if entry_code < code {
+            low = mid + 1;
+        } else if entry_code > code {
+            high = mid;
+        } else {
+            return Some(entry);
+        }
+    }
+
+    None
 }
 
 /// Returns the full table of known exit-code templates.
@@ -197,7 +225,7 @@ pub fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
 /// ```
 #[must_use]
 pub const fn exit_code_messages() -> &'static [ExitCodeMessage] {
-    EXIT_CODE_TABLE
+    &EXIT_CODE_TABLE
 }
 
 #[cfg(test)]
@@ -290,5 +318,13 @@ mod tests {
             warnings.next().is_none(),
             "exit code table must not contain additional warning severities"
         );
+    }
+
+    #[test]
+    fn exit_code_message_is_const_evaluable() {
+        const TEMPLATE: Option<ExitCodeMessage> = exit_code_message(124);
+        let template = TEMPLATE.expect("code 124 is mapped");
+        assert_eq!(template.code(), 124);
+        assert_eq!(template.severity(), Severity::Error);
     }
 }
