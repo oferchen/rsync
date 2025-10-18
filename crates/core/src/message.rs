@@ -871,7 +871,8 @@ impl Message {
         }
 
         let mut adapter = Adapter(writer);
-        self.render_to_writer_inner(&mut adapter, false)
+        let mut scratch = MessageScratch::new();
+        self.render_to_writer_inner(&mut adapter, &mut scratch, false)
             .map_err(|_| fmt::Error)
     }
 
@@ -976,7 +977,8 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        self.render_to_writer_inner(writer, false)
+        let mut scratch = MessageScratch::new();
+        self.render_to_writer_inner(writer, &mut scratch, false)
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -1002,16 +1004,73 @@ impl Message {
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        self.render_to_writer_inner(writer, true)
+        let mut scratch = MessageScratch::new();
+        self.render_to_writer_inner(writer, &mut scratch, true)
+    }
+
+    /// Writes the rendered message into an [`io::Write`] implementor using the supplied scratch buffer.
+    ///
+    /// Higher layers that emit numerous diagnostics can pass a single [`MessageScratch`] between calls to
+    /// avoid repeatedly zeroing the temporary digit buffers. The rendered output is identical to
+    /// [`Self::render_to_writer`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, MessageScratch};
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let mut output = Vec::new();
+    /// let template = Message::error(23, "delta-transfer failure");
+    /// template
+    ///     .clone()
+    ///     .render_to_writer_with_scratch(&mut output, &mut scratch)
+    ///     .unwrap();
+    ///
+    /// assert_eq!(output, template.to_bytes().unwrap());
+    /// ```
+    pub fn render_to_writer_with_scratch<W: IoWrite>(
+        &self,
+        writer: &mut W,
+        scratch: &mut MessageScratch,
+    ) -> io::Result<()> {
+        self.render_to_writer_inner(writer, scratch, false)
+    }
+
+    /// Writes the rendered message followed by a newline using an existing scratch buffer.
+    ///
+    /// This mirrors [`Self::render_line_to_writer`] while letting the caller reuse the digit workspace when
+    /// streaming multiple diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, MessageScratch};
+    ///
+    /// let mut scratch = MessageScratch::new();
+    /// let mut output = Vec::new();
+    /// Message::warning("some files vanished")
+    ///     .with_code(24)
+    ///     .render_line_to_writer_with_scratch(&mut output, &mut scratch)
+    ///     .unwrap();
+    ///
+    /// assert!(output.ends_with(b"\n"));
+    /// ```
+    pub fn render_line_to_writer_with_scratch<W: IoWrite>(
+        &self,
+        writer: &mut W,
+        scratch: &mut MessageScratch,
+    ) -> io::Result<()> {
+        self.render_to_writer_inner(writer, scratch, true)
     }
 
     fn render_to_writer_inner<W: IoWrite>(
         &self,
         writer: &mut W,
+        scratch: &mut MessageScratch,
         include_newline: bool,
     ) -> io::Result<()> {
-        let mut scratch = MessageScratch::new();
-        let segments = self.as_segments(&mut scratch, include_newline);
+        let segments = self.as_segments(scratch, include_newline);
         let slices = segments.as_slices();
 
         if segments.segment_count() > 1 {
@@ -1053,7 +1112,8 @@ impl Message {
 
     fn to_bytes_inner(&self, include_newline: bool) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::with_capacity(self.estimated_rendered_length(include_newline));
-        self.render_to_writer_inner(&mut buffer, include_newline)?;
+        let mut scratch = MessageScratch::new();
+        self.render_to_writer_inner(&mut buffer, &mut scratch, include_newline)?;
         Ok(buffer)
     }
 
@@ -1574,6 +1634,31 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn rendering_with_shared_scratch_matches_individual_buffers() {
+        let mut scratch = MessageScratch::new();
+
+        let first = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let mut first_bytes = Vec::new();
+        first
+            .clone()
+            .render_to_writer_with_scratch(&mut first_bytes, &mut scratch)
+            .expect("writing into a vector never fails");
+        assert_eq!(first_bytes, first.to_bytes().unwrap());
+
+        let second = Message::warning("some files vanished before they could be transferred")
+            .with_code(24)
+            .with_source(message_source!());
+        let mut second_bytes = Vec::new();
+        second
+            .clone()
+            .render_line_to_writer_with_scratch(&mut second_bytes, &mut scratch)
+            .expect("writing into a vector never fails");
+        assert_eq!(second_bytes, second.to_line_bytes().unwrap());
     }
 
     #[test]
