@@ -324,6 +324,33 @@ impl CompatibilityFlags {
         self.bits & !Self::KNOWN_MASK
     }
 
+    /// Returns `true` when the bitfield contains flags unknown to this release.
+    ///
+    /// Upstream rsync tolerates future compatibility bits by leaving them set
+    /// while ignoring their semantics. Higher layers in the Rust implementation
+    /// often need to detect that situation so they can log downgraded
+    /// diagnostics or gate behaviour that depends on mutually understood
+    /// capabilities. This helper mirrors the upstream check performed after the
+    /// bitfield is received over the wire by simply testing whether any
+    /// off-range bits are present.
+    #[must_use]
+    pub const fn has_unknown_bits(self) -> bool {
+        self.unknown_bits() != 0
+    }
+
+    /// Returns a new bitfield with all unknown compatibility flags cleared.
+    ///
+    /// Older upstream daemons mask future bits when propagating their own flag
+    /// set so peers without knowledge of a capability do not accidentally
+    /// expose it further downstream. Reproducing that behaviour keeps the Rust
+    /// implementation compatible with mixed-version deployments while still
+    /// allowing callers to retain the original value when they need to surface
+    /// the full bit pattern in diagnostics.
+    #[must_use]
+    pub const fn without_unknown_bits(self) -> Self {
+        Self::new(self.bits & Self::KNOWN_MASK)
+    }
+
     /// Checks whether all flags in `other` are set in `self`.
     #[must_use]
     pub const fn contains(self, other: Self) -> bool {
@@ -758,6 +785,26 @@ mod tests {
     fn unknown_bits_reports_future_flags() {
         let flags = CompatibilityFlags::from_bits(0x1FF | (1 << 12));
         assert_eq!(flags.unknown_bits(), 1 << 12);
+    }
+
+    #[test]
+    fn has_unknown_bits_detects_future_flags() {
+        let future =
+            CompatibilityFlags::from_bits(CompatibilityFlags::ID0_NAMES.bits() | (1 << 17));
+
+        assert!(future.has_unknown_bits());
+        assert!(!CompatibilityFlags::ID0_NAMES.has_unknown_bits());
+    }
+
+    #[test]
+    fn without_unknown_bits_masks_future_flags() {
+        let mixed =
+            CompatibilityFlags::from_bits(CompatibilityFlags::INC_RECURSE.bits() | (1 << 29));
+        let masked = mixed.without_unknown_bits();
+
+        assert_eq!(masked, CompatibilityFlags::INC_RECURSE);
+        assert_eq!(masked.unknown_bits(), 0);
+        assert!(mixed.has_unknown_bits());
     }
 
     #[test]
