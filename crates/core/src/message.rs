@@ -239,7 +239,9 @@ impl<'a> MessageSegments<'a> {
                 }
 
                 match writer.write_vectored(&slices[start..count]) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        return Err(io::Error::from(io::ErrorKind::WriteZero));
+                    },
                     Ok(written) => {
                         debug_assert!(written <= remaining);
                         remaining -= written;
@@ -2266,6 +2268,14 @@ mod tests {
                 let capped = to_write.min(limit);
                 self.vectored_limit = Some(limit.saturating_sub(capped));
                 to_write = capped;
+
+                if to_write == 0 {
+                    self.supports_vectored = false;
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "vectored limit reached",
+                    ));
+                }
             }
 
             let mut remaining = to_write;
@@ -2496,6 +2506,26 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ZeroProgressWriter {
+        write_calls: usize,
+    }
+
+    impl io::Write for ZeroProgressWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn segments_write_to_prefers_vectored_io() {
         let message = Message::error(11, "error in file IO")
@@ -2554,5 +2584,23 @@ mod tests {
 
         assert_eq!(writer.written, message.to_line_bytes().unwrap());
         assert!(writer.vectored_calls >= 2);
+    }
+
+    #[test]
+    fn segments_write_to_errors_when_vectored_makes_no_progress() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+        let mut writer = ZeroProgressWriter::default();
+
+        let err = segments
+            .write_to(&mut writer)
+            .expect_err("zero-length vectored write must error");
+
+        assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+        assert_eq!(writer.write_calls, 0, "sequential writes should not run");
     }
 }
