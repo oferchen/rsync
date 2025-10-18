@@ -3107,3 +3107,48 @@ fn prologue_sniffer_take_sniffed_prefix_into_writer_drains_prefix_and_preserves_
     assert_eq!(written_again, 0);
     assert_eq!(sniffer.buffered(), remainder);
 }
+
+#[test]
+fn sniffer_rehydrate_from_parts_binary_preserves_state() {
+    let data = [0x34, 0x12, 0x00, 0x01];
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let mut reader = Cursor::new(&data[..]);
+    let decision = sniffer
+        .read_from(&mut reader)
+        .expect("binary negotiation detection succeeds");
+    assert_eq!(decision, NegotiationPrologue::Binary);
+    let prefix_len = sniffer.sniffed_prefix_len();
+    let snapshot = sniffer.buffered().to_vec();
+
+    let mut restored = NegotiationPrologueSniffer::new();
+    restored
+        .rehydrate_from_parts(decision, prefix_len, &snapshot)
+        .expect("rehydration succeeds");
+
+    assert_eq!(restored.buffered(), snapshot.as_slice());
+    assert_eq!(restored.sniffed_prefix_len(), prefix_len);
+    assert_eq!(restored.decision(), Some(decision));
+}
+
+#[test]
+fn sniffer_rehydrate_from_parts_partial_legacy_preserves_pending_state() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (_, consumed) = sniffer.observe(b"@RS").expect("observation succeeds");
+    assert_eq!(consumed, 3);
+    assert!(sniffer.requires_more_data());
+    let decision = sniffer.decision().expect("cached decision available");
+    let prefix_len = sniffer.sniffed_prefix_len();
+    let remaining = sniffer.legacy_prefix_remaining();
+    let snapshot = sniffer.buffered().to_vec();
+
+    let mut restored = NegotiationPrologueSniffer::new();
+    restored
+        .rehydrate_from_parts(decision, prefix_len, &snapshot)
+        .expect("rehydration succeeds");
+
+    assert_eq!(restored.buffered(), snapshot.as_slice());
+    assert_eq!(restored.sniffed_prefix_len(), prefix_len);
+    assert_eq!(restored.decision(), Some(decision));
+    assert_eq!(restored.legacy_prefix_remaining(), remaining);
+    assert!(restored.requires_more_data());
+}
