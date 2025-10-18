@@ -51,7 +51,7 @@
 //! - Future CLI modules rely on [`compiled_features`] to mirror upstream
 //!   `--version` capability listings.
 
-use core::fmt;
+use core::{fmt, iter::FusedIterator};
 
 /// Upstream base version that the Rust implementation tracks.
 #[doc(alias = "3.4.1")]
@@ -137,34 +137,93 @@ impl fmt::Display for CompiledFeature {
     }
 }
 
+/// Returns an iterator over the optional features compiled into the current build.
+///
+/// The iterator preserves the canonical ordering defined by
+/// [`CompiledFeature::ALL`] while skipping capabilities that were not enabled at
+/// compile time. It is primarily useful for callers that only need to iterate
+/// over the active feature set without allocating an intermediate [`Vec`]. When
+/// the collected representation is required, use [`compiled_features`], which
+/// delegates to this iterator.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::version::{compiled_features, compiled_features_iter};
+///
+/// let collected: Vec<_> = compiled_features_iter().collect();
+/// assert_eq!(collected, compiled_features());
+/// ```
+#[must_use]
+pub fn compiled_features_iter() -> CompiledFeaturesIter {
+    CompiledFeaturesIter::new()
+}
+
 /// Returns the set of optional features compiled into the current build.
 ///
-/// The helper inspects Cargo feature flags exposed to the `rsync-core` crate and
-/// yields the matching [`CompiledFeature`] values in a deterministic order. The
-/// resulting vector is sorted by priority rather than lexicographically to
-/// mirror the user-facing expectation: ACLs and xattrs appear before
-/// compression and auxiliary integrations.
+/// The helper collects [`compiled_features_iter`], preserving the deterministic
+/// priority order used by upstream rsync when printing capability lists.
 #[must_use]
 pub fn compiled_features() -> Vec<CompiledFeature> {
-    let mut features = Vec::with_capacity(CompiledFeature::ALL.len());
-
-    for feature in CompiledFeature::ALL {
-        if feature.is_enabled() {
-            features.push(feature);
-        }
-    }
-
-    features
+    compiled_features_iter().collect()
 }
 
 /// Convenience helper that exposes the labels for each compiled feature.
 #[must_use]
 pub fn compiled_feature_labels() -> Vec<&'static str> {
-    compiled_features()
-        .into_iter()
+    compiled_features_iter()
         .map(CompiledFeature::label)
         .collect()
 }
+
+/// Iterator over [`CompiledFeature`] values that are enabled for the current build.
+#[derive(Clone, Debug, Default)]
+pub struct CompiledFeaturesIter {
+    index: usize,
+}
+
+impl CompiledFeaturesIter {
+    const fn new() -> Self {
+        Self { index: 0 }
+    }
+
+    fn remaining_enabled(&self) -> usize {
+        CompiledFeature::ALL[self.index..]
+            .iter()
+            .filter(|feature| feature.is_enabled())
+            .count()
+    }
+}
+
+impl Iterator for CompiledFeaturesIter {
+    type Item = CompiledFeature;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.index < CompiledFeature::ALL.len() {
+            let feature = CompiledFeature::ALL[self.index];
+            self.index += 1;
+
+            if feature.is_enabled() {
+                return Some(feature);
+            }
+        }
+
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.remaining_enabled();
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for CompiledFeaturesIter {
+    fn len(&self) -> usize {
+        self.remaining_enabled()
+    }
+}
+
+impl FusedIterator for CompiledFeaturesIter {}
 
 /// Convenience formatter for the compiled feature list.
 ///
@@ -311,5 +370,29 @@ mod tests {
 
         assert!(display.is_empty());
         assert!(display.to_string().is_empty());
+    }
+
+    #[test]
+    fn compiled_features_iter_matches_collected_set() {
+        let via_iter: Vec<_> = compiled_features_iter().collect();
+        assert_eq!(via_iter, compiled_features());
+    }
+
+    #[test]
+    fn compiled_features_iter_is_fused_and_updates_len() {
+        let mut iter = compiled_features_iter();
+        let (lower, upper) = iter.size_hint();
+        assert_eq!(Some(lower), upper);
+        assert_eq!(iter.len(), lower);
+
+        while iter.next().is_some() {
+            let (lower, upper) = iter.size_hint();
+            assert_eq!(Some(lower), upper);
+            assert_eq!(iter.len(), lower);
+        }
+
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
     }
 }
