@@ -6,6 +6,7 @@ use crate::negotiation::{
 use core::convert::TryFrom;
 use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
+use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
 /// Result of completing the binary rsync protocol negotiation.
@@ -476,6 +477,24 @@ impl<R> BinaryHandshake<R> {
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
         self.stream
+    }
+
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
+    ///
+    /// The helper invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] with the buffered
+    /// transcript captured during negotiation, mirroring the functionality available via
+    /// [`BinaryHandshakeParts::stream_parts`]. Callers that retain the handshake wrapper can
+    /// therefore rebuild sniffers without unpacking the parts structure or replaying the underlying
+    /// transport, matching the ergonomics provided by the session-level helpers.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        sniffer.rehydrate_from_parts(
+            self.stream.decision(),
+            self.stream.sniffed_prefix_len(),
+            self.stream.buffered(),
+        )
     }
 
     /// Decomposes the handshake into its components.
@@ -1319,6 +1338,29 @@ mod tests {
         let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
         expected.extend_from_slice(b"payload");
         assert_eq!(transport.written(), expected.as_slice());
+    }
+
+    #[test]
+    fn binary_handshake_rehydrates_sniffer_state() {
+        let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+        let mut bytes = handshake_bytes(remote_version).to_vec();
+        bytes.extend_from_slice(b"payload");
+        let transport = MemoryTransport::new(&bytes);
+
+        let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake succeeds");
+
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        handshake
+            .rehydrate_sniffer(&mut sniffer)
+            .expect("rehydration succeeds");
+
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+        assert_eq!(sniffer.buffered(), handshake.stream().buffered());
+        assert_eq!(
+            sniffer.sniffed_prefix_len(),
+            handshake.stream().sniffed_prefix_len()
+        );
     }
 
     #[test]

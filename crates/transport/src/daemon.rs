@@ -9,6 +9,7 @@ use rsync_protocol::{
     NegotiationPrologueSniffer, ProtocolVersion, write_legacy_daemon_greeting,
 };
 use std::cmp;
+use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
 
 const LEGACY_GREETING_BUFFER_CAPACITY: usize = LEGACY_DAEMON_PREFIX_LEN + 7;
@@ -551,6 +552,24 @@ impl<R> LegacyDaemonHandshake<R> {
         LegacyDaemonHandshakeParts::from_components(server_greeting, negotiated_protocol, parts)
     }
 
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
+    ///
+    /// The helper mirrors the functionality exposed by
+    /// [`LegacyDaemonHandshakeParts::stream_parts`], reusing
+    /// [`NegotiationPrologueSniffer::rehydrate_from_parts`] with the buffered transcript captured
+    /// during negotiation. Callers can therefore rebuild sniffers without decomposing the session
+    /// into parts or replaying the underlying transport.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        sniffer.rehydrate_from_parts(
+            self.stream.decision(),
+            self.stream.sniffed_prefix_len(),
+            self.stream.buffered(),
+        )
+    }
+
     /// Reconstructs a [`LegacyDaemonHandshake`] from previously extracted parts.
     #[must_use]
     pub fn from_parts(parts: LegacyDaemonHandshakeParts<R>) -> Self {
@@ -1071,6 +1090,28 @@ mod tests {
         let transport = rebuilt.into_stream().into_inner();
         assert_eq!(transport.flushes(), 2);
         assert_eq!(transport.written(), b"@RSYNCD: 31.0\n@RSYNCD: OK\n");
+    }
+
+    #[test]
+    fn legacy_handshake_rehydrates_sniffer_state() {
+        let mut bytes = b"@RSYNCD: 31.0\n".to_vec();
+        bytes.extend_from_slice(b"@RSYNCD: OK\n");
+        let transport = MemoryTransport::new(&bytes);
+
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
+
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        handshake
+            .rehydrate_sniffer(&mut sniffer)
+            .expect("rehydration succeeds");
+
+        assert!(sniffer.is_legacy());
+        assert_eq!(sniffer.buffered(), handshake.stream().buffered());
+        assert_eq!(
+            sniffer.sniffed_prefix_len(),
+            handshake.stream().sniffed_prefix_len()
+        );
     }
 
     #[test]
