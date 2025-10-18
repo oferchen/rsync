@@ -2,8 +2,10 @@ use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
 use crate::handshake_util::remote_advertisement_was_clamped;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
-use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
-use std::convert::TryFrom;
+use rsync_protocol::{
+    LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+};
+use std::{collections::TryReserveError, convert::TryFrom};
 
 use super::handshake::SessionHandshake;
 
@@ -128,6 +130,14 @@ impl<R> SessionHandshakeParts<R> {
             SessionHandshakeParts::Binary { stream, .. }
             | SessionHandshakeParts::Legacy { stream, .. } => stream.into_stream(),
         }
+    }
+
+    /// Rehydrates a [`NegotiationPrologueSniffer`] using the stored negotiation snapshot.
+    pub fn rehydrate_sniffer(
+        &self,
+        sniffer: &mut NegotiationPrologueSniffer,
+    ) -> Result<(), TryReserveError> {
+        self.stream().rehydrate_sniffer(sniffer)
     }
 
     /// Maps the inner transport for both variants while preserving the negotiated metadata.
