@@ -115,6 +115,82 @@ impl<'a> NegotiationBufferedSlices<'a> {
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
+
+    /// Streams the buffered negotiation data into the provided writer.
+    ///
+    /// The helper prefers vectored I/O when the writer advertises support,
+    /// mirroring upstream rsync's habit of emitting the replay prefix in a
+    /// single `writev` call. When vectored writes are unsupported or only
+    /// partially flush the buffered data, the method falls back to sequential
+    /// [`Write::write_all`] operations to ensure the entire transcript is
+    /// forwarded without duplication.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let mut stream =
+    ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///         .expect("sniff succeeds");
+    /// let slices = stream.buffered_vectored();
+    ///
+    /// let mut replay = Vec::new();
+    /// slices.write_to(&mut replay).expect("write succeeds");
+    ///
+    /// assert_eq!(replay, stream.buffered());
+    /// ```
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let slices = self.as_slices();
+
+        if slices.is_empty() {
+            return Ok(());
+        }
+
+        if self.count == 1 {
+            return writer.write_all(slices[0].as_ref());
+        }
+
+        match writer.write_vectored(slices) {
+            Ok(0) => Err(io::Error::from(io::ErrorKind::WriteZero)),
+            Ok(written) if written >= self.total_len => Ok(()),
+            Ok(written) => {
+                let mut remaining = written;
+                let mut index = 0usize;
+
+                while remaining > 0 && index < slices.len() {
+                    let slice = slices[index].as_ref();
+                    if remaining < slice.len() {
+                        writer.write_all(&slice[remaining..])?;
+                        remaining = 0;
+                        index += 1;
+                        break;
+                    } else {
+                        remaining -= slice.len();
+                        index += 1;
+                    }
+                }
+
+                if remaining > 0 {
+                    return Err(io::Error::from(io::ErrorKind::WriteZero));
+                }
+
+                for slice in &slices[index..] {
+                    writer.write_all(slice.as_ref())?;
+                }
+
+                Ok(())
+            }
+            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                for slice in slices {
+                    writer.write_all(slice.as_ref())?;
+                }
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl<'a> AsRef<[IoSlice<'a>]> for NegotiationBufferedSlices<'a> {
@@ -2334,6 +2410,198 @@ mod tests {
             self.flushes += 1;
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct VectoredOnlyWriter {
+        writes: Vec<u8>,
+        vectored_calls: usize,
+    }
+
+    impl VectoredOnlyWriter {
+        fn writes(&self) -> &[u8] {
+            &self.writes
+        }
+
+        fn vectored_calls(&self) -> usize {
+            self.vectored_calls
+        }
+    }
+
+    impl Write for VectoredOnlyWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("scalar write path should not be used when vectored IO is available");
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+            let mut total = 0usize;
+            for slice in bufs {
+                self.writes.extend_from_slice(slice);
+                total += slice.len();
+            }
+            Ok(total)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct UnsupportedVectoredWriter {
+        writes: Vec<u8>,
+        write_calls: usize,
+        vectored_calls: usize,
+    }
+
+    impl UnsupportedVectoredWriter {
+        fn writes(&self) -> &[u8] {
+            &self.writes
+        }
+
+        fn write_calls(&self) -> usize {
+            self.write_calls
+        }
+
+        fn vectored_calls(&self) -> usize {
+            self.vectored_calls
+        }
+    }
+
+    impl Write for UnsupportedVectoredWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no vectored support",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct PartialVectoredWriter {
+        writes: Vec<u8>,
+        remaining: usize,
+        vectored_calls: usize,
+        write_calls: usize,
+    }
+
+    impl PartialVectoredWriter {
+        fn new(limit: usize) -> Self {
+            Self {
+                writes: Vec::new(),
+                remaining: limit,
+                vectored_calls: 0,
+                write_calls: 0,
+            }
+        }
+
+        fn writes(&self) -> &[u8] {
+            &self.writes
+        }
+
+        fn vectored_calls(&self) -> usize {
+            self.vectored_calls
+        }
+
+        fn write_calls(&self) -> usize {
+            self.write_calls
+        }
+    }
+
+    impl Write for PartialVectoredWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+            let mut remaining = self.remaining;
+            let mut written = 0usize;
+
+            for slice in bufs {
+                if remaining == 0 {
+                    break;
+                }
+
+                let chunk = remaining.min(slice.len());
+                self.writes.extend_from_slice(&slice[..chunk]);
+                written += chunk;
+                remaining -= chunk;
+            }
+
+            self.remaining = 0;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_write_to_prefers_vectored_io() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" 31.0\n";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut writer = VectoredOnlyWriter::default();
+
+        slices.write_to(&mut writer).expect("write succeeds");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(writer.vectored_calls(), 1);
+        assert_eq!(writer.writes(), expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_write_to_handles_unsupported_vectored_io() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" listing";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut writer = UnsupportedVectoredWriter::default();
+
+        slices.write_to(&mut writer).expect("write succeeds");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(writer.vectored_calls(), 1);
+        assert_eq!(writer.write_calls(), 2);
+        assert_eq!(writer.writes(), expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_write_to_flushes_remaining_after_partial_vectored_call() {
+        let prefix = b"@RSYNC"; // intentionally shorter to exercise partial writes
+        let remainder = b" protocol";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut writer = PartialVectoredWriter::new(prefix.len() - 2);
+
+        slices.write_to(&mut writer).expect("write succeeds");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(writer.vectored_calls(), 1);
+        assert!(writer.write_calls() >= 1);
+        assert_eq!(writer.writes(), expected.as_slice());
     }
 
     #[test]
