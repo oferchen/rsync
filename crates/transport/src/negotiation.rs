@@ -2,6 +2,7 @@ use std::any::type_name;
 use std::collections::TryReserveError;
 use std::fmt;
 use std::io::{self, BufRead, IoSlice, IoSliceMut, Read, Write};
+use std::slice;
 
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonMessage, NegotiationPrologue,
@@ -29,6 +30,115 @@ pub struct NegotiatedStream<R> {
     inner: R,
     decision: NegotiationPrologue,
     buffer: NegotiationBuffer,
+}
+
+/// Vectored view over buffered negotiation data.
+///
+/// The structure exposes up to two [`IoSlice`] segments: the remaining portion of the
+/// canonical legacy prefix (`@RSYNCD:`) and any buffered payload that followed the prologue.
+/// Consumers obtain instances via [`NegotiatedStream::buffered_vectored`],
+/// [`NegotiatedStream::buffered_remaining_vectored`], or their counterparts on
+/// [`NegotiatedStreamParts`]. The iterator interface allows the slices to be passed directly to
+/// [`Write::write_vectored`] without allocating intermediate buffers.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_transport::sniff_negotiation_stream;
+/// use std::io::Cursor;
+///
+/// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+///     .expect("sniff succeeds");
+/// let vectored = stream.buffered_vectored();
+///
+/// let mut flattened = Vec::with_capacity(vectored.len());
+/// for slice in vectored.iter() {
+///     flattened.extend_from_slice(slice);
+/// }
+///
+/// assert_eq!(flattened, stream.buffered());
+/// ```
+#[derive(Clone, Debug)]
+pub struct NegotiationBufferedSlices<'a> {
+    segments: [IoSlice<'a>; 2],
+    count: usize,
+    total_len: usize,
+}
+
+impl<'a> NegotiationBufferedSlices<'a> {
+    fn new(prefix: &'a [u8], remainder: &'a [u8]) -> Self {
+        let mut segments = [IoSlice::new(&[]); 2];
+        let mut count = 0usize;
+
+        if !prefix.is_empty() {
+            segments[count] = IoSlice::new(prefix);
+            count += 1;
+        }
+
+        if !remainder.is_empty() {
+            segments[count] = IoSlice::new(remainder);
+            count += 1;
+        }
+
+        Self {
+            segments,
+            count,
+            total_len: prefix.len() + remainder.len(),
+        }
+    }
+
+    /// Returns the populated slice view over the underlying [`IoSlice`] array.
+    #[must_use]
+    pub fn as_slices(&self) -> &[IoSlice<'a>] {
+        &self.segments[..self.count]
+    }
+
+    /// Returns the number of buffered bytes represented by the vectored view.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.total_len
+    }
+
+    /// Reports whether any data is present in the vectored representation.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Returns the number of slices that were populated.
+    #[must_use]
+    pub const fn segment_count(&self) -> usize {
+        self.count
+    }
+
+    /// Returns an iterator over the populated slices.
+    pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
+        self.as_slices().iter()
+    }
+}
+
+impl<'a> AsRef<[IoSlice<'a>]> for NegotiationBufferedSlices<'a> {
+    fn as_ref(&self) -> &[IoSlice<'a>] {
+        self.as_slices()
+    }
+}
+
+impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
+    type Item = IoSlice<'a>;
+    type IntoIter = std::iter::Take<std::array::IntoIter<IoSlice<'a>, 2>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.segments.into_iter().take(self.count)
+    }
+}
+
+impl<'a> IntoIterator for &'a NegotiationBufferedSlices<'a> {
+    type Item = &'a IoSlice<'a>;
+    type IntoIter = slice::Iter<'a, IoSlice<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 pub(crate) const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
@@ -157,6 +267,16 @@ impl<R> NegotiatedStream<R> {
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
         self.buffer.buffered()
+    }
+
+    /// Returns the buffered negotiation data split into vectored slices.
+    ///
+    /// The first slice contains the canonical legacy prefix (if present) while the second slice
+    /// holds any additional payload captured alongside the prologue. Callers can forward the
+    /// slices directly to [`Write::write_vectored`] without copying the buffered bytes.
+    #[must_use]
+    pub fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer.buffered_vectored()
     }
 
     /// Copies the buffered negotiation data into a caller-provided vector without consuming it.
@@ -356,6 +476,17 @@ impl<R> NegotiatedStream<R> {
     #[must_use]
     pub fn buffered_remaining_slice(&self) -> &[u8] {
         self.buffer.buffered_remaining_slice()
+    }
+
+    /// Returns the unread portion of the buffered negotiation data as vectored slices.
+    ///
+    /// The slices mirror [`Self::buffered_remaining_slice`] but expose the replay data in a form
+    /// that integrates with vectored writers. When the sniffed prefix has been partially consumed,
+    /// the first slice covers the remaining prefix bytes while the second slice contains any
+    /// buffered payload.
+    #[must_use]
+    pub fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer.buffered_remaining_vectored()
     }
 
     /// Releases the wrapper and returns its components.
@@ -1273,6 +1404,12 @@ impl<R> NegotiatedStreamParts<R> {
         self.buffer.buffered()
     }
 
+    /// Returns the buffered negotiation data split into vectored slices.
+    #[must_use]
+    pub fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer.buffered_vectored()
+    }
+
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
     ///
     /// The method mirrors the state captured during the initial prologue sniff,
@@ -1404,6 +1541,12 @@ impl<R> NegotiatedStreamParts<R> {
     #[must_use]
     pub fn buffered_remaining_slice(&self) -> &[u8] {
         self.buffer.buffered_remaining_slice()
+    }
+
+    /// Returns the unread portion of the buffered negotiation data as vectored slices.
+    #[must_use]
+    pub fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        self.buffer.buffered_remaining_vectored()
     }
 
     /// Returns the length of the sniffed negotiation prefix.
@@ -1723,6 +1866,12 @@ impl NegotiationBuffer {
         &self.buffered
     }
 
+    fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        let prefix = &self.buffered[..self.sniffed_prefix_len];
+        let remainder = &self.buffered[self.sniffed_prefix_len..];
+        NegotiationBufferedSlices::new(prefix, remainder)
+    }
+
     fn buffered_split(&self) -> (&[u8], &[u8]) {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
@@ -1735,6 +1884,11 @@ impl NegotiationBuffer {
         let remainder_slice = &self.buffered[remainder_start..];
 
         (prefix_slice, remainder_slice)
+    }
+
+    fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
+        let (prefix, remainder) = self.buffered_split();
+        NegotiationBufferedSlices::new(prefix, remainder)
     }
 
     const fn sniffed_prefix_len(&self) -> usize {
@@ -2919,6 +3073,15 @@ mod tests {
             .into_parts();
         let expected = parts.buffered().to_vec();
 
+        let vectored = parts.buffered_vectored();
+        assert_eq!(vectored.len(), expected.len());
+
+        let flattened: Vec<u8> = vectored
+            .iter()
+            .flat_map(|slice| slice.as_ref().iter().copied())
+            .collect();
+        assert_eq!(flattened, expected);
+
         let mut target = Vec::with_capacity(expected.len() + 8);
         target.extend_from_slice(b"junk data");
         let initial_capacity = target.capacity();
@@ -2947,6 +3110,15 @@ mod tests {
 
         let parts = stream.into_parts();
 
+        let remaining_vectored = parts.buffered_remaining_vectored();
+        assert_eq!(remaining_vectored.len(), expected.len() - consumed);
+
+        let flattened: Vec<u8> = remaining_vectored
+            .iter()
+            .flat_map(|slice| slice.as_ref().iter().copied())
+            .collect();
+        assert_eq!(flattened, expected[consumed..]);
+
         let mut target = Vec::new();
         let copied = parts
             .copy_buffered_remaining_into_vec(&mut target)
@@ -2955,6 +3127,48 @@ mod tests {
         assert_eq!(copied, expected.len() - consumed);
         assert_eq!(target, expected[consumed..]);
         assert_eq!(parts.buffered_consumed(), consumed);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_buffered_vectored_handles_manual_components() {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let stream = NegotiatedStream::from_raw_components(
+            cursor,
+            NegotiationPrologue::Binary,
+            1,
+            0,
+            vec![0x11, b'm', b'n'],
+        );
+
+        let parts = stream.into_parts();
+        let vectored = parts.buffered_vectored();
+        assert_eq!(vectored.segment_count(), 2);
+        let slices: Vec<&[u8]> = vectored.iter().map(|slice| slice.as_ref()).collect();
+        assert_eq!(slices, vec![&[0x11][..], &b"mn"[..]]);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_buffered_remaining_vectored_handles_consumed_prefix() {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut stream = NegotiatedStream::from_raw_components(
+            cursor,
+            NegotiationPrologue::Binary,
+            2,
+            0,
+            vec![0x22, 0x33, b'p', b'q'],
+        );
+
+        let mut buf = [0u8; 1];
+        stream
+            .read_exact(&mut buf)
+            .expect("reading consumes part of the prefix");
+        assert_eq!(&buf, &[0x22]);
+
+        let parts = stream.into_parts();
+        let remaining = parts.buffered_remaining_vectored();
+        assert_eq!(remaining.segment_count(), 2);
+        let slices: Vec<&[u8]> = remaining.iter().map(|slice| slice.as_ref()).collect();
+        assert_eq!(slices, vec![&[0x33][..], &b"pq"[..]]);
     }
 
     #[test]
@@ -3794,6 +4008,62 @@ mod tests {
         let (after_read_prefix, after_read_remainder) = stream.buffered_split();
         assert!(after_read_prefix.is_empty());
         assert!(after_read_remainder.is_empty());
+    }
+
+    #[test]
+    fn sniff_negotiation_buffered_vectored_matches_buffered_bytes() {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let stream = NegotiatedStream::from_raw_components(
+            cursor,
+            NegotiationPrologue::Binary,
+            1,
+            0,
+            vec![0x00, b'a', b'b'],
+        );
+
+        let vectored = stream.buffered_vectored();
+        assert_eq!(vectored.segment_count(), 2);
+        assert_eq!(vectored.len(), stream.buffered().len());
+
+        let collected: Vec<&[u8]> = vectored.iter().map(|slice| slice.as_ref()).collect();
+        assert_eq!(collected, vec![&[0x00][..], &b"ab"[..]]);
+
+        let flattened: Vec<u8> = vectored
+            .iter()
+            .flat_map(|slice| slice.as_ref().iter().copied())
+            .collect();
+        assert_eq!(flattened, stream.buffered());
+    }
+
+    #[test]
+    fn sniff_negotiation_buffered_remaining_vectored_tracks_consumption() {
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut stream = NegotiatedStream::from_raw_components(
+            cursor,
+            NegotiationPrologue::Binary,
+            2,
+            0,
+            vec![0xAA, 0xBB, b'x', b'y'],
+        );
+
+        let mut buf = [0u8; 1];
+        stream
+            .read_exact(&mut buf)
+            .expect("read_exact consumes part of the prefix");
+        assert_eq!(&buf, &[0xAA]);
+
+        let remaining = stream.buffered_remaining_vectored();
+        assert_eq!(remaining.segment_count(), 2);
+        assert_eq!(remaining.len(), stream.buffered_remaining());
+
+        let slices: Vec<&[u8]> = remaining.iter().map(|slice| slice.as_ref()).collect();
+        assert_eq!(slices, vec![&[0xBB][..], &b"xy"[..]]);
+
+        let flattened: Vec<u8> = remaining
+            .iter()
+            .flat_map(|slice| slice.as_ref().iter().copied())
+            .collect();
+        assert_eq!(flattened, stream.buffered_remaining_slice());
     }
 
     #[test]
