@@ -127,6 +127,25 @@ impl<R> BinaryHandshakeParts<R> {
         self.negotiated_protocol
     }
 
+    /// Reports whether the remote peer advertised a protocol newer than the supported range.
+    ///
+    /// The helper mirrors [`BinaryHandshake::remote_protocol_was_clamped`] so callers that
+    /// temporarily decomposed the handshake via [`BinaryHandshake::into_parts`] retain access to
+    /// the same diagnostics without rebuilding the wrapper first.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.remote_protocol())
+    }
+
+    /// Reports whether the negotiated protocol was reduced by the caller-specified cap.
+    ///
+    /// This complements [`BinaryHandshake::local_protocol_was_capped`] for scenarios where the
+    /// parts structure is inspected before reconstructing the full handshake.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        self.negotiated_protocol() < self.remote_protocol()
+    }
+
     /// Returns the replaying stream parts captured during negotiation.
     #[must_use]
     pub const fn stream_parts(&self) -> &NegotiatedStreamParts<R> {
@@ -814,10 +833,15 @@ mod tests {
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), desired);
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
-        assert!(handshake.remote_protocol_was_clamped());
-        assert!(handshake.local_protocol_was_capped());
 
-        let transport = handshake.into_stream().into_inner();
+        let parts = handshake.into_parts();
+        assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
+        assert_eq!(parts.negotiated_protocol(), desired);
+        assert_eq!(parts.remote_advertised_protocol(), future_version);
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(parts.local_protocol_was_capped());
+
+        let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), &handshake_bytes(desired));
     }
 
@@ -832,8 +856,10 @@ mod tests {
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
-        assert!(handshake.remote_protocol_was_clamped());
-        assert!(!handshake.local_protocol_was_capped());
+
+        let parts = handshake.into_parts();
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
     }
 
     #[test]
@@ -846,8 +872,10 @@ mod tests {
         assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-        assert!(handshake.remote_protocol_was_clamped());
-        assert!(!handshake.local_protocol_was_capped());
+
+        let parts = handshake.into_parts();
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
     }
 
     #[test]
@@ -866,6 +894,10 @@ mod tests {
         );
         assert!(!handshake.remote_protocol_was_clamped());
         assert!(handshake.local_protocol_was_capped());
+
+        let parts = handshake.into_parts();
+        assert!(!parts.remote_protocol_was_clamped());
+        assert!(parts.local_protocol_was_capped());
     }
 
     #[test]
@@ -970,6 +1002,8 @@ mod tests {
         );
         assert_eq!(parts.remote_protocol(), remote_version);
         assert_eq!(parts.negotiated_protocol(), remote_version);
+        assert!(!parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
         assert_eq!(parts.stream_parts().decision(), NegotiationPrologue::Binary);
 
         let mut rebuilt = parts.into_handshake();
