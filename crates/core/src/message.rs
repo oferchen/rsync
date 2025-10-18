@@ -217,76 +217,87 @@ impl<'a> MessageSegments<'a> {
     pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         let slices = self.as_slices();
 
-        if slices.is_empty() {
+        if slices.is_empty() || self.len() == 0 {
             return Ok(());
         }
 
         let count = self.segment_count();
 
-        if count > 1 {
-            let mut start = 0usize;
-            let mut offset = 0usize;
-            let mut remaining = self.len();
-
-            while start < count && remaining > 0 {
-                if offset > 0 {
-                    let slice = slices[start].as_ref();
-                    let tail = &slice[offset..];
-                    writer.write_all(tail)?;
-                    remaining = remaining.saturating_sub(tail.len());
-                    start += 1;
-                    offset = 0;
-                    continue;
-                }
-
-                match writer.write_vectored(&slices[start..count]) {
-                    Ok(0) => {
-                        return Err(io::Error::from(io::ErrorKind::WriteZero));
-                    }
-                    Ok(written) => {
-                        debug_assert!(written <= remaining);
-                        remaining -= written;
-                        if remaining == 0 {
-                            return Ok(());
-                        }
-
-                        let mut consumed = written;
-                        while consumed > 0 && start < count {
-                            let slice_len = slices[start].len();
-                            if consumed < slice_len {
-                                offset = consumed;
-                                break;
-                            }
-
-                            consumed -= slice_len;
-                            start += 1;
-                        }
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
-                    Err(err) => return Err(err),
-                }
-            }
-
-            if remaining == 0 {
-                return Ok(());
-            }
-
-            if offset > 0 && start < count {
-                let slice = slices[start].as_ref();
-                writer.write_all(&slice[offset..])?;
-                start += 1;
-            }
-
-            for slice in &slices[start..count] {
-                writer.write_all(slice.as_ref())?;
-            }
-
+        if count == 1 {
+            writer.write_all(slices[0].as_ref())?;
             return Ok(());
         }
 
+        let mut remaining = self.len();
+        let mut consumed_total = 0usize;
+        let mut start = 0usize;
+        let mut vectored = [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS];
+        vectored[..count].copy_from_slice(slices);
+
+        while remaining > 0 {
+            let tail = &mut vectored[start..count];
+            if tail.is_empty() {
+                break;
+            }
+
+            match writer.write_vectored(&*tail) {
+                Ok(0) => {
+                    return Err(io::Error::from(io::ErrorKind::WriteZero));
+                }
+                Ok(written) => {
+                    debug_assert!(written <= remaining);
+                    consumed_total += written;
+                    remaining -= written;
+
+                    if remaining == 0 {
+                        return Ok(());
+                    }
+
+                    let mut consumed = written;
+                    let mut index = start;
+                    while consumed > 0 && index < count {
+                        let slice_len = vectored[index].len();
+                        if consumed < slice_len {
+                            vectored[index].advance(consumed);
+                            consumed = 0;
+                        } else {
+                            vectored[index].advance(slice_len);
+                            consumed -= slice_len;
+                            index += 1;
+                        }
+                    }
+
+                    start = index;
+                    while start < count && vectored[start].len() == 0 {
+                        start += 1;
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
+                Err(err) => return Err(err),
+            }
+        }
+
+        if remaining == 0 {
+            return Ok(());
+        }
+
+        let mut consumed = consumed_total;
+
         for slice in slices {
-            writer.write_all(slice.as_ref())?;
+            let bytes = slice.as_ref();
+
+            if consumed >= bytes.len() {
+                consumed -= bytes.len();
+                continue;
+            }
+
+            if consumed > 0 {
+                writer.write_all(&bytes[consumed..])?;
+                consumed = 0;
+            } else {
+                writer.write_all(bytes)?;
+            }
         }
 
         Ok(())
@@ -2529,6 +2540,67 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct PartialThenUnsupportedWriter {
+        written: Vec<u8>,
+        vectored_calls: usize,
+        fallback_writes: usize,
+        limit: usize,
+    }
+
+    impl PartialThenUnsupportedWriter {
+        fn new(limit: usize) -> Self {
+            Self {
+                limit,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl io::Write for PartialThenUnsupportedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.fallback_writes += 1;
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+
+            if self.vectored_calls == 1 {
+                let mut limit = self.limit;
+                let mut total = 0usize;
+
+                for buf in bufs {
+                    if limit == 0 {
+                        break;
+                    }
+
+                    let slice = buf.as_ref();
+                    let take = slice.len().min(limit);
+                    self.written.extend_from_slice(&slice[..take]);
+                    total += take;
+                    limit -= take;
+
+                    if take < slice.len() {
+                        break;
+                    }
+                }
+
+                return Ok(total);
+            }
+
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "vectored disabled after first call",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
     struct ZeroProgressWriter {
         write_calls: usize,
     }
@@ -2626,6 +2698,27 @@ mod tests {
 
         assert_eq!(writer.written, message.to_line_bytes().unwrap());
         assert!(writer.vectored_calls >= 2);
+    }
+
+    #[test]
+    fn segments_write_to_handles_partial_then_unsupported_vectored_call() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+        let mut writer = PartialThenUnsupportedWriter::new(8);
+
+        segments
+            .write_to(&mut writer)
+            .expect("sequential fallback should succeed after partial vectored writes");
+
+        drop(segments);
+
+        assert_eq!(writer.written, message.to_bytes().unwrap());
+        assert_eq!(writer.vectored_calls, 2);
+        assert!(writer.fallback_writes >= 1);
     }
 
     #[test]
