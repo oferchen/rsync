@@ -1,3 +1,4 @@
+use std::any::type_name;
 use std::collections::TryReserveError;
 use std::fmt;
 use std::io::{self, BufRead, IoSlice, IoSliceMut, Read, Write};
@@ -975,6 +976,26 @@ pub struct NegotiatedStreamParts<R> {
 ///     .expect("replayed bytes remain available");
 /// assert_eq!(replay, b"@RSYNCD: 31.0\n");
 /// ```
+///
+/// The preserved error and transport type are surfaced when formatting the
+/// [`TryMapInnerError`], making it easier to log failures without losing
+/// context.
+///
+/// ```
+/// use rsync_transport::sniff_negotiation_stream;
+/// use std::io::{self, Cursor};
+///
+/// let err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+///     .expect("sniff succeeds")
+///     .try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), cursor))
+///     })
+///     .expect_err("mapping fails");
+///
+/// assert!(format!("{err}").contains("wrap failed"));
+/// assert!(format!("{err}").contains("Cursor"));
+/// assert!(format!("{err:#}").contains("recover via into_original"));
+/// ```
 pub struct TryMapInnerError<T, E> {
     error: E,
     original: T,
@@ -1184,15 +1205,37 @@ impl<T, E> TryMapInnerError<T, E> {
 
 impl<T, E: fmt::Debug> fmt::Debug for TryMapInnerError<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TryMapInnerError")
-            .field("error", &self.error)
-            .finish()
+        let alternate = f.alternate();
+        let mut builder = f.debug_struct("TryMapInnerError");
+        builder.field("error", &self.error);
+        builder.field("original_type", &type_name::<T>());
+        if alternate {
+            builder.field(
+                "recovery",
+                &"call into_original() to regain the preserved transport",
+            );
+        }
+        builder.finish()
     }
 }
 
 impl<T, E: fmt::Display> fmt::Display for TryMapInnerError<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "failed to map inner value: {}", self.error)
+        if f.alternate() {
+            write!(
+                f,
+                "failed to map inner value: {} (original type: {}; recover via into_original())",
+                self.error,
+                type_name::<T>()
+            )
+        } else {
+            write!(
+                f,
+                "failed to map inner value: {} (original type: {})",
+                self.error,
+                type_name::<T>()
+            )
+        }
     }
 }
 
@@ -3541,6 +3584,52 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("mapped parts preserve replay bytes");
         assert_eq!(replay, legacy);
+    }
+
+    #[test]
+    fn try_map_inner_error_display_mentions_original_type() {
+        let legacy = b"@RSYNCD: 31.0\nlisting";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("wrap failed"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        let display = format!("{err}");
+        assert!(display.contains("wrap failed"));
+        assert!(display.contains("Cursor"));
+        assert!(display.contains("original type"));
+
+        let alternate = format!("{err:#}");
+        assert!(alternate.contains("recover via into_original"));
+        assert!(alternate.contains("Cursor"));
+    }
+
+    #[test]
+    fn try_map_inner_error_debug_reports_recovery_hint() {
+        let legacy = b"@RSYNCD: 31.0\nlisting";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("wrap failed"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        let debug = format!("{err:?}");
+        assert!(debug.contains("TryMapInnerError"));
+        assert!(debug.contains("original_type"));
+        assert!(debug.contains("Cursor"));
+
+        let debug_alternate = format!("{err:#?}");
+        assert!(debug_alternate.contains("recover"));
+        assert!(debug_alternate.contains("Cursor"));
     }
 
     #[test]
