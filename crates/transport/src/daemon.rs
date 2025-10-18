@@ -181,6 +181,25 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         self.negotiated_protocol
     }
 
+    /// Reports whether the daemon advertised a protocol newer than the supported range.
+    ///
+    /// The helper mirrors [`LegacyDaemonHandshake::remote_protocol_was_clamped`] so callers that
+    /// operate on the decomposed parts retain access to the same diagnostics without rebuilding the
+    /// wrapper first.
+    #[must_use]
+    pub fn remote_protocol_was_clamped(&self) -> bool {
+        remote_advertisement_was_clamped(self.remote_advertised_protocol(), self.server_protocol())
+    }
+
+    /// Reports whether the negotiated protocol was reduced by the caller-provided cap.
+    ///
+    /// This complements [`LegacyDaemonHandshake::local_protocol_was_capped`] when higher layers
+    /// inspect the parts structure before reconstructing the handshake.
+    #[must_use]
+    pub fn local_protocol_was_capped(&self) -> bool {
+        self.negotiated_protocol() < self.server_protocol()
+    }
+
     /// Returns the replaying stream parts captured during negotiation.
     #[must_use]
     pub const fn stream_parts(&self) -> &NegotiatedStreamParts<R> {
@@ -679,7 +698,11 @@ mod tests {
         assert!(!handshake.remote_protocol_was_clamped());
         assert!(handshake.local_protocol_was_capped());
 
-        let transport = handshake.into_stream().into_inner();
+        let parts = handshake.into_parts();
+        assert!(!parts.remote_protocol_was_clamped());
+        assert!(parts.local_protocol_was_capped());
+
+        let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 30.0\n");
     }
 
@@ -696,7 +719,11 @@ mod tests {
         assert!(handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
 
-        let transport = handshake.into_stream().into_inner();
+        let parts = handshake.into_parts();
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
+
+        let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
     }
 
@@ -713,7 +740,11 @@ mod tests {
         assert!(handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
 
-        let transport = handshake.into_stream().into_inner();
+        let parts = handshake.into_parts();
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
+
+        let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
     }
 
@@ -730,7 +761,11 @@ mod tests {
         assert!(handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
 
-        let transport = handshake.into_stream().into_inner();
+        let parts = handshake.into_parts();
+        assert!(parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
+
+        let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
     }
 
@@ -787,6 +822,8 @@ mod tests {
         assert_eq!(parts.server_protocol(), expected_protocol);
         assert_eq!(parts.negotiated_protocol(), expected_protocol);
         assert_eq!(parts.remote_advertised_protocol(), 31);
+        assert!(!parts.remote_protocol_was_clamped());
+        assert!(!parts.local_protocol_was_capped());
         assert_eq!(
             parts.stream_parts().decision(),
             NegotiationPrologue::LegacyAscii
