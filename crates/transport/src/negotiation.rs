@@ -1529,7 +1529,35 @@ impl<T, E> TryMapInnerError<T, E> {
         (&mut self.error, &mut self.original)
     }
 
-    /// Decomposes the error into its parts.
+    /// Consumes the error, returning both the preserved error and original value.
+    ///
+    /// The helper mirrors [`Self::into_original`] but also yields the captured error so callers can
+    /// regain ownership of the replayable transport and the failure that interrupted the mapping in
+    /// a single pattern match. This matches upstream rsync's practice of pairing recovered streams
+    /// with the diagnostics that triggered the recovery path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{self, Cursor, Read};
+    ///
+    /// let err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+    ///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), cursor))
+    ///     })
+    ///     .expect_err("mapping fails");
+    ///
+    /// let (error, mut original) = err.into_parts();
+    /// assert_eq!(error.kind(), io::ErrorKind::Other);
+    ///
+    /// let mut replay = Vec::new();
+    /// original
+    ///     .read_to_end(&mut replay)
+    ///     .expect("original stream remains readable");
+    /// assert_eq!(replay, b"@RSYNCD: 31.0\n");
+    /// ```
     #[must_use]
     pub fn into_parts(self) -> (E, T) {
         (self.error, self.original)
@@ -4618,6 +4646,27 @@ mod tests {
             .read_to_end(&mut replay)
             .expect("remaining bytes preserved after combined access");
         assert_eq!(replay, &legacy[1..]);
+    }
+
+    #[test]
+    fn try_map_inner_error_into_parts_returns_error_and_original() {
+        let legacy = b"@RSYNCD: 31.0\nremainder";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let err = stream
+            .try_map_inner(|cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                Err((io::Error::other("boom"), cursor))
+            })
+            .expect_err("mapping fails");
+
+        let (error, mut original) = err.into_parts();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+
+        let mut replay = Vec::new();
+        original
+            .read_to_end(&mut replay)
+            .expect("replay remains available");
+        assert_eq!(replay, legacy);
     }
 
     #[test]
