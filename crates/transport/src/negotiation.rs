@@ -940,6 +940,41 @@ impl<T, E> TryMapInnerError<T, E> {
         &self.original
     }
 
+    /// Returns shared references to both the preserved error and original value.
+    ///
+    /// This mirrors [`Self::error`] and [`Self::original`] but surfaces both references at once,
+    /// making it convenient to inspect the captured state without cloning the
+    /// [`TryMapInnerError`]. The helper is particularly useful for logging and debugging flows
+    /// where callers want to snapshot the buffered negotiation transcript while examining the
+    /// transport error that interrupted the mapping operation.
+    ///
+    /// # Examples
+    ///
+    /// Inspect the preserved error alongside the sniffed negotiation bytes after a failed
+    /// transport transformation.
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{self, Cursor};
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let err = stream
+    ///     .try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+    ///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), cursor))
+    ///     })
+    ///     .expect_err("mapping fails");
+    /// let (error, original) = err.as_ref();
+    /// assert_eq!(error.kind(), io::ErrorKind::Other);
+    /// let (prefix, remainder) = original.buffered_split();
+    /// assert_eq!(prefix, b"@RSYNCD:");
+    /// assert!(remainder.is_empty());
+    /// ```
+    #[must_use]
+    pub fn as_ref(&self) -> (&E, &T) {
+        (&self.error, &self.original)
+    }
+
     /// Returns a mutable reference to the value that failed to be mapped.
     ///
     /// The mutable accessor mirrors [`Self::original`] and allows callers to prepare the preserved
@@ -950,6 +985,46 @@ impl<T, E> TryMapInnerError<T, E> {
     #[must_use]
     pub fn original_mut(&mut self) -> &mut T {
         &mut self.original
+    }
+
+    /// Returns mutable references to both the preserved error and original value.
+    ///
+    /// This helper combines [`Self::error_mut`] and [`Self::original_mut`] so callers can adjust the
+    /// stored error while simultaneously preparing the buffered transport state. It is useful when
+    /// higher layers downgrade rich I/O errors and consume a portion of the replay buffer before
+    /// resuming the transfer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::{self, Cursor, Read};
+    ///
+    /// let mut err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+    ///     .expect("sniff succeeds")
+    ///     .try_map_inner(|cursor| -> Result<Cursor<Vec<u8>>, (io::Error, Cursor<Vec<u8>>)> {
+    ///         Err((io::Error::new(io::ErrorKind::Other, "wrap failed"), cursor))
+    ///     })
+    ///     .expect_err("mapping fails");
+    /// {
+    ///     let (error, original) = err.as_mut();
+    ///     *error = io::Error::new(io::ErrorKind::TimedOut, "timeout");
+    ///     let mut first = [0u8; 1];
+    ///     original
+    ///         .read_exact(&mut first)
+    ///         .expect("reading from preserved stream succeeds");
+    ///     assert_eq!(&first, b"@");
+    /// }
+    /// assert_eq!(err.error().kind(), io::ErrorKind::TimedOut);
+    /// let mut replay = Vec::new();
+    /// err.into_original()
+    ///     .read_to_end(&mut replay)
+    ///     .expect("replay succeeds");
+    /// assert_eq!(replay, b"RSYNCD: 31.0\n");
+    /// ```
+    #[must_use]
+    pub fn as_mut(&mut self) -> (&mut E, &mut T) {
+        (&mut self.error, &mut self.original)
     }
 
     /// Decomposes the error into its parts.
@@ -2813,6 +2888,47 @@ mod tests {
         restored
             .read_to_end(&mut replay)
             .expect("mutations persist when recovering the original stream");
+        assert_eq!(replay, &legacy[1..]);
+    }
+
+    #[test]
+    fn try_map_inner_error_combined_accessors_expose_borrows() {
+        let legacy = b"@RSYNCD: 31.0\npayload";
+        let stream = sniff_bytes(legacy).expect("sniff succeeds");
+
+        let mut err = stream
+            .try_map_inner(
+                |cursor| -> Result<RecordingTransport, (io::Error, Cursor<Vec<u8>>)> {
+                    Err((io::Error::other("boom"), cursor))
+                },
+            )
+            .expect_err("mapping fails");
+
+        {
+            let (error, original) = err.as_ref();
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            let (prefix, remainder) = original.buffered_split();
+            assert_eq!(prefix, b"@RSYNCD:");
+            assert!(remainder.is_empty());
+        }
+
+        {
+            let (error, original) = err.as_mut();
+            *error = io::Error::new(io::ErrorKind::TimedOut, "timeout");
+            let mut first = [0u8; 1];
+            original
+                .read_exact(&mut first)
+                .expect("reading from preserved stream succeeds");
+            assert_eq!(&first, b"@");
+        }
+
+        assert_eq!(err.error().kind(), io::ErrorKind::TimedOut);
+
+        let mut restored = err.into_original();
+        let mut replay = Vec::new();
+        restored
+            .read_to_end(&mut replay)
+            .expect("remaining bytes preserved after combined access");
         assert_eq!(replay, &legacy[1..]);
     }
 
