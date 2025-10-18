@@ -893,6 +893,69 @@ impl Message {
         }
     }
 
+    /// Invokes the provided closure with the vectored representation of the message.
+    ///
+    /// The helper borrows the internal thread-local [`MessageScratch`] and renders the message
+    /// exactly once before handing the [`MessageSegments`] view to the supplied closure. This keeps
+    /// call sites lightweight when they only need transient access to the slices—for example when
+    /// forwarding diagnostics to a sink that expects [`IoSlice`] values. The closure must not store
+    /// the provided reference because it borrows scratch space owned by the thread-local buffer.
+    ///
+    /// # Examples
+    ///
+    /// Write the rendered message using vectored I/O without manually managing scratch buffers.
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, Role},
+    ///     message_source,
+    /// };
+    /// use std::io::{self, IoSlice, Write};
+    ///
+    /// struct Collector(Vec<u8>);
+    ///
+    /// impl Write for Collector {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.0.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    ///
+    ///     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+    ///         let mut total = 0;
+    ///         for slice in bufs {
+    ///             self.0.extend_from_slice(slice);
+    ///             total += slice.len();
+    ///         }
+    ///         Ok(total)
+    ///     }
+    /// }
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let mut collector = Collector(Vec::new());
+    ///
+    /// message.with_segments(true, |segments| {
+    ///     collector.write_vectored(segments.as_ref()).unwrap();
+    /// });
+    ///
+    /// assert_eq!(collector.0, message.to_line_bytes().unwrap());
+    /// ```
+    pub fn with_segments<R>(
+        &self,
+        include_newline: bool,
+        f: impl FnOnce(&MessageSegments<'_>) -> R,
+    ) -> R {
+        with_thread_local_scratch(|scratch| {
+            let segments = self.as_segments(scratch, include_newline);
+            f(&segments)
+        })
+    }
+
     /// Creates an informational message.
     #[must_use = "constructed messages must be emitted to reach users"]
     pub fn info<T: Into<Cow<'static, str>>>(text: T) -> Self {
@@ -1769,6 +1832,41 @@ mod tests {
             .expect("writing into a vector never fails");
 
         assert_eq!(buffer, message.to_string().into_bytes());
+    }
+
+    #[test]
+    fn with_segments_invokes_closure_with_rendered_bytes() {
+        let message = Message::error(35, "timeout in data send")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let expected = message.to_bytes().unwrap();
+        let mut collected = Vec::new();
+
+        let value = message.with_segments(false, |segments| {
+            for slice in segments {
+                collected.extend_from_slice(slice.as_ref());
+            }
+
+            0xdead_beefu64
+        });
+
+        assert_eq!(value, 0xdead_beefu64);
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn with_segments_supports_newline_variants() {
+        let message = Message::warning("vanished files detected").with_code(24);
+
+        let mut collected = Vec::new();
+        message.with_segments(true, |segments| {
+            for slice in segments {
+                collected.extend_from_slice(slice.as_ref());
+            }
+        });
+
+        assert_eq!(collected, message.to_line_bytes().unwrap());
     }
 
     #[test]
