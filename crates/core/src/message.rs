@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, IoSlice, Write as IoWrite};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::slice;
 use std::str::{self, FromStr};
 use std::sync::OnceLock;
@@ -504,8 +504,7 @@ impl SourceLocation {
 
         let absolute = if file_path.is_absolute() {
             file_path.to_path_buf()
-        } else if let Some(root) = option_env!("RSYNC_WORKSPACE_ROOT") {
-            let workspace_path = Path::new(root);
+        } else if let Some(workspace_path) = workspace_root_path() {
             if let Ok(manifest_relative) = manifest_path.strip_prefix(workspace_path) {
                 if manifest_relative.as_os_str().is_empty() {
                     manifest_path.join(file_path)
@@ -1343,9 +1342,16 @@ fn normalized_workspace_root() -> Option<&'static str> {
     static NORMALIZED: OnceLock<Option<String>> = OnceLock::new();
 
     NORMALIZED
-        .get_or_init(|| {
-            option_env!("RSYNC_WORKSPACE_ROOT").map(|root| normalize_path(Path::new(root)))
-        })
+        .get_or_init(|| workspace_root_path().map(normalize_path))
+        .as_deref()
+}
+
+/// Returns the absolute workspace root configured at build time, if available.
+fn workspace_root_path() -> Option<&'static Path> {
+    static WORKSPACE_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    WORKSPACE_ROOT
+        .get_or_init(|| option_env!("RSYNC_WORKSPACE_ROOT").map(PathBuf::from))
         .as_deref()
 }
 
