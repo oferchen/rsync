@@ -563,6 +563,51 @@ impl Severity {
             Self::Error => "rsync error: ",
         }
     }
+
+    /// Reports whether this severity represents an informational message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Severity;
+    ///
+    /// assert!(Severity::Info.is_info());
+    /// assert!(!Severity::Error.is_info());
+    /// ```
+    #[must_use]
+    pub const fn is_info(self) -> bool {
+        matches!(self, Self::Info)
+    }
+
+    /// Reports whether this severity represents a warning message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Severity;
+    ///
+    /// assert!(Severity::Warning.is_warning());
+    /// assert!(!Severity::Info.is_warning());
+    /// ```
+    #[must_use]
+    pub const fn is_warning(self) -> bool {
+        matches!(self, Self::Warning)
+    }
+
+    /// Reports whether this severity represents an error message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Severity;
+    ///
+    /// assert!(Severity::Error.is_error());
+    /// assert!(!Severity::Warning.is_error());
+    /// ```
+    #[must_use]
+    pub const fn is_error(self) -> bool {
+        matches!(self, Self::Error)
+    }
 }
 
 impl fmt::Display for Severity {
@@ -1272,6 +1317,57 @@ impl Message {
     #[must_use]
     pub const fn severity(&self) -> Severity {
         self.severity
+    }
+
+    /// Returns `true` when the message severity is [`Severity::Info`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let info = Message::info("probe");
+    /// assert!(info.is_info());
+    /// assert!(!info.is_warning());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn is_info(&self) -> bool {
+        self.severity.is_info()
+    }
+
+    /// Returns `true` when the message severity is [`Severity::Warning`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let warning = Message::warning("vanished");
+    /// assert!(warning.is_warning());
+    /// assert!(!warning.is_error());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn is_warning(&self) -> bool {
+        self.severity.is_warning()
+    }
+
+    /// Returns `true` when the message severity is [`Severity::Error`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let error = Message::error(11, "io");
+    /// assert!(error.is_error());
+    /// assert!(!error.is_info());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn is_error(&self) -> bool {
+        self.severity.is_error()
     }
 
     /// Returns the exit code associated with the message if present.
@@ -2135,6 +2231,24 @@ mod tests {
         assert_eq!(error.severity(), Severity::Error);
         assert_eq!(error.code(), Some(23));
         assert_eq!(error.text(), "dynamic error");
+    }
+
+    #[test]
+    fn message_predicates_forward_to_severity() {
+        let info = Message::info("probe");
+        assert!(info.is_info());
+        assert!(!info.is_warning());
+        assert!(!info.is_error());
+
+        let warning = Message::warning("vanished");
+        assert!(warning.is_warning());
+        assert!(!warning.is_info());
+        assert!(!warning.is_error());
+
+        let error = Message::error(11, "io failure");
+        assert!(error.is_error());
+        assert!(!error.is_info());
+        assert!(!error.is_warning());
     }
 
     #[test]
@@ -3316,6 +3430,21 @@ mod tests {
         assert_eq!(Severity::Info.to_string(), "info");
         assert_eq!(Severity::Warning.to_string(), "warning");
         assert_eq!(Severity::Error.to_string(), "error");
+    }
+
+    #[test]
+    fn severity_predicates_match_variants() {
+        assert!(Severity::Info.is_info());
+        assert!(!Severity::Info.is_warning());
+        assert!(!Severity::Info.is_error());
+
+        assert!(Severity::Warning.is_warning());
+        assert!(!Severity::Warning.is_info());
+        assert!(!Severity::Warning.is_error());
+
+        assert!(Severity::Error.is_error());
+        assert!(!Severity::Error.is_info());
+        assert!(!Severity::Error.is_warning());
     }
 
     #[test]
