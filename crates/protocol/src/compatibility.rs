@@ -203,7 +203,11 @@ impl KnownCompatibilityFlag {
     ///
     /// The parser accepts the exact `CF_*` names emitted by upstream rsync and returned by
     /// [`Self::name`]. Any other input is rejected, ensuring higher layers avoid silently mapping
-    /// unknown identifiers to a default value.
+    /// unknown identifiers to a default value. When parsing fails, the returned
+    /// [`ParseKnownCompatibilityFlagError`] exposes the offending identifier via
+    /// [`ParseKnownCompatibilityFlagError::identifier`], making it trivial for
+    /// callers to surface actionable diagnostics or log messages that mirror
+    /// upstream wording.
     ///
     /// # Examples
     ///
@@ -235,26 +239,38 @@ impl FromStr for KnownCompatibilityFlag {
             "CF_INPLACE_PARTIAL_DIR" => Ok(Self::InplacePartialDir),
             "CF_VARINT_FLIST_FLAGS" => Ok(Self::VarintFlistFlags),
             "CF_ID0_NAMES" => Ok(Self::Id0Names),
-            _ => Err(ParseKnownCompatibilityFlagError::new()),
+            _ => Err(ParseKnownCompatibilityFlagError::new(s)),
         }
     }
 }
 
 /// Error returned when parsing a [`KnownCompatibilityFlag`] from an invalid identifier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParseKnownCompatibilityFlagError {
-    _private: (),
+    identifier: Box<str>,
 }
 
 impl ParseKnownCompatibilityFlagError {
-    const fn new() -> Self {
-        Self { _private: () }
+    pub(crate) fn new(identifier: impl Into<Box<str>>) -> Self {
+        Self {
+            identifier: identifier.into(),
+        }
+    }
+
+    /// Returns the identifier that failed to parse.
+    #[must_use]
+    pub fn identifier(&self) -> &str {
+        &self.identifier
     }
 }
 
 impl fmt::Display for ParseKnownCompatibilityFlagError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unrecognized compatibility flag identifier")
+        write!(
+            f,
+            "unrecognized compatibility flag identifier: {}",
+            self.identifier()
+        )
     }
 }
 
@@ -996,10 +1012,10 @@ mod tests {
         use std::str::FromStr;
 
         let err = KnownCompatibilityFlag::from_str("CF_UNKNOWN").expect_err("unknown flag");
-        assert_eq!(err, ParseKnownCompatibilityFlagError::new());
+        assert_eq!(err.identifier(), "CF_UNKNOWN");
         assert_eq!(
             err.to_string(),
-            "unrecognized compatibility flag identifier"
+            "unrecognized compatibility flag identifier: CF_UNKNOWN"
         );
     }
 
