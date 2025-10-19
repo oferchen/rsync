@@ -54,7 +54,7 @@ impl RemoteProtocolAdvertisement {
         }
     }
 
-    pub(crate) fn from_raw(advertised: u32, clamped: ProtocolVersion) -> Self {
+    pub(crate) const fn from_raw(advertised: u32, clamped: ProtocolVersion) -> Self {
         if remote_advertisement_was_clamped(advertised) {
             Self::Future(advertised)
         } else {
@@ -133,8 +133,8 @@ impl RemoteProtocolAdvertisement {
 /// supported version. Values outside the byte range are treated as future
 /// protocols and therefore considered clamped.
 #[must_use]
-pub(crate) fn remote_advertisement_was_clamped(advertised: u32) -> bool {
-    let newest_supported = u32::from(ProtocolVersion::NEWEST.as_u8());
+pub(crate) const fn remote_advertisement_was_clamped(advertised: u32) -> bool {
+    let newest_supported = ProtocolVersion::NEWEST.as_u8() as u32;
     advertised > newest_supported
 }
 
@@ -161,11 +161,11 @@ pub(crate) fn remote_advertisement_was_clamped(advertised: u32) -> bool {
 /// ```
 #[doc(alias = "--protocol")]
 #[must_use]
-pub(crate) fn local_cap_reduced_protocol(
+pub(crate) const fn local_cap_reduced_protocol(
     remote: ProtocolVersion,
     negotiated: ProtocolVersion,
 ) -> bool {
-    negotiated < remote
+    negotiated.as_u8() < remote.as_u8()
 }
 
 #[cfg(test)]
@@ -197,6 +197,41 @@ mod tests {
         let remote = ProtocolVersion::NEWEST.as_u8();
 
         assert!(!remote_advertisement_was_clamped(u32::from(remote)));
+    }
+
+    #[test]
+    fn remote_advertisement_helpers_are_const_evaluable() {
+        const CLAMPED: bool =
+            remote_advertisement_was_clamped(ProtocolVersion::NEWEST.as_u8() as u32 + 1);
+        const NOT_CLAMPED: bool =
+            remote_advertisement_was_clamped(ProtocolVersion::NEWEST.as_u8() as u32);
+        const FUTURE: RemoteProtocolAdvertisement =
+            RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST);
+        const SUPPORTED: RemoteProtocolAdvertisement = RemoteProtocolAdvertisement::from_raw(
+            ProtocolVersion::V30.as_u8() as u32,
+            ProtocolVersion::V30,
+        );
+
+        assert!(CLAMPED);
+        assert!(!NOT_CLAMPED);
+        assert!(matches!(FUTURE, RemoteProtocolAdvertisement::Future(40)));
+        assert!(matches!(
+            SUPPORTED,
+            RemoteProtocolAdvertisement::Supported(ProtocolVersion::V30)
+        ));
+        assert_eq!(FUTURE.negotiated(), ProtocolVersion::NEWEST);
+        assert_eq!(SUPPORTED.negotiated(), ProtocolVersion::V30);
+    }
+
+    #[test]
+    fn local_cap_detection_is_const_evaluable() {
+        const WAS_CAPPED: bool =
+            local_cap_reduced_protocol(ProtocolVersion::V31, ProtocolVersion::V29);
+        const NOT_CAPPED: bool =
+            local_cap_reduced_protocol(ProtocolVersion::V29, ProtocolVersion::V29);
+
+        assert!(WAS_CAPPED);
+        assert!(!NOT_CAPPED);
     }
 
     #[test]
