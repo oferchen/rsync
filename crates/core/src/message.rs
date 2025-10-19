@@ -3974,10 +3974,7 @@ mod tests {
         fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
             self.vectored_calls += 1;
 
-            if bufs
-                .first()
-                .map_or(false, |slice| slice.as_ref().is_empty())
-            {
+            if bufs.first().is_some_and(|slice| slice.as_ref().is_empty()) {
                 return Ok(0);
             }
 
@@ -4062,7 +4059,7 @@ mod tests {
         let mut segments = message.as_segments(&mut scratch, false);
 
         let original_count = segments.count;
-        assert!(original_count + 1 <= MAX_MESSAGE_SEGMENTS);
+        assert!(original_count < MAX_MESSAGE_SEGMENTS);
 
         for index in (0..original_count).rev() {
             segments.segments[index + 1] = segments.segments[index];
