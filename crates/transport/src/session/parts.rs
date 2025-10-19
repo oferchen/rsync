@@ -182,7 +182,7 @@ impl<R> SessionHandshakeParts<R> {
     /// }
     ///
     /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_be_bytes());
     /// let parts = negotiate_session(transport, ProtocolVersion::NEWEST)
     ///     .unwrap()
     ///     .into_stream_parts();
