@@ -68,6 +68,7 @@
 //!   stdout/stderr, log files, or journald.
 
 use std::borrow::Borrow;
+use std::fmt;
 use std::io::{self, Write};
 
 use rsync_core::message::{Message, MessageScratch};
@@ -156,6 +157,100 @@ pub struct MessageSink<W> {
     writer: W,
     scratch: MessageScratch,
     line_mode: LineMode,
+}
+
+/// Error returned by [`MessageSink::try_map_writer`] when the conversion closure fails.
+///
+/// The structure preserves ownership of the original [`MessageSink`] together with the
+/// error reported by the conversion attempt. This mirrors `std::io::IntoInnerError`
+/// so callers can recover the sink and either retry with a different mapping or continue
+/// using the existing writer. Helper accessors expose both components without forcing
+/// additional allocations.
+pub struct TryMapWriterError<W, E> {
+    sink: MessageSink<W>,
+    error: E,
+}
+
+impl<W, E> TryMapWriterError<W, E> {
+    const fn new(sink: MessageSink<W>, error: E) -> Self {
+        Self { sink, error }
+    }
+
+    /// Returns a reference to the preserved [`MessageSink`].
+    #[must_use]
+    pub fn sink(&self) -> &MessageSink<W> {
+        &self.sink
+    }
+
+    /// Returns a mutable reference to the preserved [`MessageSink`].
+    #[must_use]
+    pub fn sink_mut(&mut self) -> &mut MessageSink<W> {
+        &mut self.sink
+    }
+
+    /// Returns a reference to the conversion error.
+    #[must_use]
+    pub fn error(&self) -> &E {
+        &self.error
+    }
+
+    /// Returns a mutable reference to the conversion error.
+    #[must_use]
+    pub fn error_mut(&mut self) -> &mut E {
+        &mut self.error
+    }
+
+    /// Consumes the wrapper and returns the preserved sink and conversion error.
+    #[must_use]
+    pub fn into_parts(self) -> (MessageSink<W>, E) {
+        (self.sink, self.error)
+    }
+}
+
+impl<W, E> TryMapWriterError<W, E> {
+    /// Consumes the wrapper and returns only the preserved [`MessageSink`].
+    #[must_use]
+    pub fn into_sink(self) -> MessageSink<W> {
+        self.sink
+    }
+
+    /// Consumes the wrapper and returns only the conversion error.
+    #[must_use]
+    pub fn into_error(self) -> E {
+        self.error
+    }
+}
+
+impl<W, E> fmt::Debug for TryMapWriterError<W, E>
+where
+    MessageSink<W>: fmt::Debug,
+    E: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TryMapWriterError")
+            .field("sink", &self.sink)
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl<W, E> fmt::Display for TryMapWriterError<W, E>
+where
+    E: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "failed to map message sink writer: {}", self.error)
+    }
+}
+
+impl<W, E> std::error::Error for TryMapWriterError<W, E>
+where
+    E: std::error::Error + fmt::Debug + 'static,
+    MessageSink<W>: fmt::Debug,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 impl<W> MessageSink<W> {
@@ -249,6 +344,69 @@ impl<W> MessageSink<W> {
             line_mode,
         } = self;
         MessageSink::with_parts(f(writer), scratch, line_mode)
+    }
+
+    /// Attempts to map the sink's writer into a different type, preserving the original sink on
+    /// failure.
+    ///
+    /// The closure returns `Ok` with the mapped writer when the conversion succeeds. On error, it
+    /// must return the original writer alongside the error value so the method can reconstruct the
+    /// [`MessageSink`]. This mirrors [`std::io::IntoInnerError`], allowing callers to recover
+    /// without losing buffered diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// Convert the writer into a `Cursor<Vec<u8>>` while keeping the scratch buffer and line mode:
+    ///
+    /// ```
+    /// # use rsync_core::message::Message;
+    /// # use rsync_logging::MessageSink;
+    /// # use std::io::Cursor;
+    /// let sink = MessageSink::new(Vec::new());
+    /// let mut sink = sink
+    ///     .try_map_writer(|writer| -> Result<Cursor<Vec<u8>>, (Vec<u8>, &'static str)> {
+    ///         Ok(Cursor::new(writer))
+    ///     })
+    ///     .expect("mapping succeeds");
+    /// sink.write(&Message::info("ready"))?;
+    /// assert_eq!(sink.into_inner().into_inner(), b"rsync info: ready\n".to_vec());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    ///
+    /// Recover the original sink when the conversion fails:
+    ///
+    /// ```
+    /// # use rsync_core::message::Message;
+    /// # use rsync_logging::{LineMode, MessageSink};
+    /// let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+    /// let err = sink
+    ///     .try_map_writer(|writer| -> Result<Vec<u8>, (Vec<u8>, &'static str)> {
+    ///         Err((writer, "permission denied"))
+    ///     })
+    ///     .unwrap_err();
+    /// let (mut sink, error) = err.into_parts();
+    /// assert_eq!(error, "permission denied");
+    /// sink.write(&Message::info("still working"))?;
+    /// assert_eq!(sink.into_inner(), b"rsync info: still working".to_vec());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn try_map_writer<F, W2, E>(self, f: F) -> Result<MessageSink<W2>, TryMapWriterError<W, E>>
+    where
+        F: FnOnce(W) -> Result<W2, (W, E)>,
+    {
+        let MessageSink {
+            writer,
+            scratch,
+            line_mode,
+        } = self;
+
+        match f(writer) {
+            Ok(mapped) => Ok(MessageSink::with_parts(mapped, scratch, line_mode)),
+            Err((writer, error)) => Err(TryMapWriterError::new(
+                MessageSink::with_parts(writer, scratch, line_mode),
+                error,
+            )),
+        }
     }
 
     /// Consumes the sink and returns the writer, scratch buffer, and line mode.
@@ -503,6 +661,45 @@ mod tests {
 
         let cursor = sink.into_inner();
         assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn try_map_writer_transforms_writer() {
+        use std::io::Cursor;
+
+        let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let mut sink = sink
+            .try_map_writer(
+                |writer| -> Result<Cursor<Vec<u8>>, (Vec<u8>, &'static str)> {
+                    Ok(Cursor::new(writer))
+                },
+            )
+            .expect("mapping succeeds");
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+
+        sink.write(&Message::info("ready")).expect("write succeeds");
+
+        let cursor = sink.into_inner();
+        assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn try_map_writer_preserves_sink_on_error() {
+        let sink = MessageSink::new(Vec::new());
+        let err = sink
+            .try_map_writer(|writer| -> Result<Vec<u8>, (Vec<u8>, &'static str)> {
+                Err((writer, "conversion failed"))
+            })
+            .unwrap_err();
+        let (mut sink, error) = err.into_parts();
+
+        assert_eq!(error, "conversion failed");
+
+        sink.write(&Message::info("still running"))
+            .expect("write succeeds");
+
+        let output = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(output, "rsync info: still running\n");
     }
 
     #[test]
