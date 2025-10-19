@@ -544,8 +544,9 @@ impl<'a> MessageSegments<'a> {
         let required = self.len();
         let spare = buffer.capacity().saturating_sub(buffer.len());
         if spare < required {
+            let additional = required - spare;
             buffer
-                .try_reserve_exact(required)
+                .try_reserve_exact(additional)
                 .map_err(map_message_reserve_error)?;
             debug_assert!(
                 buffer.capacity().saturating_sub(buffer.len()) >= required,
