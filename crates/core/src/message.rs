@@ -5,6 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
 use std::fs;
 use std::io::{self, IoSlice, Write as IoWrite};
+use std::iter::FusedIterator;
 use std::path::{Path, PathBuf, PrefixComponent};
 use std::slice;
 use std::str::{self, FromStr};
@@ -245,8 +246,44 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(total, segments.len());
     /// ```
     #[inline]
+    #[must_use]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
+    }
+
+    /// Returns an iterator over the byte slices referenced by each segment.
+    ///
+    /// This is a convenience wrapper around [`Self::iter`] that exposes the underlying
+    /// `&[u8]` views directly. It is especially useful when callers need to analyse or copy
+    /// the rendered bytes without interacting with [`IoSlice`] explicitly, keeping their
+    /// code agnostic of vectored I/O details. The iterator preserves the original ordering
+    /// and implements [`DoubleEndedIterator`], [`ExactSizeIterator`], and [`FusedIterator`]
+    /// so integrations can efficiently consume the slices in either direction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let mut scratch = MessageScratch::new();
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let collected: Vec<&[u8]> = segments.iter_bytes().collect();
+    ///
+    /// assert_eq!(collected.len(), segments.segment_count());
+    /// assert_eq!(collected.concat(), message.to_bytes().unwrap());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn iter_bytes(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &'_ [u8]> + DoubleEndedIterator + FusedIterator + '_ {
+        self.iter().map(move |slice| slice.as_ref())
     }
 
     /// Reports whether any slices were produced or contain bytes.
@@ -284,6 +321,7 @@ impl<'a> MessageSegments<'a> {
     /// }
     /// ```
     #[inline]
+    #[must_use]
     pub fn iter_mut(&mut self) -> slice::IterMut<'_, IoSlice<'a>> {
         self.as_slices_mut().iter_mut()
     }
@@ -2806,6 +2844,35 @@ mod tests {
         };
 
         assert_eq!(collected, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_iter_bytes_matches_iter() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, false);
+        let via_iter: Vec<&[u8]> = segments.iter().map(|slice| slice.as_ref()).collect();
+        let via_bytes: Vec<&[u8]> = segments.iter_bytes().collect();
+
+        assert_eq!(via_bytes, via_iter);
+    }
+
+    #[test]
+    fn message_segments_iter_bytes_supports_double_ended_iteration() {
+        let message = Message::warning("vanished").with_code(24);
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, true);
+        let forward: Vec<&[u8]> = segments.iter_bytes().collect();
+        let reverse: Vec<&[u8]> = segments.iter_bytes().rev().collect();
+        let expected_forward: Vec<&[u8]> = segments.iter().map(|slice| slice.as_ref()).collect();
+        let expected_reverse: Vec<&[u8]> = expected_forward.iter().rev().copied().collect();
+
+        assert_eq!(forward, expected_forward);
+        assert_eq!(reverse, expected_reverse);
     }
 
     #[test]
