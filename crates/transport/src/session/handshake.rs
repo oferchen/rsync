@@ -93,6 +93,16 @@ impl<R> SessionHandshake<R> {
         }
     }
 
+    /// Returns the protocol version advertised by the local peer before the negotiation settled.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub fn local_advertised_protocol(&self) -> ProtocolVersion {
+        match self {
+            Self::Binary(handshake) => handshake.local_advertised_protocol(),
+            Self::Legacy(handshake) => handshake.local_advertised_protocol(),
+        }
+    }
+
     /// Returns the classification of the peer's protocol advertisement.
     #[must_use]
     pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {

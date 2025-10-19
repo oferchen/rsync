@@ -202,6 +202,17 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         self.negotiated_protocol
     }
 
+    /// Returns the protocol version the client advertised to the daemon.
+    ///
+    /// For the legacy handshake the client echoes the final negotiated protocol back to the server, so
+    /// the value mirrors [`Self::negotiated_protocol`] but is exposed explicitly to keep the API shape
+    /// aligned with the binary negotiation helpers.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
+        self.negotiated_protocol
+    }
+
     /// Reports whether the daemon advertised a protocol newer than the supported range.
     ///
     /// The helper mirrors [`LegacyDaemonHandshake::remote_protocol_was_clamped`] so callers that
@@ -538,6 +549,17 @@ impl<R> LegacyDaemonHandshake<R> {
     /// Returns the negotiated protocol version after applying the caller's cap.
     #[must_use]
     pub const fn negotiated_protocol(&self) -> ProtocolVersion {
+        self.negotiated_protocol
+    }
+
+    /// Returns the protocol version the client advertised to the daemon.
+    ///
+    /// For the legacy exchange the client echoes the final negotiated protocol back to the server, so
+    /// this value mirrors [`Self::negotiated_protocol`] while exposing the same API surface as the
+    /// binary handshake helpers that track the client's advertisement explicitly.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
         self.negotiated_protocol
     }
 
