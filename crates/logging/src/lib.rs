@@ -70,6 +70,7 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::io::{self, Write};
+use std::mem;
 
 use rsync_core::message::{Message, MessageScratch, MessageSegments};
 
@@ -614,6 +615,38 @@ impl<W> MessageSink<W> {
         }
     }
 
+    /// Replaces the underlying writer while preserving the sink's scratch buffer and [`LineMode`].
+    ///
+    /// The previous writer is returned to the caller so buffered diagnostics can be inspected or
+    /// flushed before it is dropped. This avoids rebuilding the entire [`MessageSink`] when the
+    /// destination changes—for example, when switching from standard output to a log file mid-run.
+    /// The method performs an in-place swap, keeping the existing [`MessageScratch`] zeroed and
+    /// reusing it for subsequent writes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// sink.write(&Message::info("phase one"))?;
+    /// let previous = sink.replace_writer(Vec::new());
+    /// assert_eq!(String::from_utf8(previous).unwrap(), "rsync info: phase one\n");
+    ///
+    /// sink.write(&Message::info("phase two"))?;
+    /// assert_eq!(
+    ///     String::from_utf8(sink.into_inner()).unwrap(),
+    ///     "rsync info: phase two\n"
+    /// );
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    #[must_use = "the returned writer contains diagnostics produced before the replacement"]
+    pub fn replace_writer(&mut self, mut writer: W) -> W {
+        mem::swap(&mut self.writer, &mut writer);
+        writer
+    }
+
     /// Consumes the sink and returns the writer, scratch buffer, and line mode.
     ///
     /// The returned [`MessageScratch`] can be reused to build another
@@ -1003,6 +1036,20 @@ mod tests {
 
         let cursor = sink.into_inner();
         assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn replace_writer_swaps_underlying_writer() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        sink.write(&Message::info("phase one"))
+            .expect("write succeeds");
+
+        let previous = sink.replace_writer(Vec::new());
+        assert_eq!(previous, b"rsync info: phase one".to_vec());
+
+        sink.write(&Message::info("phase two"))
+            .expect("write succeeds");
+        assert_eq!(sink.into_inner(), b"rsync info: phase two".to_vec());
     }
 
     #[test]
