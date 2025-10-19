@@ -654,6 +654,46 @@ fn offset_from_newest_matches_descending_index() {
 }
 
 #[test]
+fn offset_conversions_round_trip_supported_versions() {
+    for &version in ProtocolVersion::supported_versions().iter() {
+        assert_eq!(
+            ProtocolVersion::from_oldest_offset(version.offset_from_oldest()),
+            Some(version),
+            "offset_from_oldest should invert from_oldest_offset",
+        );
+        assert_eq!(
+            ProtocolVersion::from_newest_offset(version.offset_from_newest()),
+            Some(version),
+            "offset_from_newest should invert from_newest_offset",
+        );
+    }
+
+    let max_oldest_offset = ProtocolVersion::NEWEST.offset_from_oldest();
+    assert_eq!(
+        ProtocolVersion::from_oldest_offset(max_oldest_offset + 1),
+        None,
+        "offsets past the supported span must be rejected",
+    );
+
+    assert_eq!(
+        ProtocolVersion::from_newest_offset(ProtocolVersion::supported_protocol_numbers().len()),
+        None,
+        "offsets beyond the descending span must be rejected",
+    );
+
+    assert_eq!(
+        ProtocolVersion::from_oldest_offset(usize::MAX),
+        None,
+        "large offsets should saturate to None without panicking",
+    );
+    assert_eq!(
+        ProtocolVersion::from_newest_offset(usize::MAX),
+        None,
+        "large offsets relative to newest should also be rejected",
+    );
+}
+
+#[test]
 fn next_newer_walks_towards_newest_within_bounds() {
     let mut current = ProtocolVersion::OLDEST;
     let mut expected = ProtocolVersion::OLDEST.as_u8();
