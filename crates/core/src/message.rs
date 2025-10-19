@@ -445,12 +445,12 @@ impl<'a> MessageSegments<'a> {
     ///
     /// The method ensures enough capacity for the rendered message by using
     /// [`Vec::try_reserve_exact`], avoiding the exponential growth strategy of
-    /// [`Vec::try_reserve`]. Once space is reserved it resizes the vector and
-    /// delegates to [`Self::copy_to_slice`] so the bytes are written contiguously.
-    /// On failure the buffer is truncated back to its original length, keeping
-    /// previously appended diagnostics intact. This keeps allocations tight for
+    /// [`Vec::try_reserve`]. Once space is reserved it appends each segment via
+    /// [`Vec::extend_from_slice`], eliminating the intermediate zero-fill that
+    /// [`Vec::resize`] would otherwise perform. This keeps allocations tight for
     /// call sites that accumulate multiple diagnostics into a single [`Vec<u8>`]
-    /// without going through the [`Write`](IoWrite) trait.
+    /// without going through the [`Write`](IoWrite) trait while ensuring no
+    /// redundant memory writes occur.
     ///
     /// # Examples
     ///
@@ -490,18 +490,17 @@ impl<'a> MessageSegments<'a> {
         }
 
         let start = buffer.len();
-        buffer.resize(start + required, 0);
+        for slice in self.iter() {
+            let bytes = slice.as_ref();
+            if bytes.is_empty() {
+                continue;
+            }
 
-        match self.copy_to_slice(&mut buffer[start..]) {
-            Ok(copied) => {
-                debug_assert_eq!(copied, required);
-                Ok(required)
-            }
-            Err(err) => {
-                buffer.truncate(start);
-                Err(io::Error::other(err))
-            }
+            buffer.extend_from_slice(bytes);
         }
+
+        debug_assert_eq!(buffer.len() - start, required);
+        Ok(required)
     }
 
     /// Copies the rendered message into the provided slice.
