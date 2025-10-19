@@ -175,9 +175,9 @@ pub(crate) const fn remote_advertisement_was_clamped(advertised: u32) -> bool {
 /// Clamp the negotiated protocol to 29 even though the peer advertised 31, mirroring
 /// `rsync --protocol=29` against a newer daemon.
 ///
-/// ```rust,ignore
+/// ```
 /// use rsync_protocol::ProtocolVersion;
-/// use rsync_transport::handshake_util::local_cap_reduced_protocol;
+/// use rsync_transport::local_cap_reduced_protocol;
 ///
 /// let remote = ProtocolVersion::from_supported(31).unwrap();
 /// let negotiated = ProtocolVersion::from_supported(29).unwrap();
@@ -186,7 +186,7 @@ pub(crate) const fn remote_advertisement_was_clamped(advertised: u32) -> bool {
 /// ```
 #[doc(alias = "--protocol")]
 #[must_use]
-pub(crate) const fn local_cap_reduced_protocol(
+pub const fn local_cap_reduced_protocol(
     remote: ProtocolVersion,
     negotiated: ProtocolVersion,
 ) -> bool {

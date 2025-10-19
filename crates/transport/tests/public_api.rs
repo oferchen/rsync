@@ -1,4 +1,7 @@
-use rsync_transport::{BufferedCopyTooSmall, NegotiatedStreamParts, SessionHandshakeParts};
+use rsync_protocol::ProtocolVersion;
+use rsync_transport::{
+    BufferedCopyTooSmall, NegotiatedStreamParts, SessionHandshakeParts, local_cap_reduced_protocol,
+};
 use std::io::Cursor;
 
 fn assert_type_visible<T>() {}
@@ -16,4 +19,12 @@ fn negotiated_stream_parts_remains_accessible() {
 #[test]
 fn buffered_copy_too_small_is_publicly_visible() {
     assert_type_visible::<BufferedCopyTooSmall>();
+}
+
+#[test]
+fn local_cap_helper_is_public() {
+    assert!(local_cap_reduced_protocol(
+        ProtocolVersion::V31,
+        ProtocolVersion::V29,
+    ));
 }
