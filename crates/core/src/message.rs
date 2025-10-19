@@ -103,14 +103,34 @@ thread_local! {
     static THREAD_LOCAL_SCRATCH: RefCell<MessageScratch> = const { RefCell::new(MessageScratch::new()) };
 }
 
+fn call_with_scratch<F, R>(closure: &mut Option<F>, scratch: &mut MessageScratch) -> R
+where
+    F: FnOnce(&mut MessageScratch) -> R,
+{
+    let f = closure
+        .take()
+        .expect("message scratch closure invoked multiple times");
+    f(scratch)
+}
+
 fn with_thread_local_scratch<F, R>(f: F) -> R
 where
     F: FnOnce(&mut MessageScratch) -> R,
 {
-    THREAD_LOCAL_SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
-        f(&mut scratch)
-    })
+    let mut closure = Some(f);
+
+    if let Ok(Some(result)) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
+        if let Ok(mut guard) = scratch.try_borrow_mut() {
+            return Some(call_with_scratch(&mut closure, &mut guard));
+        }
+
+        None
+    }) {
+        return result;
+    }
+
+    let mut scratch = MessageScratch::new();
+    call_with_scratch(&mut closure, &mut scratch)
 }
 
 /// Collection of slices that jointly render an [`Message`].
@@ -2308,6 +2328,22 @@ mod tests {
         });
 
         assert_eq!(collected, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn with_segments_supports_reentrant_rendering() {
+        let message = Message::warning("vanished files detected").with_code(24);
+        let expected = message.to_bytes().expect("rendering into Vec never fails");
+
+        message.with_segments(false, |segments| {
+            let nested = message
+                .to_bytes()
+                .expect("rendering inside closure should not panic");
+            assert_eq!(nested, expected);
+
+            let flattened = segments.to_vec().expect("collecting segments never fails");
+            assert_eq!(flattened, expected);
+        });
     }
 
     #[test]
