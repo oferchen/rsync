@@ -88,6 +88,37 @@ impl RemoteProtocolAdvertisement {
             Self::Future(value) => value,
         }
     }
+
+    /// Returns the [`ProtocolVersion`] used for the session after applying upstream clamps.
+    ///
+    /// Upstream rsync downgrades peers that advertise future protocol versions to
+    /// [`ProtocolVersion::NEWEST`]. Sessions where the peer announced a supported
+    /// protocol negotiate that exact version. The helper exposes the final
+    /// [`ProtocolVersion`] so higher layers that only receive the classification
+    /// can still determine the active protocol without duplicating the clamping
+    /// logic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::RemoteProtocolAdvertisement;
+    ///
+    /// let supported = RemoteProtocolAdvertisement::Supported(
+    ///     ProtocolVersion::from_supported(30).unwrap()
+    /// );
+    /// assert_eq!(supported.negotiated(), ProtocolVersion::from_supported(30).unwrap());
+    ///
+    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// assert_eq!(future.negotiated(), ProtocolVersion::NEWEST);
+    /// ```
+    #[must_use]
+    pub const fn negotiated(self) -> ProtocolVersion {
+        match self {
+            Self::Supported(version) => version,
+            Self::Future(_) => ProtocolVersion::NEWEST,
+        }
+    }
 }
 
 /// Reports whether a remote protocol advertisement was clamped to the newest supported value.
@@ -183,6 +214,7 @@ mod tests {
         assert_eq!(classification.supported(), Some(version));
         assert_eq!(classification.future(), None);
         assert_eq!(classification.advertised(), advertised);
+        assert_eq!(classification.negotiated(), version);
     }
 
     #[test]
@@ -195,6 +227,7 @@ mod tests {
         assert_eq!(classification.supported(), None);
         assert_eq!(classification.future(), Some(advertised));
         assert_eq!(classification.advertised(), advertised);
+        assert_eq!(classification.negotiated(), ProtocolVersion::NEWEST);
     }
 
     proptest! {
@@ -245,6 +278,7 @@ mod tests {
             };
 
             prop_assert_eq!(classification.advertised(), expected);
+            prop_assert_eq!(classification.negotiated(), negotiated);
         }
     }
 }
