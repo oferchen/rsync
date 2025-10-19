@@ -453,7 +453,7 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(collected, message.to_bytes().unwrap());
     /// ```
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
-        let mut buffer = Vec::with_capacity(self.len());
+        let mut buffer = Vec::new();
         self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
