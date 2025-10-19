@@ -278,6 +278,7 @@ dependencies = [
 name = "rsync-core"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "rsync-protocol",
 ]
 
