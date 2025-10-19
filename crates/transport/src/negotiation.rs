@@ -340,6 +340,11 @@ trait NegotiationBufferAccess {
     }
 
     #[inline]
+    fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        self.buffer_ref().buffered_to_vec()
+    }
+
+    #[inline]
     fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         self.buffer_ref().copy_into_vec(target)
     }
@@ -408,6 +413,11 @@ trait NegotiationBufferAccess {
     #[inline]
     fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
         self.buffer_ref().buffered_remaining_vectored()
+    }
+
+    #[inline]
+    fn buffered_remaining_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        self.buffer_ref().buffered_remaining_to_vec()
     }
 
     #[inline]
@@ -659,6 +669,30 @@ impl<R> NegotiatedStream<R> {
         NegotiationBufferAccess::buffered(self)
     }
 
+    /// Collects the buffered negotiation transcript into an owned [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::buffered`] but allocates a new vector sized exactly for the
+    /// captured transcript. It reserves the necessary capacity via [`Vec::try_reserve_exact`]
+    /// internally, propagating allocation failures as [`TryReserveError`]. Callers that need to own
+    /// the replay bytes—for example to stash them in a log or retry a handshake—can use this method
+    /// without first preparing a scratch buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let owned = stream.buffered_to_vec().expect("allocation succeeds");
+    /// assert_eq!(owned.as_slice(), stream.buffered());
+    /// ```
+    #[must_use = "the owned buffer contains the negotiation transcript"]
+    pub fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        NegotiationBufferAccess::buffered_to_vec(self)
+    }
+
     /// Returns the buffered negotiation data split into vectored slices.
     ///
     /// The first slice contains the canonical legacy prefix (if present) while the second slice
@@ -709,6 +743,30 @@ impl<R> NegotiatedStream<R> {
         target: &mut Vec<u8>,
     ) -> Result<usize, TryReserveError> {
         NegotiationBufferAccess::copy_buffered_remaining_into_vec(self, target)
+    }
+
+    /// Collects the unread portion of the buffered negotiation transcript into a new [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::buffered_remainder`] but returns an owned buffer containing only
+    /// the bytes that still need to be replayed. Allocation failures are reported via
+    /// [`TryReserveError`], matching the semantics of [`Self::buffered_to_vec`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///     .expect("sniff succeeds");
+    /// let remainder = stream
+    ///     .buffered_remaining_to_vec()
+    ///     .expect("allocation succeeds");
+    /// assert_eq!(remainder.as_slice(), stream.buffered_remainder());
+    /// ```
+    #[must_use = "the owned buffer contains the unread negotiation transcript"]
+    pub fn buffered_remaining_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        NegotiationBufferAccess::buffered_remaining_to_vec(self)
     }
 
     /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
@@ -1892,10 +1950,30 @@ impl<R> NegotiatedStreamParts<R> {
         NegotiationBufferAccess::buffered_remainder(self)
     }
 
+    /// Collects the buffered remainder into an owned [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::buffered_remainder`] while returning an owned buffer. It is
+    /// particularly useful for diagnostics that snapshot the unread portion of the transcript without
+    /// mutating the decomposed parts.
+    #[must_use = "the owned buffer contains the unread negotiation transcript"]
+    pub fn buffered_remaining_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        NegotiationBufferAccess::buffered_remaining_to_vec(self)
+    }
+
     /// Returns the buffered bytes captured during sniffing.
     #[must_use]
     pub fn buffered(&self) -> &[u8] {
         NegotiationBufferAccess::buffered(self)
+    }
+
+    /// Collects the buffered negotiation bytes into an owned [`Vec<u8>`].
+    ///
+    /// The helper mirrors [`Self::buffered`] but allocates a new vector sized for the captured
+    /// transcript. Allocation failures propagate as [`TryReserveError`], matching the semantics of
+    /// [`NegotiatedStream::buffered_to_vec`].
+    #[must_use = "the owned buffer contains the negotiation transcript"]
+    pub fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        NegotiationBufferAccess::buffered_to_vec(self)
     }
 
     /// Returns the buffered negotiation data split into vectored slices.
@@ -2408,6 +2486,10 @@ impl NegotiationBuffer {
         NegotiationBufferedSlices::new(prefix, remainder)
     }
 
+    fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        self.buffered_vectored().to_vec()
+    }
+
     fn buffered_split(&self) -> (&[u8], &[u8]) {
         let prefix_len = self.sniffed_prefix_len();
         debug_assert!(prefix_len <= self.buffered.len());
@@ -2425,6 +2507,18 @@ impl NegotiationBuffer {
     fn buffered_remaining_vectored(&self) -> NegotiationBufferedSlices<'_> {
         let (prefix, remainder) = self.buffered_split();
         NegotiationBufferedSlices::new(prefix, remainder)
+    }
+
+    fn buffered_remaining_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
+        let remainder = self.buffered_remainder();
+        if remainder.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut buffer = Vec::new();
+        buffer.try_reserve_exact(remainder.len())?;
+        buffer.extend_from_slice(remainder);
+        Ok(buffer)
     }
 
     const fn sniffed_prefix_len(&self) -> usize {
@@ -3401,6 +3495,22 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_buffered_to_vec_matches_slice() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let owned = stream.buffered_to_vec().expect("allocation succeeds");
+        assert_eq!(owned.as_slice(), stream.buffered());
+    }
+
+    #[test]
+    fn negotiated_stream_buffered_remaining_to_vec_matches_slice() {
+        let stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let owned = stream
+            .buffered_remaining_to_vec()
+            .expect("allocation succeeds");
+        assert_eq!(owned.as_slice(), stream.buffered_remainder());
+    }
+
+    #[test]
     fn negotiated_stream_parts_reports_handshake_style_helpers() {
         let binary_parts = sniff_bytes(&[0x00, 0x12, 0x34])
             .expect("sniff succeeds")
@@ -3413,6 +3523,26 @@ mod tests {
             .into_parts();
         assert!(legacy_parts.is_legacy());
         assert!(!legacy_parts.is_binary());
+    }
+
+    #[test]
+    fn negotiated_stream_parts_buffered_to_vec_matches_slice() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nrest")
+            .expect("sniff succeeds")
+            .into_parts();
+        let owned = parts.buffered_to_vec().expect("allocation succeeds");
+        assert_eq!(owned.as_slice(), parts.buffered());
+    }
+
+    #[test]
+    fn negotiated_stream_parts_buffered_remaining_to_vec_matches_slice() {
+        let parts = sniff_bytes(b"@RSYNCD: 31.0\nrest")
+            .expect("sniff succeeds")
+            .into_parts();
+        let owned = parts
+            .buffered_remaining_to_vec()
+            .expect("allocation succeeds");
+        assert_eq!(owned.as_slice(), parts.buffered_remainder());
     }
 
     #[test]
