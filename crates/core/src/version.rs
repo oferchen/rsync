@@ -134,6 +134,25 @@ pub enum CompiledFeature {
 }
 
 impl CompiledFeature {
+    const fn label_eq(label: &str, expected: &str) -> bool {
+        let lhs = label.as_bytes();
+        let rhs = expected.as_bytes();
+
+        if lhs.len() != rhs.len() {
+            return false;
+        }
+
+        let mut index = 0;
+        while index < lhs.len() {
+            if lhs[index] != rhs[index] {
+                return false;
+            }
+            index += 1;
+        }
+
+        true
+    }
+
     /// Canonical ordering of optional capabilities as rendered in `--version` output.
     pub const ALL: [CompiledFeature; 5] = [
         CompiledFeature::Acl,
@@ -171,22 +190,36 @@ impl CompiledFeature {
     /// and used in `--version` output. It runs in constant time because the
     /// feature set is fixed and small, making it suitable for validating user
     /// supplied capability lists or regenerating [`CompiledFeature`] values from
-    /// documentation tables without allocating intermediate collections.
+    /// documentation tables without allocating intermediate collections. The
+    /// function is `const`, enabling compile-time validation of documentation
+    /// tables and other static metadata.
     ///
     /// # Examples
     ///
     /// ```
     /// use rsync_core::version::CompiledFeature;
     ///
-    /// assert_eq!(CompiledFeature::from_label("ACLs"), Some(CompiledFeature::Acl));
-    /// assert_eq!(CompiledFeature::from_label("unknown"), None);
+    /// const ACL: Option<CompiledFeature> = CompiledFeature::from_label("ACLs");
+    /// const UNKNOWN: Option<CompiledFeature> = CompiledFeature::from_label("unknown");
+    ///
+    /// assert_eq!(ACL, Some(CompiledFeature::Acl));
+    /// assert!(UNKNOWN.is_none());
     /// ```
     #[must_use]
-    pub fn from_label(label: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|feature| feature.label() == label)
+    pub const fn from_label(label: &str) -> Option<Self> {
+        if Self::label_eq(label, "ACLs") {
+            Some(Self::Acl)
+        } else if Self::label_eq(label, "xattrs") {
+            Some(Self::Xattr)
+        } else if Self::label_eq(label, "zstd") {
+            Some(Self::Zstd)
+        } else if Self::label_eq(label, "iconv") {
+            Some(Self::Iconv)
+        } else if Self::label_eq(label, "sd-notify") {
+            Some(Self::SdNotify)
+        } else {
+            None
+        }
     }
 
     /// Reports whether the feature was compiled into the current build.
@@ -608,6 +641,9 @@ pub fn compiled_features_display() -> CompiledFeaturesDisplay {
 mod tests {
     use super::*;
 
+    const ACL_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("ACLs");
+    const UNKNOWN_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("unknown");
+
     #[test]
     fn compiled_features_match_cfg_flags() {
         let features = compiled_features();
@@ -762,6 +798,12 @@ mod tests {
             Some(CompiledFeature::SdNotify)
         );
         assert_eq!(CompiledFeature::from_label("unknown"), None);
+    }
+
+    #[test]
+    fn from_label_const_results_match_runtime() {
+        assert_eq!(ACL_FROM_LABEL, Some(CompiledFeature::Acl));
+        assert!(UNKNOWN_FROM_LABEL.is_none());
     }
 
     #[test]
