@@ -71,7 +71,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::io::{self, Write};
 
-use rsync_core::message::{Message, MessageScratch};
+use rsync_core::message::{Message, MessageScratch, MessageSegments};
 
 /// Controls whether a [`MessageSink`] appends a trailing newline when writing messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -716,6 +716,69 @@ where
         self.render_message(message.borrow(), line_mode.append_newline())
     }
 
+    /// Streams pre-rendered [`MessageSegments`] into the underlying writer.
+    ///
+    /// The helper allows callers that already rendered a [`Message`] into vectored
+    /// slices (for example, to inspect or buffer them) to forward the segments
+    /// without requesting another render. The sink honours its configured
+    /// [`LineMode`] when deciding whether to append a trailing newline; callers
+    /// must indicate whether `segments` already include a newline slice via the
+    /// `segments_include_newline` flag. Passing `false` matches the common case of
+    /// invoking [`Message::as_segments`] with `include_newline` set to `false`.
+    ///
+    /// # Examples
+    ///
+    /// Forward vectored message segments and let the sink append the newline:
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, MessageScratch};
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let message = Message::info("phase complete");
+    /// let mut scratch = MessageScratch::new();
+    /// let segments = message.as_segments(&mut scratch, false);
+    /// let mut sink = MessageSink::new(Vec::new());
+    ///
+    /// sink.write_segments(&segments, false)?;
+    ///
+    /// assert_eq!(
+    ///     String::from_utf8(sink.into_inner()).unwrap(),
+    ///     "rsync info: phase complete\n"
+    /// );
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_segments(
+        &mut self,
+        segments: &MessageSegments<'_>,
+        segments_include_newline: bool,
+    ) -> io::Result<()> {
+        self.write_segments_with_mode(segments, self.line_mode, segments_include_newline)
+    }
+
+    /// Writes pre-rendered [`MessageSegments`] using an explicit [`LineMode`].
+    ///
+    /// This mirrors [`write_segments`](Self::write_segments) but allows callers to
+    /// override the newline behaviour for a single emission. The
+    /// `segments_include_newline` flag indicates whether the supplied segments
+    /// already contain a terminating newline (for example when rendered via
+    /// [`Message::as_segments`] with `include_newline = true`). When the flag is
+    /// `false` and the selected [`LineMode`] appends newlines, the sink writes the
+    /// trailing newline after streaming the segments.
+    pub fn write_segments_with_mode(
+        &mut self,
+        segments: &MessageSegments<'_>,
+        line_mode: LineMode,
+        segments_include_newline: bool,
+    ) -> io::Result<()> {
+        segments.write_to(&mut self.writer)?;
+
+        if line_mode.append_newline() && !segments_include_newline {
+            self.writer.write_all(b"\n")?;
+        }
+
+        Ok(())
+    }
+
     /// Writes each message from the iterator to the underlying writer.
     ///
     /// The iterator may yield borrowed or owned [`Message`] values. Items that
@@ -824,7 +887,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsync_core::message::Message;
+    use rsync_core::message::{Message, MessageScratch};
     use std::io::{self, Cursor, Write};
 
     #[derive(Default)]
@@ -1092,6 +1155,48 @@ mod tests {
         let buffer = sink.into_inner();
         let rendered = String::from_utf8(buffer).expect("utf-8");
         assert_eq!(rendered, "rsync info: phase one\nrsync info: phase two");
+    }
+
+    #[test]
+    fn write_segments_respects_sink_line_mode() {
+        let message = Message::info("phase complete");
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+
+        let mut sink = MessageSink::new(Vec::new());
+        sink.write_segments(&segments, false)
+            .expect("writing segments succeeds");
+
+        let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(rendered, "rsync info: phase complete\n");
+    }
+
+    #[test]
+    fn write_segments_with_mode_overrides_line_mode() {
+        let message = Message::info("phase complete");
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+
+        let mut sink = MessageSink::new(Vec::new());
+        sink.write_segments_with_mode(&segments, LineMode::WithoutNewline, false)
+            .expect("writing segments succeeds");
+
+        let output = sink.into_inner();
+        assert_eq!(output, b"rsync info: phase complete".to_vec());
+    }
+
+    #[test]
+    fn write_segments_avoids_double_newline_when_flag_set() {
+        let message = Message::info("phase complete");
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, true);
+
+        let mut sink = MessageSink::new(Vec::new());
+        sink.write_segments(&segments, true)
+            .expect("writing segments succeeds");
+
+        let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(rendered, "rsync info: phase complete\n");
     }
 
     #[test]
