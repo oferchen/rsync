@@ -471,7 +471,9 @@ impl<W> MessageSink<W> {
     /// The returned guard implements [`Deref`](std::ops::Deref) and [`DerefMut`](std::ops::DerefMut),
     /// allowing callers to treat it as a mutable reference to the sink. This mirrors upstream rsync's
     /// behaviour of disabling trailing newlines for progress updates while ensuring the original
-    /// configuration is reinstated once the guard is dropped.
+    /// configuration is reinstated once the guard is dropped. The guard carries a `#[must_use]`
+    /// attribute so ignoring the return value triggers a lint, preventing accidental one-line
+    /// overrides that would immediately revert to the previous mode.
     ///
     /// # Examples
     ///
@@ -490,6 +492,7 @@ impl<W> MessageSink<W> {
     /// assert!(output.starts_with("rsync info: phase one"));
     /// assert!(output.ends_with("done\n"));
     /// ```
+    #[must_use = "bind the guard to retain the temporary line mode override for its scope"]
     pub fn scoped_line_mode(&mut self, line_mode: LineMode) -> LineModeGuard<'_, W> {
         let previous = self.line_mode;
         self.line_mode = line_mode;
