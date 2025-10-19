@@ -9,6 +9,7 @@
 //! path also validate the other.
 
 use rsync_protocol::ProtocolVersion;
+use std::fmt;
 
 /// Classification of the protocol version advertised by a remote peer.
 ///
@@ -195,6 +196,26 @@ impl From<RemoteProtocolAdvertisement> for ProtocolVersion {
     /// ```
     fn from(classification: RemoteProtocolAdvertisement) -> Self {
         classification.negotiated()
+    }
+}
+
+impl fmt::Display for RemoteProtocolAdvertisement {
+    /// Formats the remote protocol announcement for diagnostics and logging.
+    ///
+    /// Supported advertisements render as `protocol <version>` whereas future
+    /// announcements indicate the raw value together with the clamped
+    /// [`ProtocolVersion`]. The format is intentionally concise so it can be
+    /// embedded within higher-level messages without further allocation or
+    /// string manipulation. The output is covered by unit tests to guarantee
+    /// stability for downstream consumers.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Supported(version) => write!(f, "protocol {}", version),
+            Self::Future {
+                advertised,
+                clamped,
+            } => write!(f, "future protocol {} (clamped to {})", advertised, clamped),
+        }
     }
 }
 
@@ -386,6 +407,15 @@ mod tests {
 
         assert_eq!(supported_version, ProtocolVersion::V31);
         assert_eq!(future_version, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn classification_display_is_stable() {
+        let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
+        let future = RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST);
+
+        assert_eq!(supported.to_string(), "protocol 31");
+        assert_eq!(future.to_string(), "future protocol 40 (clamped to 32)");
     }
 
     proptest! {
