@@ -1,4 +1,6 @@
-use crate::handshake_util::{local_cap_reduced_protocol, remote_advertisement_was_clamped};
+use crate::handshake_util::{
+    RemoteProtocolAdvertisement, local_cap_reduced_protocol, remote_advertisement_was_clamped,
+};
 use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
@@ -135,6 +137,22 @@ impl<R> BinaryHandshakeParts<R> {
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
         remote_advertisement_was_clamped(self.remote_advertised_protocol())
+    }
+
+    /// Returns the classification of the peer's protocol advertisement.
+    ///
+    /// When the peer announces a protocol within rsync's supported range the
+    /// classification contains the negotiated [`ProtocolVersion`]. Future
+    /// protocols are reported via the [`RemoteProtocolAdvertisement::Future`]
+    /// variant so higher layers can reference the raw number in diagnostics
+    /// while still observing that the negotiated session uses
+    /// [`ProtocolVersion::NEWEST`].
+    #[must_use]
+    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+        RemoteProtocolAdvertisement::from_raw(
+            self.remote_advertised_protocol(),
+            self.remote_protocol(),
+        )
     }
 
     /// Reports whether the negotiated protocol was reduced by the caller-specified cap.
@@ -431,6 +449,18 @@ impl<R> BinaryHandshake<R> {
     #[must_use]
     pub fn remote_protocol_was_clamped(&self) -> bool {
         remote_advertisement_was_clamped(self.remote_advertised_protocol())
+    }
+
+    /// Returns the classification of the peer's protocol advertisement.
+    ///
+    /// The helper mirrors [`BinaryHandshakeParts::remote_advertisement`] so the
+    /// wrapper and its decomposed form remain in sync.
+    #[must_use]
+    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+        RemoteProtocolAdvertisement::from_raw(
+            self.remote_advertised_protocol(),
+            self.remote_protocol(),
+        )
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
@@ -775,7 +805,9 @@ mod tests {
     use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer};
     use std::io::{self, Cursor, Read, Write};
 
-    #[derive(Debug)]
+    use crate::RemoteProtocolAdvertisement;
+
+    #[derive(Clone, Debug)]
     struct MemoryTransport {
         reader: Cursor<Vec<u8>>,
         written: Vec<u8>,
@@ -924,6 +956,10 @@ mod tests {
         assert_eq!(rebuilt.negotiated_protocol(), negotiated_protocol);
         assert_eq!(rebuilt.stream().decision(), NegotiationPrologue::Binary);
         assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
+        assert_eq!(
+            rebuilt.remote_advertisement(),
+            RemoteProtocolAdvertisement::Supported(remote_protocol)
+        );
     }
 
     fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
@@ -938,11 +974,20 @@ mod tests {
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
 
+        let parts = handshake.clone().into_parts();
+        assert_eq!(
+            parts.remote_advertisement(),
+            RemoteProtocolAdvertisement::Supported(remote_version)
+        );
         assert_eq!(handshake.remote_protocol(), remote_version);
         assert_eq!(handshake.negotiated_protocol(), remote_version);
         assert_eq!(
             handshake.remote_advertised_protocol(),
             u32::from(remote_version.as_u8())
+        );
+        assert_eq!(
+            handshake.remote_advertisement(),
+            RemoteProtocolAdvertisement::Supported(remote_version)
         );
         assert!(!handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
@@ -1141,6 +1186,10 @@ mod tests {
         assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
         assert_eq!(handshake.negotiated_protocol(), desired);
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
+        assert_eq!(
+            handshake.remote_advertisement(),
+            RemoteProtocolAdvertisement::Future(future_version)
+        );
 
         let parts = handshake.into_parts();
         assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
@@ -1148,6 +1197,10 @@ mod tests {
         assert_eq!(parts.remote_advertised_protocol(), future_version);
         assert!(parts.remote_protocol_was_clamped());
         assert!(parts.local_protocol_was_capped());
+        assert_eq!(
+            parts.remote_advertisement(),
+            RemoteProtocolAdvertisement::Future(future_version)
+        );
 
         let transport = parts.into_handshake().into_stream().into_inner();
         assert_eq!(transport.written(), &handshake_bytes(desired));
@@ -1166,6 +1219,10 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert!(handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
+        assert_eq!(
+            handshake.remote_advertisement(),
+            RemoteProtocolAdvertisement::Future(future_version)
+        );
     }
 
     #[test]
@@ -1180,6 +1237,10 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
         assert!(handshake.remote_protocol_was_clamped());
         assert!(!handshake.local_protocol_was_capped());
+        assert_eq!(
+            handshake.remote_advertisement(),
+            RemoteProtocolAdvertisement::Future(u32::MAX)
+        );
     }
 
     #[test]
@@ -1190,11 +1251,20 @@ mod tests {
 
         let handshake = negotiate_binary_session(transport, desired).expect("handshake succeeds");
 
+        let parts = handshake.clone().into_parts();
+        assert_eq!(
+            parts.remote_advertisement(),
+            RemoteProtocolAdvertisement::Supported(remote_version)
+        );
         assert_eq!(handshake.remote_protocol(), remote_version);
         assert_eq!(handshake.negotiated_protocol(), desired);
         assert_eq!(
             handshake.remote_advertised_protocol(),
             u32::from(remote_version.as_u8())
+        );
+        assert_eq!(
+            handshake.remote_advertisement(),
+            RemoteProtocolAdvertisement::Supported(remote_version)
         );
         assert!(!handshake.remote_protocol_was_clamped());
         assert!(handshake.local_protocol_was_capped());

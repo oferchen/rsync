@@ -10,6 +10,59 @@
 
 use rsync_protocol::ProtocolVersion;
 
+/// Classification of the protocol version advertised by a remote peer.
+///
+/// Binary and legacy daemon negotiations both record the verbatim protocol
+/// number announced by the peer alongside the clamped
+/// [`ProtocolVersion`] that will be used for the remainder of the
+/// session. When the advertisement exceeds the range supported by rsync
+/// 3.4.1 the negotiated value is clamped to
+/// [`ProtocolVersion::NEWEST`]. Higher layers frequently need to branch
+/// on whether the peer ran a supported protocol or merely announced a
+/// future release, so the classification is centralised here to ensure
+/// the binary and legacy flows remain in lockstep.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemoteProtocolAdvertisement {
+    /// The peer advertised a protocol within the supported range.
+    Supported(ProtocolVersion),
+    /// The peer announced a future protocol that required clamping.
+    Future(u32),
+}
+
+impl RemoteProtocolAdvertisement {
+    /// Returns `true` when the peer advertised a protocol within the supported range.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        matches!(self, Self::Supported(_))
+    }
+
+    /// Returns the negotiated [`ProtocolVersion`] when the advertisement was supported.
+    #[must_use]
+    pub const fn supported(self) -> Option<ProtocolVersion> {
+        match self {
+            Self::Supported(version) => Some(version),
+            Self::Future(_) => None,
+        }
+    }
+
+    /// Returns the raw protocol number announced by the peer when it exceeded the supported range.
+    #[must_use]
+    pub const fn future(self) -> Option<u32> {
+        match self {
+            Self::Supported(_) => None,
+            Self::Future(value) => Some(value),
+        }
+    }
+
+    pub(crate) fn from_raw(advertised: u32, clamped: ProtocolVersion) -> Self {
+        if remote_advertisement_was_clamped(advertised) {
+            Self::Future(advertised)
+        } else {
+            Self::Supported(clamped)
+        }
+    }
+}
+
 /// Reports whether a remote protocol advertisement was clamped to the newest supported value.
 ///
 /// Upstream rsync accepts peers that announce protocol numbers newer than it
@@ -75,6 +128,28 @@ mod tests {
     #[test]
     fn future_remote_versions_are_detected_even_with_local_caps() {
         assert!(remote_advertisement_was_clamped(40));
+    }
+
+    #[test]
+    fn classification_marks_supported_advertisements() {
+        let version = ProtocolVersion::from_supported(31).expect("supported protocol");
+        let advertised = u32::from(version.as_u8());
+        let classification = RemoteProtocolAdvertisement::from_raw(advertised, version);
+
+        assert!(classification.is_supported());
+        assert_eq!(classification.supported(), Some(version));
+        assert_eq!(classification.future(), None);
+    }
+
+    #[test]
+    fn classification_marks_future_advertisements() {
+        let advertised = 40u32;
+        let classification =
+            RemoteProtocolAdvertisement::from_raw(advertised, ProtocolVersion::NEWEST);
+
+        assert!(!classification.is_supported());
+        assert_eq!(classification.supported(), None);
+        assert_eq!(classification.future(), Some(advertised));
     }
 
     proptest! {
