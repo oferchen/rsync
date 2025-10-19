@@ -381,6 +381,44 @@ where
         Ok(())
     }
 
+    /// Writes each message from the iterator using the provided [`LineMode`].
+    ///
+    /// This mirrors [`write_all`](Self::write_all) but allows callers to batch messages that
+    /// require a specific newline mode without mutating the sink's configuration. The helper is
+    /// useful when most diagnostics should follow the sink's [`LineMode::WithNewline`] default yet a
+    /// subset (such as progress updates) must be rendered without trailing newlines.
+    ///
+    /// # Examples
+    ///
+    /// Render a batch of progress messages without altering the sink's line mode:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::{LineMode, MessageSink};
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// let progress = [
+    ///     Message::info("progress 1"),
+    ///     Message::info("progress 2"),
+    /// ];
+    ///
+    /// sink.write_all_with_mode(progress.iter(), LineMode::WithoutNewline)?;
+    /// assert_eq!(sink.line_mode(), LineMode::WithNewline);
+    /// let output = sink.into_inner();
+    /// assert_eq!(output, b"rsync info: progress 1rsync info: progress 2".to_vec());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_all_with_mode<I, M>(&mut self, messages: I, line_mode: LineMode) -> io::Result<()>
+    where
+        I: IntoIterator<Item = M>,
+        M: Borrow<Message>,
+    {
+        for message in messages {
+            self.write_with_mode(message.borrow(), line_mode)?;
+        }
+        Ok(())
+    }
+
     /// Flushes the underlying writer.
     pub fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
@@ -495,6 +533,34 @@ mod tests {
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
         assert_eq!(output.lines().count(), expected);
+    }
+
+    #[test]
+    fn write_all_with_mode_uses_explicit_line_mode() {
+        let mut sink = MessageSink::new(Vec::new());
+        let progress = [Message::info("p1"), Message::info("p2")];
+
+        sink.write_all_with_mode(progress.iter(), LineMode::WithoutNewline)
+            .expect("batch write succeeds");
+
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+
+        let output = sink.into_inner();
+        assert_eq!(output, b"rsync info: p1rsync info: p2".to_vec());
+    }
+
+    #[test]
+    fn write_all_with_mode_accepts_owned_messages() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithNewline);
+        let messages = vec![Message::info("one"), Message::info("two")];
+
+        sink.write_all_with_mode(messages, LineMode::WithoutNewline)
+            .expect("batch write succeeds");
+
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+
+        let output = sink.into_inner();
+        assert_eq!(output, b"rsync info: onersync info: two".to_vec());
     }
 
     #[test]
