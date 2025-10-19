@@ -1162,9 +1162,238 @@ impl VersionInfoConfig {
             supports_asm_md5: false,
         }
     }
+
+    /// Returns a builder for constructing customised capability configurations.
+    ///
+    /// The builder follows the fluent style used across the workspace, making it
+    /// straightforward to toggle capabilities while reusing the compile-time
+    /// defaults produced by [`VersionInfoConfig::new`]. Feature-gated entries
+    /// (ACLs, xattrs, and iconv) are automatically clamped so callers cannot
+    /// advertise support for capabilities that were not compiled in.
+    ///
+    /// # Examples
+    ///
+    /// Build a configuration that reports socketpair availability while keeping
+    /// the ACL flag consistent with the compiled feature set.
+    ///
+    /// ```
+    /// use rsync_core::version::{VersionInfoConfig, VersionInfoConfigBuilder};
+    ///
+    /// let config = VersionInfoConfig::builder()
+    ///     .supports_socketpairs(true)
+    ///     .supports_acls(true)
+    ///     .build();
+    ///
+    /// assert!(config.supports_socketpairs);
+    /// assert_eq!(config.supports_acls, cfg!(feature = "acl"));
+    /// ```
+    #[must_use]
+    pub const fn builder() -> VersionInfoConfigBuilder {
+        VersionInfoConfigBuilder::new()
+    }
+
+    /// Converts the configuration into a builder so individual fields can be
+    /// tweaked fluently.
+    #[must_use]
+    pub const fn to_builder(self) -> VersionInfoConfigBuilder {
+        VersionInfoConfigBuilder::from_config(self)
+    }
 }
 
 impl Default for VersionInfoConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Fluent builder for [`VersionInfoConfig`].
+///
+/// The builder starts from the compile-time defaults exposed by
+/// [`VersionInfoConfig::new`] and provides chainable setters for each capability
+/// flag. It clamps ACL, xattr, and iconv support to the compiled feature set so
+/// higher layers cannot misreport unavailable functionality.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VersionInfoConfigBuilder {
+    config: VersionInfoConfig,
+}
+
+impl VersionInfoConfigBuilder {
+    /// Creates a builder initialised with [`VersionInfoConfig::new`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            config: VersionInfoConfig::new(),
+        }
+    }
+
+    /// Creates a builder seeded with an existing configuration.
+    #[must_use]
+    pub const fn from_config(config: VersionInfoConfig) -> Self {
+        Self { config }
+    }
+
+    /// Enables or disables socketpair support.
+    #[must_use]
+    pub fn supports_socketpairs(mut self, enabled: bool) -> Self {
+        self.config.supports_socketpairs = enabled;
+        self
+    }
+
+    /// Enables or disables symbolic link preservation.
+    #[must_use]
+    pub fn supports_symlinks(mut self, enabled: bool) -> Self {
+        self.config.supports_symlinks = enabled;
+        self
+    }
+
+    /// Enables or disables symbolic link timestamp preservation.
+    #[must_use]
+    pub fn supports_symtimes(mut self, enabled: bool) -> Self {
+        self.config.supports_symtimes = enabled;
+        self
+    }
+
+    /// Enables or disables hard link preservation.
+    #[must_use]
+    pub fn supports_hardlinks(mut self, enabled: bool) -> Self {
+        self.config.supports_hardlinks = enabled;
+        self
+    }
+
+    /// Enables or disables hard link support for special files.
+    #[must_use]
+    pub fn supports_hardlink_specials(mut self, enabled: bool) -> Self {
+        self.config.supports_hardlink_specials = enabled;
+        self
+    }
+
+    /// Enables or disables hard link support for symbolic links.
+    #[must_use]
+    pub fn supports_hardlink_symlinks(mut self, enabled: bool) -> Self {
+        self.config.supports_hardlink_symlinks = enabled;
+        self
+    }
+
+    /// Enables or disables IPv6 transport support.
+    #[must_use]
+    pub fn supports_ipv6(mut self, enabled: bool) -> Self {
+        self.config.supports_ipv6 = enabled;
+        self
+    }
+
+    /// Enables or disables access-time preservation.
+    #[must_use]
+    pub fn supports_atimes(mut self, enabled: bool) -> Self {
+        self.config.supports_atimes = enabled;
+        self
+    }
+
+    /// Enables or disables batch file support.
+    #[must_use]
+    pub fn supports_batchfiles(mut self, enabled: bool) -> Self {
+        self.config.supports_batchfiles = enabled;
+        self
+    }
+
+    /// Enables or disables in-place update support.
+    #[must_use]
+    pub fn supports_inplace(mut self, enabled: bool) -> Self {
+        self.config.supports_inplace = enabled;
+        self
+    }
+
+    /// Enables or disables append mode support.
+    #[must_use]
+    pub fn supports_append(mut self, enabled: bool) -> Self {
+        self.config.supports_append = enabled;
+        self
+    }
+
+    /// Enables or disables ACL propagation, clamped to the compiled feature set.
+    #[must_use]
+    pub fn supports_acls(mut self, enabled: bool) -> Self {
+        self.config.supports_acls = enabled && cfg!(feature = "acl");
+        self
+    }
+
+    /// Enables or disables extended attribute propagation, clamped to the compiled feature set.
+    #[must_use]
+    pub fn supports_xattrs(mut self, enabled: bool) -> Self {
+        self.config.supports_xattrs = enabled && cfg!(feature = "xattr");
+        self
+    }
+
+    /// Sets the advertised secluded-argument mode.
+    #[must_use]
+    pub fn secluded_args_mode(mut self, mode: SecludedArgsMode) -> Self {
+        self.config.secluded_args_mode = mode;
+        self
+    }
+
+    /// Enables or disables iconv charset conversion, clamped to the compiled feature set.
+    #[must_use]
+    pub fn supports_iconv(mut self, enabled: bool) -> Self {
+        self.config.supports_iconv = enabled && cfg!(feature = "iconv");
+        self
+    }
+
+    /// Enables or disables preallocation support.
+    #[must_use]
+    pub fn supports_prealloc(mut self, enabled: bool) -> Self {
+        self.config.supports_prealloc = enabled;
+        self
+    }
+
+    /// Enables or disables `--stop-at` style cut-off support.
+    #[must_use]
+    pub fn supports_stop_at(mut self, enabled: bool) -> Self {
+        self.config.supports_stop_at = enabled;
+        self
+    }
+
+    /// Enables or disables change-time preservation.
+    #[must_use]
+    pub fn supports_crtimes(mut self, enabled: bool) -> Self {
+        self.config.supports_crtimes = enabled;
+        self
+    }
+
+    /// Enables or disables SIMD-accelerated rolling checksums.
+    #[must_use]
+    pub fn supports_simd_roll(mut self, enabled: bool) -> Self {
+        self.config.supports_simd_roll = enabled;
+        self
+    }
+
+    /// Enables or disables assembly-accelerated rolling checksums.
+    #[must_use]
+    pub fn supports_asm_roll(mut self, enabled: bool) -> Self {
+        self.config.supports_asm_roll = enabled;
+        self
+    }
+
+    /// Enables or disables OpenSSL-backed cryptography support.
+    #[must_use]
+    pub fn supports_openssl_crypto(mut self, enabled: bool) -> Self {
+        self.config.supports_openssl_crypto = enabled;
+        self
+    }
+
+    /// Enables or disables assembly-accelerated MD5.
+    #[must_use]
+    pub fn supports_asm_md5(mut self, enabled: bool) -> Self {
+        self.config.supports_asm_md5 = enabled;
+        self
+    }
+
+    /// Finalises the builder and returns the constructed configuration.
+    #[must_use]
+    pub const fn build(self) -> VersionInfoConfig {
+        self.config
+    }
+}
+
+impl Default for VersionInfoConfigBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -1354,14 +1583,8 @@ impl VersionInfoReport {
             capability_entry("symlinks", config.supports_symlinks),
             capability_entry("symtimes", config.supports_symtimes),
             capability_entry("hardlinks", config.supports_hardlinks),
-            capability_entry(
-                "hardlink-specials",
-                config.supports_hardlink_specials,
-            ),
-            capability_entry(
-                "hardlink-symlinks",
-                config.supports_hardlink_symlinks,
-            ),
+            capability_entry("hardlink-specials", config.supports_hardlink_specials),
+            capability_entry("hardlink-symlinks", config.supports_hardlink_symlinks),
             capability_entry("IPv6", config.supports_ipv6),
             capability_entry("atimes", config.supports_atimes),
             capability_entry("batchfiles", config.supports_batchfiles),
@@ -1369,9 +1592,7 @@ impl VersionInfoReport {
             capability_entry("append", config.supports_append),
             capability_entry("ACLs", config.supports_acls),
             capability_entry("xattrs", config.supports_xattrs),
-            InfoItem::Entry(Cow::Borrowed(
-                config.secluded_args_mode.label(),
-            )),
+            InfoItem::Entry(Cow::Borrowed(config.secluded_args_mode.label())),
             capability_entry("iconv", config.supports_iconv),
             capability_entry("prealloc", config.supports_prealloc),
             capability_entry("stop-at", config.supports_stop_at),
@@ -1379,10 +1600,7 @@ impl VersionInfoReport {
             InfoItem::Section("Optimizations"),
             capability_entry("SIMD-roll", config.supports_simd_roll),
             capability_entry("asm-roll", config.supports_asm_roll),
-            capability_entry(
-                "openssl-crypto",
-                config.supports_openssl_crypto,
-            ),
+            capability_entry("openssl-crypto", config.supports_openssl_crypto),
             capability_entry("asm-MD5", config.supports_asm_md5),
         ]
     }
@@ -1571,6 +1789,79 @@ mod tests {
         let display = compiled_features_display();
         assert_eq!(display.features(), compiled_features().as_slice());
         assert_eq!(display.is_empty(), compiled_features().is_empty());
+    }
+
+    #[test]
+    fn version_info_config_builder_supports_chaining() {
+        let config = VersionInfoConfig::builder()
+            .supports_socketpairs(true)
+            .supports_symlinks(true)
+            .supports_symtimes(true)
+            .supports_hardlinks(true)
+            .supports_hardlink_specials(true)
+            .supports_hardlink_symlinks(true)
+            .supports_ipv6(true)
+            .supports_atimes(true)
+            .supports_batchfiles(true)
+            .supports_inplace(true)
+            .supports_append(true)
+            .supports_acls(true)
+            .supports_xattrs(true)
+            .secluded_args_mode(SecludedArgsMode::Default)
+            .supports_iconv(true)
+            .supports_prealloc(true)
+            .supports_stop_at(true)
+            .supports_crtimes(true)
+            .supports_simd_roll(true)
+            .supports_asm_roll(true)
+            .supports_openssl_crypto(true)
+            .supports_asm_md5(true)
+            .build();
+
+        assert!(config.supports_socketpairs);
+        assert!(config.supports_symlinks);
+        assert!(config.supports_symtimes);
+        assert!(config.supports_hardlinks);
+        assert!(config.supports_hardlink_specials);
+        assert!(config.supports_hardlink_symlinks);
+        assert!(config.supports_ipv6);
+        assert!(config.supports_atimes);
+        assert!(config.supports_batchfiles);
+        assert!(config.supports_inplace);
+        assert!(config.supports_append);
+        assert_eq!(config.supports_acls, cfg!(feature = "acl"));
+        assert_eq!(config.supports_xattrs, cfg!(feature = "xattr"));
+        assert_eq!(config.secluded_args_mode, SecludedArgsMode::Default);
+        assert_eq!(config.supports_iconv, cfg!(feature = "iconv"));
+        assert!(config.supports_prealloc);
+        assert!(config.supports_stop_at);
+        assert!(config.supports_crtimes);
+        assert!(config.supports_simd_roll);
+        assert!(config.supports_asm_roll);
+        assert!(config.supports_openssl_crypto);
+        assert!(config.supports_asm_md5);
+    }
+
+    #[test]
+    fn version_info_config_to_builder_round_trips() {
+        let original = VersionInfoConfig::builder()
+            .supports_socketpairs(true)
+            .supports_ipv6(true)
+            .supports_prealloc(true)
+            .build();
+
+        let updated = original
+            .to_builder()
+            .supports_socketpairs(false)
+            .supports_ipv6(false)
+            .build();
+
+        assert!(original.supports_socketpairs);
+        assert!(original.supports_ipv6);
+        assert!(original.supports_prealloc);
+        assert!(!updated.supports_socketpairs);
+        assert!(!updated.supports_ipv6);
+        assert!(updated.supports_prealloc);
     }
 
     #[test]
