@@ -1655,6 +1655,94 @@ impl Message {
         &self.text
     }
 
+    /// Exposes borrowed views over the message components without consuming `self`.
+    ///
+    /// The returned tuple provides copies of the scalar fields together with
+    /// references to the textual payload and optional source location. This is
+    /// useful when call sites need to inspect or branch on the contents of a
+    /// [`Message`] while retaining ownership so it can still be emitted. The
+    /// helper avoids cloning the payload: the returned string slice borrows the
+    /// existing [`Cow`] storage in place.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role, Severity}, message_source};
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let (severity, code, text, role, source) = message.parts();
+    ///
+    /// assert_eq!(severity, Severity::Error);
+    /// assert_eq!(code, Some(23));
+    /// assert_eq!(text, "delta-transfer failure");
+    /// assert_eq!(role, Some(Role::Sender));
+    /// assert!(source.is_some());
+    ///
+    /// // The original message is still available for emission.
+    /// assert!(message.to_string().contains("rsync error:"));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn parts(
+        &self,
+    ) -> (
+        Severity,
+        Option<i32>,
+        &str,
+        Option<Role>,
+        Option<&SourceLocation>,
+    ) {
+        (
+            self.severity,
+            self.code,
+            self.text.as_ref(),
+            self.role,
+            self.source.as_ref(),
+        )
+    }
+
+    /// Consumes the message and returns owned components.
+    ///
+    /// Unlike [`parts`](Self::parts), this helper transfers ownership of the
+    /// textual payload and optional [`SourceLocation`], making it convenient to
+    /// persist diagnostics or feed them into structured logging sinks that take
+    /// ownership. The returned [`Cow`] retains its original borrowing mode, so
+    /// zero-copy payloads remain borrowed unless the caller subsequently needs a
+    /// mutable string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::{Message, Role, Severity}, message_source};
+    ///
+    /// let message = Message::warning("vanished files detected")
+    ///     .with_code(24)
+    ///     .with_role(Role::Receiver)
+    ///     .with_source(message_source!());
+    /// let (severity, code, text, role, source) = message.into_parts();
+    ///
+    /// assert_eq!(severity, Severity::Warning);
+    /// assert_eq!(code, Some(24));
+    /// assert_eq!(text.as_ref(), "vanished files detected");
+    /// assert_eq!(role, Some(Role::Receiver));
+    /// assert!(source.is_some());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Severity,
+        Option<i32>,
+        Cow<'static, str>,
+        Option<Role>,
+        Option<SourceLocation>,
+    ) {
+        (self.severity, self.code, self.text, self.role, self.source)
+    }
+
     /// Replaces the message payload with the provided text.
     ///
     /// The helper keeps the message's severity, exit code, role, and source location untouched,
@@ -2631,6 +2719,44 @@ mod tests {
         assert_eq!(updated.role(), Some(Role::Sender));
         assert_eq!(updated.source(), original.source());
         assert_eq!(original.text(), "delta-transfer failure");
+    }
+
+    #[test]
+    fn message_parts_provides_borrowed_views() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+
+        let (severity, code, text, role, source) = message.parts();
+
+        assert_eq!(severity, Severity::Error);
+        assert_eq!(code, Some(11));
+        assert_eq!(text, "error in file IO");
+        assert_eq!(role, Some(Role::Receiver));
+        assert_eq!(source, message.source());
+
+        // Ensure the original message is still usable after inspecting it.
+        assert!(
+            message
+                .to_string()
+                .contains("rsync error: error in file IO")
+        );
+    }
+
+    #[test]
+    fn message_into_parts_transfers_owned_components() {
+        let message = Message::warning("vanished files detected")
+            .with_code(24)
+            .with_role(Role::Generator)
+            .with_source(message_source!());
+
+        let (severity, code, text, role, source) = message.into_parts();
+
+        assert_eq!(severity, Severity::Warning);
+        assert_eq!(code, Some(24));
+        assert_eq!(text, Cow::Borrowed("vanished files detected"));
+        assert_eq!(role, Some(Role::Generator));
+        assert!(source.is_some());
     }
 
     #[test]
