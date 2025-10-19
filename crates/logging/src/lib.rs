@@ -216,6 +216,41 @@ impl<W> MessageSink<W> {
         self.writer
     }
 
+    /// Maps the sink's writer into a different type while preserving the existing
+    /// scratch buffer and [`LineMode`].
+    ///
+    /// The helper consumes the sink, applies the provided conversion to the
+    /// underlying writer, and returns a new sink that reuses the previous
+    /// [`MessageScratch`]. This mirrors patterns such as `BufWriter::into_inner`
+    /// where callers often want to hand ownership of the buffered writer to a
+    /// higher layer without reinitialising per-sink state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use rsync_core::message::Message;
+    /// # use rsync_logging::{LineMode, MessageSink};
+    /// # use std::io::Cursor;
+    /// let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+    /// let mut sink = sink.map_writer(Cursor::new);
+    /// sink.write(&Message::info("ready"))?;
+    /// let cursor = sink.into_inner();
+    /// assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    #[must_use]
+    pub fn map_writer<F, W2>(self, f: F) -> MessageSink<W2>
+    where
+        F: FnOnce(W) -> W2,
+    {
+        let MessageSink {
+            writer,
+            scratch,
+            line_mode,
+        } = self;
+        MessageSink::with_parts(f(writer), scratch, line_mode)
+    }
+
     /// Consumes the sink and returns the writer, scratch buffer, and line mode.
     ///
     /// The returned [`MessageScratch`] can be reused to build another
@@ -379,6 +414,20 @@ mod tests {
 
         let output = sink.into_inner();
         assert_eq!(output, b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn map_writer_preserves_configuration() {
+        use std::io::Cursor;
+
+        let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let mut sink = sink.map_writer(Cursor::new);
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+
+        sink.write(&Message::info("ready")).expect("write succeeds");
+
+        let cursor = sink.into_inner();
+        assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
     }
 
     #[test]
