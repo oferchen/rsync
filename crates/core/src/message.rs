@@ -2094,6 +2094,36 @@ mod tests {
     }
 
     #[test]
+    fn strip_normalized_workspace_prefix_returns_current_dir_for_exact_match() {
+        let root = "/workspace/project";
+        let stripped = super::strip_normalized_workspace_prefix(root, root)
+            .expect("identical paths should collapse to the current directory");
+
+        assert_eq!(stripped, ".");
+    }
+
+    #[test]
+    fn strip_normalized_workspace_prefix_accepts_trailing_separator_on_root() {
+        let root = "/workspace/project/";
+        let path = "/workspace/project/crates/core/src/lib.rs";
+        let stripped = super::strip_normalized_workspace_prefix(path, root)
+            .expect("child paths should remain accessible when the root ends with a separator");
+
+        assert_eq!(stripped, "crates/core/src/lib.rs");
+    }
+
+    #[test]
+    fn strip_normalized_workspace_prefix_rejects_partial_component_matches() {
+        let root = "/workspace/project";
+        let path = "/workspace/project-old/src/lib.rs";
+
+        assert!(
+            super::strip_normalized_workspace_prefix(path, root).is_none(),
+            "differing path segments must not be treated as the same workspace",
+        );
+    }
+
+    #[test]
     fn escaping_workspace_root_renders_absolute_path() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let escape = Path::new("../../../../outside.rs");
