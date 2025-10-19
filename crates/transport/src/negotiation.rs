@@ -204,6 +204,54 @@ impl<'a> NegotiationBufferedSlices<'a> {
         Ok(buffer)
     }
 
+    /// Copies the buffered bytes into the provided destination slice.
+    ///
+    /// The helper mirrors [`Self::extend_vec`] but writes directly into an existing
+    /// buffer. When `dest` does not provide enough capacity for the replay
+    /// prefix and payload, the method returns a [`CopyToSliceError`] describing
+    /// the required length. Callers can resize their storage and retry. On
+    /// success the number of bytes written equals the total buffered length and
+    /// any remaining capacity in `dest` is left untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::sniff_negotiation_stream;
+    /// use std::io::Cursor;
+    ///
+    /// let stream =
+    ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
+    ///         .expect("sniff succeeds");
+    /// let slices = stream.buffered_vectored();
+    /// let mut buffer = [0u8; 32];
+    /// let copied = slices.copy_to_slice(&mut buffer)?;
+    ///
+    /// assert_eq!(copied, stream.buffered().len());
+    /// assert_eq!(&buffer[..copied], &stream.buffered()[..]);
+    /// # Ok::<(), rsync_transport::CopyToSliceError>(())
+    /// ```
+    #[must_use = "inspect the result to discover how many bytes were copied"]
+    pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
+        if self.is_empty() {
+            return Ok(0);
+        }
+
+        let required = self.total_len;
+        if dest.len() < required {
+            return Err(CopyToSliceError::new(required, dest.len()));
+        }
+
+        let mut offset = 0usize;
+        for slice in self.as_slices() {
+            let bytes = slice.as_ref();
+            let end = offset + bytes.len();
+            dest[offset..end].copy_from_slice(bytes);
+            offset = end;
+        }
+
+        Ok(required)
+    }
+
     /// Streams the buffered negotiation data into the provided writer.
     ///
     /// The helper prefers vectored I/O when the writer advertises support,
@@ -315,6 +363,43 @@ impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
         self.segments.into_iter().take(self.count)
     }
 }
+
+/// Error returned when [`NegotiationBufferedSlices::copy_to_slice`] receives an undersized buffer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CopyToSliceError {
+    required: usize,
+    provided: usize,
+}
+
+impl CopyToSliceError {
+    const fn new(required: usize, provided: usize) -> Self {
+        Self { required, provided }
+    }
+
+    /// Number of bytes required to store the buffered negotiation transcript.
+    #[must_use]
+    pub const fn required(self) -> usize {
+        self.required
+    }
+
+    /// Number of bytes supplied by the caller.
+    #[must_use]
+    pub const fn provided(self) -> usize {
+        self.provided
+    }
+}
+
+impl fmt::Display for CopyToSliceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "buffer length {} is insufficient for negotiation transcript requiring {} bytes",
+            self.provided, self.required
+        )
+    }
+}
+
+impl std::error::Error for CopyToSliceError {}
 
 trait NegotiationBufferAccess {
     fn buffer_ref(&self) -> &NegotiationBuffer;
@@ -3271,6 +3356,52 @@ mod tests {
         assert_eq!(writer.vectored_calls(), 2);
         assert_eq!(writer.write_calls(), 0);
         assert_eq!(writer.writes(), expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_copy_to_slice_copies_bytes() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" 31.0\nreply";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut buffer = [0u8; 32];
+
+        let copied = slices
+            .copy_to_slice(&mut buffer)
+            .expect("buffer has enough capacity");
+
+        assert_eq!(copied, prefix.len() + remainder.len());
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(prefix);
+        expected.extend_from_slice(remainder);
+
+        assert_eq!(&buffer[..copied], expected.as_slice());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_copy_to_slice_reports_required_length() {
+        let slices = NegotiationBufferedSlices::new(b"@RSYNCD:", b" 31.0\nreply");
+        let mut buffer = [0u8; 4];
+
+        let err = slices
+            .copy_to_slice(&mut buffer)
+            .expect_err("buffer is too small");
+
+        assert!(err.required() > err.provided());
+        assert_eq!(err.provided(), buffer.len());
+    }
+
+    #[test]
+    fn negotiation_buffered_slices_copy_to_slice_handles_empty_transcript() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let mut buffer = [0u8; 1];
+
+        let copied = slices
+            .copy_to_slice(&mut buffer)
+            .expect("empty transcript requires no space");
+
+        assert_eq!(copied, 0);
+        assert_eq!(buffer[0], 0);
     }
 
     #[test]
