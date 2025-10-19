@@ -230,6 +230,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///
     /// assert_eq!(replay, stream.buffered());
     /// ```
+    #[must_use = "ignoring the result would drop I/O errors emitted while replaying the transcript"]
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let slices = self.as_slices();
 
@@ -1109,6 +1110,7 @@ impl<R> NegotiatedStream<R> {
     /// The closure returns the replacement reader on success or a tuple containing the error and
     /// original reader on failure. The latter allows callers to recover the original
     /// [`NegotiatedStream`] without losing any replay bytes.
+    #[must_use = "the result contains either the mapped stream or the preserved error and original stream"]
     pub fn try_map_inner<F, T, E>(
         self,
         map: F,
@@ -1149,6 +1151,7 @@ impl<R> NegotiatedStream<R> {
     /// assert_eq!(replay, b"@RSYNCD: 31.0\nreply");
     /// ```
     #[doc(alias = "try_clone")]
+    #[must_use = "the result reports whether cloning the inner reader succeeded"]
     pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStream<T>, E>
     where
         F: FnOnce(&R) -> Result<T, E>,
@@ -1907,6 +1910,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// allowing callers to rebuild a sniffer without replaying the underlying
     /// transport. This keeps the high-level session APIs aligned with the
     /// protocol crate helpers that operate on sniffers.
+    #[must_use = "the result indicates whether the sniffer could be rehydrated without reallocating"]
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -2241,6 +2245,7 @@ impl<R> NegotiatedStreamParts<R> {
     ///
     /// When the mapping fails the original reader is returned alongside the error, ensuring callers
     /// retain access to the sniffed bytes without needing to re-run negotiation detection.
+    #[must_use = "the result contains either the mapped parts or the preserved error and original parts"]
     pub fn try_map_inner<F, T, E>(
         self,
         map: F,
@@ -2301,6 +2306,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// assert_eq!(replay, b"@RSYNCD: 30.0\nhello");
     /// ```
     #[doc(alias = "try_clone")]
+    #[must_use = "the result reports whether cloning the inner reader succeeded"]
     pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStreamParts<T>, E>
     where
         F: FnOnce(&R) -> Result<T, E>,
@@ -2709,6 +2715,7 @@ impl<R> NegotiatedStreamParts<R> {
 /// Returns [`io::ErrorKind::UnexpectedEof`] if the stream ends before a
 /// negotiation style can be determined or propagates any underlying I/O error
 /// reported by the reader.
+#[must_use = "the returned stream holds the buffered negotiation state and must be consumed"]
 pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStream<R>> {
     let mut sniffer = NegotiationPrologueSniffer::new();
     sniff_negotiation_stream_with_sniffer(reader, &mut sniffer)
@@ -2721,6 +2728,7 @@ pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStre
 /// higher layer already maintains a pool of reusable sniffers. The sniffer is
 /// reset to guarantee stale state from previous sessions is discarded before
 /// the new transport is observed.
+#[must_use = "the returned stream holds the buffered negotiation state and must be consumed"]
 pub fn sniff_negotiation_stream_with_sniffer<R: Read>(
     mut reader: R,
     sniffer: &mut NegotiationPrologueSniffer,
