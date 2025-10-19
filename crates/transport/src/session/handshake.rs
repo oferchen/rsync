@@ -144,7 +144,7 @@ impl<R> SessionHandshake<R> {
     ///
     /// impl Loopback {
     ///     fn new(advertised: ProtocolVersion) -> Self {
-    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+    ///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
     ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
     ///     }
     /// }
@@ -293,14 +293,14 @@ impl<R> SessionHandshake<R> {
     /// }
     ///
     /// let protocol = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
+    /// let transport = Loopback::new(u32::from(protocol.as_u8()).to_be_bytes());
     /// let raw = negotiate_session(transport, protocol)
     ///     .unwrap()
     ///     .into_inner();
     ///
     /// // The returned transport is the original stream, including any bytes the
     /// // client wrote while negotiating.
-    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_le_bytes());
+    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_be_bytes());
     /// ```
     #[must_use]
     pub fn into_inner(self) -> R {
@@ -624,7 +624,7 @@ where
 ///
 /// impl Loopback {
 ///     fn new(advertised: ProtocolVersion) -> Self {
-///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
 ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
 ///     }
 /// }

@@ -56,7 +56,7 @@ impl Write for MemoryTransport {
 }
 
 fn binary_handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
-    u32::from(version.as_u8()).to_le_bytes()
+    u32::from(version.as_u8()).to_be_bytes()
 }
 
 #[test]
@@ -724,7 +724,7 @@ fn try_map_stream_inner_preserves_original_handshake_on_error() {
 #[test]
 fn session_reports_clamped_binary_future_version() {
     let future_version = 40u32;
-    let transport = MemoryTransport::new(&future_version.to_le_bytes());
+    let transport = MemoryTransport::new(&future_version.to_be_bytes());
 
     let handshake = negotiate_session(transport, ProtocolVersion::NEWEST)
         .expect("binary handshake clamps future versions");
