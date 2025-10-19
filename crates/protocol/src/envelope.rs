@@ -664,7 +664,7 @@ impl MessageHeader {
     ///
     /// assert_eq!(decoded, original);
     /// ```
-    #[must_use]
+    #[must_use = "Discard the decoded header only after handling potential validation errors"]
     #[inline]
     pub const fn from_raw(raw: u32) -> Result<Self, EnvelopeError> {
         let tag = (raw >> 24) as u8;
