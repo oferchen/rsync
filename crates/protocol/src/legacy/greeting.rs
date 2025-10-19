@@ -121,6 +121,35 @@ impl<'a> LegacyDaemonGreeting<'a> {
         DigestListTokens::new(self.digest_list())
     }
 
+    /// Reports whether the daemon advertised support for the specified digest algorithm.
+    ///
+    /// The comparison follows upstream rsync's behaviour by matching ASCII tokens without
+    /// allocating new strings. Whitespace surrounding the query is ignored and matching is
+    /// case-insensitive because the daemon may emit lowercase names while callers often
+    /// canonicalise constants using uppercase letters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::parse_legacy_daemon_greeting_details;
+    ///
+    /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
+    /// assert!(greeting.supports_digest("md5"));
+    /// assert!(greeting.supports_digest("MD4"));
+    /// assert!(!greeting.supports_digest("sha1"));
+    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn supports_digest(&self, name: &str) -> bool {
+        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        self.digest_tokens()
+            .any(|token| token.eq_ignore_ascii_case(trimmed))
+    }
+
     /// Converts the borrowed greeting into an owned representation.
     ///
     /// Legacy negotiation flows often parse the greeting while the underlying
@@ -287,6 +316,22 @@ impl LegacyDaemonGreetingOwned {
     #[must_use]
     pub fn digest_tokens(&self) -> DigestListTokens<'_> {
         DigestListTokens::new(self.digest_list())
+    }
+
+    /// Reports whether the daemon advertised support for the specified digest algorithm.
+    ///
+    /// This mirrors [`LegacyDaemonGreeting::supports_digest`] while borrowing from the owned
+    /// string, allowing callers that retain the parsed metadata to perform capability checks
+    /// without re-parsing the original banner.
+    #[must_use]
+    pub fn supports_digest(&self, name: &str) -> bool {
+        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        self.digest_tokens()
+            .any(|token| token.eq_ignore_ascii_case(trimmed))
     }
 
     /// Returns a borrowed representation of the greeting.
@@ -675,6 +720,21 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_greeting_reports_supported_digests() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")
+            .expect("digest list should parse");
+
+        assert!(greeting.supports_digest("md5"));
+        assert!(greeting.supports_digest(" MD4 "));
+        assert!(!greeting.supports_digest("sha1"));
+        assert!(!greeting.supports_digest(""));
+
+        let no_digest =
+            parse_legacy_daemon_greeting_details("@RSYNCD: 29\n").expect("no digest list");
+        assert!(!no_digest.supports_digest("md5"));
+    }
+
+    #[test]
     fn greeting_details_records_absence_of_subprotocol_for_old_versions() {
         let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 29\n")
             .expect("old protocols may omit subprotocol");
@@ -713,6 +773,22 @@ mod tests {
             LegacyDaemonGreetingOwned::from_parts(28, None, None).expect("no digest list");
         let empty: Vec<_> = no_digest.digest_tokens().collect();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn owned_greeting_reports_supported_digests() {
+        let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md4 md5\n")
+            .expect("digest list should parse")
+            .into_owned();
+
+        assert!(greeting.supports_digest("md4"));
+        assert!(greeting.supports_digest("MD5"));
+        assert!(!greeting.supports_digest("sha1"));
+
+        let no_digest = parse_legacy_daemon_greeting_details("@RSYNCD: 30.0\n")
+            .expect("no digest list")
+            .into_owned();
+        assert!(!no_digest.supports_digest("md5"));
     }
 
     #[test]
