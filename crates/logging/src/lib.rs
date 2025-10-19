@@ -225,6 +225,48 @@ pub struct MessageSink<W> {
     line_mode: LineMode,
 }
 
+/// RAII guard that temporarily overrides a [`MessageSink`]'s [`LineMode`].
+///
+/// Instances of this guard are created by [`MessageSink::scoped_line_mode`]. While the guard is
+/// alive, all writes issued through it or the underlying sink use the scoped line mode. Dropping the
+/// guard automatically restores the previous line mode, mirroring upstream rsync's practice of
+/// toggling newline behaviour when rendering progress updates. The guard implements
+/// [`Deref`](std::ops::Deref) and [`DerefMut`](std::ops::DerefMut) so callers can seamlessly invoke
+/// sink methods without additional boilerplate.
+#[must_use = "dropping the guard immediately restores the previous line mode"]
+pub struct LineModeGuard<'a, W> {
+    sink: &'a mut MessageSink<W>,
+    previous: LineMode,
+}
+
+impl<'a, W> LineModeGuard<'a, W> {
+    /// Returns the [`LineMode`] that will be restored when the guard is dropped.
+    #[must_use]
+    pub const fn previous_line_mode(&self) -> LineMode {
+        self.previous
+    }
+}
+
+impl<'a, W> Drop for LineModeGuard<'a, W> {
+    fn drop(&mut self) {
+        self.sink.line_mode = self.previous;
+    }
+}
+
+impl<'a, W> std::ops::Deref for LineModeGuard<'a, W> {
+    type Target = MessageSink<W>;
+
+    fn deref(&self) -> &Self::Target {
+        self.sink
+    }
+}
+
+impl<'a, W> std::ops::DerefMut for LineModeGuard<'a, W> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.sink
+    }
+}
+
 /// Error returned by [`MessageSink::try_map_writer`] when the conversion closure fails.
 ///
 /// The structure preserves ownership of the original [`MessageSink`] together with the
@@ -421,6 +463,39 @@ impl<W> MessageSink<W> {
     /// Updates the [`LineMode`] used for subsequent writes.
     pub fn set_line_mode(&mut self, line_mode: LineMode) {
         self.line_mode = line_mode;
+    }
+
+    /// Temporarily overrides the sink's [`LineMode`], restoring the previous value on drop.
+    ///
+    /// The returned guard implements [`Deref`](std::ops::Deref) and [`DerefMut`](std::ops::DerefMut),
+    /// allowing callers to treat it as a mutable reference to the sink. This mirrors upstream rsync's
+    /// behaviour of disabling trailing newlines for progress updates while ensuring the original
+    /// configuration is reinstated once the guard is dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::{LineMode, MessageSink};
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// {
+    ///     let mut guard = sink.scoped_line_mode(LineMode::WithoutNewline);
+    ///     guard.write(&Message::info("phase one")).unwrap();
+    ///     guard.write(&Message::info("phase two")).unwrap();
+    /// }
+    /// sink.write(&Message::info("done")).unwrap();
+    /// let output = String::from_utf8(sink.into_inner()).unwrap();
+    /// assert!(output.starts_with("rsync info: phase one"));
+    /// assert!(output.ends_with("done\n"));
+    /// ```
+    pub fn scoped_line_mode(&mut self, line_mode: LineMode) -> LineModeGuard<'_, W> {
+        let previous = self.line_mode;
+        self.line_mode = line_mode;
+        LineModeGuard {
+            sink: self,
+            previous,
+        }
     }
 
     /// Borrows the underlying writer.
@@ -1109,6 +1184,47 @@ mod tests {
 
         let buffer = sink.into_inner();
         assert_eq!(buffer, b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn scoped_line_mode_restores_previous_configuration() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        {
+            let mut guard = sink.scoped_line_mode(LineMode::WithNewline);
+            assert_eq!(guard.previous_line_mode(), LineMode::WithoutNewline);
+            guard
+                .write(&Message::info("transient"))
+                .expect("write succeeds");
+        }
+
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+        sink.write(&Message::info("steady"))
+            .expect("write succeeds");
+
+        let output = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(output, "rsync info: transient\nrsync info: steady");
+    }
+
+    #[test]
+    fn scoped_line_mode_controls_rendering_within_scope() {
+        let mut sink = MessageSink::new(Vec::new());
+        {
+            let mut guard = sink.scoped_line_mode(LineMode::WithoutNewline);
+            guard
+                .write(&Message::info("phase one"))
+                .expect("write succeeds");
+            guard
+                .write(&Message::info("phase two"))
+                .expect("write succeeds");
+        }
+
+        sink.write(&Message::info("done")).expect("write succeeds");
+
+        let output = sink.into_inner();
+        assert_eq!(
+            output,
+            b"rsync info: phase onersync info: phase tworsync info: done\n".to_vec()
+        );
     }
 
     #[test]
