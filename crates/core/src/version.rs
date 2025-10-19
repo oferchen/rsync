@@ -163,7 +163,10 @@ impl CompiledFeature {
     /// Reports whether the feature was compiled into the current build.
     #[must_use]
     pub const fn is_enabled(self) -> bool {
-        (COMPILED_FEATURE_BITMAP & self.bit()) != 0
+        match COMPILED_FEATURE_BITMAP {
+            0 => false,
+            bitmap => (bitmap & self.bit()) != 0,
+        }
     }
 
     /// Returns a human-readable description of the feature for tooling output.
