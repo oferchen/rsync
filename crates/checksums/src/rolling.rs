@@ -418,6 +418,90 @@ pub struct RollingDigest {
 }
 
 impl RollingDigest {
+    /// Computes the digest for the provided byte slice.
+    ///
+    /// The helper instantiates a fresh [`RollingChecksum`], feeds the supplied
+    /// bytes through it, and returns the resulting digest. This mirrors
+    /// upstream rsync's habit of recalculating the weak checksum for individual
+    /// blocks when constructing the sender's file list. Using this convenience
+    /// avoids plumbing a mutable [`RollingChecksum`] through call sites that
+    /// only need a one-off digest.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    ///
+    /// let digest = RollingDigest::from_bytes(b"delta block");
+    /// let manual = {
+    ///     let mut checksum = rsync_checksums::RollingChecksum::new();
+    ///     checksum.update(b"delta block");
+    ///     checksum.digest()
+    /// };
+    ///
+    /// assert_eq!(digest, manual);
+    /// assert_eq!(digest.len(), b"delta block".len());
+    /// ```
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(bytes);
+        checksum.digest()
+    }
+
+    /// Computes a digest by streaming bytes from the provided reader using the caller's buffer.
+    ///
+    /// This mirrors [`RollingChecksum::update_reader_with_buffer`] but returns the resulting
+    /// [`RollingDigest`] directly. The buffer must be non-empty; otherwise an
+    /// [`io::ErrorKind::InvalidInput`] error is returned. The `len` reported by
+    /// the digest matches the total number of bytes consumed from `reader`
+    /// (clamped to [`usize::MAX`] just like [`RollingChecksum`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`io::Error`] emitted by the reader or reported for an empty buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingDigest;
+    /// use std::io::Cursor;
+    ///
+    /// let mut reader = Cursor::new(b"streamed input".to_vec());
+    /// let mut scratch = [0u8; 8];
+    /// let digest = RollingDigest::from_reader_with_buffer(&mut reader, &mut scratch)
+    ///     .expect("reader succeeds");
+    ///
+    /// assert_eq!(digest.len(), b"streamed input".len());
+    /// ```
+    pub fn from_reader_with_buffer<R: Read>(reader: &mut R, buffer: &mut [u8]) -> io::Result<Self> {
+        let mut checksum = RollingChecksum::new();
+        let read = checksum.update_reader_with_buffer(reader, buffer)?;
+        debug_assert_eq!(
+            checksum.len(),
+            usize::try_from(read).unwrap_or(usize::MAX),
+            "rolling checksum length should mirror bytes read (modulo usize saturation)",
+        );
+        Ok(checksum.digest())
+    }
+
+    /// Computes a digest by streaming bytes from the reader using an internal stack buffer.
+    ///
+    /// This convenience wrapper allocates a
+    /// [`RollingChecksum::DEFAULT_READER_BUFFER_LEN`] scratch buffer on the
+    /// stack and delegates to [`from_reader_with_buffer`](Self::from_reader_with_buffer).
+    /// It is ideal for tests and simple call sites that do not manage their own
+    /// workspace for streaming checksums.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`io::Error`] emitted by the reader.
+    pub fn from_reader<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let mut checksum = RollingChecksum::new();
+        checksum.update_reader(reader)?;
+        Ok(checksum.digest())
+    }
+
     /// Creates a digest from individual components.
     #[must_use]
     pub const fn new(sum1: u16, sum2: u16, len: usize) -> Self {
@@ -678,6 +762,21 @@ mod tests {
     }
 
     #[test]
+    fn digest_from_bytes_matches_manual_update() {
+        let data = b"from bytes helper";
+        let digest = RollingDigest::from_bytes(data);
+
+        let manual = {
+            let mut checksum = RollingChecksum::new();
+            checksum.update(data);
+            checksum.digest()
+        };
+
+        assert_eq!(digest, manual);
+        assert_eq!(digest.len(), data.len());
+    }
+
+    #[test]
     fn digest_round_trips_through_packed_value() {
         let sample = RollingDigest::new(0x1357, 0x2468, 4096);
         let packed = sample.value();
@@ -751,6 +850,38 @@ mod tests {
             .expect("cursor provides the expected number of bytes");
 
         assert_eq!(parsed, sample);
+    }
+
+    #[test]
+    fn digest_from_reader_with_buffer_matches_streaming_update() {
+        let data = b"streamed rolling input";
+        let mut reader = Cursor::new(&data[..]);
+        let mut scratch = [0u8; 5];
+
+        let digest = RollingDigest::from_reader_with_buffer(&mut reader, &mut scratch)
+            .expect("reader succeeds");
+        assert_eq!(digest, RollingDigest::from_bytes(data));
+        assert_eq!(digest.len(), data.len());
+    }
+
+    #[test]
+    fn digest_from_reader_with_buffer_rejects_empty_scratch() {
+        let mut reader = Cursor::new(b"anything".to_vec());
+        let mut scratch = [];
+
+        let err = RollingDigest::from_reader_with_buffer(&mut reader, &mut scratch)
+            .expect_err("empty scratch must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn digest_from_reader_matches_manual_update() {
+        let data = b"buffered rolling digest";
+        let mut reader = Cursor::new(&data[..]);
+
+        let digest = RollingDigest::from_reader(&mut reader).expect("reader succeeds");
+        assert_eq!(digest, RollingDigest::from_bytes(data));
+        assert_eq!(digest.len(), data.len());
     }
 
     #[test]
