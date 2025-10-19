@@ -67,6 +67,7 @@
 //! - Future logging backends will reuse [`MessageSink`] to route diagnostics to
 //!   stdout/stderr, log files, or journald.
 
+use std::borrow::Borrow;
 use std::io::{self, Write};
 
 use rsync_core::message::{Message, MessageScratch};
@@ -249,13 +250,60 @@ where
     }
 
     /// Writes each message from the iterator to the underlying writer.
-    pub fn write_all<'a, I>(&mut self, messages: I) -> io::Result<()>
+    ///
+    /// The iterator may yield borrowed or owned [`Message`] values. Items that
+    /// implement [`Borrow<Message>`] are accepted to avoid forcing callers to
+    /// materialise intermediate references when they already own the messages.
+    /// This keeps the method ergonomic for code that batches diagnostics in
+    /// collections such as [`Vec<Message>`] or arrays.
+    ///
+    /// # Examples
+    ///
+    /// Write a slice of borrowed messages:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// let messages = [
+    ///     Message::info("phase one"),
+    ///     Message::warning("phase two"),
+    ///     Message::error(23, "partial transfer"),
+    /// ];
+    ///
+    /// sink.write_all(messages.iter())?;
+    /// let buffer = String::from_utf8(sink.into_inner()).unwrap();
+    /// assert_eq!(buffer.lines().count(), messages.len());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    ///
+    /// Consume owned messages without taking manual references:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// let messages = vec![
+    ///     Message::info("phase one"),
+    ///     Message::warning("phase two"),
+    ///     Message::error(23, "partial transfer"),
+    /// ];
+    ///
+    /// let count = messages.len();
+    /// sink.write_all(messages)?;
+    /// let buffer = String::from_utf8(sink.into_inner()).unwrap();
+    /// assert_eq!(buffer.lines().count(), count);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_all<I, M>(&mut self, messages: I) -> io::Result<()>
     where
-        I: IntoIterator<Item = &'a Message>,
-        Message: 'a,
+        I: IntoIterator<Item = M>,
+        M: Borrow<Message>,
     {
         for message in messages {
-            self.write(message)?;
+            self.write(message.borrow())?;
         }
         Ok(())
     }
@@ -303,12 +351,27 @@ mod tests {
             Message::warning("transient"),
             Message::error(10, "socket"),
         ];
-
-        sink.write_all(messages.iter())
-            .expect("batch write succeeds");
+        let expected = messages.len();
+        sink.write_all(messages).expect("batch write succeeds");
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
-        assert_eq!(output.lines().count(), messages.len());
+        assert_eq!(output.lines().count(), expected);
+    }
+
+    #[test]
+    fn write_all_accepts_owned_messages() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithNewline);
+        let messages = vec![
+            Message::info("phase 1"),
+            Message::warning("transient"),
+            Message::error(10, "socket"),
+        ];
+        let expected = messages.len();
+
+        sink.write_all(messages).expect("batch write succeeds");
+
+        let output = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(output.lines().count(), expected);
     }
 
     #[test]
