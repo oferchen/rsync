@@ -459,7 +459,7 @@ impl CompiledFeaturesDisplay {
     /// assert_eq!(iter.next(), Some(&CompiledFeature::Acl));
     /// assert!(iter.next().is_none());
     /// ```
-    #[must_use]
+    #[must_use = "inspect the iterator to observe compiled feature ordering"]
     pub fn iter(&self) -> std::slice::Iter<'_, CompiledFeature> {
         self.features.iter()
     }
