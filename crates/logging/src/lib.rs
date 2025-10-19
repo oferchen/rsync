@@ -112,6 +112,54 @@ impl Default for LineMode {
     }
 }
 
+impl From<bool> for LineMode {
+    /// Converts a boolean flag describing whether a trailing newline should be appended into a [`LineMode`].
+    ///
+    /// `true` maps to [`LineMode::WithNewline`] while `false` selects [`LineMode::WithoutNewline`],
+    /// mirroring the terminology used throughout the workspace. This allows call sites that already
+    /// compute newline behaviour as a boolean (for example, when matching upstream format tables) to
+    /// adopt [`MessageSink`] without branching on the enum variants themselves.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_logging::LineMode;
+    ///
+    /// assert_eq!(LineMode::from(true), LineMode::WithNewline);
+    /// assert_eq!(LineMode::from(false), LineMode::WithoutNewline);
+    /// ```
+    fn from(append_newline: bool) -> Self {
+        if append_newline {
+            Self::WithNewline
+        } else {
+            Self::WithoutNewline
+        }
+    }
+}
+
+impl From<LineMode> for bool {
+    /// Converts a [`LineMode`] back into a boolean flag describing whether a trailing newline is appended.
+    ///
+    /// The conversion delegates to [`LineMode::append_newline`], ensuring the mapping remains consistent even
+    /// if future variants are introduced. This is primarily useful in formatting pipelines that need to feed
+    /// newline preferences into APIs expecting a boolean without reimplementing the enum-to-bool logic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_logging::LineMode;
+    ///
+    /// let append_newline: bool = LineMode::WithNewline.into();
+    /// assert!(append_newline);
+    ///
+    /// let append_newline: bool = LineMode::WithoutNewline.into();
+    /// assert!(!append_newline);
+    /// ```
+    fn from(mode: LineMode) -> Self {
+        mode.append_newline()
+    }
+}
+
 /// Streaming sink that renders [`Message`] values into an [`io::Write`] target.
 ///
 /// The sink owns the underlying writer together with a reusable
@@ -705,6 +753,18 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
         }
+    }
+
+    #[test]
+    fn line_mode_bool_conversions_round_trip() {
+        assert_eq!(LineMode::from(true), LineMode::WithNewline);
+        assert_eq!(LineMode::from(false), LineMode::WithoutNewline);
+
+        let append: bool = LineMode::WithNewline.into();
+        assert!(append);
+
+        let append: bool = LineMode::WithoutNewline.into();
+        assert!(!append);
     }
 
     #[test]
