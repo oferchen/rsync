@@ -1093,6 +1093,12 @@ fn protocol_version_from_str_reports_error_kinds() {
     let invalid = ProtocolVersion::from_str("abc").unwrap_err();
     assert_eq!(invalid.kind(), ParseProtocolVersionErrorKind::InvalidDigit);
 
+    let double_sign = ProtocolVersion::from_str("+-31").unwrap_err();
+    assert_eq!(
+        double_sign.kind(),
+        ParseProtocolVersionErrorKind::InvalidDigit
+    );
+
     let negative = ProtocolVersion::from_str("-31").unwrap_err();
     assert_eq!(negative.kind(), ParseProtocolVersionErrorKind::Negative);
 

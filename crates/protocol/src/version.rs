@@ -1139,24 +1139,30 @@ impl FromStr for ProtocolVersion {
         }
 
         let mut digits = trimmed;
-        if let Some(rest) = digits.strip_prefix('+') {
-            digits = rest;
-        }
+        let mut saw_negative = false;
 
-        if let Some(rest) = digits.strip_prefix('-') {
-            if rest.chars().all(|ch| ch.is_ascii_digit()) {
-                return Err(ParseProtocolVersionError::new(
-                    ParseProtocolVersionErrorKind::Negative,
-                ));
+        if let Some(first) = digits.as_bytes().first().copied() {
+            match first {
+                b'+' => {
+                    digits = &digits[1..];
+                }
+                b'-' => {
+                    saw_negative = true;
+                    digits = &digits[1..];
+                }
+                _ => {}
             }
-            return Err(ParseProtocolVersionError::new(
-                ParseProtocolVersionErrorKind::InvalidDigit,
-            ));
         }
 
         if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
             return Err(ParseProtocolVersionError::new(
                 ParseProtocolVersionErrorKind::InvalidDigit,
+            ));
+        }
+
+        if saw_negative {
+            return Err(ParseProtocolVersionError::new(
+                ParseProtocolVersionErrorKind::Negative,
             ));
         }
 
