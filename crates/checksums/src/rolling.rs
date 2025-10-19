@@ -712,6 +712,34 @@ impl RollingDigest {
     }
 }
 
+impl From<RollingDigest> for u32 {
+    #[inline]
+    fn from(digest: RollingDigest) -> Self {
+        digest.value()
+    }
+}
+
+impl From<&RollingDigest> for u32 {
+    #[inline]
+    fn from(digest: &RollingDigest) -> Self {
+        digest.value()
+    }
+}
+
+impl From<RollingDigest> for [u8; 4] {
+    #[inline]
+    fn from(digest: RollingDigest) -> Self {
+        digest.to_le_bytes()
+    }
+}
+
+impl From<&RollingDigest> for [u8; 4] {
+    #[inline]
+    fn from(digest: &RollingDigest) -> Self {
+        digest.to_le_bytes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -811,6 +839,42 @@ mod tests {
 
         assert_eq!(parsed, sample);
         assert_eq!(parsed.to_le_bytes(), sample.to_le_bytes());
+    }
+
+    #[test]
+    fn digest_into_u32_matches_value() {
+        let sample = RollingDigest::new(0x4321, 0x8765, 2048);
+        let expected = sample.value();
+        let packed = u32::from(sample);
+
+        assert_eq!(packed, expected);
+    }
+
+    #[test]
+    fn digest_ref_into_u32_matches_value() {
+        let sample = RollingDigest::new(0x1357, 0x2468, 1024);
+        let expected = sample.value();
+        let packed = u32::from(&sample);
+
+        assert_eq!(packed, expected);
+    }
+
+    #[test]
+    fn digest_into_array_matches_le_bytes() {
+        let sample = RollingDigest::new(0x0ace, 0x1bdf, 512);
+        let expected = sample.to_le_bytes();
+        let bytes: [u8; 4] = sample.into();
+
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn digest_ref_into_array_matches_le_bytes() {
+        let sample = RollingDigest::new(0xface, 0xbeef, 128);
+        let expected = sample.to_le_bytes();
+        let bytes: [u8; 4] = (&sample).into();
+
+        assert_eq!(bytes, expected);
     }
 
     #[test]
