@@ -1,6 +1,6 @@
 use core::{fmt, mem, slice};
 use std::collections::TryReserveError;
-use std::io::{self, Read, Write};
+use std::io::{self, IoSliceMut, Read, Write};
 
 use crate::legacy::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, parse_legacy_daemon_greeting_bytes,
@@ -43,6 +43,32 @@ pub struct NegotiationPrologueSniffer {
 }
 
 impl NegotiationPrologueSniffer {
+    fn copy_into_vectored<'a>(
+        source: &[u8],
+        targets: &mut [IoSliceMut<'a>],
+    ) -> Result<(), BufferedPrefixTooSmall> {
+        let required = source.len();
+        let available: usize = targets.iter().map(|buf| buf.len()).sum();
+        if available < required {
+            return Err(BufferedPrefixTooSmall::new(required, available));
+        }
+
+        let mut offset = 0;
+        for buf in targets.iter_mut() {
+            if offset == required {
+                break;
+            }
+
+            let slice: &mut [u8] = &mut **buf;
+            let to_copy = slice.len().min(required - offset);
+            slice[..to_copy].copy_from_slice(&source[offset..offset + to_copy]);
+            offset += to_copy;
+        }
+
+        debug_assert_eq!(offset, required);
+        Ok(())
+    }
+
     /// Creates a sniffer with an empty buffer and undecided negotiation state.
     #[must_use]
     #[inline]
@@ -569,6 +595,34 @@ impl NegotiationPrologueSniffer {
         Ok(required)
     }
 
+    /// Drains the buffered bytes into a vectored slice supplied by the caller without allocating.
+    ///
+    /// This mirrors [`take_buffered_into_slice`](Self::take_buffered_into_slice) but copies the
+    /// sniffed prefix and any buffered remainder across a mutable slice of
+    /// [`IoSliceMut`] buffers. Callers that stage the negotiation prelude in an I/O scatter list can
+    /// therefore forward the bytes without first collecting them into a contiguous scratch buffer.
+    /// If the combined capacity of the vectored slices is smaller than the buffered contents a
+    /// [`BufferedPrefixTooSmall`] error is returned and the internal buffer remains untouched so the
+    /// caller can retry after provisioning additional space. When the canonical prefix has not yet
+    /// been fully buffered the helper returns `Ok(0)` and leaves both the destination buffers and the
+    /// sniffer unchanged.
+    #[must_use = "buffered negotiation bytes must be replayed"]
+    #[inline]
+    pub fn take_buffered_into_vectored(
+        &mut self,
+        targets: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        if self.requires_more_data() {
+            return Ok(0);
+        }
+
+        let required = self.buffered.len();
+        Self::copy_into_vectored(&self.buffered, targets)?;
+        self.reset_buffer_for_reuse();
+
+        Ok(required)
+    }
+
     /// Drains the buffered bytes into an array supplied by the caller without allocating.
     ///
     /// This is a convenience wrapper around
@@ -729,6 +783,35 @@ impl NegotiationPrologueSniffer {
         }
 
         target[..remainder_len].copy_from_slice(&self.buffered[prefix_len..]);
+        self.buffered.truncate(prefix_len);
+        self.update_prefix_retention();
+
+        Ok(remainder_len)
+    }
+
+    /// Drains the buffered remainder into a vectored slice supplied by the caller.
+    ///
+    /// The helper mirrors [`take_buffered_remainder_into_slice`](Self::take_buffered_remainder_into_slice)
+    /// but writes into a mutable slice of [`IoSliceMut`] buffers. This allows transports to forward
+    /// the trailing payload captured alongside the negotiation prefix without first materialising a
+    /// contiguous scratch buffer. If the combined capacity of the vectored slices is insufficient the
+    /// method returns a [`BufferedPrefixTooSmall`] error and leaves the internal buffer untouched so
+    /// the caller can retry after allocating additional space. When no remainder is buffered the
+    /// helper returns `Ok(0)` without mutating either the destination buffers or the sniffer state.
+    #[must_use = "buffered remainder must be forwarded to the negotiated protocol handler"]
+    #[inline]
+    pub fn take_buffered_remainder_into_vectored(
+        &mut self,
+        targets: &mut [IoSliceMut<'_>],
+    ) -> Result<usize, BufferedPrefixTooSmall> {
+        let prefix_len = self.sniffed_prefix_len();
+        if self.buffered.len() <= prefix_len {
+            return Ok(0);
+        }
+
+        let remainder = &self.buffered[prefix_len..];
+        Self::copy_into_vectored(remainder, targets)?;
+        let remainder_len = remainder.len();
         self.buffered.truncate(prefix_len);
         self.update_prefix_retention();
 
