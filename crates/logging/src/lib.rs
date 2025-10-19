@@ -435,6 +435,37 @@ where
 mod tests {
     use super::*;
     use rsync_core::message::Message;
+    use std::io::{self, Write};
+
+    #[derive(Default)]
+    struct TrackingWriter {
+        buffer: Vec<u8>,
+        flush_calls: usize,
+    }
+
+    impl Write for TrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_calls += 1;
+            Ok(())
+        }
+    }
+
+    struct FailingFlushWriter;
+
+    impl Write for FailingFlushWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+        }
+    }
 
     #[test]
     fn sink_appends_newlines_by_default() {
@@ -600,5 +631,25 @@ mod tests {
 
         let buffer = sink.into_inner();
         assert_eq!(buffer, b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn flush_delegates_to_inner_writer() {
+        let writer = TrackingWriter::default();
+        let mut sink = MessageSink::with_line_mode(writer, LineMode::WithNewline);
+
+        sink.flush().expect("flush succeeds");
+
+        let writer = sink.into_inner();
+        assert_eq!(writer.flush_calls, 1);
+        assert!(writer.buffer.is_empty());
+    }
+
+    #[test]
+    fn flush_propagates_writer_errors() {
+        let mut sink = MessageSink::with_line_mode(FailingFlushWriter, LineMode::WithNewline);
+
+        let err = sink.flush().expect_err("flush should propagate error");
+        assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 }
