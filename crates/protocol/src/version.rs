@@ -864,6 +864,46 @@ impl ProtocolVersion {
         (self.as_u8() - Self::OLDEST.as_u8()) as usize
     }
 
+    /// Constructs a [`ProtocolVersion`] from its zero-based offset relative to
+    /// [`ProtocolVersion::OLDEST`].
+    ///
+    /// The helper mirrors the arithmetic performed by
+    /// [`ProtocolVersion::offset_from_oldest`], allowing lookup tables that use
+    /// ascending order to recover the strongly typed version without duplicating
+    /// bounds checks. When the offset falls outside the supported range the
+    /// method returns [`None`] to match the indexing behaviour of the standard
+    /// library. Because the function is `const`, call sites can validate static
+    /// tables at compile time just like upstream rsync's generated arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// const OLDEST: ProtocolVersion = ProtocolVersion::OLDEST;
+    /// const NEWEST: ProtocolVersion = ProtocolVersion::NEWEST;
+    ///
+    /// assert_eq!(ProtocolVersion::from_oldest_offset(0), Some(OLDEST));
+    /// assert_eq!(
+    ///     ProtocolVersion::from_oldest_offset(NEWEST.offset_from_oldest()),
+    ///     Some(NEWEST)
+    /// );
+    /// assert!(
+    ///     ProtocolVersion::from_oldest_offset(NEWEST.offset_from_oldest() + 1)
+    ///         .is_none()
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn from_oldest_offset(offset: usize) -> Option<Self> {
+        let oldest = Self::OLDEST.as_u8() as usize;
+        let newest = Self::NEWEST.as_u8() as usize;
+
+        match oldest.checked_add(offset) {
+            Some(value) if value <= newest => Some(Self::new_const(value as u8)),
+            _ => None,
+        }
+    }
+
     /// Returns the zero-based offset from [`ProtocolVersion::NEWEST`] when iterating
     /// protocol versions in the descending order used by [`SUPPORTED_PROTOCOLS`].
     ///
@@ -875,6 +915,49 @@ impl ProtocolVersion {
     #[inline]
     pub const fn offset_from_newest(self) -> usize {
         (Self::NEWEST.as_u8() - self.as_u8()) as usize
+    }
+
+    /// Constructs a [`ProtocolVersion`] from its zero-based offset relative to
+    /// [`ProtocolVersion::NEWEST`].
+    ///
+    /// The helper complements [`ProtocolVersion::offset_from_newest`], making it
+    /// straightforward to convert indices that follow the newest-to-oldest order
+    /// used by [`SUPPORTED_PROTOCOLS`] back into strongly typed versions. The
+    /// conversion mirrors the bounds checks performed elsewhere in this module
+    /// and returns [`None`] when the offset exceeds the supported span. Keeping
+    /// the logic in a single place ensures the Rust implementation and upstream
+    /// rsync stay aligned even if the negotiated protocol range expands in the
+    /// future.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    ///
+    /// const NEWEST: ProtocolVersion = ProtocolVersion::NEWEST;
+    /// const OLDEST: ProtocolVersion = ProtocolVersion::OLDEST;
+    ///
+    /// assert_eq!(ProtocolVersion::from_newest_offset(0), Some(NEWEST));
+    /// assert_eq!(
+    ///     ProtocolVersion::from_newest_offset(OLDEST.offset_from_newest()),
+    ///     Some(OLDEST)
+    /// );
+    /// assert!(
+    ///     ProtocolVersion::from_newest_offset(OLDEST.offset_from_newest() + 1)
+    ///         .is_none()
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn from_newest_offset(offset: usize) -> Option<Self> {
+        let newest = Self::NEWEST.as_u8() as usize;
+        let oldest = Self::OLDEST.as_u8() as usize;
+        let span = newest - oldest;
+
+        if offset > span {
+            return None;
+        }
+
+        Some(Self::new_const((newest - offset) as u8))
     }
 
     /// Returns the next newer protocol version within the supported range, if any.
