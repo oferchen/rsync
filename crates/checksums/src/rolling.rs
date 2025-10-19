@@ -424,6 +424,14 @@ pub struct RollingDigest {
 }
 
 impl RollingDigest {
+    /// Digest representing an empty window.
+    ///
+    /// Upstream rsync initialises rolling checksum state to zeroes before any
+    /// data is observed. Exposing a constant avoids repetitive
+    /// `RollingDigest::new(0, 0, 0)` expressions while ensuring callers reuse
+    /// the canonical empty digest.
+    pub const ZERO: Self = Self::new(0, 0, 0);
+
     /// Computes the digest for the provided byte slice.
     ///
     /// The helper instantiates a fresh [`RollingChecksum`], feeds the supplied
@@ -745,6 +753,12 @@ impl From<&RollingDigest> for [u8; 4] {
     }
 }
 
+impl Default for RollingDigest {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,6 +807,22 @@ mod tests {
         checksum.update(data);
         assert_eq!(checksum.digest(), digest);
         assert_eq!(checksum.value(), digest.value());
+    }
+
+    #[test]
+    fn digest_default_matches_zero_constant() {
+        let digest = RollingDigest::default();
+        assert_eq!(digest, RollingDigest::ZERO);
+        assert!(digest.is_empty());
+        assert_eq!(digest.sum1(), 0);
+        assert_eq!(digest.sum2(), 0);
+    }
+
+    #[test]
+    fn checksum_default_digest_is_zero_constant() {
+        let checksum = RollingChecksum::new();
+        assert_eq!(checksum.digest(), RollingDigest::ZERO);
+        assert!(checksum.is_empty());
     }
 
     #[test]
