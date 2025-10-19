@@ -2476,40 +2476,50 @@ impl NegotiationBuffer {
         to_copy
     }
 
-    fn copy_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        let required = self.buffered.len();
+    #[inline]
+    fn copy_bytes_into_vec(
+        target: &mut Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<usize, TryReserveError> {
         let len = target.len();
-        target.try_reserve(required.saturating_sub(len))?;
-
+        target.try_reserve(bytes.len().saturating_sub(len))?;
         target.clear();
-        target.extend_from_slice(&self.buffered);
-        Ok(target.len())
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+
+        target.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    #[inline]
+    fn extend_bytes_into_vec(
+        target: &mut Vec<u8>,
+        bytes: &[u8],
+    ) -> Result<usize, TryReserveError> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+
+        target.try_reserve(bytes.len())?;
+        target.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn copy_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
+        Self::copy_bytes_into_vec(target, &self.buffered)
     }
 
     fn extend_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        let required = self.buffered.len();
-        target.try_reserve(required)?;
-
-        target.extend_from_slice(&self.buffered);
-        Ok(required)
+        Self::extend_bytes_into_vec(target, &self.buffered)
     }
 
     fn copy_remaining_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        let remaining = self.remaining_slice();
-        let len = target.len();
-        target.try_reserve(remaining.len().saturating_sub(len))?;
-
-        target.clear();
-        target.extend_from_slice(remaining);
-        Ok(remaining.len())
+        Self::copy_bytes_into_vec(target, self.remaining_slice())
     }
 
     fn extend_remaining_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
-        let remaining = self.remaining_slice();
-        target.try_reserve(remaining.len())?;
-
-        target.extend_from_slice(remaining);
-        Ok(remaining.len())
+        Self::extend_bytes_into_vec(target, self.remaining_slice())
     }
 
     fn copy_all_into_slice(&self, target: &mut [u8]) -> Result<usize, BufferedCopyTooSmall> {
