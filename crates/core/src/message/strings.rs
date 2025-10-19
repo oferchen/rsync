@@ -78,6 +78,7 @@
 //! # See also
 //!
 //! - [`crate::message`] for the `Message` type used to render the output.
+//! - [`crate::message::Message::from_exit_code`] builds the canonical diagnostic directly.
 
 use super::{Message, Severity};
 

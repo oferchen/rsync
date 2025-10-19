@@ -1534,6 +1534,50 @@ impl Message {
         Self::new(Severity::Error, text).with_code(code)
     }
 
+    /// Constructs the canonical message for a known rsync exit code.
+    ///
+    /// The helper consults [`strings::exit_code_message`] to reproduce the severity and
+    /// wording that upstream rsync associates with well-known exit codes. When the table
+    /// contains an entry the returned [`Message`] already includes the `(code N)` suffix,
+    /// leaving callers to optionally attach roles or source locations before emitting the
+    /// diagnostic. Unknown codes yield `None`, allowing higher layers to surface bespoke
+    /// explanations when necessary.
+    ///
+    /// # Examples
+    ///
+    /// Look up exit code 23 and render the canonical error message:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let message = Message::from_exit_code(23).expect("code 23 is defined by upstream");
+    /// assert!(message.is_error());
+    /// assert_eq!(message.code(), Some(23));
+    /// assert_eq!(
+    ///     message.text(),
+    ///     "some files/attrs were not transferred (see previous errors)"
+    /// );
+    /// ```
+    ///
+    /// Exit code 24 is downgraded to a warning by upstream rsync:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let message = Message::from_exit_code(24).expect("code 24 is defined by upstream");
+    /// assert!(message.is_warning());
+    /// assert!(message
+    ///     .to_string()
+    ///     .starts_with("rsync warning: some files vanished before they could be transferred"));
+    /// ```
+    #[doc(alias = "rerr_names")]
+    #[must_use]
+    pub fn from_exit_code(code: i32) -> Option<Self> {
+        strings::exit_code_message(code).map(|template| {
+            Self::new(template.severity(), template.text()).with_code(template.code())
+        })
+    }
+
     /// Returns the message severity.
     #[inline]
     #[must_use]
@@ -2533,6 +2577,39 @@ mod tests {
         assert_eq!(error.severity(), Severity::Error);
         assert_eq!(error.code(), Some(23));
         assert_eq!(error.text(), "dynamic error");
+    }
+
+    #[test]
+    fn message_from_exit_code_rehydrates_known_entries() {
+        let error = Message::from_exit_code(23).expect("exit code 23 is defined");
+        assert_eq!(error.severity(), Severity::Error);
+        assert_eq!(error.code(), Some(23));
+        assert_eq!(
+            error.text(),
+            "some files/attrs were not transferred (see previous errors)"
+        );
+
+        let warning = Message::from_exit_code(24).expect("exit code 24 is defined");
+        assert!(warning.is_warning());
+        assert_eq!(warning.code(), Some(24));
+        assert_eq!(
+            warning.text(),
+            "some files vanished before they could be transferred"
+        );
+
+        let rendered = warning.to_string();
+        assert!(rendered.starts_with("rsync warning: some files vanished"));
+        assert!(rendered.contains("(code 24)"));
+    }
+
+    #[test]
+    fn message_from_exit_code_returns_none_for_unknown_values() {
+        for code in [-1, 0, 7, 200] {
+            assert!(
+                Message::from_exit_code(code).is_none(),
+                "unexpected mapping for {code}"
+            );
+        }
     }
 
     #[test]
