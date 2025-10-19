@@ -146,6 +146,36 @@ impl RemoteProtocolAdvertisement {
     }
 }
 
+impl From<RemoteProtocolAdvertisement> for ProtocolVersion {
+    /// Converts the classification into the negotiated [`ProtocolVersion`].
+    ///
+    /// Future protocol advertisements are represented as
+    /// [`RemoteProtocolAdvertisement::Future`] and therefore clamp to
+    /// [`ProtocolVersion::NEWEST`], mirroring the behaviour used by upstream
+    /// rsync when a peer announces a newer release. Supported advertisements
+    /// return their negotiated counterpart unchanged. The conversion keeps
+    /// higher-level helpers ergonomic when they only need the active protocol
+    /// value without branching on the classification.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::RemoteProtocolAdvertisement;
+    ///
+    /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
+    /// let negotiated: ProtocolVersion = supported.into();
+    /// assert_eq!(negotiated, ProtocolVersion::V31);
+    ///
+    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// let negotiated: ProtocolVersion = future.into();
+    /// assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    /// ```
+    fn from(classification: RemoteProtocolAdvertisement) -> Self {
+        classification.negotiated()
+    }
+}
+
 /// Reports whether a remote protocol advertisement was clamped to the newest supported value.
 ///
 /// Upstream rsync accepts peers that announce protocol numbers newer than it
@@ -316,6 +346,18 @@ mod tests {
         assert_eq!(classification.advertised(), advertised);
         assert_eq!(classification.negotiated(), ProtocolVersion::NEWEST);
         assert!(classification.was_clamped());
+    }
+
+    #[test]
+    fn classification_converts_into_protocol_version() {
+        let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
+        let future = RemoteProtocolAdvertisement::Future(40);
+
+        let supported_version: ProtocolVersion = supported.into();
+        let future_version: ProtocolVersion = future.into();
+
+        assert_eq!(supported_version, ProtocolVersion::V31);
+        assert_eq!(future_version, ProtocolVersion::NEWEST);
     }
 
     proptest! {
