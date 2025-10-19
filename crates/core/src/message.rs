@@ -440,16 +440,17 @@ impl<'a> MessageSegments<'a> {
     /// let segments = message.as_segments(&mut scratch, false);
     /// let mut buffer = b"prefix: ".to_vec();
     /// let prefix_len = buffer.len();
-    /// segments.extend_vec(&mut buffer)?;
+    /// let appended = segments.extend_vec(&mut buffer)?;
     ///
     /// assert_eq!(&buffer[..prefix_len], b"prefix: ");
     /// assert_eq!(&buffer[prefix_len..], message.to_bytes().unwrap().as_slice());
+    /// assert_eq!(appended, message.to_bytes().unwrap().len());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    #[must_use = "buffer extension reserves memory and may fail; handle potential allocation errors"]
-    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+    #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         if self.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         let required = self.len();
@@ -463,7 +464,7 @@ impl<'a> MessageSegments<'a> {
         for slice in self.iter() {
             buffer.extend_from_slice(slice.as_ref());
         }
-        Ok(())
+        Ok(required)
     }
 
     /// Collects the message segments into a freshly allocated [`Vec<u8>`].
@@ -495,7 +496,7 @@ impl<'a> MessageSegments<'a> {
     #[must_use = "collecting message segments allocates and can fail if memory reservations are unsuccessful"]
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::new();
-        self.extend_vec(&mut buffer)?;
+        let _ = self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
 }
@@ -1266,9 +1267,10 @@ impl Message {
     ///     .with_source(message_source!());
     ///
     /// let mut buffer = Vec::with_capacity(message.byte_len());
-    /// message.append_to_vec(&mut buffer).unwrap();
+    /// let appended = message.append_to_vec(&mut buffer).unwrap();
     ///
     /// assert_eq!(buffer.len(), message.byte_len());
+    /// assert_eq!(appended, message.byte_len());
     /// ```
     #[inline]
     #[must_use]
@@ -1778,17 +1780,18 @@ impl Message {
     /// use rsync_core::{message::{Message, Role}, message_source};
     ///
     /// let mut buffer = Vec::new();
-    /// Message::error(23, "delta-transfer failure")
+    /// let appended = Message::error(23, "delta-transfer failure")
     ///     .with_role(Role::Sender)
     ///     .with_source(message_source!())
     ///     .append_to_vec(&mut buffer)?;
     ///
     /// assert!(buffer.starts_with(b"rsync error:"));
     /// assert!(buffer.ends_with(b"[sender=3.4.1-rust]"));
+    /// assert_eq!(appended, buffer.len());
     /// # Ok::<(), std::io::Error>(())
     /// ```
     #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
-    pub fn append_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+    pub fn append_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         with_thread_local_scratch(|scratch| self.append_to_vec_with_scratch(scratch, buffer))
     }
 
@@ -1805,15 +1808,16 @@ impl Message {
     /// use rsync_core::message::Message;
     ///
     /// let mut buffer = Vec::new();
-    /// Message::warning("vanished file")
+    /// let appended = Message::warning("vanished file")
     ///     .with_code(24)
     ///     .append_line_to_vec(&mut buffer)?;
     ///
     /// assert!(buffer.ends_with(b"\n"));
+    /// assert_eq!(appended, buffer.len());
     /// # Ok::<(), std::io::Error>(())
     /// ```
     #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
-    pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+    pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
         with_thread_local_scratch(|scratch| self.append_line_to_vec_with_scratch(scratch, buffer))
     }
 
@@ -1876,7 +1880,7 @@ impl Message {
         &self,
         scratch: &mut MessageScratch,
         buffer: &mut Vec<u8>,
-    ) -> io::Result<()> {
+    ) -> io::Result<usize> {
         self.append_to_vec_with_scratch_inner(scratch, buffer, false)
     }
 
@@ -1886,7 +1890,7 @@ impl Message {
         &self,
         scratch: &mut MessageScratch,
         buffer: &mut Vec<u8>,
-    ) -> io::Result<()> {
+    ) -> io::Result<usize> {
         self.append_to_vec_with_scratch_inner(scratch, buffer, true)
     }
 
@@ -1907,7 +1911,7 @@ impl Message {
     ) -> io::Result<Vec<u8>> {
         let segments = self.as_segments(scratch, include_newline);
         let mut buffer = Vec::new();
-        segments.extend_vec(&mut buffer)?;
+        let _ = segments.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
 
@@ -1916,7 +1920,7 @@ impl Message {
         scratch: &mut MessageScratch,
         buffer: &mut Vec<u8>,
         include_newline: bool,
-    ) -> io::Result<()> {
+    ) -> io::Result<usize> {
         let segments = self.as_segments(scratch, include_newline);
         segments.extend_vec(buffer)
     }
@@ -2914,7 +2918,7 @@ mod tests {
         let segments = message.as_segments(&mut scratch, false);
         let mut buffer = b"prefix: ".to_vec();
         let prefix_len = buffer.len();
-        segments
+        let appended = segments
             .extend_vec(&mut buffer)
             .expect("Vec<u8> growth should succeed for small messages");
 
@@ -2923,6 +2927,7 @@ mod tests {
             &buffer[prefix_len..],
             message.to_bytes().unwrap().as_slice()
         );
+        assert_eq!(appended, message.to_bytes().unwrap().len());
     }
 
     #[test]
@@ -2937,10 +2942,11 @@ mod tests {
         let expected = buffer.clone();
         let capacity = buffer.capacity();
 
-        segments
+        let appended = segments
             .extend_vec(&mut buffer)
             .expect("empty segments should not alter the buffer");
 
+        assert_eq!(appended, 0);
         assert_eq!(buffer, expected);
         assert_eq!(buffer.capacity(), capacity);
     }
@@ -3144,11 +3150,12 @@ mod tests {
             .with_source(message_source!());
 
         let mut buffer = Vec::new();
-        message
+        let appended = message
             .append_to_vec(&mut buffer)
             .expect("Vec<u8> growth should succeed for small messages");
 
         assert_eq!(buffer, message.to_bytes().unwrap());
+        assert_eq!(appended, buffer.len());
     }
 
     #[test]
@@ -3158,11 +3165,12 @@ mod tests {
             .with_source(message_source!());
 
         let mut buffer = Vec::new();
-        message
+        let appended = message
             .append_line_to_vec(&mut buffer)
             .expect("Vec<u8> growth should succeed for small messages");
 
         assert_eq!(buffer, message.to_line_bytes().unwrap());
+        assert_eq!(appended, buffer.len());
     }
 
     #[test]
@@ -3173,18 +3181,20 @@ mod tests {
 
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        message
+        let appended = message
             .append_to_vec_with_scratch(&mut scratch, &mut buffer)
             .expect("Vec<u8> growth should succeed for small messages");
         let first_len = buffer.len();
         let without_newline = message.to_bytes().unwrap();
+        assert_eq!(appended, without_newline.len());
 
-        message
+        let appended_line = message
             .append_line_to_vec_with_scratch(&mut scratch, &mut buffer)
             .expect("Vec<u8> growth should succeed for small messages");
         let with_newline = message
             .to_line_bytes()
             .expect("Vec<u8> writes are infallible");
+        assert_eq!(appended_line, with_newline.len());
 
         assert_eq!(&buffer[..first_len], without_newline.as_slice());
         assert_eq!(&buffer[first_len..], with_newline.as_slice());
