@@ -493,6 +493,52 @@ impl<'a> MessageSegments<'a> {
         Ok(required)
     }
 
+    /// Copies the rendered message into the provided slice.
+    ///
+    /// The destination slice must be at least [`Self::len`] bytes long. When the capacity is
+    /// insufficient the method returns [`CopyToSliceError`] describing the required length so callers
+    /// can retry with a suitably sized buffer. This mirrors upstream rsync's approach of reusing
+    /// stack-allocated buffers for message rendering while preserving deterministic allocation
+    /// patterns.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let mut scratch = MessageScratch::new();
+    /// let segments = message.as_segments(&mut scratch, false);
+    ///
+    /// let mut buffer = vec![0u8; segments.len()];
+    /// let copied = segments.copy_to_slice(&mut buffer)?;
+    ///
+    /// assert_eq!(copied, segments.len());
+    /// assert_eq!(buffer, message.to_bytes().unwrap());
+    /// # Ok::<(), rsync_core::message::CopyToSliceError>(())
+    /// ```
+    #[must_use = "callers should handle the number of copied bytes or the returned error"]
+    pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
+        let required = self.len();
+        if dest.len() < required {
+            return Err(CopyToSliceError::new(required, dest.len()));
+        }
+
+        let mut offset = 0usize;
+        for slice in self.iter() {
+            let bytes = slice.as_ref();
+            let end = offset + bytes.len();
+            dest[offset..end].copy_from_slice(bytes);
+            offset = end;
+        }
+        Ok(required)
+    }
+
     /// Collects the message segments into a freshly allocated [`Vec<u8>`].
     ///
     /// The helper mirrors [`Self::extend_vec`] but manages the buffer lifecycle
@@ -563,6 +609,43 @@ impl<'a> IntoIterator for MessageSegments<'a> {
         self.segments.into_iter().take(self.count)
     }
 }
+
+/// Error returned when [`MessageSegments::copy_to_slice`] receives an undersized buffer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CopyToSliceError {
+    required: usize,
+    provided: usize,
+}
+
+impl CopyToSliceError {
+    const fn new(required: usize, provided: usize) -> Self {
+        Self { required, provided }
+    }
+
+    /// Number of bytes required to hold the rendered message.
+    #[must_use]
+    pub const fn required(self) -> usize {
+        self.required
+    }
+
+    /// Number of bytes supplied by the caller.
+    #[must_use]
+    pub const fn provided(self) -> usize {
+        self.provided
+    }
+}
+
+impl fmt::Display for CopyToSliceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "buffer length {} is insufficient for message requiring {} bytes",
+            self.provided, self.required
+        )
+    }
+}
+
+impl std::error::Error for CopyToSliceError {}
 
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = crate::version::RUST_VERSION;
@@ -3020,6 +3103,54 @@ mod tests {
         assert_eq!(appended, 0);
         assert_eq!(buffer, expected);
         assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[test]
+    fn message_segments_copy_to_slice_copies_exact_bytes() {
+        let message = Message::error(12, "example failure")
+            .with_role(Role::Server)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, true);
+        let mut buffer = vec![0u8; segments.len()];
+        let copied = segments
+            .copy_to_slice(&mut buffer)
+            .expect("buffer is large enough");
+
+        assert_eq!(copied, segments.len());
+        assert_eq!(buffer, message.to_line_bytes().unwrap());
+    }
+
+    #[test]
+    fn message_segments_copy_to_slice_reports_required_length() {
+        let message = Message::warning("vanished").with_code(24);
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+        let mut buffer = vec![0u8; segments.len().saturating_sub(1)];
+
+        let err = segments
+            .copy_to_slice(&mut buffer)
+            .expect_err("buffer is intentionally undersized");
+
+        assert_eq!(err.required(), segments.len());
+        assert_eq!(err.provided(), buffer.len());
+    }
+
+    #[test]
+    fn message_segments_copy_to_slice_accepts_empty_inputs() {
+        let segments = MessageSegments {
+            segments: [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS],
+            count: 0,
+            total_len: 0,
+        };
+
+        let mut buffer = [0u8; 0];
+        let copied = segments
+            .copy_to_slice(&mut buffer)
+            .expect("empty segments succeed for empty buffers");
+
+        assert_eq!(copied, 0);
     }
 
     #[test]
