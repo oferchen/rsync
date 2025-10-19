@@ -114,7 +114,56 @@ impl<R> SessionHandshake<R> {
     /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
     ///
     /// This mirrors the per-variant helpers and keeps the aggregated handshake API aligned with
-    /// upstream rsync, where diagnostics note when the user-requested protocol forced a downgrade.
+    /// upstream rsync, where `--protocol` forces the session to downgrade even when the peer
+    /// advertises a newer version.
+    ///
+    /// # Examples
+    ///
+    /// Force the session to run at protocol 29 despite the peer advertising 31.
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_session;
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct Loopback {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertised: ProtocolVersion) -> Self {
+    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+    ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let remote = ProtocolVersion::from_supported(31).unwrap();
+    /// let desired = ProtocolVersion::from_supported(29).unwrap();
+    /// let handshake = negotiate_session(Loopback::new(remote), desired).unwrap();
+    ///
+    /// assert!(handshake.local_protocol_was_capped());
+    /// assert_eq!(handshake.negotiated_protocol(), desired);
+    /// ```
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         match self {
