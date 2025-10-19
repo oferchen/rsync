@@ -1,5 +1,6 @@
 use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
+use core::fmt::{self, Write as FmtWrite};
 
 use super::{
     LEGACY_DAEMON_PREFIX, greeting::parse_legacy_daemon_greeting, malformed_legacy_greeting,
@@ -161,6 +162,118 @@ fn parse_prefixed_payload<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     trimmed.strip_prefix(prefix).map(|rest| rest.trim())
 }
 
+fn write_prefixed_payload<W: FmtWrite>(writer: &mut W, payload: &str) -> fmt::Result {
+    writer.write_str(LEGACY_DAEMON_PREFIX)?;
+    if !payload.is_empty() {
+        writer.write_char(' ')?;
+        writer.write_str(payload)?;
+    }
+    writer.write_char('\n')
+}
+
+fn write_prefixed_keyword<W: FmtWrite>(
+    writer: &mut W,
+    keyword: &str,
+    value: Option<&str>,
+) -> fmt::Result {
+    writer.write_str(LEGACY_DAEMON_PREFIX)?;
+    writer.write_char(' ')?;
+    writer.write_str(keyword)?;
+
+    if let Some(rest) = value {
+        if !rest.is_empty() {
+            writer.write_char(' ')?;
+            writer.write_str(rest)?;
+        }
+    }
+
+    writer.write_char('\n')
+}
+
+/// Writes a canonical legacy daemon message into the supplied [`fmt::Write`] sink.
+///
+/// The helper mirrors upstream formatting for `@RSYNCD:` responses while
+/// normalising whitespace. Version announcements reuse
+/// [`write_legacy_daemon_greeting`](super::greeting::write_legacy_daemon_greeting)
+/// so the protocol number is rendered with the canonical fractional suffix and
+/// newline terminator. Other keywords emit a single space between the prefix
+/// and payload, trimming trailing whitespace captured during parsing and
+/// collapsing consecutive ASCII whitespace sequences inside capability banners
+/// to match the formatting relayed by upstream rsync.
+///
+/// # Examples
+///
+/// Render a legacy daemon acknowledgment:
+///
+/// ```
+/// use rsync_protocol::{format_legacy_daemon_message, LegacyDaemonMessage};
+///
+/// let rendered = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
+/// assert_eq!(rendered, "@RSYNCD: OK\n");
+/// ```
+///
+/// Canonicalise a legacy capability banner:
+///
+/// ```
+/// use rsync_protocol::{
+///     format_legacy_daemon_message, LegacyDaemonMessage, parse_legacy_daemon_message,
+/// };
+///
+/// let parsed = parse_legacy_daemon_message("@RSYNCD: CAP   0x1f  0x2\r\n")?;
+/// let rendered = format_legacy_daemon_message(parsed);
+///
+/// assert_eq!(rendered, "@RSYNCD: CAP 0x1f 0x2\n");
+/// # Ok::<_, rsync_protocol::NegotiationError>(())
+/// ```
+#[must_use = "callers typically forward the formatted message to the daemon or logs"]
+pub fn write_legacy_daemon_message<W: FmtWrite>(
+    writer: &mut W,
+    message: LegacyDaemonMessage<'_>,
+) -> fmt::Result {
+    use super::greeting::write_legacy_daemon_greeting;
+
+    match message {
+        LegacyDaemonMessage::Version(version) => write_legacy_daemon_greeting(writer, version),
+        LegacyDaemonMessage::Ok => write_prefixed_keyword(writer, "OK", None),
+        LegacyDaemonMessage::Exit => write_prefixed_keyword(writer, "EXIT", None),
+        LegacyDaemonMessage::Capabilities { flags } => {
+            writer.write_str(LEGACY_DAEMON_PREFIX)?;
+            writer.write_str(" CAP")?;
+
+            let mut tokens = flags.split_ascii_whitespace();
+            if let Some(first) = tokens.next() {
+                writer.write_char(' ')?;
+                writer.write_str(first)?;
+                for token in tokens {
+                    writer.write_char(' ')?;
+                    writer.write_str(token)?;
+                }
+            }
+
+            writer.write_char('\n')
+        }
+        LegacyDaemonMessage::AuthRequired { module } => {
+            write_prefixed_keyword(writer, "AUTHREQD", module)
+        }
+        LegacyDaemonMessage::Other(payload) => {
+            let normalized = payload.trim_end_matches(|ch: char| ch.is_ascii_whitespace());
+            write_prefixed_payload(writer, normalized)
+        }
+    }
+}
+
+/// Formats a legacy daemon message into an owned [`String`].
+///
+/// This is a convenience wrapper around [`write_legacy_daemon_message`] for
+/// call sites that prefer an owned allocation. The returned string always ends
+/// with a newline to match upstream framing.
+#[must_use]
+pub fn format_legacy_daemon_message(message: LegacyDaemonMessage<'_>) -> String {
+    let mut rendered = String::with_capacity(LEGACY_DAEMON_PREFIX.len() + 32);
+    write_legacy_daemon_message(&mut rendered, message).expect("String implements fmt::Write");
+    rendered
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +331,56 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn write_legacy_daemon_message_formats_version_branch() {
+        let message = LegacyDaemonMessage::Version(ProtocolVersion::from_supported(31).unwrap());
+        let rendered = format_legacy_daemon_message(message);
+        assert_eq!(rendered, "@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn write_legacy_daemon_message_formats_keywords() {
+        assert_eq!(
+            format_legacy_daemon_message(LegacyDaemonMessage::Ok),
+            "@RSYNCD: OK\n"
+        );
+        assert_eq!(
+            format_legacy_daemon_message(LegacyDaemonMessage::Exit),
+            "@RSYNCD: EXIT\n"
+        );
+    }
+
+    #[test]
+    fn write_legacy_daemon_message_formats_capabilities() {
+        let message = LegacyDaemonMessage::Capabilities { flags: "0x1f 0x2" };
+        let rendered = format_legacy_daemon_message(message);
+        assert_eq!(rendered, "@RSYNCD: CAP 0x1f 0x2\n");
+    }
+
+    #[test]
+    fn write_legacy_daemon_message_formats_auth_requests() {
+        let without_module = LegacyDaemonMessage::AuthRequired { module: None };
+        assert_eq!(
+            format_legacy_daemon_message(without_module),
+            "@RSYNCD: AUTHREQD\n"
+        );
+
+        let with_module = LegacyDaemonMessage::AuthRequired {
+            module: Some("module"),
+        };
+        assert_eq!(
+            format_legacy_daemon_message(with_module),
+            "@RSYNCD: AUTHREQD module\n"
+        );
+    }
+
+    #[test]
+    fn write_legacy_daemon_message_normalises_other_payloads() {
+        let parsed =
+            parse_legacy_daemon_message("@RSYNCD: EXTRA   \t \r\n").expect("message should parse");
+        assert_eq!(format_legacy_daemon_message(parsed), "@RSYNCD: EXTRA\n");
     }
 
     #[test]
