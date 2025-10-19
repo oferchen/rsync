@@ -76,7 +76,7 @@ pub struct BinaryHandshake<R> {
 /// }
 ///
 /// let protocol = ProtocolVersion::from_supported(31).unwrap();
-/// let transport = Loopback::new(u32::from(protocol.as_u8()).to_le_bytes());
+/// let transport = Loopback::new(u32::from(protocol.as_u8()).to_be_bytes());
 /// let handshake = negotiate_binary_session(transport, protocol).unwrap();
 ///
 /// let parts = handshake.into_parts();
@@ -237,7 +237,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// }
     ///
     /// fn main() -> io::Result<()> {
-    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
     ///     let transport = Cursor::new(advertisement.to_vec());
     ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
     ///         .into_parts();
@@ -318,7 +318,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// }
     ///
     /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_be_bytes());
     /// let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
     ///     .expect("handshake succeeds")
     ///     .into_parts();
@@ -388,7 +388,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// use std::io::{self, Cursor};
     ///
     /// fn main() -> io::Result<()> {
-    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_le_bytes();
+    ///     let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
     ///     let transport = Cursor::new(advertisement.to_vec());
     ///     let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)?
     ///         .into_parts();
@@ -535,7 +535,7 @@ impl<R> BinaryHandshake<R> {
     ///
     /// impl Loopback {
     ///     fn new(advertised: ProtocolVersion) -> Self {
-    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+    ///         let bytes = u32::from(advertised.as_u8()).to_be_bytes();
     ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
     ///     }
     /// }
@@ -886,7 +886,7 @@ where
 
     let mut advertisement = [0u8; 4];
     let desired = desired_protocol.as_u8();
-    advertisement.copy_from_slice(&u32::from(desired).to_le_bytes());
+    advertisement.copy_from_slice(&u32::from(desired).to_be_bytes());
     {
         let inner = stream.inner_mut();
         inner.write_all(&advertisement)?;
@@ -895,7 +895,7 @@ where
 
     let mut remote_buf = [0u8; 4];
     stream.read_exact(&mut remote_buf)?;
-    let remote_advertised = u32::from_le_bytes(remote_buf);
+    let remote_advertised = u32::from_be_bytes(remote_buf);
 
     let remote_byte = remote_advertised.min(u32::from(u8::MAX)) as u8;
 
@@ -1086,7 +1086,7 @@ mod tests {
     }
 
     fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
-        u32::from(version.as_u8()).to_le_bytes()
+        u32::from(version.as_u8()).to_be_bytes()
     }
 
     #[test]
@@ -1125,7 +1125,8 @@ mod tests {
     #[test]
     fn map_stream_inner_preserves_protocols_and_replays_transport() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
@@ -1160,7 +1161,8 @@ mod tests {
     #[test]
     fn try_map_stream_inner_transforms_transport() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
@@ -1190,7 +1192,8 @@ mod tests {
     #[test]
     fn parts_map_stream_inner_transforms_transport() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds")
@@ -1220,7 +1223,8 @@ mod tests {
     #[test]
     fn parts_try_map_stream_inner_transforms_transport() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds")
@@ -1248,7 +1252,8 @@ mod tests {
     #[test]
     fn parts_try_map_stream_inner_preserves_original_on_error() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds")
@@ -1273,7 +1278,8 @@ mod tests {
     #[test]
     fn try_map_stream_inner_preserves_original_on_error() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds");
@@ -1300,7 +1306,7 @@ mod tests {
     #[test]
     fn negotiate_binary_session_clamps_future_protocols() {
         let future_version = 40u32;
-        let transport = MemoryTransport::new(&future_version.to_le_bytes());
+        let transport = MemoryTransport::new(&future_version.to_be_bytes());
 
         let desired = ProtocolVersion::from_supported(29).expect("29 supported");
         let handshake =
@@ -1332,7 +1338,7 @@ mod tests {
     #[test]
     fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
         let future_version = 0x0001_0200u32;
-        let transport = MemoryTransport::new(&future_version.to_le_bytes());
+        let transport = MemoryTransport::new(&future_version.to_be_bytes());
 
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("future advertisements beyond u8 clamp to newest");
@@ -1350,7 +1356,7 @@ mod tests {
 
     #[test]
     fn negotiate_binary_session_clamps_u32_max_advertisement() {
-        let transport = MemoryTransport::new(&u32::MAX.to_le_bytes());
+        let transport = MemoryTransport::new(&u32::MAX.to_be_bytes());
 
         let handshake = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("maximum u32 advertisement clamps to newest");
@@ -1408,7 +1414,7 @@ mod tests {
     #[test]
     fn negotiate_binary_session_rejects_out_of_range_version() {
         let mut bytes = [0u8; 4];
-        bytes.copy_from_slice(&27u32.to_le_bytes());
+        bytes.copy_from_slice(&27u32.to_be_bytes());
         let transport = MemoryTransport::new(&bytes);
         let err = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect_err("unsupported protocol must fail");
@@ -1431,7 +1437,10 @@ mod tests {
         assert_eq!(local_advertised, ProtocolVersion::NEWEST);
         assert_eq!(negotiated, remote_version);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
-        assert_eq!(parts.sniffed_prefix(), &[remote_version.as_u8()]);
+        assert_eq!(
+            parts.sniffed_prefix(),
+            &handshake_bytes(remote_version)[..1]
+        );
         assert_eq!(parts.buffered_remaining(), 0);
         assert_eq!(parts.sniffed_prefix_len(), 1);
 
@@ -1452,7 +1461,8 @@ mod tests {
     #[test]
     fn binary_handshake_parts_into_components_matches_accessors() {
         let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-        let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+        let remote_advertisement = handshake_bytes(remote_version);
+        let transport = MemoryTransport::new(&remote_advertisement);
 
         let parts = negotiate_binary_session(transport, ProtocolVersion::NEWEST)
             .expect("handshake succeeds")
@@ -1472,7 +1482,10 @@ mod tests {
         assert_eq!(local, expected_local);
         assert_eq!(negotiated, expected_negotiated);
         assert_eq!(stream_parts.decision(), NegotiationPrologue::Binary);
-        assert_eq!(stream_parts.sniffed_prefix(), &[expected_remote.as_u8()]);
+        assert_eq!(
+            stream_parts.sniffed_prefix(),
+            &handshake_bytes(expected_remote)[..1]
+        );
         assert_eq!(stream_parts.buffered_consumed(), expected_consumed);
         assert_eq!(stream_parts.buffered(), expected_buffer.as_slice());
     }
