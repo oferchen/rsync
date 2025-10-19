@@ -122,10 +122,11 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// Extends the provided buffer with the buffered negotiation bytes.
     ///
     /// The helper reserves exactly enough additional capacity to append the
-    /// replay prefix and payload while preserving their original ordering. This
-    /// mirrors [`write_to`](Self::write_to) but avoids going through the
-    /// [`Write`] trait when callers simply need an owned [`Vec<u8>`] for later
-    /// comparison.
+    /// replay prefix and payload while preserving their original ordering. It
+    /// only grows the vector when the existing spare capacity is insufficient,
+    /// avoiding allocator-dependent exponential growth. This mirrors
+    /// [`write_to`](Self::write_to) but avoids going through the [`Write`] trait
+    /// when callers simply need an owned [`Vec<u8>`] for later comparison.
     ///
     /// # Examples
     ///
@@ -148,7 +149,10 @@ impl<'a> NegotiationBufferedSlices<'a> {
             return Ok(());
         }
 
-        buffer.try_reserve(self.total_len)?;
+        let additional = self.total_len;
+        if buffer.capacity().saturating_sub(buffer.len()) < additional {
+            buffer.try_reserve_exact(additional)?;
+        }
 
         for slice in self.as_slices() {
             buffer.extend_from_slice(slice.as_ref());
@@ -159,7 +163,9 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// Collects the buffered negotiation bytes into a freshly allocated [`Vec<u8>`].
     ///
     /// The helper mirrors [`Self::extend_vec`] but manages the allocation internally,
-    /// returning the replay prefix and payload as an owned buffer. This keeps call
+    /// returning the replay prefix and payload as an owned buffer. It pre-reserves
+    /// the exact byte count required for the transcript, keeping allocations
+    /// deterministic while avoiding exponential growth strategies. This keeps call
     /// sites concise when they only need the buffered transcript for comparison or
     /// logging. Allocation failures propagate as [`TryReserveError`], matching the
     /// behaviour of [`Self::extend_vec`].
@@ -182,6 +188,11 @@ impl<'a> NegotiationBufferedSlices<'a> {
     #[must_use = "the returned vector owns the buffered negotiation transcript"]
     pub fn to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         let mut buffer = Vec::new();
+
+        if self.total_len != 0 {
+            buffer.try_reserve_exact(self.total_len)?;
+        }
+
         self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
