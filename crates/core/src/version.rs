@@ -563,6 +563,36 @@ impl CompiledFeaturesDisplay {
     pub fn iter(&self) -> std::slice::Iter<'_, CompiledFeature> {
         self.features.iter()
     }
+
+    /// Retains only the features that satisfy the provided predicate.
+    ///
+    /// The helper mirrors [`Vec::retain`] while preserving the deterministic
+    /// ordering expected by upstream `--version` output. Callers can use this to
+    /// drop capabilities that should not be rendered in a particular context
+    /// (for example, when the daemon configuration restricts advertised
+    /// features) without reallocating the backing vector. The predicate receives
+    /// each feature in sequence and retains it when returning `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+    ///
+    /// let mut display = CompiledFeaturesDisplay::new(vec![
+    ///     CompiledFeature::Acl,
+    ///     CompiledFeature::Xattr,
+    ///     CompiledFeature::Iconv,
+    /// ]);
+    ///
+    /// display.retain(|feature| !matches!(feature, CompiledFeature::Xattr));
+    /// assert_eq!(display.features(), &[CompiledFeature::Acl, CompiledFeature::Iconv]);
+    /// ```
+    pub fn retain<F>(&mut self, mut predicate: F)
+    where
+        F: FnMut(&CompiledFeature) -> bool,
+    {
+        self.features.retain(|feature| predicate(feature));
+    }
 }
 
 impl fmt::Display for CompiledFeaturesDisplay {
@@ -791,6 +821,31 @@ mod tests {
                 CompiledFeature::SdNotify,
             ]
         );
+    }
+
+    #[test]
+    fn compiled_features_display_retain_filters_in_place() {
+        let mut display = CompiledFeaturesDisplay::new(vec![
+            CompiledFeature::Acl,
+            CompiledFeature::Xattr,
+            CompiledFeature::Iconv,
+        ]);
+
+        display.retain(|feature| !matches!(feature, CompiledFeature::Xattr));
+
+        assert_eq!(
+            display.features(),
+            &[CompiledFeature::Acl, CompiledFeature::Iconv]
+        );
+    }
+
+    #[test]
+    fn compiled_features_display_retain_can_drop_all_features() {
+        let mut display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
+        display.retain(|_| false);
+
+        assert!(display.is_empty());
+        assert!(display.features().is_empty());
     }
 
     #[test]
