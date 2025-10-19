@@ -158,7 +158,10 @@ impl<R> BinaryHandshakeParts<R> {
     /// Reports whether the negotiated protocol was reduced by the caller-specified cap.
     ///
     /// This complements [`BinaryHandshake::local_protocol_was_capped`] for scenarios where the
-    /// parts structure is inspected before reconstructing the full handshake.
+    /// parts structure is inspected before reconstructing the full handshake. The check mirrors the
+    /// behaviour of `rsync --protocol=<version>`: when the user requests an older protocol, the
+    /// negotiated session is forced to run at that level even if the peer advertised something newer.
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.remote_protocol(), self.negotiated_protocol())
@@ -465,11 +468,62 @@ impl<R> BinaryHandshake<R> {
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
     ///
-    /// Upstream rsync clamps the negotiated protocol to the minimum of the peer's
-    /// advertisement and the caller's requested cap. When the desired value is lower than the
-    /// remote protocol, the transfer is forced to speak the older protocol. This helper exposes
-    /// that condition so higher layers can surface diagnostics or adjust feature negotiation in
-    /// parity with the C implementation.
+    /// Upstream rsync clamps the negotiated protocol to the minimum of the peer's advertisement and
+    /// the caller's requested cap (as configured via `--protocol`). When the requested value is
+    /// lower than the remote protocol, the transfer is forced to speak the older version. This
+    /// helper exposes that condition so higher layers can surface diagnostics or adjust feature
+    /// negotiation in parity with the C implementation.
+    ///
+    /// # Examples
+    ///
+    /// Force the negotiation to protocol 29 even though the peer advertises 31. The helper reports
+    /// that the user-imposed cap took effect, mirroring the observable behaviour of
+    /// `rsync --protocol=29`.
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_binary_session;
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct Loopback {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertised: ProtocolVersion) -> Self {
+    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+    ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let remote = ProtocolVersion::from_supported(31).unwrap();
+    /// let desired = ProtocolVersion::from_supported(29).unwrap();
+    /// let transport = Loopback::new(remote);
+    /// let handshake = negotiate_binary_session(transport, desired).unwrap();
+    ///
+    /// assert!(handshake.local_protocol_was_capped());
+    /// assert_eq!(handshake.negotiated_protocol(), desired);
+    /// ```
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.remote_protocol, self.negotiated_protocol)
