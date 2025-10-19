@@ -131,6 +131,9 @@ mod tests {
         via_trait.update(input);
         let trait_digest = via_trait.finalize();
 
-        assert_eq!(trait_digest.as_ref(), Xxh3_128::digest(seed, input).as_ref());
+        assert_eq!(
+            trait_digest.as_ref(),
+            Xxh3_128::digest(seed, input).as_ref()
+        );
     }
 }

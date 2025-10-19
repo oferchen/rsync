@@ -51,7 +51,10 @@
 //! - Future CLI modules rely on [`compiled_features`] to mirror upstream
 //!   `--version` capability listings.
 
-use core::{fmt, iter::FusedIterator};
+use core::{
+    fmt,
+    iter::{FromIterator, FusedIterator},
+};
 
 /// Upstream base version that the Rust implementation tracks.
 #[doc(alias = "3.4.1")]
@@ -272,8 +275,9 @@ impl Default for CompiledFeaturesIter {
 /// [`Display`](fmt::Display) so callers can render the list into user-facing banners without
 /// duplicating join logic. Upstream rsync prints optional capabilities as a space-separated
 /// string, which this helper reproduces exactly. The type also implements [`IntoIterator`]
-/// for owned and borrowed values, making it easy to reuse the collected feature set when
-/// rendering additional diagnostics or driving conditional logic.
+/// for owned and borrowed values together with [`FromIterator`] and [`Extend`], making it easy
+/// to reuse the collected feature set when rendering additional diagnostics, building the
+/// wrapper from iterator pipelines, or appending capabilities incrementally.
 ///
 /// # Examples
 ///
@@ -305,6 +309,40 @@ impl Default for CompiledFeaturesIter {
 /// let mut owned = display.clone().into_iter();
 /// assert_eq!(owned.next(), Some(CompiledFeature::Acl));
 /// assert!(owned.next().is_none());
+/// ```
+///
+/// Collect a display from an iterator of features:
+///
+/// ```
+/// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+///
+/// let display: CompiledFeaturesDisplay = [CompiledFeature::Acl, CompiledFeature::Xattr]
+///     .into_iter()
+///     .collect();
+///
+/// assert_eq!(display.features(), &[CompiledFeature::Acl, CompiledFeature::Xattr]);
+/// ```
+///
+/// Extend an existing display with additional features:
+///
+/// ```
+/// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+///
+/// let mut display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
+/// display.extend([CompiledFeature::Xattr]);
+///
+/// let extra = [CompiledFeature::Zstd, CompiledFeature::Iconv];
+/// display.extend(extra.iter());
+///
+/// assert_eq!(
+///     display.features(),
+///     &[
+///         CompiledFeature::Acl,
+///         CompiledFeature::Xattr,
+///         CompiledFeature::Zstd,
+///         CompiledFeature::Iconv,
+///     ]
+/// );
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CompiledFeaturesDisplay {
@@ -377,6 +415,24 @@ impl<'a> IntoIterator for &'a mut CompiledFeaturesDisplay {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.features.iter_mut()
+    }
+}
+
+impl FromIterator<CompiledFeature> for CompiledFeaturesDisplay {
+    fn from_iter<T: IntoIterator<Item = CompiledFeature>>(iter: T) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
+impl Extend<CompiledFeature> for CompiledFeaturesDisplay {
+    fn extend<T: IntoIterator<Item = CompiledFeature>>(&mut self, iter: T) {
+        self.features.extend(iter);
+    }
+}
+
+impl<'a> Extend<&'a CompiledFeature> for CompiledFeaturesDisplay {
+    fn extend<T: IntoIterator<Item = &'a CompiledFeature>>(&mut self, iter: T) {
+        self.features.extend(iter.into_iter().copied());
     }
 }
 
@@ -477,6 +533,42 @@ mod tests {
 
         assert!(display.is_empty());
         assert!(display.to_string().is_empty());
+    }
+
+    #[test]
+    fn compiled_features_display_collect_from_iterator() {
+        let display: CompiledFeaturesDisplay = [CompiledFeature::Acl, CompiledFeature::Iconv]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            display.features(),
+            &[CompiledFeature::Acl, CompiledFeature::Iconv]
+        );
+    }
+
+    #[test]
+    fn compiled_features_display_extend_supports_owned_and_borrowed() {
+        let mut display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
+        display.extend([CompiledFeature::Xattr]);
+
+        assert_eq!(
+            display.features(),
+            &[CompiledFeature::Acl, CompiledFeature::Xattr]
+        );
+
+        let borrowed = [CompiledFeature::Zstd, CompiledFeature::SdNotify];
+        display.extend(borrowed.iter());
+
+        assert_eq!(
+            display.features(),
+            &[
+                CompiledFeature::Acl,
+                CompiledFeature::Xattr,
+                CompiledFeature::Zstd,
+                CompiledFeature::SdNotify,
+            ]
+        );
     }
 
     #[test]
