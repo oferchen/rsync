@@ -2477,10 +2477,7 @@ impl NegotiationBuffer {
     }
 
     #[inline]
-    fn copy_bytes_into_vec(
-        target: &mut Vec<u8>,
-        bytes: &[u8],
-    ) -> Result<usize, TryReserveError> {
+    fn copy_bytes_into_vec(target: &mut Vec<u8>, bytes: &[u8]) -> Result<usize, TryReserveError> {
         let len = target.len();
         target.try_reserve(bytes.len().saturating_sub(len))?;
         target.clear();
@@ -2493,10 +2490,7 @@ impl NegotiationBuffer {
     }
 
     #[inline]
-    fn extend_bytes_into_vec(
-        target: &mut Vec<u8>,
-        bytes: &[u8],
-    ) -> Result<usize, TryReserveError> {
+    fn extend_bytes_into_vec(target: &mut Vec<u8>, bytes: &[u8]) -> Result<usize, TryReserveError> {
         if bytes.is_empty() {
             return Ok(0);
         }

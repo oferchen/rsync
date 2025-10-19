@@ -1103,7 +1103,7 @@ mod tests {
         assert!(!handshake.local_protocol_was_capped());
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(40)
+            RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST)
         );
 
         let parts = handshake.into_parts();
@@ -1111,7 +1111,7 @@ mod tests {
         assert!(!parts.local_protocol_was_capped());
         assert_eq!(
             parts.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(40)
+            RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST)
         );
 
         let transport = parts.into_handshake().into_stream().into_inner();
@@ -1132,7 +1132,7 @@ mod tests {
         assert!(!handshake.local_protocol_was_capped());
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(999)
+            RemoteProtocolAdvertisement::from_raw(999, ProtocolVersion::NEWEST)
         );
 
         let parts = handshake.into_parts();
@@ -1140,7 +1140,7 @@ mod tests {
         assert!(!parts.local_protocol_was_capped());
         assert_eq!(
             parts.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(999)
+            RemoteProtocolAdvertisement::from_raw(999, ProtocolVersion::NEWEST)
         );
 
         let transport = parts.into_handshake().into_stream().into_inner();
@@ -1161,7 +1161,7 @@ mod tests {
         assert!(!handshake.local_protocol_was_capped());
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(u32::MAX)
+            RemoteProtocolAdvertisement::from_raw(u32::MAX, ProtocolVersion::NEWEST)
         );
 
         let parts = handshake.into_parts();
