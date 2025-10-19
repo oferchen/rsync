@@ -1384,6 +1384,41 @@ impl Message {
         &self.text
     }
 
+    /// Replaces the message payload with the provided text.
+    ///
+    /// The helper keeps the message's severity, exit code, role, and source location untouched,
+    /// mirroring upstream rsync's habit of enriching diagnostics with additional wording as more
+    /// context becomes available. Accepting any type that converts into a [`Cow<'static, str>`]
+    /// keeps allocations to a minimum when callers promote string literals or reuse existing
+    /// buffers.
+    ///
+    /// # Examples
+    ///
+    /// Update the payload on a cloned message without disturbing its metadata:
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let original = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .with_source(message_source!());
+    /// let updated = original.clone().with_text("retry scheduled for delta-transfer");
+    ///
+    /// assert_eq!(updated.text(), "retry scheduled for delta-transfer");
+    /// assert_eq!(updated.code(), Some(23));
+    /// assert_eq!(updated.role(), Some(Role::Sender));
+    /// assert_eq!(updated.source(), original.source());
+    /// ```
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the new text"]
+    pub fn with_text<T: Into<Cow<'static, str>>>(mut self, text: T) -> Self {
+        self.text = text.into();
+        self
+    }
+
     /// Returns the role used in the trailer, if any.
     #[inline]
     #[must_use]
@@ -2231,6 +2266,22 @@ mod tests {
         assert_eq!(error.severity(), Severity::Error);
         assert_eq!(error.code(), Some(23));
         assert_eq!(error.text(), "dynamic error");
+    }
+
+    #[test]
+    fn message_with_text_replaces_payload_without_touching_metadata() {
+        let original = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let updated = original
+            .clone()
+            .with_text("retry scheduled for delta-transfer");
+
+        assert_eq!(updated.text(), "retry scheduled for delta-transfer");
+        assert_eq!(updated.code(), Some(23));
+        assert_eq!(updated.role(), Some(Role::Sender));
+        assert_eq!(updated.source(), original.source());
+        assert_eq!(original.text(), "delta-transfer failure");
     }
 
     #[test]
