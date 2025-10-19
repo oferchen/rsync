@@ -511,6 +511,51 @@ impl<W> MessageSink<W> {
         &mut self.writer
     }
 
+    /// Returns a shared reference to the reusable [`MessageScratch`] buffer.
+    ///
+    /// This enables integrations that need to inspect or duplicate the scratch
+    /// storage (for example, when constructing additional sinks that should
+    /// share the same initial digits) without consuming the sink. The returned
+    /// reference is valid for the lifetime of `self` and matches the buffer used
+    /// internally by [`write`](Self::write) and related helpers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::MessageScratch;
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let sink = MessageSink::new(Vec::<u8>::new());
+    /// let scratch: *const MessageScratch = sink.scratch();
+    /// assert!(!scratch.is_null());
+    /// ```
+    #[must_use]
+    pub const fn scratch(&self) -> &MessageScratch {
+        &self.scratch
+    }
+
+    /// Returns a mutable reference to the sink's [`MessageScratch`] buffer.
+    ///
+    /// Callers can reset or prepopulate the scratch storage before emitting
+    /// diagnostics. Because the buffer is reused across writes, manually
+    /// initialising it can help enforce deterministic state when toggling
+    /// between sinks that share a scratch instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, MessageScratch};
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::<u8>::new());
+    /// *sink.scratch_mut() = MessageScratch::new();
+    /// sink.write(&Message::info("ready"))?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn scratch_mut(&mut self) -> &mut MessageScratch {
+        &mut self.scratch
+    }
+
     /// Consumes the sink and returns the wrapped writer.
     #[must_use]
     pub fn into_inner(self) -> W {
@@ -568,7 +613,7 @@ impl<W> MessageSink<W> {
     /// # use rsync_core::message::Message;
     /// # use rsync_logging::MessageSink;
     /// # use std::io::Cursor;
-    /// let sink = MessageSink::new(Vec::new());
+    /// let sink = MessageSink::new(Vec::<u8>::new());
     /// let mut sink = sink
     ///     .try_map_writer(|writer| -> Result<Cursor<Vec<u8>>, (Vec<u8>, &'static str)> {
     ///         Ok(Cursor::new(writer))
@@ -629,7 +674,7 @@ impl<W> MessageSink<W> {
     /// use rsync_core::message::Message;
     /// use rsync_logging::MessageSink;
     ///
-    /// let mut sink = MessageSink::new(Vec::new());
+    /// let mut sink = MessageSink::new(Vec::<u8>::new());
     /// sink.write(&Message::info("phase one"))?;
     /// let previous = sink.replace_writer(Vec::new());
     /// assert_eq!(String::from_utf8(previous).unwrap(), "rsync info: phase one\n");
@@ -951,6 +996,29 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Err(io::Error::other("flush failed"))
         }
+    }
+
+    #[test]
+    fn scratch_accessors_expose_reusable_buffer() {
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        let shared_ptr = {
+            let scratch = sink.scratch();
+            scratch as *const MessageScratch
+        };
+        let mutable_ptr = {
+            let scratch = sink.scratch_mut();
+            scratch as *mut MessageScratch
+        };
+
+        assert_eq!(shared_ptr, mutable_ptr as *const MessageScratch);
+
+        // Reset the scratch buffer and ensure rendering still succeeds.
+        *sink.scratch_mut() = MessageScratch::new();
+        sink.write(&Message::info("ready"))
+            .expect("write succeeds after manual scratch reset");
+
+        let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert_eq!(rendered, "rsync info: ready\n");
     }
 
     #[test]
