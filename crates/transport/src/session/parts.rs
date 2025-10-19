@@ -321,6 +321,11 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Reports whether the negotiated protocol was reduced due to the caller's desired cap.
+    ///
+    /// This mirrors [`SessionHandshake::local_protocol_was_capped`] while operating on the decomposed
+    /// parts. The check observes the same `--protocol` semantics: a caller-specified cap forces the
+    /// session to run at the requested protocol even if the peer advertised something newer.
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         match self {

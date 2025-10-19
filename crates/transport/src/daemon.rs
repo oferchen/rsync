@@ -226,7 +226,10 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// Reports whether the negotiated protocol was reduced by the caller-provided cap.
     ///
     /// This complements [`LegacyDaemonHandshake::local_protocol_was_capped`] when higher layers
-    /// inspect the parts structure before reconstructing the handshake.
+    /// inspect the parts structure before reconstructing the handshake. The check mirrors
+    /// `rsync --protocol=<version>`: if the caller requests an older protocol than the daemon
+    /// advertised, the negotiated session is forced to run at the downgraded version.
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.server_protocol(), self.negotiated_protocol())
@@ -576,9 +579,58 @@ impl<R> LegacyDaemonHandshake<R> {
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
     ///
     /// The negotiated protocol equals the minimum of the daemon's advertised protocol and the
-    /// caller's requested cap. When the caller limits the session to an older version, certain
-    /// protocol features become unavailable. This helper mirrors upstream rsync by exposing that
-    /// condition so higher layers can render matching diagnostics.
+    /// caller's requested cap (configured via `--protocol`). When the caller limits the session to an
+    /// older version, certain protocol features become unavailable. This helper mirrors upstream
+    /// rsync by exposing that condition so higher layers can render matching diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// Limit the daemon negotiation to protocol 29 even though the server banner advertises 31.
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_legacy_daemon_session;
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Debug)]
+    /// struct MemoryTransport {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    ///     flushes: usize,
+    /// }
+    ///
+    /// impl MemoryTransport {
+    ///     fn new(input: &[u8]) -> Self {
+    ///         Self { reader: Cursor::new(input.to_vec()), written: Vec::new(), flushes: 0 }
+    ///     }
+    /// }
+    ///
+    /// impl Read for MemoryTransport {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for MemoryTransport {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         self.flushes += 1;
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let desired = ProtocolVersion::from_supported(29).unwrap();
+    /// let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+    /// let handshake = negotiate_legacy_daemon_session(transport, desired).unwrap();
+    ///
+    /// assert!(handshake.local_protocol_was_capped());
+    /// assert_eq!(handshake.negotiated_protocol(), desired);
+    /// ```
+    #[doc(alias = "--protocol")]
     #[must_use]
     pub fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.server_greeting.protocol(), self.negotiated_protocol)
