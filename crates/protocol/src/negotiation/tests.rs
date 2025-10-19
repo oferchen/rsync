@@ -1932,7 +1932,7 @@ fn prologue_sniffer_take_buffered_into_vectored_copies_bytes() {
         if remaining == 0 {
             break;
         }
-        let slice: &[u8] = &*buf;
+        let slice: &[u8] = buf.as_ref();
         let take = slice.len().min(remaining);
         actual.extend_from_slice(&slice[..take]);
         remaining -= take;
@@ -2225,7 +2225,7 @@ fn prologue_sniffer_take_buffered_remainder_into_vectored_copies_remainder() {
         if remaining == 0 {
             break;
         }
-        let slice: &[u8] = &*buf;
+        let slice: &[u8] = buf.as_ref();
         let take = slice.len().min(remaining);
         actual.extend_from_slice(&slice[..take]);
         remaining -= take;
