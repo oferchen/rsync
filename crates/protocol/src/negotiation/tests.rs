@@ -1781,6 +1781,33 @@ fn prologue_sniffer_take_buffered_into_includes_remainder_bytes() {
 }
 
 #[test]
+fn prologue_sniffer_take_buffered_split_into_splits_prefix_and_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" trailing payload";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut prefix = b"old-prefix".to_vec();
+    let mut tail = b"old-remainder".to_vec();
+    let (prefix_len, remainder_len) = sniffer
+        .take_buffered_split_into(&mut prefix, &mut tail)
+        .expect("split transfer succeeds");
+
+    assert_eq!(prefix, LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(tail, remainder);
+    assert_eq!(prefix_len, LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(remainder_len, remainder.len());
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_variants_wait_for_complete_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let partial = &LEGACY_DAEMON_PREFIX.as_bytes()[..LEGACY_DAEMON_PREFIX_LEN - 1];
@@ -1821,6 +1848,32 @@ fn prologue_sniffer_take_buffered_variants_wait_for_complete_prefix() {
         .expect("guarded writer transfer should succeed");
     assert_eq!(written, 0);
     assert!(sink.is_empty());
+    assert_eq!(sniffer.buffered(), partial);
+    assert!(sniffer.requires_more_data());
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_split_into_waits_for_complete_prefix() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let partial = &LEGACY_DAEMON_PREFIX.as_bytes()[..LEGACY_DAEMON_PREFIX_LEN - 1];
+
+    let (decision, consumed) = sniffer
+        .observe(partial)
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(consumed, partial.len());
+    assert!(sniffer.requires_more_data());
+
+    let mut prefix = b"unchanged-prefix".to_vec();
+    let mut tail = b"unchanged-tail".to_vec();
+    let (prefix_len, remainder_len) = sniffer
+        .take_buffered_split_into(&mut prefix, &mut tail)
+        .expect("guarded split transfer succeeds");
+
+    assert_eq!(prefix_len, 0);
+    assert_eq!(remainder_len, 0);
+    assert_eq!(prefix, b"unchanged-prefix");
+    assert_eq!(tail, b"unchanged-tail");
     assert_eq!(sniffer.buffered(), partial);
     assert!(sniffer.requires_more_data());
 }
