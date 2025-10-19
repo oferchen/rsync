@@ -323,7 +323,8 @@ impl RollingChecksum {
     ///
     /// The method behaves as if [`roll`](Self::roll) were called repeatedly for each pair of
     /// outgoing and incoming bytes. Providing slices of different lengths is rejected to avoid
-    /// ambiguous state. Passing empty slices is allowed and leaves the checksum unchanged.
+    /// ambiguous state. Passing empty slices is allowed and leaves the checksum unchanged after
+    /// verifying that the checksum has been seeded with an initial window.
     ///
     /// # Errors
     ///
@@ -339,11 +340,11 @@ impl RollingChecksum {
             });
         }
 
+        let window_len = self.window_len_u32()?;
+
         if outgoing.is_empty() {
             return Ok(());
         }
-
-        let window_len = self.window_len_u32()?;
 
         let mut s1 = self.s1;
         let mut s2 = self.s2;
@@ -972,6 +973,16 @@ mod tests {
         let err = checksum
             .roll_many(b"a", b"b")
             .expect_err("rolling on empty window must fail");
+        assert_eq!(err, RollingError::EmptyWindow);
+        assert_eq!(checksum.digest(), RollingDigest::new(0, 0, 0));
+    }
+
+    #[test]
+    fn roll_many_empty_slices_still_require_initial_window() {
+        let mut checksum = RollingChecksum::new();
+        let err = checksum
+            .roll_many(&[], &[])
+            .expect_err("empty slices should still require a seeded window");
         assert_eq!(err, RollingError::EmptyWindow);
         assert_eq!(checksum.digest(), RollingDigest::new(0, 0, 0));
     }
