@@ -83,7 +83,25 @@ pub enum LineMode {
 }
 
 impl LineMode {
-    const fn append_newline(self) -> bool {
+    /// Reports whether the mode appends a trailing newline when rendering a message.
+    ///
+    /// The helper mirrors the terminology used throughout the workspace where
+    /// [`LineMode::WithNewline`] matches upstream rsync's default of emitting
+    /// each diagnostic on its own line. Exposing the behaviour as a method
+    /// avoids requiring callers to pattern-match on the enum, simplifying
+    /// integrations that need to mirror the sink's newline policy when routing
+    /// messages to multiple destinations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_logging::LineMode;
+    ///
+    /// assert!(LineMode::WithNewline.append_newline());
+    /// assert!(!LineMode::WithoutNewline.append_newline());
+    /// ```
+    #[must_use]
+    pub const fn append_newline(self) -> bool {
         matches!(self, Self::WithNewline)
     }
 }
