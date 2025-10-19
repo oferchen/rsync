@@ -376,10 +376,47 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
-        let mut storage = self.segments;
-        let mut view = Self::trim_leading_empty_slices_mut(&mut storage[..self.count]);
+        let borrowed = Self::trim_leading_empty_slices(&self.segments[..self.count]);
         let mut remaining = self.total_len;
 
+        if borrowed.is_empty() {
+            return Ok(());
+        }
+
+        loop {
+            match writer.write_vectored(borrowed) {
+                Ok(0) => {
+                    return Err(io::Error::from(io::ErrorKind::WriteZero));
+                }
+                Ok(written) => {
+                    debug_assert!(written <= remaining);
+                    remaining = remaining.saturating_sub(written);
+
+                    if remaining == 0 {
+                        return Ok(());
+                    }
+
+                    let mut storage = self.segments;
+                    let mut view = Self::trim_leading_empty_slices_mut(&mut storage[..self.count]);
+                    IoSlice::advance_slices(&mut view, written);
+                    view = Self::trim_leading_empty_slices_mut(view);
+
+                    return Self::write_owned_view(writer, view, remaining);
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                    return Self::write_borrowed_sequential(writer, borrowed, remaining);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    fn write_owned_view<W: IoWrite>(
+        writer: &mut W,
+        mut view: &mut [IoSlice<'a>],
+        mut remaining: usize,
+    ) -> io::Result<()> {
         while !view.is_empty() && remaining != 0 {
             match writer.write_vectored(view) {
                 Ok(0) => {
@@ -401,6 +438,16 @@ impl<'a> MessageSegments<'a> {
                 Err(err) => return Err(err),
             }
         }
+
+        Self::write_borrowed_sequential(writer, view, remaining)
+    }
+
+    fn write_borrowed_sequential<W: IoWrite>(
+        writer: &mut W,
+        slices: &[IoSlice<'a>],
+        mut remaining: usize,
+    ) -> io::Result<()> {
+        let view = Self::trim_leading_empty_slices(slices);
 
         for slice in view.iter() {
             let bytes = slice.as_ref();
@@ -439,6 +486,19 @@ impl<'a> MessageSegments<'a> {
                 .expect("slice is non-empty after first() check");
             slices = rest;
         }
+    }
+
+    #[inline]
+    fn trim_leading_empty_slices<'b>(mut slices: &'b [IoSlice<'a>]) -> &'b [IoSlice<'a>] {
+        while let Some((first, rest)) = slices.split_first() {
+            if !first.as_ref().is_empty() {
+                break;
+            }
+
+            slices = rest;
+        }
+
+        slices
     }
 
     /// Extends the provided buffer with the rendered message bytes.
