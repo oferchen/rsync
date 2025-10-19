@@ -545,8 +545,12 @@ impl<'a> MessageSegments<'a> {
         let spare = buffer.capacity().saturating_sub(buffer.len());
         if spare < required {
             buffer
-                .try_reserve_exact(required - spare)
+                .try_reserve_exact(required)
                 .map_err(map_message_reserve_error)?;
+            debug_assert!(
+                buffer.capacity().saturating_sub(buffer.len()) >= required,
+                "MessageSegments::extend_vec must reserve enough capacity for the entire message",
+            );
         }
 
         let start = buffer.len();
