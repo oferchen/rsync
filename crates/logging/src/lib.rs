@@ -240,9 +240,51 @@ impl<W> MessageSink<W>
 where
     W: Write,
 {
-    /// Writes a single message to the underlying writer.
+    /// Writes a single message using the sink's current [`LineMode`].
     pub fn write(&mut self, message: &Message) -> io::Result<()> {
-        if self.line_mode.append_newline() {
+        self.write_with_mode(message, self.line_mode)
+    }
+
+    /// Writes `message` using an explicit [`LineMode`] without mutating the sink.
+    ///
+    /// The helper mirrors [`write`](Self::write) but allows callers to override the
+    /// newline behaviour for a single message. This is useful when most
+    /// diagnostics should follow the sink's configured mode yet specific
+    /// messages must be emitted without a trailing newline (for example,
+    /// progress indicators that are overwritten in-place).
+    ///
+    /// # Examples
+    ///
+    /// Render a final message without a newline while keeping the sink's
+    /// default `LineMode::WithNewline` for subsequent writes:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::{LineMode, MessageSink};
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// sink.write(&Message::info("phase one"))?;
+    /// sink.write_with_mode(&Message::info("progress"), LineMode::WithoutNewline)?;
+    /// sink.write(&Message::info("phase two"))?;
+    ///
+    /// let output = String::from_utf8(sink.into_inner()).unwrap();
+    /// let mut lines = output.lines();
+    /// assert_eq!(lines.next(), Some("rsync info: phase one"));
+    /// assert_eq!(
+    ///     lines.next(),
+    ///     Some("rsync info: progressrsync info: phase two"),
+    /// );
+    /// // The progress message was rendered without a newline, so it shares the
+    /// // line with the final status update.
+    /// assert!(lines.next().is_none());
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write_with_mode(
+        &mut self,
+        message: &Message,
+        line_mode: LineMode,
+    ) -> io::Result<()> {
+        if line_mode.append_newline() {
             message.render_line_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
         } else {
             message.render_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
@@ -341,6 +383,42 @@ mod tests {
 
         let output = sink.into_inner();
         assert_eq!(output, b"rsync info: ready".to_vec());
+    }
+
+    #[test]
+    fn write_with_mode_overrides_line_mode_for_single_message() {
+        let mut sink = MessageSink::new(Vec::new());
+        sink.write(&Message::info("phase one"))
+            .expect("write succeeds");
+        sink.write_with_mode(&Message::info("progress"), LineMode::WithoutNewline)
+            .expect("write succeeds");
+        sink.write(&Message::info("phase two"))
+            .expect("write succeeds");
+
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+
+        let output = sink.into_inner();
+        let rendered = String::from_utf8(output).expect("utf-8");
+        let mut lines = rendered.lines();
+        assert_eq!(lines.next(), Some("rsync info: phase one"));
+        assert_eq!(
+            lines.next(),
+            Some("rsync info: progressrsync info: phase two"),
+        );
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn write_with_mode_respects_explicit_newline() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        sink.write_with_mode(&Message::warning("vanished"), LineMode::WithNewline)
+            .expect("write succeeds");
+
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+
+        let buffer = sink.into_inner();
+        let rendered = String::from_utf8(buffer).expect("utf-8");
+        assert_eq!(rendered, "rsync warning: vanished\n");
     }
 
     #[test]
