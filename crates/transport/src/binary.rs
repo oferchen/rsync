@@ -27,6 +27,7 @@ pub struct BinaryHandshake<R> {
     remote_advertised: u32,
     remote_protocol: ProtocolVersion,
     negotiated_protocol: ProtocolVersion,
+    local_advertised: ProtocolVersion,
 }
 
 /// Decomposed components of a [`BinaryHandshake`].
@@ -91,6 +92,7 @@ pub struct BinaryHandshakeParts<R> {
     remote_advertised: u32,
     remote_protocol: ProtocolVersion,
     negotiated_protocol: ProtocolVersion,
+    local_advertised: ProtocolVersion,
     stream: NegotiatedStreamParts<R>,
 }
 
@@ -99,12 +101,14 @@ impl<R> BinaryHandshakeParts<R> {
         remote_advertised: u32,
         remote_protocol: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
+        local_advertised: ProtocolVersion,
         stream: NegotiatedStreamParts<R>,
     ) -> Self {
         Self {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream,
         }
     }
@@ -125,6 +129,18 @@ impl<R> BinaryHandshakeParts<R> {
     #[must_use]
     pub const fn negotiated_protocol(&self) -> ProtocolVersion {
         self.negotiated_protocol
+    }
+
+    /// Returns the protocol version advertised by the local peer before remote negotiation completed.
+    ///
+    /// Upstream rsync writes the caller's desired protocol (after applying any `--protocol` cap) to the
+    /// transport before reading the remote advertisement. Capturing the value here allows higher layers
+    /// to surface diagnostics such as "client requested protocol 32 but server replied with 30" without
+    /// having to retain the original argument passed to [`negotiate_binary_session`].
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
+        self.local_advertised
     }
 
     /// Reports whether the remote peer advertised a protocol newer than the supported range.
@@ -243,6 +259,7 @@ impl<R> BinaryHandshakeParts<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream,
         } = self;
 
@@ -250,6 +267,7 @@ impl<R> BinaryHandshakeParts<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream.map_inner(map),
         )
     }
@@ -327,6 +345,7 @@ impl<R> BinaryHandshakeParts<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream,
         } = self;
 
@@ -337,6 +356,7 @@ impl<R> BinaryHandshakeParts<R> {
                     remote_advertised,
                     remote_protocol,
                     negotiated_protocol,
+                    local_advertised,
                     stream,
                 )
             })
@@ -346,6 +366,7 @@ impl<R> BinaryHandshakeParts<R> {
                         remote_advertised,
                         remote_protocol,
                         negotiated_protocol,
+                        local_advertised,
                         stream,
                     )
                 })
@@ -373,12 +394,20 @@ impl<R> BinaryHandshakeParts<R> {
     ///         .into_parts();
     ///
     ///     let expected_remote = parts.remote_protocol();
+    ///     let expected_local = parts.local_advertised_protocol();
     ///     let expected_negotiated = parts.negotiated_protocol();
-    ///     let (remote_advertised, remote_protocol, negotiated_protocol, stream_parts) =
+    ///     let (
+    ///         remote_advertised,
+    ///         remote_protocol,
+    ///         local_advertised,
+    ///         negotiated_protocol,
+    ///         stream_parts,
+    ///     ) =
     ///         parts.into_components();
     ///
     ///     assert_eq!(remote_advertised, u32::from(expected_remote.as_u8()));
     ///     assert_eq!(remote_protocol, expected_remote);
+    ///     assert_eq!(local_advertised, expected_local);
     ///     assert_eq!(negotiated_protocol, expected_negotiated);
     ///     assert_eq!(
     ///         stream_parts.decision(),
@@ -395,11 +424,13 @@ impl<R> BinaryHandshakeParts<R> {
         u32,
         ProtocolVersion,
         ProtocolVersion,
+        ProtocolVersion,
         NegotiatedStreamParts<R>,
     ) {
         (
             self.remote_advertised,
             self.remote_protocol,
+            self.local_advertised,
             self.negotiated_protocol,
             self.stream,
         )
@@ -409,12 +440,14 @@ impl<R> BinaryHandshakeParts<R> {
         remote_advertised: u32,
         remote_protocol: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
+        local_advertised: ProtocolVersion,
         stream: NegotiatedStreamParts<R>,
     ) -> Self {
         Self::new(
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream,
         )
     }
@@ -444,6 +477,17 @@ impl<R> BinaryHandshake<R> {
     #[must_use]
     pub const fn remote_advertised_protocol(&self) -> u32 {
         self.remote_advertised
+    }
+
+    /// Returns the protocol version the local peer advertised to the remote side.
+    ///
+    /// Binary negotiations transmit the caller's desired protocol (subject to `--protocol` caps) before
+    /// the remote advertisement is read. Capturing the value allows diagnostics to reference both sides
+    /// of the negotiation without requiring the original caller to stash the requested version.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
+        self.local_advertised
     }
 
     /// Reports whether the remote peer advertised a protocol newer than we support.
@@ -565,10 +609,19 @@ impl<R> BinaryHandshake<R> {
 
     /// Decomposes the handshake into its components.
     #[must_use]
-    pub fn into_components(self) -> (u32, ProtocolVersion, ProtocolVersion, NegotiatedStream<R>) {
+    pub fn into_components(
+        self,
+    ) -> (
+        u32,
+        ProtocolVersion,
+        ProtocolVersion,
+        ProtocolVersion,
+        NegotiatedStream<R>,
+    ) {
         (
             self.remote_advertised,
             self.remote_protocol,
+            self.local_advertised,
             self.negotiated_protocol,
             self.stream,
         )
@@ -577,12 +630,13 @@ impl<R> BinaryHandshake<R> {
     /// Decomposes the handshake into a [`BinaryHandshakeParts`] structure.
     #[must_use]
     pub fn into_parts(self) -> BinaryHandshakeParts<R> {
-        let (remote_advertised, remote_protocol, negotiated_protocol, stream) =
+        let (remote_advertised, remote_protocol, local_advertised, negotiated_protocol, stream) =
             self.into_stream_parts();
         BinaryHandshakeParts::from_components(
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
             stream,
         )
     }
@@ -590,11 +644,12 @@ impl<R> BinaryHandshake<R> {
     /// Reconstructs a [`BinaryHandshake`] from previously extracted parts.
     #[must_use]
     pub fn from_parts(parts: BinaryHandshakeParts<R>) -> Self {
-        let (remote_advertised, remote_protocol, negotiated_protocol, stream) =
+        let (remote_advertised, remote_protocol, local_advertised, negotiated_protocol, stream) =
             parts.into_components();
         Self::from_stream_parts(
             remote_advertised,
             remote_protocol,
+            local_advertised,
             negotiated_protocol,
             stream,
         )
@@ -610,6 +665,7 @@ impl<R> BinaryHandshake<R> {
     pub fn from_components(
         remote_advertised: u32,
         remote_protocol: ProtocolVersion,
+        local_advertised: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
         stream: NegotiatedStream<R>,
     ) -> Self {
@@ -619,6 +675,7 @@ impl<R> BinaryHandshake<R> {
             stream,
             remote_advertised,
             remote_protocol,
+            local_advertised,
             negotiated_protocol,
         }
     }
@@ -640,6 +697,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
         } = self;
 
         BinaryHandshake {
@@ -647,6 +705,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
         }
     }
 
@@ -666,6 +725,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
         } = self;
 
         stream
@@ -675,6 +735,7 @@ impl<R> BinaryHandshake<R> {
                 remote_advertised,
                 remote_protocol,
                 negotiated_protocol,
+                local_advertised,
             })
             .map_err(|err| {
                 err.map_original(|stream| BinaryHandshake {
@@ -682,6 +743,7 @@ impl<R> BinaryHandshake<R> {
                     remote_advertised,
                     remote_protocol,
                     negotiated_protocol,
+                    local_advertised,
                 })
             })
     }
@@ -700,6 +762,7 @@ impl<R> BinaryHandshake<R> {
         u32,
         ProtocolVersion,
         ProtocolVersion,
+        ProtocolVersion,
         NegotiatedStreamParts<R>,
     ) {
         let Self {
@@ -707,11 +770,13 @@ impl<R> BinaryHandshake<R> {
             remote_advertised,
             remote_protocol,
             negotiated_protocol,
+            local_advertised,
         } = self;
 
         (
             remote_advertised,
             remote_protocol,
+            local_advertised,
             negotiated_protocol,
             stream.into_parts(),
         )
@@ -728,6 +793,7 @@ impl<R> BinaryHandshake<R> {
     pub fn from_stream_parts(
         remote_advertised: u32,
         remote_protocol: ProtocolVersion,
+        local_advertised: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
         parts: NegotiatedStreamParts<R>,
     ) -> Self {
@@ -737,6 +803,7 @@ impl<R> BinaryHandshake<R> {
             stream: parts.into_stream(),
             remote_advertised,
             remote_protocol,
+            local_advertised,
             negotiated_protocol,
         }
     }
@@ -847,6 +914,7 @@ where
         stream,
         remote_advertised,
         remote_protocol,
+        local_advertised: desired_protocol,
         negotiated_protocol,
     })
 }
@@ -993,18 +1061,21 @@ mod tests {
         let expected_buffer = handshake.stream().buffered().to_vec();
         let remote_advertised = handshake.remote_advertised_protocol();
         let remote_protocol = handshake.remote_protocol();
+        let local_advertised = handshake.local_advertised_protocol();
         let negotiated_protocol = handshake.negotiated_protocol();
         let stream = handshake.into_stream();
 
         let rebuilt = BinaryHandshake::from_components(
             remote_advertised,
             remote_protocol,
+            local_advertised,
             negotiated_protocol,
             stream,
         );
 
         assert_eq!(rebuilt.remote_advertised_protocol(), remote_advertised);
         assert_eq!(rebuilt.remote_protocol(), remote_protocol);
+        assert_eq!(rebuilt.local_advertised_protocol(), local_advertised);
         assert_eq!(rebuilt.negotiated_protocol(), negotiated_protocol);
         assert_eq!(rebuilt.stream().decision(), NegotiationPrologue::Binary);
         assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
@@ -1353,9 +1424,11 @@ mod tests {
             .expect("handshake succeeds");
 
         assert!(!handshake.local_protocol_was_capped());
-        let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
+        let (remote_adv, remote, local_advertised, negotiated, parts) =
+            handshake.into_stream_parts();
         assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
+        assert_eq!(local_advertised, ProtocolVersion::NEWEST);
         assert_eq!(negotiated, remote_version);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
         assert_eq!(parts.sniffed_prefix(), &[remote_version.as_u8()]);
@@ -1387,14 +1460,16 @@ mod tests {
 
         let expected_advertised = parts.remote_advertised_protocol();
         let expected_remote = parts.remote_protocol();
+        let expected_local = parts.local_advertised_protocol();
         let expected_negotiated = parts.negotiated_protocol();
         let expected_consumed = parts.stream_parts().buffered_consumed();
         let expected_buffer = parts.stream_parts().buffered().to_vec();
 
-        let (advertised, remote, negotiated, stream_parts) = parts.into_components();
+        let (advertised, remote, local, negotiated, stream_parts) = parts.into_components();
 
         assert_eq!(advertised, expected_advertised);
         assert_eq!(remote, expected_remote);
+        assert_eq!(local, expected_local);
         assert_eq!(negotiated, expected_negotiated);
         assert_eq!(stream_parts.decision(), NegotiationPrologue::Binary);
         assert_eq!(stream_parts.sniffed_prefix(), &[expected_remote.as_u8()]);
@@ -1411,14 +1486,21 @@ mod tests {
             .expect("handshake succeeds");
 
         assert!(!handshake.local_protocol_was_capped());
-        let (remote_adv, remote, negotiated, parts) = handshake.into_stream_parts();
+        let (remote_adv, remote, local_advertised, negotiated, parts) =
+            handshake.into_stream_parts();
         assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
         assert_eq!(remote, remote_version);
+        assert_eq!(local_advertised, ProtocolVersion::NEWEST);
         assert_eq!(negotiated, remote_version);
         assert_eq!(parts.decision(), NegotiationPrologue::Binary);
 
-        let mut rehydrated =
-            BinaryHandshake::from_stream_parts(remote_adv, remote, negotiated, parts);
+        let mut rehydrated = BinaryHandshake::from_stream_parts(
+            remote_adv,
+            remote,
+            local_advertised,
+            negotiated,
+            parts,
+        );
 
         assert!(!rehydrated.local_protocol_was_capped());
         assert_eq!(rehydrated.remote_protocol(), remote_version);
@@ -1454,6 +1536,7 @@ mod tests {
         );
         assert_eq!(parts.remote_protocol(), remote_version);
         assert_eq!(parts.negotiated_protocol(), remote_version);
+        assert_eq!(parts.local_advertised_protocol(), ProtocolVersion::NEWEST);
         assert!(!parts.remote_protocol_was_clamped());
         assert!(!parts.local_protocol_was_capped());
         assert_eq!(parts.stream_parts().decision(), NegotiationPrologue::Binary);

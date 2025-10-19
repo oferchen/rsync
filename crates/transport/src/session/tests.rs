@@ -77,6 +77,10 @@ fn negotiate_session_detects_binary_transport() {
         u32::from(remote_version.as_u8())
     );
     assert_eq!(
+        handshake.local_advertised_protocol(),
+        ProtocolVersion::NEWEST
+    );
+    assert_eq!(
         handshake.remote_advertisement(),
         RemoteProtocolAdvertisement::Supported(remote_version)
     );
@@ -128,6 +132,10 @@ fn negotiate_session_detects_legacy_transport() {
         RemoteProtocolAdvertisement::Supported(
             ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
         )
+    );
+    assert_eq!(
+        handshake.local_advertised_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported")
     );
     assert!(!handshake.local_protocol_was_capped());
 
@@ -208,15 +216,25 @@ fn negotiate_session_parts_exposes_binary_metadata() {
         .clone()
         .into_binary()
         .expect("binary tuple parts available");
-    let (remote_advertised, remote_protocol, negotiated_protocol, _stream_parts_tuple) =
-        tuple_parts;
+    let (
+        remote_advertised,
+        remote_protocol,
+        local_advertised,
+        negotiated_protocol,
+        _stream_parts_tuple,
+    ) = tuple_parts;
     assert_eq!(remote_advertised, u32::from(remote_version.as_u8()));
     assert_eq!(remote_protocol, remote_version);
+    assert_eq!(local_advertised, ProtocolVersion::NEWEST);
     assert_eq!(negotiated_protocol, remote_version);
 
     let binary_parts = BinaryHandshakeParts::try_from(parts).expect("binary parts conversion");
     assert_eq!(binary_parts.remote_protocol(), remote_version);
     assert_eq!(binary_parts.negotiated_protocol(), remote_version);
+    assert_eq!(
+        binary_parts.local_advertised_protocol(),
+        ProtocolVersion::NEWEST
+    );
 
     let stream_parts = binary_parts.into_stream_parts();
     let transport = stream_parts.into_stream().into_inner();
@@ -459,7 +477,7 @@ fn negotiate_session_parts_with_sniffer_supports_reuse() {
     assert_eq!(parts1.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts1.remote_protocol(), remote_version);
 
-    let (_remote_advertised, _remote_protocol, _negotiated, stream_parts) =
+    let (_remote_advertised, _remote_protocol, _local_advertised, _negotiated, stream_parts) =
         parts1.into_binary().expect("binary parts");
     let transport1 = stream_parts.into_stream().into_inner();
     assert_eq!(
@@ -725,6 +743,7 @@ fn session_reports_clamped_binary_future_version() {
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
     assert_eq!(parts.remote_advertised_protocol(), future_version);
+    assert_eq!(parts.local_advertised_protocol(), ProtocolVersion::NEWEST);
     assert!(parts.remote_protocol_was_clamped());
     assert!(!parts.local_protocol_was_capped());
     assert_eq!(
@@ -750,6 +769,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
         parts.remote_advertised_protocol(),
         u32::from(remote_version.as_u8())
     );
+    assert_eq!(parts.local_advertised_protocol(), ProtocolVersion::NEWEST);
     assert!(!parts.remote_protocol_was_clamped());
     assert!(!parts.local_protocol_was_capped());
     assert!(parts.server_greeting().is_none());

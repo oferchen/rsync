@@ -85,6 +85,16 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
+    /// Returns the protocol version advertised by the local peer before the negotiation settled.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub fn local_advertised_protocol(&self) -> ProtocolVersion {
+        match self {
+            SessionHandshakeParts::Binary(parts) => parts.local_advertised_protocol(),
+            SessionHandshakeParts::Legacy(parts) => parts.local_advertised_protocol(),
+        }
+    }
+
     /// Returns the classification of the peer's protocol advertisement.
     #[must_use]
     pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
@@ -247,15 +257,22 @@ impl<R> SessionHandshakeParts<R> {
             u32,
             ProtocolVersion,
             ProtocolVersion,
+            ProtocolVersion,
             NegotiatedStreamParts<R>,
         ),
         SessionHandshakeParts<R>,
     > {
         match self {
             SessionHandshakeParts::Binary(parts) => {
-                let (remote_advertised, remote_protocol, negotiated, stream) =
+                let (remote_advertised, remote_protocol, local_advertised, negotiated, stream) =
                     parts.into_components();
-                Ok((remote_advertised, remote_protocol, negotiated, stream))
+                Ok((
+                    remote_advertised,
+                    remote_protocol,
+                    local_advertised,
+                    negotiated,
+                    stream,
+                ))
             }
             SessionHandshakeParts::Legacy(parts) => Err(SessionHandshakeParts::Legacy(parts)),
         }
