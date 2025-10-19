@@ -1,4 +1,5 @@
 use super::*;
+use crate::RemoteProtocolAdvertisement;
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts, negotiate_binary_session};
 use crate::daemon::{
     LegacyDaemonHandshake, LegacyDaemonHandshakeParts, negotiate_legacy_daemon_session,
@@ -74,6 +75,10 @@ fn negotiate_session_detects_binary_transport() {
         handshake.remote_advertised_protocol(),
         u32::from(remote_version.as_u8())
     );
+    assert_eq!(
+        handshake.remote_advertisement(),
+        RemoteProtocolAdvertisement::Supported(remote_version)
+    );
     assert!(!handshake.remote_protocol_was_clamped());
     assert!(!handshake.local_protocol_was_capped());
 
@@ -116,6 +121,12 @@ fn negotiate_session_detects_legacy_transport() {
             .expect("legacy handshake exposes greeting")
             .advertised_protocol(),
         31
+    );
+    assert_eq!(
+        handshake.remote_advertisement(),
+        RemoteProtocolAdvertisement::Supported(
+            ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+        )
     );
     assert!(!handshake.local_protocol_was_capped());
 
@@ -653,6 +664,10 @@ fn session_reports_clamped_binary_future_version() {
     assert_eq!(handshake.remote_advertised_protocol(), future_version);
     assert!(handshake.remote_protocol_was_clamped());
     assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(
+        handshake.remote_advertisement(),
+        RemoteProtocolAdvertisement::Future(future_version)
+    );
 
     let parts = handshake.into_stream_parts();
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
@@ -660,6 +675,10 @@ fn session_reports_clamped_binary_future_version() {
     assert_eq!(parts.remote_advertised_protocol(), future_version);
     assert!(parts.remote_protocol_was_clamped());
     assert!(!parts.local_protocol_was_capped());
+    assert_eq!(
+        parts.remote_advertisement(),
+        RemoteProtocolAdvertisement::Future(future_version)
+    );
 }
 
 #[test]

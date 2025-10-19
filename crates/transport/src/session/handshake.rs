@@ -1,5 +1,6 @@
 use crate::binary::{BinaryHandshake, negotiate_binary_session_from_stream};
 use crate::daemon::{LegacyDaemonHandshake, negotiate_legacy_daemon_session_from_stream};
+use crate::handshake_util::RemoteProtocolAdvertisement;
 use crate::negotiation::{
     NegotiatedStream, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
@@ -89,6 +90,15 @@ impl<R> SessionHandshake<R> {
         match self {
             Self::Binary(handshake) => handshake.remote_advertised_protocol(),
             Self::Legacy(handshake) => handshake.remote_advertised_protocol(),
+        }
+    }
+
+    /// Returns the classification of the peer's protocol advertisement.
+    #[must_use]
+    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+        match self {
+            Self::Binary(handshake) => handshake.remote_advertisement(),
+            Self::Legacy(handshake) => handshake.remote_advertisement(),
         }
     }
 

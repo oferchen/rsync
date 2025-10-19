@@ -1,5 +1,6 @@
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
+use crate::handshake_util::RemoteProtocolAdvertisement;
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
 use rsync_protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
@@ -81,6 +82,15 @@ impl<R> SessionHandshakeParts<R> {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.remote_advertised_protocol(),
             SessionHandshakeParts::Legacy(parts) => parts.remote_advertised_protocol(),
+        }
+    }
+
+    /// Returns the classification of the peer's protocol advertisement.
+    #[must_use]
+    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+        match self {
+            SessionHandshakeParts::Binary(parts) => parts.remote_advertisement(),
+            SessionHandshakeParts::Legacy(parts) => parts.remote_advertisement(),
         }
     }
 
