@@ -1310,11 +1310,65 @@ impl Message {
         self
     }
 
+    /// Removes any role trailer from the message.
+    ///
+    /// This helper is useful when higher layers clone a templated [`Message`] and need to emit the
+    /// diagnostic without associating it with a specific sender/receiver role. Clearing the role
+    /// mirrors upstream behaviour where certain warnings are rendered without a trailer even if the
+    /// original template attached one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, Role};
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_role(Role::Sender)
+    ///     .without_role();
+    ///
+    /// assert!(message.role().is_none());
+    /// let rendered = message.to_string();
+    /// assert!(!rendered.contains("[sender="));
+    /// ```
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the cleared role"]
+    pub fn without_role(mut self) -> Self {
+        self.role = None;
+        self
+    }
+
     /// Attaches a source location to the message.
     #[inline]
     #[must_use = "the updated message must be emitted to retain the attached source"]
     pub fn with_source(mut self, source: SourceLocation) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Removes any source location metadata from the message.
+    ///
+    /// Messages cloned from templates sometimes need to suppress the originating Rust file when
+    /// relayed to users—for example when reproducing upstream diagnostics that omit source
+    /// locations. Calling this helper clears the recorded [`SourceLocation`] while leaving the
+    /// payload and severity untouched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{message::Message, message_source};
+    ///
+    /// let message = Message::error(23, "delta-transfer failure")
+    ///     .with_source(message_source!())
+    ///     .without_source();
+    ///
+    /// assert!(message.source().is_none());
+    /// let rendered = message.to_string();
+    /// assert!(!rendered.contains(" at "));
+    /// ```
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the cleared source"]
+    pub fn without_source(mut self) -> Self {
+        self.source = None;
         self
     }
 
@@ -1341,6 +1395,30 @@ impl Message {
     #[inline]
     pub fn with_code(mut self, code: i32) -> Self {
         self.code = Some(code);
+        self
+    }
+
+    /// Removes any exit code annotation from the message.
+    ///
+    /// This mirrors upstream rsync's behaviour where informational diagnostics often omit `(code
+    /// N)` even if a template initially provided one. Clearing the code is cheaper than rebuilding
+    /// the [`Message`] from scratch when only the numeric suffix needs to be stripped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    ///
+    /// let message = Message::error(23, "delta-transfer failure").without_code();
+    ///
+    /// assert!(message.code().is_none());
+    /// let rendered = message.to_string();
+    /// assert!(!rendered.contains("(code"));
+    /// ```
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the cleared code"]
+    pub fn without_code(mut self) -> Self {
+        self.code = None;
         self
     }
 
@@ -2064,6 +2142,35 @@ mod tests {
         assert!(formatted.starts_with("rsync error: delta-transfer failure (code 23) at "));
         assert!(formatted.contains("[sender=3.4.1-rust]"));
         assert!(formatted.contains("src/message.rs"));
+    }
+
+    #[test]
+    fn message_without_role_clears_trailer() {
+        let formatted = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .without_role()
+            .to_string();
+
+        assert!(!formatted.contains("[sender="));
+    }
+
+    #[test]
+    fn message_without_source_clears_location() {
+        let formatted = Message::error(23, "delta-transfer failure")
+            .with_source(message_source!())
+            .without_source()
+            .to_string();
+
+        assert!(!formatted.contains(" at "));
+    }
+
+    #[test]
+    fn message_without_code_clears_suffix() {
+        let formatted = Message::error(23, "delta-transfer failure")
+            .without_code()
+            .to_string();
+
+        assert!(!formatted.contains("(code"));
     }
 
     #[test]
