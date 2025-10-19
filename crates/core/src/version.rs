@@ -56,6 +56,47 @@ use core::{
     iter::{FromIterator, FusedIterator},
 };
 
+const ACL_FEATURE_BIT: u8 = 1 << 0;
+const XATTR_FEATURE_BIT: u8 = 1 << 1;
+const ZSTD_FEATURE_BIT: u8 = 1 << 2;
+const ICONV_FEATURE_BIT: u8 = 1 << 3;
+const SD_NOTIFY_FEATURE_BIT: u8 = 1 << 4;
+
+/// Bitmap describing the optional features compiled into this build.
+///
+/// Each bit corresponds to one of the [`CompiledFeature`] variants, ordered according to
+/// [`CompiledFeature::ALL`]. Exposing the bitmap allows higher layers to perform constant-time
+/// membership checks, pre-size lookup tables, or cache whether any optional capabilities were
+/// enabled without materialising the full vector returned by [`compiled_features`]. The value is
+/// computed using `cfg!(feature = "...")`, ensuring the bits reflect the compile-time feature
+/// set even in `const` contexts.
+#[doc(alias = "--version")]
+pub const COMPILED_FEATURE_BITMAP: u8 = {
+    let mut bitmap = 0u8;
+
+    if cfg!(feature = "acl") {
+        bitmap |= ACL_FEATURE_BIT;
+    }
+
+    if cfg!(feature = "xattr") {
+        bitmap |= XATTR_FEATURE_BIT;
+    }
+
+    if cfg!(feature = "zstd") {
+        bitmap |= ZSTD_FEATURE_BIT;
+    }
+
+    if cfg!(feature = "iconv") {
+        bitmap |= ICONV_FEATURE_BIT;
+    }
+
+    if cfg!(feature = "sd-notify") {
+        bitmap |= SD_NOTIFY_FEATURE_BIT;
+    }
+
+    bitmap
+};
+
 /// Upstream base version that the Rust implementation tracks.
 #[doc(alias = "3.4.1")]
 pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
@@ -97,6 +138,16 @@ impl CompiledFeature {
         CompiledFeature::SdNotify,
     ];
 
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Acl => ACL_FEATURE_BIT,
+            Self::Xattr => XATTR_FEATURE_BIT,
+            Self::Zstd => ZSTD_FEATURE_BIT,
+            Self::Iconv => ICONV_FEATURE_BIT,
+            Self::SdNotify => SD_NOTIFY_FEATURE_BIT,
+        }
+    }
+
     /// Returns the canonical label used when listing the feature in `--version` output.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -112,13 +163,7 @@ impl CompiledFeature {
     /// Reports whether the feature was compiled into the current build.
     #[must_use]
     pub const fn is_enabled(self) -> bool {
-        match self {
-            Self::Acl => cfg!(feature = "acl"),
-            Self::Xattr => cfg!(feature = "xattr"),
-            Self::Zstd => cfg!(feature = "zstd"),
-            Self::Iconv => cfg!(feature = "iconv"),
-            Self::SdNotify => cfg!(feature = "sd-notify"),
-        }
+        (COMPILED_FEATURE_BITMAP & self.bit()) != 0
     }
 
     /// Returns a human-readable description of the feature for tooling output.
@@ -200,10 +245,7 @@ pub struct CompiledFeaturesIter {
 
 impl CompiledFeaturesIter {
     fn new() -> Self {
-        let remaining = CompiledFeature::ALL
-            .into_iter()
-            .filter(|feature| feature.is_enabled())
-            .count();
+        let remaining = COMPILED_FEATURE_BITMAP.count_ones() as usize;
 
         Self {
             index: 0,
@@ -472,7 +514,16 @@ mod tests {
 
         for feature in CompiledFeature::ALL {
             assert_eq!(features.contains(&feature), feature.is_enabled());
+            assert_eq!(
+                (COMPILED_FEATURE_BITMAP & feature.bit()) != 0,
+                feature.is_enabled()
+            );
         }
+
+        assert_eq!(
+            features.len(),
+            COMPILED_FEATURE_BITMAP.count_ones() as usize
+        );
     }
 
     #[test]
