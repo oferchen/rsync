@@ -279,6 +279,13 @@ name = "rsync-core"
 version = "0.0.0"
 
 [[package]]
+name = "rsync-logging"
+version = "0.0.0"
+dependencies = [
+ "rsync-core",
+]
+
+[[package]]
 name = "rsync-protocol"
 version = "0.0.0"
 dependencies = [
