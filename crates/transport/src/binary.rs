@@ -135,7 +135,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// temporarily decomposed the handshake via [`BinaryHandshake::into_parts`] retain access to
     /// the same diagnostics without rebuilding the wrapper first.
     #[must_use]
-    pub fn remote_protocol_was_clamped(&self) -> bool {
+    pub const fn remote_protocol_was_clamped(&self) -> bool {
         remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
@@ -148,7 +148,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// while still observing that the negotiated session uses
     /// [`ProtocolVersion::NEWEST`].
     #[must_use]
-    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+    pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
         RemoteProtocolAdvertisement::from_raw(
             self.remote_advertised_protocol(),
             self.remote_protocol(),
@@ -163,7 +163,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// negotiated session is forced to run at that level even if the peer advertised something newer.
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_protocol_was_capped(&self) -> bool {
+    pub const fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.remote_protocol(), self.negotiated_protocol())
     }
 
@@ -450,7 +450,7 @@ impl<R> BinaryHandshake<R> {
 
     /// Reports whether the remote peer advertised a protocol newer than we support.
     #[must_use]
-    pub fn remote_protocol_was_clamped(&self) -> bool {
+    pub const fn remote_protocol_was_clamped(&self) -> bool {
         remote_advertisement_was_clamped(self.remote_advertised_protocol())
     }
 
@@ -459,7 +459,7 @@ impl<R> BinaryHandshake<R> {
     /// The helper mirrors [`BinaryHandshakeParts::remote_advertisement`] so the
     /// wrapper and its decomposed form remain in sync.
     #[must_use]
-    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+    pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
         RemoteProtocolAdvertisement::from_raw(
             self.remote_advertised_protocol(),
             self.remote_protocol(),
@@ -525,7 +525,7 @@ impl<R> BinaryHandshake<R> {
     /// ```
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_protocol_was_capped(&self) -> bool {
+    pub const fn local_protocol_was_capped(&self) -> bool {
         local_cap_reduced_protocol(self.remote_protocol, self.negotiated_protocol)
     }
 
