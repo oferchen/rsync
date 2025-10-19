@@ -718,7 +718,7 @@ fn session_reports_clamped_binary_future_version() {
     assert!(!handshake.local_protocol_was_capped());
     assert_eq!(
         handshake.remote_advertisement(),
-        RemoteProtocolAdvertisement::Future(future_version)
+        RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
     );
 
     let parts = handshake.into_stream_parts();
@@ -729,7 +729,7 @@ fn session_reports_clamped_binary_future_version() {
     assert!(!parts.local_protocol_was_capped());
     assert_eq!(
         parts.remote_advertisement(),
-        RemoteProtocolAdvertisement::Future(future_version)
+        RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
     );
 }
 

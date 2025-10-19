@@ -26,7 +26,12 @@ pub enum RemoteProtocolAdvertisement {
     /// The peer advertised a protocol within the supported range.
     Supported(ProtocolVersion),
     /// The peer announced a future protocol that required clamping.
-    Future(u32),
+    Future {
+        /// Raw protocol number announced by the peer.
+        advertised: u32,
+        /// [`ProtocolVersion`] obtained after applying upstream clamps.
+        clamped: ProtocolVersion,
+    },
 }
 
 impl RemoteProtocolAdvertisement {
@@ -41,7 +46,7 @@ impl RemoteProtocolAdvertisement {
     pub const fn supported(self) -> Option<ProtocolVersion> {
         match self {
             Self::Supported(version) => Some(version),
-            Self::Future(_) => None,
+            Self::Future { .. } => None,
         }
     }
 
@@ -50,13 +55,16 @@ impl RemoteProtocolAdvertisement {
     pub const fn future(self) -> Option<u32> {
         match self {
             Self::Supported(_) => None,
-            Self::Future(value) => Some(value),
+            Self::Future { advertised, .. } => Some(advertised),
         }
     }
 
     pub(crate) const fn from_raw(advertised: u32, clamped: ProtocolVersion) -> Self {
         if remote_advertisement_was_clamped(advertised) {
-            Self::Future(advertised)
+            Self::Future {
+                advertised,
+                clamped,
+            }
         } else {
             Self::Supported(clamped)
         }
@@ -79,12 +87,15 @@ impl RemoteProtocolAdvertisement {
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
     /// assert!(!supported.was_clamped());
     ///
-    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// let future = RemoteProtocolAdvertisement::Future {
+    ///     advertised: 40,
+    ///     clamped: ProtocolVersion::NEWEST,
+    /// };
     /// assert!(future.was_clamped());
     /// ```
     #[must_use]
     pub const fn was_clamped(self) -> bool {
-        matches!(self, Self::Future(_))
+        matches!(self, Self::Future { .. })
     }
 
     /// Returns the raw protocol number announced by the peer.
@@ -103,14 +114,17 @@ impl RemoteProtocolAdvertisement {
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::from_supported(31).unwrap());
     /// assert_eq!(supported.advertised(), 31);
     ///
-    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// let future = RemoteProtocolAdvertisement::Future {
+    ///     advertised: 40,
+    ///     clamped: ProtocolVersion::NEWEST,
+    /// };
     /// assert_eq!(future.advertised(), 40);
     /// ```
     #[must_use]
     pub const fn advertised(self) -> u32 {
         match self {
             Self::Supported(version) => version.as_u8() as u32,
-            Self::Future(value) => value,
+            Self::Future { advertised, .. } => advertised,
         }
     }
 
@@ -118,10 +132,12 @@ impl RemoteProtocolAdvertisement {
     ///
     /// Upstream rsync downgrades peers that advertise future protocol versions to
     /// [`ProtocolVersion::NEWEST`]. Sessions where the peer announced a supported
-    /// protocol negotiate that exact version. The helper exposes the final
-    /// [`ProtocolVersion`] so higher layers that only receive the classification
-    /// can still determine the active protocol without duplicating the clamping
-    /// logic.
+    /// protocol negotiate that exact version. The helper exposes the
+    /// [`ProtocolVersion`] selected after upstream applies its clamps. Callers
+    /// that also track a user-specified protocol cap (for example, via
+    /// `--protocol`) should combine this value with
+    /// [`local_cap_reduced_protocol`] or the negotiated protocol reported by the
+    /// handshake structures to derive the final session version.
     ///
     /// # Examples
     ///
@@ -134,14 +150,17 @@ impl RemoteProtocolAdvertisement {
     /// );
     /// assert_eq!(supported.negotiated(), ProtocolVersion::from_supported(30).unwrap());
     ///
-    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// let future = RemoteProtocolAdvertisement::Future {
+    ///     advertised: 40,
+    ///     clamped: ProtocolVersion::NEWEST,
+    /// };
     /// assert_eq!(future.negotiated(), ProtocolVersion::NEWEST);
     /// ```
     #[must_use]
     pub const fn negotiated(self) -> ProtocolVersion {
         match self {
             Self::Supported(version) => version,
-            Self::Future(_) => ProtocolVersion::NEWEST,
+            Self::Future { clamped, .. } => clamped,
         }
     }
 }
@@ -167,7 +186,10 @@ impl From<RemoteProtocolAdvertisement> for ProtocolVersion {
     /// let negotiated: ProtocolVersion = supported.into();
     /// assert_eq!(negotiated, ProtocolVersion::V31);
     ///
-    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// let future = RemoteProtocolAdvertisement::Future {
+    ///     advertised: 40,
+    ///     clamped: ProtocolVersion::NEWEST,
+    /// };
     /// let negotiated: ProtocolVersion = future.into();
     /// assert_eq!(negotiated, ProtocolVersion::NEWEST);
     /// ```
@@ -287,7 +309,13 @@ mod tests {
 
         assert!(clamped);
         assert!(!not_clamped);
-        assert!(matches!(future, RemoteProtocolAdvertisement::Future(40)));
+        assert!(matches!(
+            future,
+            RemoteProtocolAdvertisement::Future {
+                advertised: 40,
+                clamped
+            } if clamped == ProtocolVersion::NEWEST
+        ));
         assert!(matches!(
             supported,
             RemoteProtocolAdvertisement::Supported(ProtocolVersion::V30)
@@ -351,7 +379,7 @@ mod tests {
     #[test]
     fn classification_converts_into_protocol_version() {
         let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
-        let future = RemoteProtocolAdvertisement::Future(40);
+        let future = RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST);
 
         let supported_version: ProtocolVersion = supported.into();
         let future_version: ProtocolVersion = future.into();

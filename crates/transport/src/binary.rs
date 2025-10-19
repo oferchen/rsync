@@ -1240,7 +1240,7 @@ mod tests {
         assert_eq!(handshake.remote_advertised_protocol(), future_version);
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(future_version)
+            RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
         );
 
         let parts = handshake.into_parts();
@@ -1251,7 +1251,7 @@ mod tests {
         assert!(parts.local_protocol_was_capped());
         assert_eq!(
             parts.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(future_version)
+            RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
         );
 
         let transport = parts.into_handshake().into_stream().into_inner();
@@ -1273,7 +1273,7 @@ mod tests {
         assert!(!handshake.local_protocol_was_capped());
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(future_version)
+            RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
         );
     }
 
@@ -1291,7 +1291,7 @@ mod tests {
         assert!(!handshake.local_protocol_was_capped());
         assert_eq!(
             handshake.remote_advertisement(),
-            RemoteProtocolAdvertisement::Future(u32::MAX)
+            RemoteProtocolAdvertisement::from_raw(u32::MAX, ProtocolVersion::NEWEST)
         );
     }
 
