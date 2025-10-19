@@ -9,6 +9,7 @@ repository = "https://github.com/oferchen/rsync"
 build = "build.rs"
 
 [dependencies]
+rsync-protocol = { path = "../protocol" }
 
 [features]
 default = []
