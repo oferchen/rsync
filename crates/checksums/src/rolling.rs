@@ -162,36 +162,10 @@ impl RollingChecksum {
     /// Updates the checksum with an additional slice of bytes.
     #[inline]
     pub fn update(&mut self, chunk: &[u8]) {
-        if chunk.is_empty() {
-            return;
-        }
-
-        let mut s1 = self.s1;
-        let mut s2 = self.s2;
-
-        let mut iter = chunk.chunks_exact(4);
-        for block in &mut iter {
-            s1 = s1.wrapping_add(u32::from(block[0]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[1]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[2]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[3]));
-            s2 = s2.wrapping_add(s1);
-        }
-
-        for &byte in iter.remainder() {
-            s1 = s1.wrapping_add(u32::from(byte));
-            s2 = s2.wrapping_add(s1);
-        }
-
-        self.s1 = s1 & 0xffff;
-        self.s2 = s2 & 0xffff;
-        self.len = self.len.saturating_add(chunk.len());
+        let (s1, s2, len) = Self::accumulate_chunk(self.s1, self.s2, self.len, chunk);
+        self.s1 = s1;
+        self.s2 = s2;
+        self.len = len;
     }
 
     /// Updates the checksum using a vectored slice of byte buffers.
@@ -220,45 +194,16 @@ impl RollingChecksum {
     #[doc(alias = "writev")]
     #[inline]
     pub fn update_vectored(&mut self, buffers: &[IoSlice<'_>]) {
-        if buffers.is_empty() {
-            return;
-        }
-
         let mut s1 = self.s1;
         let mut s2 = self.s2;
         let mut len = self.len;
 
         for slice in buffers {
-            let chunk = slice.as_ref();
-            if chunk.is_empty() {
-                continue;
-            }
-
-            let mut iter = chunk.chunks_exact(4);
-            for block in &mut iter {
-                s1 = s1.wrapping_add(u32::from(block[0]));
-                s2 = s2.wrapping_add(s1);
-
-                s1 = s1.wrapping_add(u32::from(block[1]));
-                s2 = s2.wrapping_add(s1);
-
-                s1 = s1.wrapping_add(u32::from(block[2]));
-                s2 = s2.wrapping_add(s1);
-
-                s1 = s1.wrapping_add(u32::from(block[3]));
-                s2 = s2.wrapping_add(s1);
-            }
-
-            for &byte in iter.remainder() {
-                s1 = s1.wrapping_add(u32::from(byte));
-                s2 = s2.wrapping_add(s1);
-            }
-
-            len = len.saturating_add(chunk.len());
+            (s1, s2, len) = Self::accumulate_chunk(s1, s2, len, slice.as_ref());
         }
 
-        self.s1 = s1 & 0xffff;
-        self.s2 = s2 & 0xffff;
+        self.s1 = s1;
+        self.s2 = s2;
         self.len = len;
     }
 
@@ -363,6 +308,35 @@ impl RollingChecksum {
         }
 
         u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })
+    }
+
+    #[inline]
+    fn accumulate_chunk(mut s1: u32, mut s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
+        if chunk.is_empty() {
+            return (s1, s2, len);
+        }
+
+        let mut iter = chunk.chunks_exact(4);
+        for block in &mut iter {
+            s1 = s1.wrapping_add(u32::from(block[0]));
+            s2 = s2.wrapping_add(s1);
+
+            s1 = s1.wrapping_add(u32::from(block[1]));
+            s2 = s2.wrapping_add(s1);
+
+            s1 = s1.wrapping_add(u32::from(block[2]));
+            s2 = s2.wrapping_add(s1);
+
+            s1 = s1.wrapping_add(u32::from(block[3]));
+            s2 = s2.wrapping_add(s1);
+        }
+
+        for &byte in iter.remainder() {
+            s1 = s1.wrapping_add(u32::from(byte));
+            s2 = s2.wrapping_add(s1);
+        }
+
+        (s1 & 0xffff, s2 & 0xffff, len.saturating_add(chunk.len()))
     }
 
     /// Performs the rolling checksum update by removing `outgoing` and appending `incoming`.
