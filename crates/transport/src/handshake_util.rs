@@ -61,6 +61,33 @@ impl RemoteProtocolAdvertisement {
             Self::Supported(clamped)
         }
     }
+
+    /// Returns the raw protocol number announced by the peer.
+    ///
+    /// The value matches the on-the-wire advertisement regardless of whether it fell within the
+    /// supported range. When the peer selected a protocol known to rsync 3.4.1 the returned value
+    /// equals the numeric form of [`ProtocolVersion`]; future advertisements yield the unclamped
+    /// number so higher layers can surface diagnostics that mirror upstream rsync.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::RemoteProtocolAdvertisement;
+    ///
+    /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::from_supported(31).unwrap());
+    /// assert_eq!(supported.advertised(), 31);
+    ///
+    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// assert_eq!(future.advertised(), 40);
+    /// ```
+    #[must_use]
+    pub const fn advertised(self) -> u32 {
+        match self {
+            Self::Supported(version) => version.as_u8() as u32,
+            Self::Future(value) => value,
+        }
+    }
 }
 
 /// Reports whether a remote protocol advertisement was clamped to the newest supported value.
@@ -139,6 +166,7 @@ mod tests {
         assert!(classification.is_supported());
         assert_eq!(classification.supported(), Some(version));
         assert_eq!(classification.future(), None);
+        assert_eq!(classification.advertised(), advertised);
     }
 
     #[test]
@@ -150,6 +178,7 @@ mod tests {
         assert!(!classification.is_supported());
         assert_eq!(classification.supported(), None);
         assert_eq!(classification.future(), Some(advertised));
+        assert_eq!(classification.advertised(), advertised);
     }
 
     proptest! {
@@ -179,6 +208,27 @@ mod tests {
         ) {
             let expected = negotiated < remote;
             prop_assert_eq!(local_cap_reduced_protocol(remote, negotiated), expected);
+        }
+
+        #[test]
+        fn advertised_round_trips_to_raw_value(
+            advertised in 0u32..=u16::MAX as u32,
+        ) {
+            let negotiated = if remote_advertisement_was_clamped(advertised) {
+                ProtocolVersion::NEWEST
+            } else {
+                let byte = u8::try_from(advertised).unwrap_or(ProtocolVersion::NEWEST.as_u8());
+                ProtocolVersion::from_supported(byte).unwrap_or(ProtocolVersion::OLDEST)
+            };
+
+            let classification = RemoteProtocolAdvertisement::from_raw(advertised, negotiated);
+            let expected = if remote_advertisement_was_clamped(advertised) {
+                advertised
+            } else {
+                negotiated.as_u8() as u32
+            };
+
+            prop_assert_eq!(classification.advertised(), expected);
         }
     }
 }
