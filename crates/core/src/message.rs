@@ -228,11 +228,11 @@ impl<'a> MessageSegments<'a> {
         self.as_slices().iter()
     }
 
-    /// Reports whether any slices were produced.
+    /// Reports whether any slices were produced or contain bytes.
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.count == 0
+        self.count == 0 || self.total_len == 0
     }
 
     /// Returns a mutable iterator over the populated vectored slices.
@@ -296,7 +296,7 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(buffer, message.to_bytes().unwrap());
     /// ```
     pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        if self.count == 0 || self.total_len == 0 {
+        if self.is_empty() {
             return Ok(());
         }
 
@@ -2434,6 +2434,22 @@ mod tests {
 
         assert_eq!(buffer, expected);
         assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[test]
+    fn message_segments_is_empty_accounts_for_zero_length_segments() {
+        let mut scratch = MessageScratch::new();
+        let message = Message::info("ready");
+        let populated = message.as_segments(&mut scratch, false);
+        assert!(!populated.is_empty());
+
+        let empty = MessageSegments {
+            segments: [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS],
+            count: 1,
+            total_len: 0,
+        };
+
+        assert!(empty.is_empty());
     }
 
     #[test]
