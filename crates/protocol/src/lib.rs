@@ -141,13 +141,13 @@ pub use error::NegotiationError;
 pub use legacy::{
     DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
-    format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
+    format_legacy_daemon_greeting, format_legacy_daemon_message, parse_legacy_daemon_greeting,
     parse_legacy_daemon_greeting_bytes, parse_legacy_daemon_greeting_bytes_details,
     parse_legacy_daemon_greeting_bytes_owned, parse_legacy_daemon_greeting_details,
     parse_legacy_daemon_greeting_owned, parse_legacy_daemon_message,
     parse_legacy_daemon_message_bytes, parse_legacy_error_message,
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
-    parse_legacy_warning_message_bytes, write_legacy_daemon_greeting,
+    parse_legacy_warning_message_bytes, write_legacy_daemon_greeting, write_legacy_daemon_message,
 };
 pub use multiplex::{
     BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, recv_msg, recv_msg_into, send_frame,
