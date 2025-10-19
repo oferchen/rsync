@@ -329,4 +329,19 @@ mod tests {
         assert!(output.contains("rsync warning: second"));
         assert!(output.ends_with('\n'));
     }
+
+    #[test]
+    fn set_line_mode_updates_behavior() {
+        let mut sink = MessageSink::new(Vec::new());
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+
+        sink.set_line_mode(LineMode::WithoutNewline);
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+
+        sink.write(&Message::info("ready"))
+            .expect("write succeeds");
+
+        let buffer = sink.into_inner();
+        assert_eq!(buffer, b"rsync info: ready".to_vec());
+    }
 }
