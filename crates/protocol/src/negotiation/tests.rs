@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use std::{
     collections::{HashSet, TryReserveError},
     error::Error as _,
-    io::{self, Cursor, Read, Write},
+    io::{self, Cursor, IoSliceMut, Read, Write},
     ptr, slice,
     str::FromStr,
 };
@@ -1901,6 +1901,76 @@ fn prologue_sniffer_take_buffered_into_slice_copies_prefix() {
 }
 
 #[test]
+fn prologue_sniffer_take_buffered_into_vectored_copies_bytes() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" modules";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut first = vec![0u8; 4];
+    let mut second = vec![0u8; LEGACY_DAEMON_PREFIX_LEN - first.len()];
+    let mut third = vec![0u8; remainder.len()];
+    let mut buffers = [
+        IoSliceMut::new(first.as_mut_slice()),
+        IoSliceMut::new(second.as_mut_slice()),
+        IoSliceMut::new(third.as_mut_slice()),
+    ];
+
+    let copied = sniffer
+        .take_buffered_into_vectored(&mut buffers)
+        .expect("vectored transfer should succeed");
+
+    let mut actual = Vec::new();
+    let mut remaining = copied;
+    for buf in &buffers {
+        if remaining == 0 {
+            break;
+        }
+        let slice: &[u8] = &*buf;
+        let take = slice.len().min(remaining);
+        actual.extend_from_slice(&slice[..take]);
+        remaining -= take;
+    }
+
+    let mut expected = LEGACY_DAEMON_PREFIX.as_bytes().to_vec();
+    expected.extend_from_slice(remainder);
+
+    assert_eq!(copied, expected.len());
+    assert_eq!(actual, expected);
+    assert!(sniffer.buffered().is_empty());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_into_vectored_reports_small_capacity() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let mut small = vec![0u8; LEGACY_DAEMON_PREFIX_LEN - 1];
+    let mut buffers = [IoSliceMut::new(small.as_mut_slice())];
+
+    let err = sniffer
+        .take_buffered_into_vectored(&mut buffers)
+        .expect_err("insufficient vectored capacity should error");
+
+    assert_eq!(err.required(), LEGACY_DAEMON_PREFIX_LEN);
+    assert_eq!(err.available(), small.len());
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+}
+
+#[test]
 fn prologue_sniffer_take_buffered_into_array_copies_prefix() {
     let mut sniffer = NegotiationPrologueSniffer::new();
     let (decision, consumed) = sniffer
@@ -2124,6 +2194,76 @@ fn prologue_sniffer_take_buffered_remainder_into_slice_reports_small_buffer() {
     assert_eq!(err.required(), b" tail".len());
     assert_eq!(err.available(), scratch.len());
     assert_eq!(sniffer.buffered_remainder(), b" tail");
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_vectored_copies_remainder() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    let remainder = b" trailer";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut first = vec![0u8; 3];
+    let mut second = vec![0u8; remainder.len() - first.len()];
+    let mut buffers = [
+        IoSliceMut::new(first.as_mut_slice()),
+        IoSliceMut::new(second.as_mut_slice()),
+    ];
+
+    let copied = sniffer
+        .take_buffered_remainder_into_vectored(&mut buffers)
+        .expect("vectored remainder transfer should succeed");
+
+    let mut actual = Vec::new();
+    let mut remaining = copied;
+    for buf in &buffers {
+        if remaining == 0 {
+            break;
+        }
+        let slice: &[u8] = &*buf;
+        let take = slice.len().min(remaining);
+        actual.extend_from_slice(&slice[..take]);
+        remaining -= take;
+    }
+
+    assert_eq!(copied, remainder.len());
+    assert_eq!(actual, remainder);
+    assert_eq!(sniffer.buffered(), LEGACY_DAEMON_PREFIX.as_bytes());
+    assert!(sniffer.buffered_remainder().is_empty());
+}
+
+#[test]
+fn prologue_sniffer_take_buffered_remainder_into_vectored_reports_small_capacity() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX.as_bytes())
+        .expect("buffer reservation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+
+    let remainder = b" tail";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let mut small = vec![0u8; remainder.len() - 1];
+    let mut buffers = [IoSliceMut::new(small.as_mut_slice())];
+
+    let err = sniffer
+        .take_buffered_remainder_into_vectored(&mut buffers)
+        .expect_err("insufficient vectored remainder capacity should error");
+
+    assert_eq!(err.required(), remainder.len());
+    assert_eq!(err.available(), small.len());
+    assert_eq!(sniffer.buffered_remainder(), remainder);
+    assert_eq!(sniffer.buffered(), {
+        let mut expected = LEGACY_DAEMON_PREFIX.as_bytes().to_vec();
+        expected.extend_from_slice(remainder);
+        expected
+    });
 }
 
 #[test]
