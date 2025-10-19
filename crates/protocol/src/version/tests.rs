@@ -12,8 +12,7 @@ fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, Negoti
     use std::collections::BTreeSet;
 
     let mut recognized = BTreeSet::new();
-    let mut seen_any = false;
-    let mut seen_max = ProtocolVersion::OLDEST.as_u8();
+    let mut supported_bitmap: u64 = 0;
     let mut oldest_rejection: Option<u8> = None;
 
     for &advertised in peer_versions {
@@ -26,36 +25,29 @@ fn reference_negotiation(peer_versions: &[u8]) -> Result<ProtocolVersion, Negoti
         }
 
         let clamped = advertised.min(ProtocolVersion::NEWEST.as_u8());
-        if recognized.insert(clamped) {
-            seen_any = true;
-            if clamped > seen_max {
-                seen_max = clamped;
+        recognized.insert(clamped);
+
+        let bit = 1u64 << clamped;
+        if SUPPORTED_PROTOCOL_BITMAP & bit != 0 {
+            supported_bitmap |= bit;
+
+            if clamped == ProtocolVersion::NEWEST.as_u8() {
+                return Ok(ProtocolVersion::NEWEST);
             }
         }
     }
 
-    if let Some(&newest) = recognized.iter().next_back() {
-        return Ok(ProtocolVersion::new_const(newest));
+    if supported_bitmap != 0 {
+        let highest_bit = (u64::BITS - 1) - supported_bitmap.leading_zeros();
+        let highest = highest_bit as u8;
+        return Ok(ProtocolVersion::new_const(highest));
     }
 
     if let Some(rejected) = oldest_rejection {
         return Err(NegotiationError::UnsupportedVersion(rejected));
     }
 
-    let peer_versions = if seen_any {
-        let start = ProtocolVersion::OLDEST.as_u8();
-        let span = usize::from(seen_max.saturating_sub(start)) + 1;
-        let mut versions = Vec::with_capacity(span);
-        for version in start..=seen_max {
-            if recognized.contains(&version) {
-                versions.push(version);
-            }
-        }
-        versions
-    } else {
-        Vec::new()
-    };
-
+    let peer_versions = recognized.into_iter().collect();
     Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
 
