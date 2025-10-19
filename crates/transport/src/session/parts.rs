@@ -111,13 +111,78 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 
+    /// Releases the parts structure and returns the replaying stream parts captured during negotiation.
+    ///
+    /// The returned [`NegotiatedStreamParts`] retain the buffered prologue, decision, and transport,
+    /// allowing callers to inspect or transform the replay data without first rebuilding a
+    /// [`SessionHandshake`]. This mirrors [`Self::stream`] for owned access and keeps the
+    /// high-level API aligned with the variant-specific helpers exposed by
+    /// [`BinaryHandshakeParts`] and [`LegacyDaemonHandshakeParts`].
+    ///
+    /// # Examples
+    ///
+    /// Reconstruct a binary negotiation and extract the replaying stream parts while preserving the
+    /// buffered handshake prefix.
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_session;
+    /// use std::io::{self, Cursor, Read, Write};
+    ///
+    /// #[derive(Clone, Debug)]
+    /// struct Loopback {
+    ///     reader: Cursor<Vec<u8>>,
+    ///     written: Vec<u8>,
+    /// }
+    ///
+    /// impl Loopback {
+    ///     fn new(advertisement: [u8; 4]) -> Self {
+    ///         Self {
+    ///             reader: Cursor::new(advertisement.to_vec()),
+    ///             written: Vec::new(),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// impl Read for Loopback {
+    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    ///         self.reader.read(buf)
+    ///     }
+    /// }
+    ///
+    /// impl Write for Loopback {
+    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    ///         self.written.extend_from_slice(buf);
+    ///         Ok(buf.len())
+    ///     }
+    ///
+    ///     fn flush(&mut self) -> io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let remote = ProtocolVersion::from_supported(31).unwrap();
+    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
+    /// let parts = negotiate_session(transport, ProtocolVersion::NEWEST)
+    ///     .unwrap()
+    ///     .into_stream_parts();
+    /// let stream_parts = parts.clone().into_stream_parts();
+    ///
+    /// assert_eq!(stream_parts.decision(), parts.decision());
+    /// assert_eq!(stream_parts.buffered(), parts.stream().buffered());
+    /// ```
+    #[must_use]
+    pub fn into_stream_parts(self) -> NegotiatedStreamParts<R> {
+        match self {
+            SessionHandshakeParts::Binary(parts) => parts.into_stream_parts(),
+            SessionHandshakeParts::Legacy(parts) => parts.into_stream_parts(),
+        }
+    }
+
     /// Releases the parts structure and reconstructs the replaying stream.
     #[must_use]
     pub fn into_stream(self) -> NegotiatedStream<R> {
-        match self {
-            SessionHandshakeParts::Binary(parts) => parts.into_stream_parts().into_stream(),
-            SessionHandshakeParts::Legacy(parts) => parts.into_stream_parts().into_stream(),
-        }
+        self.into_stream_parts().into_stream()
     }
 
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the stored negotiation snapshot.
@@ -277,7 +342,7 @@ impl<R> SessionHandshakeParts<R> {
     /// for callers that only require continued access to the raw transport.
     #[must_use]
     pub fn into_inner(self) -> R {
-        self.into_stream().into_inner()
+        self.into_stream_parts().into_inner()
     }
 }
 
