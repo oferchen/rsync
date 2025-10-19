@@ -611,6 +611,48 @@ impl NegotiationPrologueSniffer {
         Ok(written)
     }
 
+    /// Drains the sniffed negotiation prefix and any buffered remainder into two separate vectors.
+    ///
+    /// The helper mirrors [`take_buffered_into`](Self::take_buffered_into) but splits the captured
+    /// bytes into the canonical negotiation prefix and the trailing payload that arrived in the same
+    /// read. This mirrors upstream rsync's handshake pipeline where the `@RSYNCD:` marker is
+    /// replayed into the legacy greeting parser while any buffered remainder is forwarded directly
+    /// to the negotiated protocol handler. The destination vectors are cleared before new data is
+    /// appended so callers do not need to reinitialise them between sessions. When the canonical
+    /// prefix has not yet been fully buffered the sniffer behaves like the other draining helpers by
+    /// leaving the buffer untouched and reporting zero-length transfers, ensuring partially captured
+    /// negotiation bytes are not lost. Allocation failures are propagated via [`TryReserveError`]
+    /// rather than panicking so transports can surface the error as an I/O failure if necessary.
+    #[must_use = "drained negotiation bytes must be replayed into the handshake"]
+    pub fn take_buffered_split_into(
+        &mut self,
+        prefix: &mut Vec<u8>,
+        remainder: &mut Vec<u8>,
+    ) -> Result<(usize, usize), TryReserveError> {
+        if self.requires_more_data() {
+            if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+                self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+            }
+            return Ok((0, 0));
+        }
+
+        let prefix_len = self.sniffed_prefix_len();
+        let remainder_len = self.buffered.len().saturating_sub(prefix_len);
+
+        ensure_vec_capacity(prefix, prefix_len)?;
+        ensure_vec_capacity(remainder, remainder_len)?;
+
+        prefix.clear();
+        prefix.extend_from_slice(&self.buffered[..prefix_len]);
+
+        remainder.clear();
+        remainder.extend_from_slice(&self.buffered[prefix_len..]);
+
+        self.reset_buffer_for_reuse();
+
+        Ok((prefix_len, remainder_len))
+    }
+
     /// Drains the buffered remainder while retaining the sniffed negotiation prefix.
     ///
     /// Callers that have not yet replayed the canonical prefix—such as when the
