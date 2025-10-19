@@ -59,7 +59,7 @@ impl NegotiationPrologueSniffer {
                 break;
             }
 
-            let slice: &mut [u8] = &mut **buf;
+            let slice: &mut [u8] = buf.as_mut();
             let to_copy = slice.len().min(required - offset);
             slice[..to_copy].copy_from_slice(&source[offset..offset + to_copy]);
             offset += to_copy;

@@ -9,6 +9,22 @@ use std::{collections::TryReserveError, convert::TryFrom};
 
 use super::handshake::SessionHandshake;
 
+type BinaryHandshakeComponents<R> = (
+    u32,
+    ProtocolVersion,
+    ProtocolVersion,
+    ProtocolVersion,
+    NegotiatedStreamParts<R>,
+);
+
+type LegacyHandshakeComponents<R> = (
+    LegacyDaemonGreetingOwned,
+    ProtocolVersion,
+    NegotiatedStreamParts<R>,
+);
+
+type HandshakePartsResult<T, R> = Result<T, SessionHandshakeParts<R>>;
+
 /// Components extracted from a [`SessionHandshake`].
 ///
 /// The structure mirrors the variant-specific handshake wrappers so callers can
@@ -250,18 +266,7 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the binary handshake components when available.
-    pub fn into_binary(
-        self,
-    ) -> Result<
-        (
-            u32,
-            ProtocolVersion,
-            ProtocolVersion,
-            ProtocolVersion,
-            NegotiatedStreamParts<R>,
-        ),
-        SessionHandshakeParts<R>,
-    > {
+    pub fn into_binary(self) -> HandshakePartsResult<BinaryHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => {
                 let (remote_advertised, remote_protocol, local_advertised, negotiated, stream) =
@@ -293,16 +298,7 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the legacy handshake components when available.
-    pub fn into_legacy(
-        self,
-    ) -> Result<
-        (
-            LegacyDaemonGreetingOwned,
-            ProtocolVersion,
-            NegotiatedStreamParts<R>,
-        ),
-        SessionHandshakeParts<R>,
-    > {
+    pub fn into_legacy(self) -> HandshakePartsResult<LegacyHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
             SessionHandshakeParts::Legacy(parts) => {
