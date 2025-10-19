@@ -160,6 +160,7 @@ impl RollingChecksum {
     }
 
     /// Updates the checksum with an additional slice of bytes.
+    #[inline]
     pub fn update(&mut self, chunk: &[u8]) {
         if chunk.is_empty() {
             return;
@@ -229,6 +230,7 @@ impl RollingChecksum {
     ///     manual.digest()
     /// });
     /// ```
+    #[inline]
     pub fn update_reader_with_buffer<R: Read>(
         &mut self,
         reader: &mut R,
@@ -286,6 +288,7 @@ impl RollingChecksum {
     }
 
     /// Returns the current window length as a 32-bit value while validating invariants.
+    #[inline]
     fn window_len_u32(&self) -> Result<u32, RollingError> {
         if self.len == 0 {
             return Err(RollingError::EmptyWindow);
@@ -301,6 +304,7 @@ impl RollingChecksum {
     /// Returns [`RollingError::EmptyWindow`] if the checksum has not been initialised with a
     /// block and [`RollingError::WindowTooLarge`] when the window length exceeds what the
     /// upstream algorithm supports (32 bits).
+    #[inline]
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
 
@@ -332,6 +336,7 @@ impl RollingChecksum {
     /// differ in length, [`RollingError::EmptyWindow`] if the checksum has not been seeded with a
     /// block yet, and [`RollingError::WindowTooLarge`] if the internal window length exceeds the
     /// upstream limit.
+    #[inline]
     pub fn roll_many(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
         if outgoing.len() != incoming.len() {
             return Err(RollingError::MismatchedSliceLength {
