@@ -20,6 +20,9 @@ The workspace currently contains the following published crates:
 - `crates/core` — shared infrastructure such as the centralized message
   formatting utilities that attach role trailers and normalized source
   locations to user-facing diagnostics.
+- `crates/logging` — newline-aware message sinks that reuse
+  `MessageScratch` buffers when streaming diagnostics into arbitrary
+  writers, mirroring upstream `rsync`'s logging pipeline.
 
 Higher-level crates such as `cli`, `daemon`, `engine`, and `meta` have not been
 implemented yet. The `core` crate currently focuses on message formatting and
