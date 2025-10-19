@@ -316,6 +316,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(buffer, message.to_bytes().unwrap());
     /// ```
+    #[must_use = "rsync message streaming can fail when the underlying writer reports an I/O error"]
     pub fn write_to<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         if self.is_empty() {
             return Ok(());
@@ -407,6 +408,7 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(&buffer[prefix_len..], message.to_bytes().unwrap().as_slice());
     /// # Ok::<(), std::io::Error>(())
     /// ```
+    #[must_use = "buffer extension reserves memory and may fail; handle potential allocation errors"]
     pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
         if self.is_empty() {
             return Ok(());
@@ -452,6 +454,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(collected, message.to_bytes().unwrap());
     /// ```
+    #[must_use = "collecting message segments allocates and can fail if memory reservations are unsuccessful"]
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
         let mut buffer = Vec::new();
         self.extend_vec(&mut buffer)?;
@@ -1576,6 +1579,7 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     #[inline]
+    #[must_use = "formatter writes can fail; propagate errors to preserve upstream diagnostics"]
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
         with_thread_local_scratch(|scratch| self.render_to_with_scratch(scratch, writer))
     }
@@ -1603,6 +1607,7 @@ impl Message {
     /// assert!(rendered.contains("[generator=3.4.1-rust]"));
     /// ```
     #[inline]
+    #[must_use = "newline rendering can fail; handle formatting errors to retain diagnostics"]
     pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
         with_thread_local_scratch(|scratch| self.render_line_to_with_scratch(scratch, writer))
     }
@@ -1629,6 +1634,7 @@ impl Message {
     /// assert!(bytes.ends_with(b"[sender=3.4.1-rust]"));
     /// ```
     #[inline]
+    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         with_thread_local_scratch(|scratch| self.to_bytes_with_scratch(scratch))
     }
@@ -1651,6 +1657,7 @@ impl Message {
     /// assert!(rendered.ends_with(b"\n"));
     /// ```
     #[inline]
+    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
         with_thread_local_scratch(|scratch| self.to_line_bytes_with_scratch(scratch))
     }
@@ -1683,6 +1690,7 @@ impl Message {
     /// assert!(rendered.contains("[sender=3.4.1-rust]"));
     /// ```
     #[inline]
+    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         with_thread_local_scratch(|scratch| self.render_to_writer_with_scratch(scratch, writer))
     }
@@ -1710,6 +1718,7 @@ impl Message {
     /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
     /// ```
     #[inline]
+    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
         with_thread_local_scratch(|scratch| {
             self.render_line_to_writer_with_scratch(scratch, writer)
@@ -1740,6 +1749,7 @@ impl Message {
     /// assert!(buffer.ends_with(b"[sender=3.4.1-rust]"));
     /// # Ok::<(), std::io::Error>(())
     /// ```
+    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
         with_thread_local_scratch(|scratch| self.append_to_vec_with_scratch(scratch, buffer))
     }
@@ -1764,6 +1774,7 @@ impl Message {
     /// assert!(buffer.ends_with(b"\n"));
     /// # Ok::<(), std::io::Error>(())
     /// ```
+    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
         with_thread_local_scratch(|scratch| self.append_line_to_vec_with_scratch(scratch, buffer))
     }
@@ -1793,6 +1804,7 @@ impl Message {
     /// assert!(rendered.contains("rsync error: i/o failure (code 11)"));
     /// assert!(rendered.contains("rsync error: i/o failure (code 12)"));
     /// ```
+    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_to_writer_with_scratch<W: IoWrite>(
         &self,
         scratch: &mut MessageScratch,
@@ -1806,6 +1818,7 @@ impl Message {
     /// The helper mirrors [`Self::render_line_to_writer`] but avoids repeated allocation or
     /// zero-initialisation by accepting an existing [`MessageScratch`]. The newline terminator is
     /// appended after the main message segments using the same buffer.
+    #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_line_to_writer_with_scratch<W: IoWrite>(
         &self,
         scratch: &mut MessageScratch,
@@ -1820,6 +1833,7 @@ impl Message {
     /// thread-local scratch storage when the caller already maintains a
     /// reusable [`MessageScratch`]. The buffer is extended in place using the
     /// vectored slices emitted by [`MessageSegments`].
+    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_to_vec_with_scratch(
         &self,
         scratch: &mut MessageScratch,
@@ -1829,6 +1843,7 @@ impl Message {
     }
 
     /// Appends the rendered message followed by a newline into the provided buffer while reusing scratch space.
+    #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_line_to_vec_with_scratch(
         &self,
         scratch: &mut MessageScratch,
@@ -1874,6 +1889,7 @@ impl Message {
     ///
     /// The helper mirrors [`Self::render_to`] but accepts an explicit [`MessageScratch`], allowing
     /// callers that emit multiple diagnostics to amortise the buffer initialisation cost.
+    #[must_use = "formatter writes can fail; propagate errors to preserve upstream diagnostics"]
     pub fn render_to_with_scratch<W: fmt::Write>(
         &self,
         scratch: &mut MessageScratch,
@@ -1921,6 +1937,7 @@ impl Message {
     }
 
     /// Renders the message followed by a newline into an [`fmt::Write`] implementor while reusing scratch buffers.
+    #[must_use = "newline rendering can fail; handle formatting errors to retain diagnostics"]
     pub fn render_line_to_with_scratch<W: fmt::Write>(
         &self,
         scratch: &mut MessageScratch,
@@ -1931,11 +1948,13 @@ impl Message {
     }
 
     /// Collects the rendered message into a [`Vec<u8>`] while reusing caller-provided scratch buffers.
+    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
         self.to_bytes_with_scratch_inner(scratch, false)
     }
 
     /// Collects the rendered message and a trailing newline into a [`Vec<u8>`] while reusing scratch buffers.
+    #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_line_bytes_with_scratch(&self, scratch: &mut MessageScratch) -> io::Result<Vec<u8>> {
         self.to_bytes_with_scratch_inner(scratch, true)
     }
