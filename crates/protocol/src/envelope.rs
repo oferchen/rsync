@@ -642,24 +642,47 @@ impl MessageHeader {
         let mut encoded = [0u8; HEADER_LEN];
         encoded.copy_from_slice(&bytes[..HEADER_LEN]);
         let raw = u32::from_le_bytes(encoded);
+
+        Self::from_raw(raw)
+    }
+
+    /// Constructs a multiplexed header from the raw 32-bit representation used on the wire.
+    ///
+    /// The raw value is interpreted in host-endian order after decoding the little-endian bytes
+    /// emitted by upstream rsync. This mirrors the layout produced by [`MessageHeader::encode`] and
+    /// allows golden multiplexed streams to embed headers without materialising temporary byte
+    /// arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{MessageCode, MessageHeader};
+    ///
+    /// let original = MessageHeader::new(MessageCode::Warning, 3).unwrap();
+    /// let raw = original.encode_raw();
+    /// let decoded = MessageHeader::from_raw(raw).unwrap();
+    ///
+    /// assert_eq!(decoded, original);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub const fn from_raw(raw: u32) -> Result<Self, EnvelopeError> {
         let tag = (raw >> 24) as u8;
         if tag < MPLEX_BASE {
             return Err(EnvelopeError::InvalidTag(tag));
         }
 
         let code_value = tag - MPLEX_BASE;
-        let code = MessageCode::try_from(code_value)?;
-        let payload_len = raw & PAYLOAD_MASK;
-
-        Self::new(code, payload_len)
+        match MessageCode::from_u8(code_value) {
+            Some(code) => Self::new(code, raw & PAYLOAD_MASK),
+            None => Err(EnvelopeError::UnknownMessageCode(code_value)),
+        }
     }
 
     /// Encodes this header into the little-endian format used on the wire.
     #[must_use]
     pub const fn encode(self) -> [u8; HEADER_LEN] {
-        let tag = (MPLEX_BASE as u32) + (self.code as u32);
-        let raw = (tag << 24) | (self.payload_len & PAYLOAD_MASK);
-        raw.to_le_bytes()
+        self.encode_raw().to_le_bytes()
     }
 
     /// Encodes this header into the caller-provided slice without allocating.
@@ -676,9 +699,31 @@ impl MessageHeader {
             return Err(EnvelopeError::TruncatedHeader { actual: out.len() });
         }
 
-        let encoded = self.encode();
-        out[..HEADER_LEN].copy_from_slice(&encoded);
+        let raw = self.encode_raw();
+        out[..HEADER_LEN].copy_from_slice(&raw.to_le_bytes());
         Ok(())
+    }
+
+    /// Returns the raw 32-bit representation used for little-endian multiplexed headers.
+    ///
+    /// Callers that need to embed headers in compile-time tables can use this helper to avoid
+    /// materialising intermediate `[u8; 4]` arrays. The returned value matches the integer obtained
+    /// by interpreting the encoded bytes in host-endian order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::{MessageCode, MessageHeader};
+    ///
+    /// let header = MessageHeader::new(MessageCode::Info, 7).unwrap();
+    /// let raw = header.encode_raw();
+    /// assert_eq!(MessageHeader::from_raw(raw).unwrap(), header);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub const fn encode_raw(self) -> u32 {
+        let tag = (MPLEX_BASE as u32) + (self.code as u32);
+        (tag << 24) | (self.payload_len & PAYLOAD_MASK)
     }
 
     /// Returns the decoded message code.
@@ -781,6 +826,41 @@ mod tests {
 
         assert_eq!(HEADER.code(), MessageCode::Info);
         assert_eq!(HEADER.payload_len(), 42);
+    }
+
+    #[test]
+    fn message_header_from_raw_round_trips() {
+        let header =
+            MessageHeader::new(MessageCode::Stats, 0x0055_AA11).expect("constructible header");
+        let raw = header.encode_raw();
+        let decoded = MessageHeader::from_raw(raw).expect("raw representation decodes");
+
+        assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn message_header_from_raw_rejects_invalid_tag() {
+        let raw = 0x0000_0001u32; // tag without MPLEX_BASE offset
+        let err = MessageHeader::from_raw(raw).expect_err("invalid tag must fail");
+
+        assert_eq!(err, EnvelopeError::InvalidTag(0));
+    }
+
+    #[test]
+    fn message_header_from_raw_rejects_unknown_code() {
+        let raw = ((u32::from(MPLEX_BASE) + 0x40) << 24) | 0x0000_00FF;
+        let err = MessageHeader::from_raw(raw).expect_err("unknown code must fail");
+
+        assert_eq!(err, EnvelopeError::UnknownMessageCode(0x40));
+    }
+
+    #[test]
+    fn message_header_encode_raw_matches_encode() {
+        let header = MessageHeader::new(MessageCode::Success, 7).expect("constructible header");
+        let encoded = header.encode();
+        let raw = header.encode_raw();
+
+        assert_eq!(encoded, raw.to_le_bytes());
     }
 
     #[test]

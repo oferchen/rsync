@@ -279,11 +279,7 @@ where
     /// assert!(lines.next().is_none());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn write_with_mode(
-        &mut self,
-        message: &Message,
-        line_mode: LineMode,
-    ) -> io::Result<()> {
+    pub fn write_with_mode(&mut self, message: &Message, line_mode: LineMode) -> io::Result<()> {
         if line_mode.append_newline() {
             message.render_line_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
         } else {
@@ -479,8 +475,7 @@ mod tests {
         sink.set_line_mode(LineMode::WithoutNewline);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
 
-        sink.write(&Message::info("ready"))
-            .expect("write succeeds");
+        sink.write(&Message::info("ready")).expect("write succeeds");
 
         let buffer = sink.into_inner();
         assert_eq!(buffer, b"rsync info: ready".to_vec());
