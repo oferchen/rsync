@@ -16,6 +16,8 @@
 //!   user-visible banners.
 //! - [`compiled_features`] inspects Cargo feature flags and returns the set of
 //!   optional capabilities enabled at build time.
+//! - [`compiled_features_static`] exposes a zero-allocation view for repeated
+//!   inspections of the compiled feature set.
 //! - [`CompiledFeature`] enumerates optional capabilities and provides label
 //!   helpers such as [`CompiledFeature::label`] and
 //!   [`CompiledFeature::from_label`] for parsing user-provided strings.
@@ -60,6 +62,8 @@ use core::{
     iter::{FromIterator, FusedIterator},
     str::FromStr,
 };
+
+const COMPILED_FEATURE_COUNT: usize = CompiledFeature::ALL.len();
 
 const ACL_FEATURE_BIT: u8 = 1 << 0;
 const XATTR_FEATURE_BIT: u8 = 1 << 1;
@@ -244,6 +248,168 @@ impl CompiledFeature {
     }
 }
 
+/// Zero-allocation view of the compiled feature list.
+///
+/// [`StaticCompiledFeatures`] materialises the active capabilities at compile
+/// time using the [`COMPILED_FEATURE_BITMAP`] so lookups and iterations avoid
+/// allocating intermediate vectors. The structure retains the canonical
+/// upstream ordering exposed by [`CompiledFeature::ALL`], making the slice view
+/// suitable for rendering `--version` banners or feeding pre-sized lookup
+/// tables.
+///
+/// # Examples
+///
+/// Inspect the statically computed feature slice without allocating:
+///
+/// ```
+/// use rsync_core::version::compiled_features_static;
+///
+/// let static_view = compiled_features_static();
+/// assert_eq!(static_view.len(), static_view.as_slice().len());
+/// assert_eq!(static_view.is_empty(), static_view.as_slice().is_empty());
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StaticCompiledFeatures {
+    features: [CompiledFeature; COMPILED_FEATURE_COUNT],
+    len: usize,
+}
+
+impl StaticCompiledFeatures {
+    const fn new() -> Self {
+        let mut features = [CompiledFeature::Acl; COMPILED_FEATURE_COUNT];
+        let mut len = 0usize;
+        let mut index = 0usize;
+
+        while index < COMPILED_FEATURE_COUNT {
+            let feature = CompiledFeature::ALL[index];
+            if (COMPILED_FEATURE_BITMAP & feature.bit()) != 0 {
+                features[len] = feature;
+                len += 1;
+            }
+
+            index += 1;
+        }
+
+        Self { features, len }
+    }
+
+    /// Returns the number of compiled features captured by the view.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Reports whether any optional features were compiled in.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Exposes the canonical slice describing the compiled feature list.
+    #[must_use]
+    pub fn as_slice(&self) -> &[CompiledFeature] {
+        &self.features[..self.len]
+    }
+
+    /// Reports whether the provided feature is part of the compiled set.
+    #[must_use]
+    pub fn contains(&self, feature: CompiledFeature) -> bool {
+        for candidate in &self.features[..self.len] {
+            if *candidate == feature {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns an iterator over the compiled features without allocating.
+    #[must_use]
+    pub fn iter(&self) -> StaticCompiledFeaturesIter<'_> {
+        StaticCompiledFeaturesIter::new(&self.features, self.len)
+    }
+}
+
+impl Default for StaticCompiledFeatures {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AsRef<[CompiledFeature]> for StaticCompiledFeatures {
+    fn as_ref(&self) -> &[CompiledFeature] {
+        self.as_slice()
+    }
+}
+
+/// Iterator over the statically computed feature set.
+#[derive(Clone, Debug)]
+pub struct StaticCompiledFeaturesIter<'a> {
+    slice: &'a [CompiledFeature; COMPILED_FEATURE_COUNT],
+    start: usize,
+    end: usize,
+}
+
+impl<'a> StaticCompiledFeaturesIter<'a> {
+    const fn new(slice: &'a [CompiledFeature; COMPILED_FEATURE_COUNT], len: usize) -> Self {
+        Self {
+            slice,
+            start: 0,
+            end: len,
+        }
+    }
+}
+
+impl<'a> Iterator for StaticCompiledFeaturesIter<'a> {
+    type Item = CompiledFeature;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start >= self.end {
+            return None;
+        }
+
+        let feature = self.slice[self.start];
+        self.start += 1;
+        Some(feature)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.end.saturating_sub(self.start);
+        (remaining, Some(remaining))
+    }
+}
+
+impl<'a> DoubleEndedIterator for StaticCompiledFeaturesIter<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.start >= self.end {
+            return None;
+        }
+
+        self.end -= 1;
+        Some(self.slice[self.end])
+    }
+}
+
+impl<'a> ExactSizeIterator for StaticCompiledFeaturesIter<'a> {
+    fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+}
+
+impl<'a> FusedIterator for StaticCompiledFeaturesIter<'a> {}
+
+impl<'a> IntoIterator for &'a StaticCompiledFeatures {
+    type Item = CompiledFeature;
+    type IntoIter = StaticCompiledFeaturesIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Statically computed compiled feature view used by helper accessors.
+pub const COMPILED_FEATURES_STATIC: StaticCompiledFeatures = StaticCompiledFeatures::new();
+
 impl fmt::Display for CompiledFeature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
@@ -303,7 +469,17 @@ pub fn compiled_features_iter() -> CompiledFeaturesIter {
 /// priority order used by upstream rsync when printing capability lists.
 #[must_use]
 pub fn compiled_features() -> Vec<CompiledFeature> {
-    compiled_features_iter().collect()
+    compiled_features_static().as_slice().to_vec()
+}
+
+/// Returns a zero-allocation view over the compiled feature set.
+///
+/// The view is backed by a `static` array constructed at compile time, making
+/// repeated lookups inexpensive when rendering `--version` output or producing
+/// diagnostics that need to inspect optional capabilities multiple times.
+#[must_use]
+pub const fn compiled_features_static() -> &'static StaticCompiledFeatures {
+    &COMPILED_FEATURES_STATIC
 }
 
 /// Convenience helper that exposes the labels for each compiled feature.
@@ -975,5 +1151,45 @@ mod tests {
         }
 
         assert_eq!(reconstructed, expected);
+    }
+
+    #[test]
+    fn compiled_features_static_matches_dynamic_collection() {
+        let static_view = compiled_features_static();
+        let collected = compiled_features();
+
+        assert_eq!(static_view.as_slice(), collected.as_slice());
+        assert_eq!(static_view.len(), collected.len());
+        assert_eq!(static_view.is_empty(), collected.is_empty());
+
+        for feature in CompiledFeature::ALL {
+            assert_eq!(static_view.contains(feature), feature.is_enabled());
+        }
+    }
+
+    #[test]
+    fn compiled_features_static_iterator_preserves_ordering() {
+        let static_view = compiled_features_static();
+        let from_iter: Vec<_> = static_view.iter().collect();
+
+        assert_eq!(from_iter.as_slice(), static_view.as_slice());
+
+        let mut iter = static_view.iter();
+        let front = iter.next();
+        let back = iter.next_back();
+        let mut remainder: Vec<_> = iter.collect();
+
+        let mut reconstructed = Vec::new();
+        if let Some(feature) = front {
+            reconstructed.push(feature);
+        }
+
+        reconstructed.append(&mut remainder);
+
+        if let Some(feature) = back {
+            reconstructed.push(feature);
+        }
+
+        assert_eq!(reconstructed.as_slice(), static_view.as_slice());
     }
 }
