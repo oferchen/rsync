@@ -1952,11 +1952,17 @@ fn encode_unsigned_decimal(value: u64, buf: &mut [u8]) -> &str {
 /// same manner as upstream.
 fn append_normalized_os_str(target: &mut String, value: &OsStr) {
     let lossy = value.to_string_lossy();
+    let text = lossy.as_ref();
 
-    if lossy.as_ref().bytes().any(|byte| byte == b'\\') {
-        target.extend(lossy.chars().map(|ch| if ch == '\\' { '/' } else { ch }));
+    if let Some(first_backslash) = text.find('\\') {
+        let (prefix, remainder) = text.split_at(first_backslash);
+        target.push_str(prefix);
+
+        for ch in remainder.chars() {
+            target.push(if ch == '\\' { '/' } else { ch });
+        }
     } else {
-        target.push_str(lossy.as_ref());
+        target.push_str(text);
     }
 }
 
@@ -3364,6 +3370,22 @@ mod tests {
         append_normalized_os_str(&mut rendered, OsStr::new("dir/sub"));
 
         assert_eq!(rendered, "dir/sub");
+    }
+
+    #[test]
+    fn append_normalized_os_str_handles_unc_prefixes() {
+        let mut rendered = String::new();
+        append_normalized_os_str(&mut rendered, OsStr::new(r"\\server\share\path"));
+
+        assert_eq!(rendered, "//server/share/path");
+    }
+
+    #[test]
+    fn append_normalized_os_str_preserves_trailing_backslash() {
+        let mut rendered = String::new();
+        append_normalized_os_str(&mut rendered, OsStr::new(r#"C:\path\to\dir\"#));
+
+        assert_eq!(rendered, "C:/path/to/dir/");
     }
 
     #[derive(Default)]
