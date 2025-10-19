@@ -118,8 +118,7 @@ pub const COPYRIGHT_START_YEAR: &str = "1996";
 pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 
 /// Copyright notice rendered by upstream `print_rsync_version`.
-pub const COPYRIGHT_NOTICE: &str =
-    "(C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.";
+pub const COPYRIGHT_NOTICE: &str = "(C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.";
 
 /// Web site advertised by upstream rsync in `--version` output.
 pub const WEB_SITE: &str = "https://rsync.samba.org/";
@@ -459,14 +458,16 @@ impl StaticCompiledFeatures {
         let mut len = 0usize;
         let mut index = 0usize;
 
-        while index < COMPILED_FEATURE_COUNT {
-            let feature = CompiledFeature::ALL[index];
-            if (COMPILED_FEATURE_BITMAP & feature.bit()) != 0 {
-                features[len] = feature;
-                len += 1;
-            }
+        if COMPILED_FEATURE_BITMAP != 0 {
+            while index < COMPILED_FEATURE_COUNT {
+                let feature = CompiledFeature::ALL[index];
+                if feature.is_enabled() {
+                    features[len] = feature;
+                    len += 1;
+                }
 
-            index += 1;
+                index += 1;
+            }
         }
 
         Self {

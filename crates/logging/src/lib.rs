@@ -56,7 +56,7 @@
 //!
 //! // Render a final message without appending a newline.
 //! let mut final_sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-//! final_sink.write(&Message::info("completed")).unwrap();
+//! final_sink.write(Message::info("completed")).unwrap();
 //! let buffer = final_sink.into_inner();
 //! assert!(buffer.ends_with(b"completed"));
 //! ```
@@ -180,8 +180,8 @@ impl From<LineMode> for bool {
 ///
 /// let mut sink = MessageSink::new(Vec::new());
 ///
-/// sink.write(&Message::warning("vanished"))?;
-/// sink.write(&Message::error(23, "partial"))?;
+/// sink.write(Message::warning("vanished"))?;
+/// sink.write(Message::error(23, "partial"))?;
 ///
 /// let output = String::from_utf8(sink.into_inner()).unwrap();
 /// assert!(output.ends_with('\n'));
@@ -195,7 +195,7 @@ impl From<LineMode> for bool {
 /// use rsync_logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-/// sink.write(&Message::info("ready"))?;
+/// sink.write(Message::info("ready"))?;
 ///
 /// assert_eq!(sink.into_inner(), b"rsync info: ready".to_vec());
 /// # Ok::<(), std::io::Error>(())
@@ -208,12 +208,12 @@ impl From<LineMode> for bool {
 /// use rsync_logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
-/// sink.write(&Message::info("phase one"))?;
+/// sink.write(Message::info("phase one"))?;
 /// let (writer, scratch, mode) = sink.into_parts();
 /// assert_eq!(mode, LineMode::WithoutNewline);
 ///
 /// let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
-/// sink.write(&Message::warning("phase two"))?;
+/// sink.write(Message::warning("phase two"))?;
 /// let output = String::from_utf8(sink.into_inner()).unwrap();
 /// assert!(output.contains("phase two"));
 /// # Ok::<(), std::io::Error>(())
@@ -482,10 +482,10 @@ impl<W> MessageSink<W> {
     /// let mut sink = MessageSink::new(Vec::new());
     /// {
     ///     let mut guard = sink.scoped_line_mode(LineMode::WithoutNewline);
-    ///     guard.write(&Message::info("phase one")).unwrap();
-    ///     guard.write(&Message::info("phase two")).unwrap();
+    ///     guard.write(Message::info("phase one")).unwrap();
+    ///     guard.write(Message::info("phase two")).unwrap();
     /// }
-    /// sink.write(&Message::info("done")).unwrap();
+    /// sink.write(Message::info("done")).unwrap();
     /// let output = String::from_utf8(sink.into_inner()).unwrap();
     /// assert!(output.starts_with("rsync info: phase one"));
     /// assert!(output.ends_with("done\n"));
@@ -549,7 +549,7 @@ impl<W> MessageSink<W> {
     ///
     /// let mut sink = MessageSink::new(Vec::<u8>::new());
     /// *sink.scratch_mut() = MessageScratch::new();
-    /// sink.write(&Message::info("ready"))?;
+    /// sink.write(Message::info("ready"))?;
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn scratch_mut(&mut self) -> &mut MessageScratch {
@@ -579,7 +579,7 @@ impl<W> MessageSink<W> {
     /// # use std::io::Cursor;
     /// let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
     /// let mut sink = sink.map_writer(Cursor::new);
-    /// sink.write(&Message::info("ready"))?;
+    /// sink.write(Message::info("ready"))?;
     /// let cursor = sink.into_inner();
     /// assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
     /// # Ok::<(), std::io::Error>(())
@@ -619,7 +619,7 @@ impl<W> MessageSink<W> {
     ///         Ok(Cursor::new(writer))
     ///     })
     ///     .expect("mapping succeeds");
-    /// sink.write(&Message::info("ready"))?;
+    /// sink.write(Message::info("ready"))?;
     /// assert_eq!(sink.into_inner().into_inner(), b"rsync info: ready\n".to_vec());
     /// # Ok::<(), std::io::Error>(())
     /// ```
@@ -637,7 +637,7 @@ impl<W> MessageSink<W> {
     ///     .unwrap_err();
     /// let (mut sink, error) = err.into_parts();
     /// assert_eq!(error, "permission denied");
-    /// sink.write(&Message::info("still working"))?;
+    /// sink.write(Message::info("still working"))?;
     /// assert_eq!(sink.into_inner(), b"rsync info: still working".to_vec());
     /// # Ok::<(), std::io::Error>(())
     /// ```
@@ -675,11 +675,11 @@ impl<W> MessageSink<W> {
     /// use rsync_logging::MessageSink;
     ///
     /// let mut sink = MessageSink::new(Vec::<u8>::new());
-    /// sink.write(&Message::info("phase one"))?;
+    /// sink.write(Message::info("phase one"))?;
     /// let previous = sink.replace_writer(Vec::new());
     /// assert_eq!(String::from_utf8(previous).unwrap(), "rsync info: phase one\n");
     ///
-    /// sink.write(&Message::info("phase two"))?;
+    /// sink.write(Message::info("phase two"))?;
     /// assert_eq!(
     ///     String::from_utf8(sink.into_inner()).unwrap(),
     ///     "rsync info: phase two\n"
@@ -739,7 +739,7 @@ where
     /// use rsync_logging::MessageSink;
     ///
     /// let mut sink = MessageSink::new(Vec::new());
-    /// sink.write(&Message::info("borrowed"))?;
+    /// sink.write(Message::info("borrowed"))?;
     /// sink.write(Message::warning("owned"))?;
     ///
     /// let rendered = String::from_utf8(sink.into_inner()).unwrap();
@@ -771,7 +771,7 @@ where
     /// use rsync_logging::{LineMode, MessageSink};
     ///
     /// let mut sink = MessageSink::new(Vec::new());
-    /// sink.write(&Message::info("phase one"))?;
+    /// sink.write(Message::info("phase one"))?;
     /// sink.write_with_mode(Message::info("progress"), LineMode::WithoutNewline)?;
     /// sink.write(Message::info("phase two"))?;
     ///
@@ -1014,7 +1014,7 @@ mod tests {
 
         // Reset the scratch buffer and ensure rendering still succeeds.
         *sink.scratch_mut() = MessageScratch::new();
-        sink.write(&Message::info("ready"))
+        sink.write(Message::info("ready"))
             .expect("write succeeds after manual scratch reset");
 
         let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
@@ -1036,9 +1036,9 @@ mod tests {
     #[test]
     fn sink_appends_newlines_by_default() {
         let mut sink = MessageSink::new(Vec::new());
-        sink.write(&Message::warning("vanished"))
+        sink.write(Message::warning("vanished"))
             .expect("write succeeds");
-        sink.write(&Message::error(23, "partial"))
+        sink.write(Message::error(23, "partial"))
             .expect("write succeeds");
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
@@ -1051,7 +1051,7 @@ mod tests {
     #[test]
     fn sink_without_newline_preserves_output() {
         let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-        sink.write(&Message::info("ready")).expect("write succeeds");
+        sink.write(Message::info("ready")).expect("write succeeds");
 
         let output = sink.into_inner();
         assert_eq!(output, b"rsync info: ready".to_vec());
@@ -1080,7 +1080,7 @@ mod tests {
         let mut sink = sink.map_writer(Cursor::new);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
 
-        sink.write(&Message::info("ready")).expect("write succeeds");
+        sink.write(Message::info("ready")).expect("write succeeds");
 
         let cursor = sink.into_inner();
         assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
@@ -1100,7 +1100,7 @@ mod tests {
             .expect("mapping succeeds");
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
 
-        sink.write(&Message::info("ready")).expect("write succeeds");
+        sink.write(Message::info("ready")).expect("write succeeds");
 
         let cursor = sink.into_inner();
         assert_eq!(cursor.into_inner(), b"rsync info: ready".to_vec());
@@ -1109,13 +1109,13 @@ mod tests {
     #[test]
     fn replace_writer_swaps_underlying_writer() {
         let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-        sink.write(&Message::info("phase one"))
+        sink.write(Message::info("phase one"))
             .expect("write succeeds");
 
         let previous = sink.replace_writer(Vec::new());
         assert_eq!(previous, b"rsync info: phase one".to_vec());
 
-        sink.write(&Message::info("phase two"))
+        sink.write(Message::info("phase two"))
             .expect("write succeeds");
         assert_eq!(sink.into_inner(), b"rsync info: phase two".to_vec());
     }
@@ -1132,7 +1132,7 @@ mod tests {
 
         assert_eq!(error, "conversion failed");
 
-        sink.write(&Message::info("still running"))
+        sink.write(Message::info("still running"))
             .expect("write succeeds");
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
@@ -1147,11 +1147,11 @@ mod tests {
 
         original
             .sink_mut()
-            .write(&Message::info("original"))
+            .write(Message::info("original"))
             .expect("write succeeds");
         cloned
             .sink_mut()
-            .write(&Message::info("clone"))
+            .write(Message::info("clone"))
             .expect("write succeeds");
 
         assert_eq!(original.error(), "failure");
@@ -1213,7 +1213,7 @@ mod tests {
 
         mapped_parts
             .sink_mut()
-            .write(&Message::info("mapped"))
+            .write(Message::info("mapped"))
             .expect("write succeeds");
 
         let cursor = mapped_parts.into_sink().into_inner();
@@ -1224,11 +1224,11 @@ mod tests {
     #[test]
     fn write_with_mode_overrides_line_mode_for_single_message() {
         let mut sink = MessageSink::new(Vec::new());
-        sink.write(&Message::info("phase one"))
+        sink.write(Message::info("phase one"))
             .expect("write succeeds");
-        sink.write_with_mode(&Message::info("progress"), LineMode::WithoutNewline)
+        sink.write_with_mode(Message::info("progress"), LineMode::WithoutNewline)
             .expect("write succeeds");
-        sink.write(&Message::info("phase two"))
+        sink.write(Message::info("phase two"))
             .expect("write succeeds");
 
         assert_eq!(sink.line_mode(), LineMode::WithNewline);
@@ -1247,7 +1247,7 @@ mod tests {
     #[test]
     fn write_with_mode_respects_explicit_newline() {
         let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-        sink.write_with_mode(&Message::warning("vanished"), LineMode::WithNewline)
+        sink.write_with_mode(Message::warning("vanished"), LineMode::WithNewline)
             .expect("write succeeds");
 
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
@@ -1377,13 +1377,13 @@ mod tests {
     fn into_parts_allows_reusing_scratch() {
         let mut sink =
             MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
-        sink.write(&Message::info("first")).expect("write succeeds");
+        sink.write(Message::info("first")).expect("write succeeds");
 
         let (writer, scratch, mode) = sink.into_parts();
         assert_eq!(mode, LineMode::WithoutNewline);
 
         let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
-        sink.write(&Message::warning("second"))
+        sink.write(Message::warning("second"))
             .expect("write succeeds");
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
@@ -1400,7 +1400,7 @@ mod tests {
         sink.set_line_mode(LineMode::WithoutNewline);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
 
-        sink.write(&Message::info("ready")).expect("write succeeds");
+        sink.write(Message::info("ready")).expect("write succeeds");
 
         let buffer = sink.into_inner();
         assert_eq!(buffer, b"rsync info: ready".to_vec());
@@ -1413,13 +1413,12 @@ mod tests {
             let mut guard = sink.scoped_line_mode(LineMode::WithNewline);
             assert_eq!(guard.previous_line_mode(), LineMode::WithoutNewline);
             guard
-                .write(&Message::info("transient"))
+                .write(Message::info("transient"))
                 .expect("write succeeds");
         }
 
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
-        sink.write(&Message::info("steady"))
-            .expect("write succeeds");
+        sink.write(Message::info("steady")).expect("write succeeds");
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
         assert_eq!(output, "rsync info: transient\nrsync info: steady");
@@ -1431,14 +1430,14 @@ mod tests {
         {
             let mut guard = sink.scoped_line_mode(LineMode::WithoutNewline);
             guard
-                .write(&Message::info("phase one"))
+                .write(Message::info("phase one"))
                 .expect("write succeeds");
             guard
-                .write(&Message::info("phase two"))
+                .write(Message::info("phase two"))
                 .expect("write succeeds");
         }
 
-        sink.write(&Message::info("done")).expect("write succeeds");
+        sink.write(Message::info("done")).expect("write succeeds");
 
         let output = sink.into_inner();
         assert_eq!(
