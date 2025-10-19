@@ -1,6 +1,4 @@
-use crate::handshake_util::{
-    RemoteProtocolAdvertisement, local_cap_reduced_protocol, remote_advertisement_was_clamped,
-};
+use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
@@ -211,7 +209,7 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// wrapper first.
     #[must_use]
     pub const fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol())
+        self.remote_advertisement().was_clamped()
     }
 
     /// Returns the classification of the daemon's protocol advertisement.
@@ -564,7 +562,7 @@ impl<R> LegacyDaemonHandshake<R> {
     /// Reports whether the remote daemon advertised a protocol newer than we support.
     #[must_use]
     pub const fn remote_protocol_was_clamped(&self) -> bool {
-        remote_advertisement_was_clamped(self.remote_advertised_protocol())
+        self.remote_advertisement().was_clamped()
     }
 
     /// Returns the classification of the daemon's protocol advertisement.
