@@ -262,16 +262,18 @@ impl CompiledFeature {
 /// Inspect the statically computed feature slice without allocating:
 ///
 /// ```
-/// use rsync_core::version::compiled_features_static;
+/// use rsync_core::version::{compiled_features_static, COMPILED_FEATURE_BITMAP};
 ///
 /// let static_view = compiled_features_static();
 /// assert_eq!(static_view.len(), static_view.as_slice().len());
 /// assert_eq!(static_view.is_empty(), static_view.as_slice().is_empty());
+/// assert_eq!(static_view.bitmap(), COMPILED_FEATURE_BITMAP);
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StaticCompiledFeatures {
     features: [CompiledFeature; COMPILED_FEATURE_COUNT],
     len: usize,
+    bitmap: u8,
 }
 
 impl StaticCompiledFeatures {
@@ -290,7 +292,11 @@ impl StaticCompiledFeatures {
             index += 1;
         }
 
-        Self { features, len }
+        Self {
+            features,
+            len,
+            bitmap: COMPILED_FEATURE_BITMAP,
+        }
     }
 
     /// Returns the number of compiled features captured by the view.
@@ -311,16 +317,27 @@ impl StaticCompiledFeatures {
         &self.features[..self.len]
     }
 
-    /// Reports whether the provided feature is part of the compiled set.
+    /// Returns the bitmap describing which optional capabilities were compiled in.
+    ///
+    /// The bitmap mirrors [`COMPILED_FEATURE_BITMAP`], allowing callers to perform constant-time
+    /// membership tests or combine the static view with other pre-computed masks without
+    /// re-deriving the enabled set from the slice. This keeps the helper aligned with upstream
+    /// rsync's `--version` output, which prints capability labels in a deterministic order while
+    /// still permitting fast bitwise comparisons when generating diagnostics.
     #[must_use]
-    pub fn contains(&self, feature: CompiledFeature) -> bool {
-        for candidate in &self.features[..self.len] {
-            if *candidate == feature {
-                return true;
-            }
-        }
+    pub const fn bitmap(&self) -> u8 {
+        self.bitmap
+    }
 
-        false
+    /// Reports whether the provided feature is part of the compiled set.
+    ///
+    /// The check runs in constant time by consulting the cached bitmap instead of scanning the
+    /// slice, ensuring lookups stay inexpensive even if future versions expand the capability
+    /// matrix. This matches upstream rsync, where feature availability is represented as bitmasks
+    /// for quick diagnostics and logging decisions.
+    #[must_use]
+    pub const fn contains(&self, feature: CompiledFeature) -> bool {
+        (self.bitmap & feature.bit()) != 0
     }
 
     /// Returns an iterator over the compiled features without allocating.
@@ -1161,6 +1178,7 @@ mod tests {
         assert_eq!(static_view.as_slice(), collected.as_slice());
         assert_eq!(static_view.len(), collected.len());
         assert_eq!(static_view.is_empty(), collected.is_empty());
+        assert_eq!(static_view.bitmap(), COMPILED_FEATURE_BITMAP);
 
         for feature in CompiledFeature::ALL {
             assert_eq!(static_view.contains(feature), feature.is_enabled());
