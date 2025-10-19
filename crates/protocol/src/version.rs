@@ -1237,8 +1237,8 @@ where
     I: IntoIterator<Item = T>,
     T: ProtocolVersionAdvertisement,
 {
-    let mut seen_bitmap: u64 = 0;
-    let mut seen_max = ProtocolVersion::OLDEST.as_u8();
+    let mut supported_bitmap: u64 = 0;
+    let mut recognized_versions: Vec<u8> = Vec::new();
     let mut oldest_rejection: Option<u8> = None;
 
     for version in peer_versions {
@@ -1251,15 +1251,18 @@ where
                     continue;
                 }
 
-                let bit = 1u64 << value;
-                if value == ProtocolVersion::NEWEST.as_u8() {
-                    return Ok(ProtocolVersion::NEWEST);
+                if recognized_versions.is_empty() {
+                    recognized_versions.push(value);
+                } else if let Err(index) = recognized_versions.binary_search(&value) {
+                    recognized_versions.insert(index, value);
                 }
 
-                if seen_bitmap & bit == 0 {
-                    seen_bitmap |= bit;
-                    if value > seen_max {
-                        seen_max = value;
+                let bit = 1u64 << value;
+                if SUPPORTED_PROTOCOL_BITMAP & bit != 0 {
+                    supported_bitmap |= bit;
+
+                    if value == ProtocolVersion::NEWEST.as_u8() {
+                        return Ok(ProtocolVersion::NEWEST);
                     }
                 }
             }
@@ -1274,9 +1277,8 @@ where
         }
     }
 
-    let mutual_bitmap = seen_bitmap & SUPPORTED_PROTOCOL_BITMAP;
-    if mutual_bitmap != 0 {
-        let highest_bit = (u64::BITS - 1) - mutual_bitmap.leading_zeros();
+    if supported_bitmap != 0 {
+        let highest_bit = (u64::BITS - 1) - supported_bitmap.leading_zeros();
         debug_assert!(highest_bit < u64::BITS);
 
         let highest = highest_bit as u8;
@@ -1289,27 +1291,9 @@ where
         return Err(NegotiationError::UnsupportedVersion(value));
     }
 
-    let peer_versions = if seen_bitmap != 0 {
-        let start = ProtocolVersion::OLDEST.as_u8();
-        let span = usize::from(seen_max.saturating_sub(start)) + 1;
-        let mut versions = Vec::with_capacity(span);
-
-        for version in start..=seen_max {
-            if version as u32 >= u64::BITS {
-                continue;
-            }
-
-            if seen_bitmap & (1u64 << version) != 0 {
-                versions.push(version);
-            }
-        }
-
-        versions
-    } else {
-        Vec::new()
-    };
-
-    Err(NegotiationError::NoMutualProtocol { peer_versions })
+    Err(NegotiationError::NoMutualProtocol {
+        peer_versions: recognized_versions,
+    })
 }
 
 #[cfg(test)]
