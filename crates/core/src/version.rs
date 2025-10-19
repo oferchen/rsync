@@ -58,10 +58,12 @@
 //!   `--version` capability listings.
 
 use core::{
-    fmt,
+    fmt::{self, Write as FmtWrite},
     iter::{FromIterator, FusedIterator},
     str::FromStr,
 };
+use rsync_protocol::ProtocolVersion;
+use std::string::String;
 
 const COMPILED_FEATURE_COUNT: usize = CompiledFeature::ALL.len();
 
@@ -106,6 +108,25 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
     bitmap
 };
 
+/// Program name used by upstream rsync when rendering version banners.
+pub const PROGRAM_NAME: &str = "rsync";
+
+/// First year included in upstream copyright notices.
+pub const COPYRIGHT_START_YEAR: &str = "1996";
+
+/// Latest copyright year recorded by upstream rsync 3.4.1.
+pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
+
+/// Copyright notice rendered by upstream `print_rsync_version`.
+pub const COPYRIGHT_NOTICE: &str =
+    "(C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.";
+
+/// Web site advertised by upstream rsync in `--version` output.
+pub const WEB_SITE: &str = "https://rsync.samba.org/";
+
+/// Subprotocol version appended to the negotiated protocol when non-zero.
+pub const SUBPROTOCOL_VERSION: u8 = 0;
+
 /// Upstream base version that the Rust implementation tracks.
 #[doc(alias = "3.4.1")]
 pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
@@ -113,6 +134,162 @@ pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
 /// Full version string rendered by user-visible banners.
 #[doc(alias = "3.4.1-rust")]
 pub const RUST_VERSION: &str = "3.4.1-rust";
+
+/// Static metadata describing the standard version banner rendered by rsync.
+///
+/// The structure mirrors upstream `print_rsync_version()` so higher layers can
+/// render byte-identical banners without hard-coding strings at the call site.
+/// It captures the program name, version identifiers, protocol numbers, and the
+/// canonical copyright notice.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::version::version_metadata;
+///
+/// let metadata = version_metadata();
+/// let banner = metadata.standard_banner();
+///
+/// assert!(banner.starts_with("rsync  version 3.4.1-rust"));
+/// assert!(banner.contains("protocol version 32"));
+/// assert!(banner.contains("https://rsync.samba.org/"));
+/// ```
+#[doc(alias = "--version")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VersionMetadata {
+    program_name: &'static str,
+    upstream_version: &'static str,
+    rust_version: &'static str,
+    protocol_version: ProtocolVersion,
+    subprotocol_version: u8,
+    copyright_notice: &'static str,
+    web_site: &'static str,
+}
+
+impl VersionMetadata {
+    /// Returns the program name rendered at the start of the banner.
+    #[must_use]
+    pub const fn program_name(&self) -> &'static str {
+        self.program_name
+    }
+
+    /// Returns the upstream version string without the Rust suffix.
+    #[must_use]
+    pub const fn upstream_version(&self) -> &'static str {
+        self.upstream_version
+    }
+
+    /// Returns the Rust-flavoured version string (`3.4.1-rust`).
+    #[must_use]
+    pub const fn rust_version(&self) -> &'static str {
+        self.rust_version
+    }
+
+    /// Returns the negotiated protocol version advertised by the banner.
+    #[must_use]
+    pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.protocol_version
+    }
+
+    /// Returns the optional subprotocol used for pre-release builds.
+    #[must_use]
+    pub const fn subprotocol_version(&self) -> u8 {
+        self.subprotocol_version
+    }
+
+    /// Returns the canonical copyright notice rendered by upstream rsync.
+    #[must_use]
+    pub const fn copyright_notice(&self) -> &'static str {
+        self.copyright_notice
+    }
+
+    /// Returns the web site advertised by the banner.
+    #[must_use]
+    pub const fn web_site(&self) -> &'static str {
+        self.web_site
+    }
+
+    /// Writes the standard textual banner into the provided [`fmt::Write`] sink.
+    ///
+    /// The formatting mirrors `print_rsync_version()` for the human-readable
+    /// path. Callers that require an owned [`String`] can use
+    /// [`VersionMetadata::standard_banner`] instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::version::version_metadata;
+    ///
+    /// let metadata = version_metadata();
+    /// let mut rendered = String::new();
+    /// metadata
+    ///     .write_standard_banner(&mut rendered)
+    ///     .expect("writing to a String never fails");
+    ///
+    /// assert!(rendered.starts_with("rsync  version"));
+    /// assert!(rendered.ends_with("\n"));
+    /// ```
+    pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        write!(
+            writer,
+            "{}  version {}  protocol version {}",
+            self.program_name(),
+            self.rust_version(),
+            self.protocol_version().as_u8()
+        )?;
+
+        if self.subprotocol_version() != 0 {
+            write!(writer, ".PR{}", self.subprotocol_version())?;
+        }
+
+        writer.write_char('\n')?;
+        writer.write_str("Copyright ")?;
+        writer.write_str(self.copyright_notice())?;
+        writer.write_char('\n')?;
+        writer.write_str("Web site: ")?;
+        writer.write_str(self.web_site())?;
+        writer.write_char('\n')
+    }
+
+    /// Returns the standard banner rendered into an owned [`String`].
+    #[must_use]
+    pub fn standard_banner(&self) -> String {
+        let mut banner = String::new();
+        self.write_standard_banner(&mut banner)
+            .expect("writing to String cannot fail");
+        banner
+    }
+}
+
+impl Default for VersionMetadata {
+    fn default() -> Self {
+        version_metadata()
+    }
+}
+
+/// Returns the canonical metadata used to render `--version` output.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::version::version_metadata;
+///
+/// let metadata = version_metadata();
+/// assert_eq!(metadata.protocol_version().as_u8(), 32);
+/// ```
+#[doc(alias = "--version")]
+#[must_use]
+pub const fn version_metadata() -> VersionMetadata {
+    VersionMetadata {
+        program_name: PROGRAM_NAME,
+        upstream_version: UPSTREAM_BASE_VERSION,
+        rust_version: RUST_VERSION,
+        protocol_version: ProtocolVersion::NEWEST,
+        subprotocol_version: SUBPROTOCOL_VERSION,
+        copyright_notice: COPYRIGHT_NOTICE,
+        web_site: WEB_SITE,
+    }
+}
 
 /// Optional capabilities that may be compiled into the binary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -884,6 +1061,38 @@ mod tests {
 
     const ACL_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("ACLs");
     const UNKNOWN_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("unknown");
+
+    #[test]
+    fn version_metadata_matches_expected_constants() {
+        let metadata = version_metadata();
+
+        assert_eq!(metadata.program_name(), PROGRAM_NAME);
+        assert_eq!(metadata.upstream_version(), UPSTREAM_BASE_VERSION);
+        assert_eq!(metadata.rust_version(), RUST_VERSION);
+        assert_eq!(metadata.protocol_version(), ProtocolVersion::NEWEST);
+        assert_eq!(metadata.subprotocol_version(), SUBPROTOCOL_VERSION);
+        assert_eq!(metadata.copyright_notice(), COPYRIGHT_NOTICE);
+        assert_eq!(metadata.web_site(), WEB_SITE);
+    }
+
+    #[test]
+    fn version_metadata_renders_standard_banner() {
+        let metadata = version_metadata();
+        let mut rendered = String::new();
+
+        metadata
+            .write_standard_banner(&mut rendered)
+            .expect("writing to String cannot fail");
+
+        let expected = concat!(
+            "rsync  version 3.4.1-rust  protocol version 32\n",
+            "Copyright (C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.\n",
+            "Web site: https://rsync.samba.org/\n"
+        )
+        .to_owned();
+
+        assert_eq!(rendered, expected);
+    }
 
     #[test]
     fn compiled_features_match_cfg_flags() {
