@@ -373,6 +373,11 @@ trait NegotiationBufferAccess {
     }
 
     #[inline]
+    fn buffered_consumed_slice(&self) -> &[u8] {
+        self.buffer_ref().buffered_consumed_slice()
+    }
+
+    #[inline]
     fn sniffed_prefix_remaining(&self) -> usize {
         self.buffer_ref().sniffed_prefix_remaining()
     }
@@ -781,6 +786,18 @@ impl<R> NegotiatedStream<R> {
     #[must_use]
     pub fn buffered_consumed(&self) -> usize {
         NegotiationBufferAccess::buffered_consumed(self)
+    }
+
+    /// Returns the portion of the buffered negotiation transcript that has already been replayed.
+    ///
+    /// The slice mirrors [`Self::buffered_consumed`] but exposes the actual bytes that were drained
+    /// from the replay buffer. This is useful for diagnostics that need to log the full transcript or
+    /// for higher layers that compare the consumed prefix against known greetings without
+    /// recalculating slice ranges manually. The returned slice is empty until data is read from the
+    /// [`NegotiatedStream`].
+    #[must_use]
+    pub fn buffered_consumed_slice(&self) -> &[u8] {
+        NegotiationBufferAccess::buffered_consumed_slice(self)
     }
 
     /// Returns the length of the sniffed negotiation prefix.
@@ -1994,6 +2011,15 @@ impl<R> NegotiatedStreamParts<R> {
         NegotiationBufferAccess::buffered_consumed(self)
     }
 
+    /// Returns the portion of the buffered negotiation transcript that had already been replayed.
+    ///
+    /// This mirrors [`NegotiatedStream::buffered_consumed_slice`] but operates on the decomposed
+    /// parts, allowing diagnostics to print the consumed prefix without rebuilding the stream.
+    #[must_use]
+    pub fn buffered_consumed_slice(&self) -> &[u8] {
+        NegotiationBufferAccess::buffered_consumed_slice(self)
+    }
+
     /// Returns how many buffered bytes remain unread.
     #[must_use]
     pub fn buffered_remaining(&self) -> usize {
@@ -2356,6 +2382,11 @@ impl NegotiationBuffer {
 
     fn buffered(&self) -> &[u8] {
         &self.buffered
+    }
+
+    fn buffered_consumed_slice(&self) -> &[u8] {
+        let consumed = self.buffered_pos.min(self.buffered.len());
+        &self.buffered[..consumed]
     }
 
     fn buffered_vectored(&self) -> NegotiationBufferedSlices<'_> {
@@ -3388,6 +3419,29 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_stream_buffered_consumed_slice_exposes_replayed_bytes() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let transcript = stream.buffered().to_vec();
+        assert!(stream.buffered_consumed_slice().is_empty());
+
+        let mut prefix = vec![0u8; 4];
+        stream
+            .read_exact(&mut prefix)
+            .expect("buffered prefix is readable");
+        assert_eq!(stream.buffered_consumed_slice(), &transcript[..4]);
+
+        let remaining = transcript.len().saturating_sub(4);
+        if remaining > 0 {
+            let mut tail = vec![0u8; remaining];
+            stream
+                .read_exact(&mut tail)
+                .expect("remaining buffered bytes are readable");
+        }
+
+        assert_eq!(stream.buffered_consumed_slice(), transcript.as_slice());
+    }
+
+    #[test]
     fn parts_buffered_consumed_matches_stream_state() {
         let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
         let total = stream.buffered_len();
@@ -3402,6 +3456,32 @@ mod tests {
         let parts = stream.into_parts();
         assert_eq!(parts.buffered_consumed(), total - 1);
         assert_eq!(parts.buffered_remaining(), 1);
+    }
+
+    #[test]
+    fn negotiated_stream_parts_buffered_consumed_slice_reflects_progress() {
+        let mut stream = sniff_bytes(b"@RSYNCD: 31.0\nrest").expect("sniff succeeds");
+        let transcript = stream.buffered().to_vec();
+
+        let mut consumed_prefix = vec![0u8; 5.min(transcript.len())];
+        stream
+            .read_exact(&mut consumed_prefix)
+            .expect("buffered prefix is readable");
+        let consumed = stream.buffered_consumed();
+
+        let parts = stream.clone().into_parts();
+        assert_eq!(parts.buffered_consumed_slice(), &transcript[..consumed]);
+
+        let remaining = transcript.len().saturating_sub(consumed);
+        if remaining > 0 {
+            let mut rest = vec![0u8; remaining];
+            stream
+                .read_exact(&mut rest)
+                .expect("remaining buffered bytes are readable");
+        }
+
+        let parts = stream.into_parts();
+        assert_eq!(parts.buffered_consumed_slice(), transcript.as_slice());
     }
 
     #[test]
