@@ -275,9 +275,17 @@ impl<W> MessageSink<W>
 where
     W: Write,
 {
+    fn render_message(&mut self, message: &Message, append_newline: bool) -> io::Result<()> {
+        if append_newline {
+            message.render_line_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
+        } else {
+            message.render_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
+        }
+    }
+
     /// Writes a single message using the sink's current [`LineMode`].
     pub fn write(&mut self, message: &Message) -> io::Result<()> {
-        self.write_with_mode(message, self.line_mode)
+        self.render_message(message, self.line_mode.append_newline())
     }
 
     /// Writes `message` using an explicit [`LineMode`] without mutating the sink.
@@ -315,11 +323,7 @@ where
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn write_with_mode(&mut self, message: &Message, line_mode: LineMode) -> io::Result<()> {
-        if line_mode.append_newline() {
-            message.render_line_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
-        } else {
-            message.render_to_writer_with_scratch(&mut self.scratch, &mut self.writer)
-        }
+        self.render_message(message, line_mode.append_newline())
     }
 
     /// Writes each message from the iterator to the underlying writer.
@@ -375,8 +379,9 @@ where
         I: IntoIterator<Item = M>,
         M: Borrow<Message>,
     {
+        let append_newline = self.line_mode.append_newline();
         for message in messages {
-            self.write(message.borrow())?;
+            self.render_message(message.borrow(), append_newline)?;
         }
         Ok(())
     }
@@ -413,8 +418,9 @@ where
         I: IntoIterator<Item = M>,
         M: Borrow<Message>,
     {
+        let append_newline = line_mode.append_newline();
         for message in messages {
-            self.write_with_mode(message.borrow(), line_mode)?;
+            self.render_message(message.borrow(), append_newline)?;
         }
         Ok(())
     }
