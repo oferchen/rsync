@@ -751,7 +751,7 @@ mod tests {
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "flush failed"))
+            Err(io::Error::other("flush failed"))
         }
     }
 

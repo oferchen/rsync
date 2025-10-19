@@ -173,6 +173,12 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    struct ConstAssert<const COND: bool>;
+
+    impl ConstAssert<true> {
+        const VALUE: () = ();
+    }
+
     fn negotiated_version_strategy() -> impl Strategy<Value = ProtocolVersion> {
         let versions: Vec<ProtocolVersion> = ProtocolVersion::supported_versions_array().to_vec();
         prop::sample::select(versions)
@@ -212,15 +218,23 @@ mod tests {
             ProtocolVersion::V30,
         );
 
-        assert!(CLAMPED);
-        assert!(!NOT_CLAMPED);
-        assert!(matches!(FUTURE, RemoteProtocolAdvertisement::Future(40)));
+        const _: () = ConstAssert::<{ CLAMPED }>::VALUE;
+        const _: () = ConstAssert::<{ !NOT_CLAMPED }>::VALUE;
+
+        let clamped = CLAMPED;
+        let not_clamped = NOT_CLAMPED;
+        let future = FUTURE;
+        let supported = SUPPORTED;
+
+        assert!(clamped);
+        assert!(!not_clamped);
+        assert!(matches!(future, RemoteProtocolAdvertisement::Future(40)));
         assert!(matches!(
-            SUPPORTED,
+            supported,
             RemoteProtocolAdvertisement::Supported(ProtocolVersion::V30)
         ));
-        assert_eq!(FUTURE.negotiated(), ProtocolVersion::NEWEST);
-        assert_eq!(SUPPORTED.negotiated(), ProtocolVersion::V30);
+        assert_eq!(future.negotiated(), ProtocolVersion::NEWEST);
+        assert_eq!(supported.negotiated(), ProtocolVersion::V30);
     }
 
     #[test]
@@ -230,8 +244,14 @@ mod tests {
         const NOT_CAPPED: bool =
             local_cap_reduced_protocol(ProtocolVersion::V29, ProtocolVersion::V29);
 
-        assert!(WAS_CAPPED);
-        assert!(!NOT_CAPPED);
+        const _: () = ConstAssert::<{ WAS_CAPPED }>::VALUE;
+        const _: () = ConstAssert::<{ !NOT_CAPPED }>::VALUE;
+
+        let was_capped = WAS_CAPPED;
+        let not_capped = NOT_CAPPED;
+
+        assert!(was_capped);
+        assert!(!not_capped);
     }
 
     #[test]
