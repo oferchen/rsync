@@ -131,22 +131,28 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// # Examples
     ///
     /// ```
+    /// # use std::collections::TryReserveError;
     /// use rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
+    /// # fn demo() -> Result<(), TryReserveError> {
     /// let stream =
     ///     sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
     ///         .expect("sniff succeeds");
     /// let slices = stream.buffered_vectored();
     /// let mut replay = Vec::new();
-    /// slices.extend_vec(&mut replay)?;
+    /// let appended = slices.extend_vec(&mut replay)?;
     ///
+    /// assert_eq!(appended, replay.len());
     /// assert_eq!(replay, stream.buffered());
-    /// # Ok::<(), std::collections::TryReserveError>(())
+    /// # Ok(())
+    /// # }
+    /// # demo().unwrap();
     /// ```
-    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> Result<(), TryReserveError> {
+    #[must_use = "the returned length reports how many bytes were appended"]
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         let additional = self.total_len;
@@ -157,7 +163,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
         for slice in self.as_slices() {
             buffer.extend_from_slice(slice.as_ref());
         }
-        Ok(())
+        Ok(additional)
     }
 
     /// Collects the buffered negotiation bytes into a freshly allocated [`Vec<u8>`].
@@ -193,7 +199,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
             buffer.try_reserve_exact(self.total_len)?;
         }
 
-        self.extend_vec(&mut buffer)?;
+        let _ = self.extend_vec(&mut buffer)?;
         Ok(buffer)
     }
 
@@ -3168,7 +3174,7 @@ mod tests {
 
         let mut buffer = b"prefix: ".to_vec();
         let prefix_len = buffer.len();
-        slices
+        let appended = slices
             .extend_vec(&mut buffer)
             .expect("Vec<u8> growth should succeed for small transcripts");
 
@@ -3177,6 +3183,7 @@ mod tests {
         let mut expected = Vec::new();
         expected.extend_from_slice(prefix);
         expected.extend_from_slice(remainder);
+        assert_eq!(appended, expected.len());
         assert_eq!(&buffer[prefix_len..], expected.as_slice());
     }
 
