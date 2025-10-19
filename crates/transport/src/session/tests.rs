@@ -216,6 +216,32 @@ fn negotiate_session_parts_exposes_binary_metadata() {
 }
 
 #[test]
+fn session_handshake_parts_into_stream_parts_preserves_buffer_state() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let parts = negotiate_session(
+        MemoryTransport::new(&binary_handshake_bytes(remote_version)),
+        ProtocolVersion::NEWEST,
+    )
+    .expect("binary handshake succeeds")
+    .into_stream_parts();
+
+    let binary_stream_parts = parts.clone().into_stream_parts();
+    assert_eq!(binary_stream_parts.buffered(), parts.stream().buffered());
+    assert_eq!(binary_stream_parts.decision(), parts.decision());
+
+    let parts = negotiate_session(
+        MemoryTransport::new(b"@RSYNCD: 31.0\n@RSYNCD: OK\n"),
+        ProtocolVersion::NEWEST,
+    )
+    .expect("legacy handshake succeeds")
+    .into_stream_parts();
+
+    let legacy_stream_parts = parts.clone().into_stream_parts();
+    assert_eq!(legacy_stream_parts.buffered(), parts.stream().buffered());
+    assert_eq!(legacy_stream_parts.decision(), parts.decision());
+}
+
+#[test]
 fn session_into_inner_returns_binary_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
     let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
