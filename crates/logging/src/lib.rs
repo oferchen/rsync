@@ -165,10 +165,25 @@ pub struct MessageSink<W> {
 /// error reported by the conversion attempt. This mirrors `std::io::IntoInnerError`
 /// so callers can recover the sink and either retry with a different mapping or continue
 /// using the existing writer. Helper accessors expose both components without forcing
-/// additional allocations.
+/// additional allocations, and the wrapper implements rich ergonomics such as [`Clone`],
+/// [`as_ref`](Self::as_ref), and [`map_parts`](Self::map_parts) so preserved state can be
+/// inspected or transformed without dropping buffered diagnostics.
 pub struct TryMapWriterError<W, E> {
     sink: MessageSink<W>,
     error: E,
+}
+
+impl<W, E> Clone for TryMapWriterError<W, E>
+where
+    MessageSink<W>: Clone,
+    E: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            sink: self.sink.clone(),
+            error: self.error.clone(),
+        }
+    }
 }
 
 impl<W, E> TryMapWriterError<W, E> {
@@ -200,6 +215,18 @@ impl<W, E> TryMapWriterError<W, E> {
         &mut self.error
     }
 
+    /// Returns shared references to the preserved sink and error.
+    #[must_use]
+    pub fn as_ref(&self) -> (&MessageSink<W>, &E) {
+        (&self.sink, &self.error)
+    }
+
+    /// Returns mutable references to the preserved sink and error.
+    #[must_use]
+    pub fn as_mut(&mut self) -> (&mut MessageSink<W>, &mut E) {
+        (&mut self.sink, &mut self.error)
+    }
+
     /// Consumes the wrapper and returns the preserved sink and conversion error.
     #[must_use]
     pub fn into_parts(self) -> (MessageSink<W>, E) {
@@ -218,6 +245,43 @@ impl<W, E> TryMapWriterError<W, E> {
     #[must_use]
     pub fn into_error(self) -> E {
         self.error
+    }
+
+    /// Maps the preserved sink into another type while retaining the error.
+    #[must_use]
+    pub fn map_sink<W2, F>(self, map: F) -> TryMapWriterError<W2, E>
+    where
+        F: FnOnce(MessageSink<W>) -> MessageSink<W2>,
+    {
+        let (sink, error) = self.into_parts();
+        TryMapWriterError::new(map(sink), error)
+    }
+
+    /// Maps the preserved error into another type while retaining the sink.
+    #[must_use]
+    pub fn map_error<E2, F>(self, map: F) -> TryMapWriterError<W, E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        let (sink, error) = self.into_parts();
+        TryMapWriterError::new(sink, map(error))
+    }
+
+    /// Transforms both the preserved sink and error in a single pass.
+    #[must_use]
+    pub fn map_parts<W2, E2, F>(self, map: F) -> TryMapWriterError<W2, E2>
+    where
+        F: FnOnce(MessageSink<W>, E) -> (MessageSink<W2>, E2),
+    {
+        let (sink, error) = self.into_parts();
+        let (sink, error) = map(sink, error);
+        TryMapWriterError::new(sink, error)
+    }
+}
+
+impl<W, E> From<(MessageSink<W>, E)> for TryMapWriterError<W, E> {
+    fn from((sink, error): (MessageSink<W>, E)) -> Self {
+        TryMapWriterError::new(sink, error)
     }
 }
 
@@ -593,7 +657,7 @@ where
 mod tests {
     use super::*;
     use rsync_core::message::Message;
-    use std::io::{self, Write};
+    use std::io::{self, Cursor, Write};
 
     #[derive(Default)]
     struct TrackingWriter {
@@ -700,6 +764,88 @@ mod tests {
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
         assert_eq!(output, "rsync info: still running\n");
+    }
+
+    #[test]
+    fn try_map_writer_error_clone_preserves_state() {
+        let mut original =
+            TryMapWriterError::new(MessageSink::new(Vec::<u8>::new()), String::from("failure"));
+        let mut cloned = original.clone();
+
+        original
+            .sink_mut()
+            .write(&Message::info("original"))
+            .expect("write succeeds");
+        cloned
+            .sink_mut()
+            .write(&Message::info("clone"))
+            .expect("write succeeds");
+
+        assert_eq!(original.error(), "failure");
+        assert_eq!(cloned.error(), "failure");
+
+        let (original_sink, original_error) = original.into_parts();
+        let (cloned_sink, cloned_error) = cloned.into_parts();
+
+        assert_eq!(original_error, "failure");
+        assert_eq!(cloned_error, "failure");
+
+        let original_rendered = String::from_utf8(original_sink.into_inner()).expect("utf-8");
+        let cloned_rendered = String::from_utf8(cloned_sink.into_inner()).expect("utf-8");
+
+        assert!(original_rendered.contains("original"));
+        assert!(cloned_rendered.contains("clone"));
+    }
+
+    #[test]
+    fn try_map_writer_error_as_ref_and_as_mut_provide_access() {
+        let mut err =
+            TryMapWriterError::new(MessageSink::new(Vec::<u8>::new()), String::from("failure"));
+        let (sink_ref, error_ref) = err.as_ref();
+        assert_eq!(sink_ref.line_mode(), LineMode::WithNewline);
+        assert_eq!(error_ref, "failure");
+
+        {
+            let (sink_mut, error_mut) = err.as_mut();
+            sink_mut.set_line_mode(LineMode::WithoutNewline);
+            error_mut.push('!');
+        }
+
+        assert_eq!(err.sink().line_mode(), LineMode::WithoutNewline);
+        assert_eq!(err.error(), "failure!");
+    }
+
+    #[test]
+    fn try_map_writer_error_map_helpers_transform_components() {
+        let err =
+            TryMapWriterError::new(MessageSink::new(Vec::<u8>::new()), String::from("failure"));
+
+        let mapped_sink = err.clone().map_sink(|mut sink| {
+            sink.set_line_mode(LineMode::WithoutNewline);
+            sink
+        });
+        assert_eq!(mapped_sink.sink().line_mode(), LineMode::WithoutNewline);
+        assert_eq!(mapped_sink.error(), "failure");
+
+        let mapped_error = err.clone().map_error(|error| error.len());
+        assert_eq!(*mapped_error.error(), "failure".len());
+        assert_eq!(mapped_error.sink().line_mode(), LineMode::WithNewline);
+
+        let mut mapped_parts = err.map_parts(|sink, error| {
+            let sink = sink.map_writer(Cursor::new);
+            let len = error.len();
+            (sink, len)
+        });
+        assert_eq!(*mapped_parts.error(), "failure".len());
+
+        mapped_parts
+            .sink_mut()
+            .write(&Message::info("mapped"))
+            .expect("write succeeds");
+
+        let cursor = mapped_parts.into_sink().into_inner();
+        let rendered = String::from_utf8(cursor.into_inner()).expect("utf-8");
+        assert!(rendered.contains("mapped"));
     }
 
     #[test]
