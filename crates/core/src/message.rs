@@ -1485,6 +1485,33 @@ impl Message {
         self
     }
 
+    /// Adjusts the message severity while keeping all other metadata intact.
+    ///
+    /// The helper mirrors upstream rsync's practice of reclassifying diagnostics without
+    /// rebuilding them from scratch. It is particularly handy when cloning message templates that
+    /// default to `error` but need to be downgraded to `warning` or `info` depending on runtime
+    /// conditions. The exit code, role trailer, source location, and payload remain unchanged so
+    /// the caller only needs to emit the returned [`Message`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::{Message, Severity};
+    ///
+    /// let template = Message::error(23, "delta-transfer failure");
+    /// let downgraded = template.clone().with_severity(Severity::Warning);
+    ///
+    /// assert_eq!(downgraded.severity(), Severity::Warning);
+    /// assert_eq!(downgraded.code(), template.code());
+    /// assert_eq!(downgraded.text(), template.text());
+    /// ```
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the new severity"]
+    pub fn with_severity(mut self, severity: Severity) -> Self {
+        self.severity = severity;
+        self
+    }
+
     /// Returns the role used in the trailer, if any.
     #[inline]
     #[must_use]
@@ -2366,6 +2393,24 @@ mod tests {
         assert_eq!(updated.role(), Some(Role::Sender));
         assert_eq!(updated.source(), original.source());
         assert_eq!(original.text(), "delta-transfer failure");
+    }
+
+    #[test]
+    fn message_with_severity_reclassifies_without_touching_metadata() {
+        let original = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let downgraded = original.clone().with_severity(Severity::Warning);
+
+        assert_eq!(downgraded.severity(), Severity::Warning);
+        assert_eq!(downgraded.code(), original.code());
+        assert_eq!(downgraded.role(), original.role());
+        assert_eq!(downgraded.source(), original.source());
+        assert_eq!(downgraded.text(), original.text());
+
+        let rendered = downgraded.to_string();
+        assert!(rendered.starts_with("rsync warning:"));
+        assert!(rendered.contains("(code 23)"));
     }
 
     #[test]
