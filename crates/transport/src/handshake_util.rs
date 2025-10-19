@@ -62,6 +62,31 @@ impl RemoteProtocolAdvertisement {
         }
     }
 
+    /// Reports whether the advertised protocol exceeded the supported range.
+    ///
+    /// Upstream rsync clamps peers that announce future protocol versions to its newest
+    /// implementation. Sessions where that occurred are surfaced via
+    /// [`RemoteProtocolAdvertisement::Future`]. This helper exposes the same
+    /// classification as a boolean flag so higher layers can branch on the condition without
+    /// manually matching on the enum variants.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::RemoteProtocolAdvertisement;
+    ///
+    /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
+    /// assert!(!supported.was_clamped());
+    ///
+    /// let future = RemoteProtocolAdvertisement::Future(40);
+    /// assert!(future.was_clamped());
+    /// ```
+    #[must_use]
+    pub const fn was_clamped(self) -> bool {
+        matches!(self, Self::Future(_))
+    }
+
     /// Returns the raw protocol number announced by the peer.
     ///
     /// The value matches the on-the-wire advertisement regardless of whether it fell within the
@@ -217,9 +242,13 @@ mod tests {
             ProtocolVersion::V30.as_u8() as u32,
             ProtocolVersion::V30,
         );
+        const FUTURE_CLAMPED: bool = FUTURE.was_clamped();
+        const SUPPORTED_CLAMPED: bool = SUPPORTED.was_clamped();
 
         const _: () = ConstAssert::<{ CLAMPED }>::VALUE;
         const _: () = ConstAssert::<{ !NOT_CLAMPED }>::VALUE;
+        const _: () = ConstAssert::<{ FUTURE_CLAMPED }>::VALUE;
+        const _: () = ConstAssert::<{ !SUPPORTED_CLAMPED }>::VALUE;
 
         let clamped = CLAMPED;
         let not_clamped = NOT_CLAMPED;
@@ -235,6 +264,8 @@ mod tests {
         ));
         assert_eq!(future.negotiated(), ProtocolVersion::NEWEST);
         assert_eq!(supported.negotiated(), ProtocolVersion::V30);
+        assert!(future.was_clamped());
+        assert!(!supported.was_clamped());
     }
 
     #[test]
@@ -270,6 +301,7 @@ mod tests {
         assert_eq!(classification.future(), None);
         assert_eq!(classification.advertised(), advertised);
         assert_eq!(classification.negotiated(), version);
+        assert!(!classification.was_clamped());
     }
 
     #[test]
@@ -283,6 +315,7 @@ mod tests {
         assert_eq!(classification.future(), Some(advertised));
         assert_eq!(classification.advertised(), advertised);
         assert_eq!(classification.negotiated(), ProtocolVersion::NEWEST);
+        assert!(classification.was_clamped());
     }
 
     proptest! {
@@ -334,6 +367,10 @@ mod tests {
 
             prop_assert_eq!(classification.advertised(), expected);
             prop_assert_eq!(classification.negotiated(), negotiated);
+            prop_assert_eq!(
+                classification.was_clamped(),
+                remote_advertisement_was_clamped(advertised)
+            );
         }
     }
 }
