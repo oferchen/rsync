@@ -5,6 +5,7 @@ use crate::daemon::{
     LegacyDaemonHandshake, LegacyDaemonHandshakeParts, negotiate_legacy_daemon_session,
 };
 use crate::negotiation::{NEGOTIATION_PROLOGUE_UNDETERMINED_MSG, NegotiatedStream};
+use crate::sniff_negotiation_stream;
 use rsync_protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
@@ -326,6 +327,57 @@ fn session_parts_into_inner_returns_legacy_transport() {
     raw.read_to_end(&mut replay)
         .expect("remaining bytes readable");
     assert!(replay.is_empty());
+}
+
+#[test]
+fn negotiate_session_parts_from_stream_handles_binary_transport() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let stream = sniff_negotiation_stream(MemoryTransport::new(&binary_handshake_bytes(
+        remote_version,
+    )))
+    .expect("binary sniff succeeds");
+
+    let parts = negotiate_session_parts_from_stream(stream, ProtocolVersion::NEWEST)
+        .expect("binary parts succeed");
+
+    assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    assert!(parts.is_binary());
+    assert!(!parts.is_legacy());
+    assert_eq!(parts.negotiated_protocol(), remote_version);
+    assert_eq!(parts.remote_protocol(), remote_version);
+
+    let transport = parts.clone().into_handshake().into_inner();
+    assert_eq!(
+        transport.writes(),
+        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+    );
+    assert_eq!(transport.flushes(), 1);
+}
+
+#[test]
+fn negotiate_session_parts_from_stream_handles_legacy_transport() {
+    let stream = sniff_negotiation_stream(MemoryTransport::new(b"@RSYNCD: 31.0\n@RSYNCD: OK\n"))
+        .expect("legacy sniff succeeds");
+
+    let parts = negotiate_session_parts_from_stream(stream, ProtocolVersion::NEWEST)
+        .expect("legacy parts succeed");
+
+    assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+    assert!(parts.is_legacy());
+    assert!(!parts.is_binary());
+    assert_eq!(
+        parts.negotiated_protocol(),
+        ProtocolVersion::from_supported(31).expect("protocol 31 supported"),
+    );
+
+    let greeting = parts
+        .server_greeting()
+        .expect("legacy parts expose greeting");
+    assert_eq!(greeting.advertised_protocol(), 31);
+
+    let transport = parts.into_handshake().into_inner();
+    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.flushes(), 1);
 }
 
 #[test]
