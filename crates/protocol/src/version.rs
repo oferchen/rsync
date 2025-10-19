@@ -1238,7 +1238,7 @@ where
     T: ProtocolVersionAdvertisement,
 {
     let mut supported_bitmap: u64 = 0;
-    let mut recognized_versions: Vec<u8> = Vec::new();
+    let mut recognized_versions = RecognizedVersions::new();
     let mut oldest_rejection: Option<u8> = None;
 
     for version in peer_versions {
@@ -1251,11 +1251,7 @@ where
                     continue;
                 }
 
-                if recognized_versions.is_empty() {
-                    recognized_versions.push(value);
-                } else if let Err(index) = recognized_versions.binary_search(&value) {
-                    recognized_versions.insert(index, value);
-                }
+                recognized_versions.insert(value);
 
                 let bit = 1u64 << value;
                 if SUPPORTED_PROTOCOL_BITMAP & bit != 0 {
@@ -1292,9 +1288,51 @@ where
     }
 
     Err(NegotiationError::NoMutualProtocol {
-        peer_versions: recognized_versions,
+        peer_versions: recognized_versions.into_vec(),
     })
 }
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Clone)]
+struct RecognizedVersions {
+    values: [u8; SUPPORTED_PROTOCOL_COUNT],
+    len: usize,
+}
+
+impl RecognizedVersions {
+    const fn new() -> Self {
+        Self {
+            values: [0; SUPPORTED_PROTOCOL_COUNT],
+            len: 0,
+        }
+    }
+
+    fn insert(&mut self, value: u8) {
+        match self.values[..self.len].binary_search(&value) {
+            Ok(_) => {}
+            Err(index) => {
+                if self.len == self.values.len() {
+                    debug_assert!(false, "recognized protocol set exceeded capacity");
+                    return;
+                }
+
+                if index == self.len {
+                    self.values[self.len] = value;
+                } else {
+                    self.values.copy_within(index..self.len, index + 1);
+                    self.values[index] = value;
+                }
+
+                self.len += 1;
+            }
+        }
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(self.len);
+        result.extend_from_slice(&self.values[..self.len]);
+        result
+    }
+}
