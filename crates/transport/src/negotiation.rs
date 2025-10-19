@@ -463,6 +463,30 @@ struct NegotiationBuffer {
 /// provided by the caller. It mirrors upstream rsync's approach of signalling insufficient
 /// capacity without mutating the destination, allowing higher layers to retry with a suitably
 /// sized buffer while keeping the captured negotiation prefix intact.
+///
+/// The error implements [`From`] for [`io::Error`], making it straightforward to integrate with
+/// APIs that expect transport errors. The conversion marks the error as
+/// [`io::ErrorKind::InvalidInput`], matching upstream rsync's diagnostics when a caller supplies a
+/// buffer that cannot hold the sniffed negotiation transcript.
+///
+/// # Examples
+///
+/// Convert the error into an [`io::Error`] when a scratch buffer is too small:
+///
+/// ```
+/// use rsync_transport::sniff_negotiation_stream;
+/// use std::io::{self, Cursor};
+///
+/// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec()))
+///     .expect("sniff succeeds");
+/// let mut scratch = [0u8; 4];
+/// let err = stream
+///     .copy_buffered_into_slice(&mut scratch)
+///     .expect_err("insufficient capacity must error");
+/// let io_err: io::Error = err.into();
+/// assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+/// assert!(io_err.to_string().contains("requires"));
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BufferedCopyTooSmall {
     required: usize,
@@ -524,6 +548,12 @@ impl fmt::Display for BufferedCopyTooSmall {
 }
 
 impl std::error::Error for BufferedCopyTooSmall {}
+
+impl From<BufferedCopyTooSmall> for io::Error {
+    fn from(err: BufferedCopyTooSmall) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
 
 impl<R> NegotiationBufferAccess for NegotiatedStream<R> {
     #[inline]
@@ -2726,6 +2756,23 @@ mod tests {
 
         let source = mapped.source().expect("mapped error must retain source");
         assert!(source.downcast_ref::<TryReserveError>().is_some());
+    }
+
+    #[test]
+    fn buffered_copy_too_small_converts_into_io_error() {
+        let err = BufferedCopyTooSmall::new(LEGACY_DAEMON_PREFIX_LEN + 4, 4);
+        let io_err: io::Error = err.into();
+
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(io_err.to_string(), err.to_string());
+
+        let inner = io_err
+            .into_inner()
+            .expect("conversion retains source error");
+        let recovered = inner
+            .downcast::<BufferedCopyTooSmall>()
+            .expect("inner error matches original type");
+        assert_eq!(*recovered, err);
     }
 
     fn sniff_bytes(data: &[u8]) -> io::Result<NegotiatedStream<Cursor<Vec<u8>>>> {
