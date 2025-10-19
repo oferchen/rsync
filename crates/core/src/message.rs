@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::TryReserveError;
 use std::ffi::{OsStr, OsString};
 use std::fmt::{self, Write as FmtWrite};
+use std::fs;
 use std::io::{self, IoSlice, Write as IoWrite};
 use std::path::{Path, PathBuf, PrefixComponent};
 use std::slice;
@@ -1781,8 +1782,53 @@ fn workspace_root_path() -> Option<&'static Path> {
     static WORKSPACE_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
 
     WORKSPACE_ROOT
-        .get_or_init(|| option_env!("RSYNC_WORKSPACE_ROOT").map(PathBuf::from))
+        .get_or_init(|| {
+            compute_workspace_root(
+                option_env!("RSYNC_WORKSPACE_ROOT"),
+                option_env!("CARGO_WORKSPACE_DIR"),
+            )
+        })
         .as_deref()
+}
+
+fn compute_workspace_root(
+    explicit_root: Option<&str>,
+    workspace_dir: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(root) = explicit_root {
+        return Some(PathBuf::from(root));
+    }
+
+    fallback_workspace_root(workspace_dir)
+}
+
+fn fallback_workspace_root(workspace_dir: Option<&str>) -> Option<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    if let Some(dir) = workspace_dir {
+        let candidate = Path::new(dir);
+        let candidate = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            manifest_dir.join(candidate)
+        };
+
+        if candidate.is_dir() {
+            return Some(canonicalize_or_fallback(&candidate));
+        }
+    }
+
+    for ancestor in manifest_dir.ancestors() {
+        if ancestor.join("Cargo.lock").is_file() {
+            return Some(canonicalize_or_fallback(ancestor));
+        }
+    }
+
+    Some(canonicalize_or_fallback(manifest_dir))
+}
+
+fn canonicalize_or_fallback(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -2165,6 +2211,53 @@ mod tests {
 
         assert_eq!(source.path(), "crates/core");
         assert!(source.is_workspace_relative());
+    }
+
+    #[test]
+    fn compute_workspace_root_prefers_explicit_env() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let computed = super::compute_workspace_root(Some(manifest), Some("ignored"))
+            .expect("explicit manifest directory should be accepted");
+
+        assert_eq!(computed, PathBuf::from(manifest));
+    }
+
+    #[test]
+    fn compute_workspace_root_falls_back_to_manifest_ancestors() {
+        let expected = super::canonicalize_or_fallback(Path::new(env!("RSYNC_WORKSPACE_ROOT")));
+        let computed = super::compute_workspace_root(None, None)
+            .expect("ancestor scan should locate the workspace root");
+
+        assert_eq!(computed, expected);
+    }
+
+    #[test]
+    fn compute_workspace_root_handles_relative_workspace_dir() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = Path::new(env!("RSYNC_WORKSPACE_ROOT"));
+
+        let relative_from_root = match manifest_dir.strip_prefix(workspace_root) {
+            Ok(relative) => relative,
+            Err(_) => Path::new("."),
+        };
+
+        let mut relative_to_root = PathBuf::new();
+        for component in relative_from_root.components() {
+            if matches!(component, std::path::Component::Normal(_)) {
+                relative_to_root.push("..");
+            }
+        }
+
+        if relative_to_root.as_os_str().is_empty() {
+            relative_to_root.push(".");
+        }
+
+        let relative_owned = relative_to_root.to_string_lossy().into_owned();
+        let computed = super::compute_workspace_root(None, Some(relative_owned.as_str()))
+            .expect("relative workspace dir should resolve");
+        let expected = super::canonicalize_or_fallback(workspace_root);
+
+        assert_eq!(computed, expected);
     }
 
     #[test]
