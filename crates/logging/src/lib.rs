@@ -572,8 +572,32 @@ where
     }
 
     /// Writes a single message using the sink's current [`LineMode`].
-    pub fn write(&mut self, message: &Message) -> io::Result<()> {
-        self.render_message(message, self.line_mode.append_newline())
+    ///
+    /// The method accepts borrowed or owned [`Message`] values via
+    /// [`Borrow<Message>`], allowing call sites to forward diagnostics without
+    /// cloning. This matches the flexibility offered by [`write_all`], making it
+    /// inexpensive to reuse the same sink for ad-hoc or batched message
+    /// emission.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// sink.write(&Message::info("borrowed"))?;
+    /// sink.write(Message::warning("owned"))?;
+    ///
+    /// let rendered = String::from_utf8(sink.into_inner()).unwrap();
+    /// assert_eq!(rendered.lines().count(), 2);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn write<M>(&mut self, message: M) -> io::Result<()>
+    where
+        M: Borrow<Message>,
+    {
+        self.render_message(message.borrow(), self.line_mode.append_newline())
     }
 
     /// Writes `message` using an explicit [`LineMode`] without mutating the sink.
@@ -595,8 +619,8 @@ where
     ///
     /// let mut sink = MessageSink::new(Vec::new());
     /// sink.write(&Message::info("phase one"))?;
-    /// sink.write_with_mode(&Message::info("progress"), LineMode::WithoutNewline)?;
-    /// sink.write(&Message::info("phase two"))?;
+    /// sink.write_with_mode(Message::info("progress"), LineMode::WithoutNewline)?;
+    /// sink.write(Message::info("phase two"))?;
     ///
     /// let output = String::from_utf8(sink.into_inner()).unwrap();
     /// let mut lines = output.lines();
@@ -610,8 +634,11 @@ where
     /// assert!(lines.next().is_none());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn write_with_mode(&mut self, message: &Message, line_mode: LineMode) -> io::Result<()> {
-        self.render_message(message, line_mode.append_newline())
+    pub fn write_with_mode<M>(&mut self, message: M, line_mode: LineMode) -> io::Result<()>
+    where
+        M: Borrow<Message>,
+    {
+        self.render_message(message.borrow(), line_mode.append_newline())
     }
 
     /// Writes each message from the iterator to the underlying writer.
@@ -792,6 +819,21 @@ mod tests {
     }
 
     #[test]
+    fn write_accepts_owned_messages() {
+        let mut sink = MessageSink::new(Vec::new());
+        sink.write(Message::info("phase one"))
+            .expect("owned message write succeeds");
+        sink.write(Message::warning("phase two"))
+            .expect("owned message write succeeds");
+
+        let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
+        let mut lines = rendered.lines();
+        assert_eq!(lines.next(), Some("rsync info: phase one"));
+        assert_eq!(lines.next(), Some("rsync warning: phase two"));
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
     fn map_writer_preserves_configuration() {
         use std::io::Cursor;
 
@@ -960,6 +1002,21 @@ mod tests {
         let buffer = sink.into_inner();
         let rendered = String::from_utf8(buffer).expect("utf-8");
         assert_eq!(rendered, "rsync warning: vanished\n");
+    }
+
+    #[test]
+    fn write_with_mode_accepts_owned_messages() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        sink.write_with_mode(Message::info("phase one"), LineMode::WithNewline)
+            .expect("owned message write succeeds");
+        sink.write_with_mode(Message::info("phase two"), LineMode::WithoutNewline)
+            .expect("owned message write succeeds");
+
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+
+        let buffer = sink.into_inner();
+        let rendered = String::from_utf8(buffer).expect("utf-8");
+        assert_eq!(rendered, "rsync info: phase one\nrsync info: phase two");
     }
 
     #[test]
