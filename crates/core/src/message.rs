@@ -499,7 +499,7 @@ impl<'a> MessageSegments<'a> {
             }
             Err(err) => {
                 buffer.truncate(start);
-                Err(io::Error::new(io::ErrorKind::Other, err))
+                Err(io::Error::other(err))
             }
         }
     }
