@@ -514,15 +514,18 @@ mod tests {
     #[test]
     fn compiled_features_match_cfg_flags() {
         let features = compiled_features();
+        let mut bitmap_from_features = 0u8;
+
+        for feature in &features {
+            bitmap_from_features |= feature.bit();
+            assert!(feature.is_enabled());
+        }
 
         for feature in CompiledFeature::ALL {
             assert_eq!(features.contains(&feature), feature.is_enabled());
-            assert_eq!(
-                (COMPILED_FEATURE_BITMAP & feature.bit()) != 0,
-                feature.is_enabled()
-            );
         }
 
+        assert_eq!(bitmap_from_features, COMPILED_FEATURE_BITMAP);
         assert_eq!(
             features.len(),
             COMPILED_FEATURE_BITMAP.count_ones() as usize
