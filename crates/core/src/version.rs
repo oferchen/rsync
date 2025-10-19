@@ -1343,50 +1343,48 @@ impl VersionInfoReport {
 
     fn info_items(&self) -> Vec<InfoItem> {
         let config = self.config;
-        let mut items = Vec::with_capacity(28);
 
-        items.push(InfoItem::Section("Capabilities"));
-        items.push(bits_entry::<off_t>("files"));
-        items.push(bits_entry::<ino_t>("inums"));
-        items.push(bits_entry::<time_t>("timestamps"));
-        items.push(bits_entry::<i64>("long ints"));
-        items.push(capability_entry("socketpairs", config.supports_socketpairs));
-        items.push(capability_entry("symlinks", config.supports_symlinks));
-        items.push(capability_entry("symtimes", config.supports_symtimes));
-        items.push(capability_entry("hardlinks", config.supports_hardlinks));
-        items.push(capability_entry(
-            "hardlink-specials",
-            config.supports_hardlink_specials,
-        ));
-        items.push(capability_entry(
-            "hardlink-symlinks",
-            config.supports_hardlink_symlinks,
-        ));
-        items.push(capability_entry("IPv6", config.supports_ipv6));
-        items.push(capability_entry("atimes", config.supports_atimes));
-        items.push(capability_entry("batchfiles", config.supports_batchfiles));
-        items.push(capability_entry("inplace", config.supports_inplace));
-        items.push(capability_entry("append", config.supports_append));
-        items.push(capability_entry("ACLs", config.supports_acls));
-        items.push(capability_entry("xattrs", config.supports_xattrs));
-        items.push(InfoItem::Entry(Cow::Borrowed(
-            config.secluded_args_mode.label(),
-        )));
-        items.push(capability_entry("iconv", config.supports_iconv));
-        items.push(capability_entry("prealloc", config.supports_prealloc));
-        items.push(capability_entry("stop-at", config.supports_stop_at));
-        items.push(capability_entry("crtimes", config.supports_crtimes));
-
-        items.push(InfoItem::Section("Optimizations"));
-        items.push(capability_entry("SIMD-roll", config.supports_simd_roll));
-        items.push(capability_entry("asm-roll", config.supports_asm_roll));
-        items.push(capability_entry(
-            "openssl-crypto",
-            config.supports_openssl_crypto,
-        ));
-        items.push(capability_entry("asm-MD5", config.supports_asm_md5));
-
-        items
+        vec![
+            InfoItem::Section("Capabilities"),
+            bits_entry::<off_t>("files"),
+            bits_entry::<ino_t>("inums"),
+            bits_entry::<time_t>("timestamps"),
+            bits_entry::<i64>("long ints"),
+            capability_entry("socketpairs", config.supports_socketpairs),
+            capability_entry("symlinks", config.supports_symlinks),
+            capability_entry("symtimes", config.supports_symtimes),
+            capability_entry("hardlinks", config.supports_hardlinks),
+            capability_entry(
+                "hardlink-specials",
+                config.supports_hardlink_specials,
+            ),
+            capability_entry(
+                "hardlink-symlinks",
+                config.supports_hardlink_symlinks,
+            ),
+            capability_entry("IPv6", config.supports_ipv6),
+            capability_entry("atimes", config.supports_atimes),
+            capability_entry("batchfiles", config.supports_batchfiles),
+            capability_entry("inplace", config.supports_inplace),
+            capability_entry("append", config.supports_append),
+            capability_entry("ACLs", config.supports_acls),
+            capability_entry("xattrs", config.supports_xattrs),
+            InfoItem::Entry(Cow::Borrowed(
+                config.secluded_args_mode.label(),
+            )),
+            capability_entry("iconv", config.supports_iconv),
+            capability_entry("prealloc", config.supports_prealloc),
+            capability_entry("stop-at", config.supports_stop_at),
+            capability_entry("crtimes", config.supports_crtimes),
+            InfoItem::Section("Optimizations"),
+            capability_entry("SIMD-roll", config.supports_simd_roll),
+            capability_entry("asm-roll", config.supports_asm_roll),
+            capability_entry(
+                "openssl-crypto",
+                config.supports_openssl_crypto,
+            ),
+            capability_entry("asm-MD5", config.supports_asm_md5),
+        ]
     }
 }
 
