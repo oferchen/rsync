@@ -131,6 +131,25 @@ impl Default for LineMode {
 /// assert_eq!(sink.into_inner(), b"rsync info: ready".to_vec());
 /// # Ok::<(), std::io::Error>(())
 /// ```
+///
+/// Reuse an existing [`MessageScratch`] when constructing a new sink:
+///
+/// ```
+/// use rsync_core::message::{Message, MessageScratch};
+/// use rsync_logging::{LineMode, MessageSink};
+///
+/// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
+/// sink.write(&Message::info("phase one"))?;
+/// let (writer, scratch, mode) = sink.into_parts();
+/// assert_eq!(mode, LineMode::WithoutNewline);
+///
+/// let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
+/// sink.write(&Message::warning("phase two"))?;
+/// let output = String::from_utf8(sink.into_inner()).unwrap();
+/// assert!(output.contains("phase two"));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[doc(alias = "--msgs2stderr")]
 #[derive(Clone, Debug)]
 pub struct MessageSink<W> {
     writer: W,
@@ -148,9 +167,21 @@ impl<W> MessageSink<W> {
     /// Creates a sink with the provided [`LineMode`].
     #[must_use]
     pub fn with_line_mode(writer: W, line_mode: LineMode) -> Self {
+        Self::with_parts(writer, MessageScratch::new(), line_mode)
+    }
+
+    /// Creates a sink from an explicit [`MessageScratch`] and [`LineMode`].
+    ///
+    /// Higher layers that manage scratch buffers manually can reuse their
+    /// allocations across sinks by passing the existing scratch value into this
+    /// constructor. The [`MessageScratch`] is stored by value, mirroring the
+    /// ownership model used throughout the workspace to avoid hidden
+    /// allocations.
+    #[must_use]
+    pub fn with_parts(writer: W, scratch: MessageScratch, line_mode: LineMode) -> Self {
         Self {
             writer,
-            scratch: MessageScratch::new(),
+            scratch,
             line_mode,
         }
     }
@@ -182,6 +213,16 @@ impl<W> MessageSink<W> {
     #[must_use]
     pub fn into_inner(self) -> W {
         self.writer
+    }
+
+    /// Consumes the sink and returns the writer, scratch buffer, and line mode.
+    ///
+    /// The returned [`MessageScratch`] can be reused to build another
+    /// [`MessageSink`] via [`with_parts`](Self::with_parts), avoiding repeated
+    /// zeroing of scratch storage when logging contexts are recycled.
+    #[must_use]
+    pub fn into_parts(self) -> (W, MessageScratch, LineMode) {
+        (self.writer, self.scratch, self.line_mode)
     }
 }
 
@@ -268,5 +309,24 @@ mod tests {
 
         let output = String::from_utf8(sink.into_inner()).expect("utf-8");
         assert_eq!(output.lines().count(), messages.len());
+    }
+
+    #[test]
+    fn into_parts_allows_reusing_scratch() {
+        let mut sink =
+            MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
+        sink.write(&Message::info("first")).expect("write succeeds");
+
+        let (writer, scratch, mode) = sink.into_parts();
+        assert_eq!(mode, LineMode::WithoutNewline);
+
+        let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
+        sink.write(&Message::warning("second"))
+            .expect("write succeeds");
+
+        let output = String::from_utf8(sink.into_inner()).expect("utf-8");
+        assert!(output.starts_with("rsync info: first"));
+        assert!(output.contains("rsync warning: second"));
+        assert!(output.ends_with('\n'));
     }
 }
