@@ -388,6 +388,10 @@ const _: () = {
         "binary negotiation threshold must classify as binary",
     );
     assert!(
+        binary_intro > ProtocolVersion::OLDEST.as_u8(),
+        "binary negotiation threshold must exceed oldest supported version",
+    );
+    assert!(
         ProtocolVersion::new_const(binary_intro - 1).uses_legacy_ascii_negotiation(),
         "protocol immediately preceding binary threshold must use legacy negotiation",
     );

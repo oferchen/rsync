@@ -1201,6 +1201,21 @@ fn binary_negotiation_threshold_matches_protocol_30() {
 }
 
 #[test]
+fn binary_negotiation_threshold_exceeds_oldest_supported_version() {
+    let threshold = ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.as_u8();
+    let oldest = ProtocolVersion::OLDEST.as_u8();
+
+    assert!(
+        threshold > oldest,
+        "binary negotiation threshold must be newer than the oldest supported protocol",
+    );
+
+    let preceding = ProtocolVersion::from_supported(threshold - 1)
+        .expect("protocol immediately preceding the binary threshold is supported");
+    assert!(preceding.uses_legacy_ascii_negotiation());
+}
+
+#[test]
 fn negotiation_style_helpers_match_protocol_cutoff() {
     for version in ProtocolVersion::supported_versions() {
         if version.as_u8() >= ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.as_u8() {
