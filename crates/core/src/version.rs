@@ -16,6 +16,9 @@
 //!   user-visible banners.
 //! - [`compiled_features`] inspects Cargo feature flags and returns the set of
 //!   optional capabilities enabled at build time.
+//! - [`CompiledFeature`] enumerates optional capabilities and provides label
+//!   helpers such as [`CompiledFeature::label`] and
+//!   [`CompiledFeature::from_label`] for parsing user-provided strings.
 //!
 //! This structure keeps other crates free of conditional compilation logic
 //! while avoiding string duplication across the workspace.
@@ -29,7 +32,8 @@
 //!
 //! # Errors
 //!
-//! The module does not expose error types. All helpers either return constants
+//! The module exposes [`ParseCompiledFeatureError`] when parsing a
+//! [`CompiledFeature`] from a string fails. All other helpers return constants
 //! or eagerly evaluate into owned collections.
 //!
 //! # Examples
@@ -54,6 +58,7 @@
 use core::{
     fmt,
     iter::{FromIterator, FusedIterator},
+    str::FromStr,
 };
 
 const ACL_FEATURE_BIT: u8 = 1 << 0;
@@ -160,6 +165,30 @@ impl CompiledFeature {
         }
     }
 
+    /// Parses a feature label back into its [`CompiledFeature`] variant.
+    ///
+    /// The helper accepts the canonical labels produced by [`CompiledFeature::label`]
+    /// and used in `--version` output. It runs in constant time because the
+    /// feature set is fixed and small, making it suitable for validating user
+    /// supplied capability lists or regenerating [`CompiledFeature`] values from
+    /// documentation tables without allocating intermediate collections.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::version::CompiledFeature;
+    ///
+    /// assert_eq!(CompiledFeature::from_label("ACLs"), Some(CompiledFeature::Acl));
+    /// assert_eq!(CompiledFeature::from_label("unknown"), None);
+    /// ```
+    #[must_use]
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|feature| feature.label() == label)
+    }
+
     /// Reports whether the feature was compiled into the current build.
     #[must_use]
     pub const fn is_enabled(self) -> bool {
@@ -185,6 +214,26 @@ impl CompiledFeature {
 impl fmt::Display for CompiledFeature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
+    }
+}
+
+/// Error returned when parsing a [`CompiledFeature`] from a string fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseCompiledFeatureError;
+
+impl fmt::Display for ParseCompiledFeatureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unknown compiled feature label")
+    }
+}
+
+impl std::error::Error for ParseCompiledFeatureError {}
+
+impl FromStr for CompiledFeature {
+    type Err = ParseCompiledFeatureError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_label(s).ok_or(ParseCompiledFeatureError)
     }
 }
 
@@ -688,6 +737,46 @@ mod tests {
                 CompiledFeature::SdNotify,
             ]
         );
+    }
+
+    #[test]
+    fn compiled_feature_from_label_matches_variants() {
+        assert_eq!(
+            CompiledFeature::from_label("ACLs"),
+            Some(CompiledFeature::Acl)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("xattrs"),
+            Some(CompiledFeature::Xattr)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("zstd"),
+            Some(CompiledFeature::Zstd)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("iconv"),
+            Some(CompiledFeature::Iconv)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("sd-notify"),
+            Some(CompiledFeature::SdNotify)
+        );
+        assert_eq!(CompiledFeature::from_label("unknown"), None);
+    }
+
+    #[test]
+    fn compiled_feature_from_str_uses_canonical_labels() {
+        for feature in CompiledFeature::ALL {
+            let parsed = feature
+                .label()
+                .parse::<CompiledFeature>()
+                .expect("label parses into feature");
+            assert_eq!(parsed, feature);
+        }
+
+        let err = "invalid".parse::<CompiledFeature>().unwrap_err();
+        assert_eq!(err, ParseCompiledFeatureError);
+        assert_eq!(err.to_string(), "unknown compiled feature label");
     }
 
     #[test]
