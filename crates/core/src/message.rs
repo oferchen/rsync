@@ -381,9 +381,10 @@ impl<'a> MessageSegments<'a> {
         }
 
         let required = self.len();
-        if buffer.capacity().saturating_sub(buffer.len()) < required {
+        let spare = buffer.capacity().saturating_sub(buffer.len());
+        if spare < required {
             buffer
-                .try_reserve_exact(required)
+                .try_reserve_exact(required - spare)
                 .map_err(map_message_reserve_error)?;
         }
 

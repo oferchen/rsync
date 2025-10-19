@@ -156,8 +156,9 @@ impl<'a> NegotiationBufferedSlices<'a> {
         }
 
         let additional = self.total_len;
-        if buffer.capacity().saturating_sub(buffer.len()) < additional {
-            buffer.try_reserve_exact(additional)?;
+        let spare = buffer.capacity().saturating_sub(buffer.len());
+        if spare < additional {
+            buffer.try_reserve_exact(additional - spare)?;
         }
 
         for slice in self.as_slices() {
