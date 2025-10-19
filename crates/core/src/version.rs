@@ -325,18 +325,26 @@ pub fn compiled_feature_labels() -> Vec<&'static str> {
 pub struct CompiledFeaturesIter {
     index: usize,
     back: usize,
+    remaining_bitmap: u8,
     remaining: usize,
 }
 
 impl CompiledFeaturesIter {
-    fn new() -> Self {
-        let remaining = COMPILED_FEATURE_BITMAP.count_ones() as usize;
+    const fn new() -> Self {
+        let bitmap = COMPILED_FEATURE_BITMAP;
 
         Self {
             index: 0,
             back: CompiledFeature::ALL.len(),
-            remaining,
+            remaining_bitmap: bitmap,
+            remaining: bitmap.count_ones() as usize,
         }
+    }
+
+    fn consume(&mut self, feature: CompiledFeature) -> CompiledFeature {
+        self.remaining_bitmap &= !feature.bit();
+        self.remaining = self.remaining.saturating_sub(1);
+        feature
     }
 }
 
@@ -344,17 +352,22 @@ impl Iterator for CompiledFeaturesIter {
     type Item = CompiledFeature;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            self.index = self.back;
+            return None;
+        }
+
         while self.index < self.back {
             let feature = CompiledFeature::ALL[self.index];
             self.index += 1;
 
-            if feature.is_enabled() {
-                self.remaining = self.remaining.saturating_sub(1);
-                return Some(feature);
+            if (self.remaining_bitmap & feature.bit()) != 0 {
+                return Some(self.consume(feature));
             }
         }
 
         self.remaining = 0;
+        self.remaining_bitmap = 0;
         self.index = self.back;
         None
     }
@@ -372,17 +385,22 @@ impl ExactSizeIterator for CompiledFeaturesIter {
 
 impl DoubleEndedIterator for CompiledFeaturesIter {
     fn next_back(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            self.back = self.index;
+            return None;
+        }
+
         while self.index < self.back {
             self.back -= 1;
             let feature = CompiledFeature::ALL[self.back];
 
-            if feature.is_enabled() {
-                self.remaining = self.remaining.saturating_sub(1);
-                return Some(feature);
+            if (self.remaining_bitmap & feature.bit()) != 0 {
+                return Some(self.consume(feature));
             }
         }
 
         self.remaining = 0;
+        self.remaining_bitmap = 0;
         self.back = self.index;
         None
     }
@@ -866,5 +884,41 @@ mod tests {
 
         assert_eq!(rev_iter.next_back(), None);
         assert_eq!(rev_iter.len(), 0);
+    }
+
+    #[test]
+    fn compiled_features_iter_next_back_matches_reverse_collection() {
+        let mut iter = compiled_features_iter();
+        let mut reversed = Vec::new();
+
+        while let Some(feature) = iter.next_back() {
+            reversed.push(feature);
+        }
+
+        let expected: Vec<_> = compiled_features().into_iter().rev().collect();
+        assert_eq!(reversed, expected);
+    }
+
+    #[test]
+    fn compiled_features_iter_supports_mixed_direction_iteration() {
+        let expected = compiled_features();
+        let mut iter = compiled_features_iter();
+
+        let front = iter.next();
+        let back = iter.next_back();
+        let mut remainder: Vec<_> = iter.collect();
+
+        let mut reconstructed = Vec::new();
+        if let Some(feature) = front {
+            reconstructed.push(feature);
+        }
+
+        reconstructed.append(&mut remainder);
+
+        if let Some(feature) = back {
+            reconstructed.push(feature);
+        }
+
+        assert_eq!(reconstructed, expected);
     }
 }
