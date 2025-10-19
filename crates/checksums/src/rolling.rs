@@ -244,13 +244,15 @@ impl RollingChecksum {
         let mut total = 0u64;
 
         loop {
-            let read = reader.read(buffer)?;
-            if read == 0 {
-                break;
+            match reader.read(buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    self.update(&buffer[..read]);
+                    total += read as u64;
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
             }
-
-            self.update(&buffer[..read]);
-            total += read as u64;
         }
 
         Ok(total)
@@ -630,7 +632,7 @@ mod tests {
     use super::*;
 
     use proptest::prelude::*;
-    use std::io::{self, Cursor};
+    use std::io::{self, Cursor, Read};
 
     fn reference_digest(data: &[u8]) -> RollingDigest {
         let mut s1: u64 = 0;
@@ -965,6 +967,51 @@ mod tests {
         let read = checksum
             .update_reader_with_buffer(&mut cursor, &mut buffer)
             .expect("buffered read succeeds");
+
+        assert_eq!(read, data.len() as u64);
+
+        let mut manual = RollingChecksum::new();
+        manual.update(data);
+
+        assert_eq!(checksum.digest(), manual.digest());
+        assert_eq!(checksum.value(), manual.value());
+    }
+
+    struct InterruptingReader<'a> {
+        inner: Cursor<&'a [u8]>,
+        interrupted: bool,
+    }
+
+    impl<'a> InterruptingReader<'a> {
+        fn new(data: &'a [u8]) -> Self {
+            Self {
+                inner: Cursor::new(data),
+                interrupted: false,
+            }
+        }
+    }
+
+    impl<'a> Read for InterruptingReader<'a> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else {
+                self.inner.read(buf)
+            }
+        }
+    }
+
+    #[test]
+    fn update_reader_with_buffer_retries_after_interruption() {
+        let data = b"retry after interrupt";
+        let mut reader = InterruptingReader::new(data);
+        let mut checksum = RollingChecksum::new();
+        let mut buffer = [0u8; 4];
+
+        let read = checksum
+            .update_reader_with_buffer(&mut reader, &mut buffer)
+            .expect("interrupted read should be retried");
 
         assert_eq!(read, data.len() as u64);
 
