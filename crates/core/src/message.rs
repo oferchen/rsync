@@ -246,7 +246,7 @@ impl<'a> MessageSegments<'a> {
     /// assert_eq!(total, segments.len());
     /// ```
     #[inline]
-    #[must_use]
+    #[must_use = "iterate over the slices to observe the rendered message segments"]
     pub fn iter(&self) -> slice::Iter<'_, IoSlice<'a>> {
         self.as_slices().iter()
     }
@@ -321,7 +321,7 @@ impl<'a> MessageSegments<'a> {
     /// }
     /// ```
     #[inline]
-    #[must_use]
+    #[must_use = "consume the iterator to mutate the in-place segment descriptors"]
     pub fn iter_mut(&mut self) -> slice::IterMut<'_, IoSlice<'a>> {
         self.as_slices_mut().iter_mut()
     }
