@@ -61,7 +61,10 @@ fn map_message_reserve_error(err: TryReserveError) -> io::Error {
 /// Instances of this type are supplied to [`Message::as_segments`] so the helper can encode
 /// decimal exit codes and line numbers without allocating temporary [`String`] values. The
 /// buffers are stack-allocated and reusable, making it cheap for higher layers to render
-/// multiple messages in succession without paying repeated allocation costs.
+/// multiple messages in succession without paying repeated allocation costs. Because
+/// [`MessageScratch`] implements [`Copy`], callers may freely duplicate values when storing per-
+/// thread caches or passing scratch buffers between helper functions without incurring
+/// additional allocations.
 ///
 /// # Examples
 ///
@@ -76,7 +79,7 @@ fn map_message_reserve_error(err: TryReserveError) -> io::Error {
 ///
 /// assert_eq!(segments.len(), message.to_bytes().unwrap().len());
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct MessageScratch {
     code_digits: [u8; 20],
     line_digits: [u8; 20],
