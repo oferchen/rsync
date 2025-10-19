@@ -410,10 +410,58 @@ impl CompiledFeaturesDisplay {
         &self.features
     }
 
+    /// Returns the number of compiled features captured by the display.
+    ///
+    /// The helper mirrors [`Vec::len`], allowing callers to treat the wrapper as a
+    /// lightweight view over the collected feature list without reaching into the
+    /// backing vector explicitly. This is useful when rendering capability
+    /// summaries that need to branch on the feature count while still preserving
+    /// the ordering guarantees provided by [`CompiledFeaturesDisplay`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+    ///
+    /// let display = CompiledFeaturesDisplay::new(vec![
+    ///     CompiledFeature::Acl,
+    ///     CompiledFeature::Xattr,
+    /// ]);
+    ///
+    /// assert_eq!(display.len(), 2);
+    /// ```
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.features.len()
+    }
+
     /// Reports whether the feature list is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.features.is_empty()
+    }
+
+    /// Returns an iterator over the compiled features in display order.
+    ///
+    /// This is a convenience wrapper around [`features`](Self::features) that
+    /// makes it straightforward to traverse the capability list without
+    /// importing [`IntoIterator`] for references. The iterator yields the same
+    /// sequence as [`CompiledFeaturesDisplay::features`], ensuring callers can
+    /// rely on the canonical upstream ordering.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::version::{CompiledFeature, CompiledFeaturesDisplay};
+    ///
+    /// let display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
+    /// let mut iter = display.iter();
+    /// assert_eq!(iter.next(), Some(&CompiledFeature::Acl));
+    /// assert!(iter.next().is_none());
+    /// ```
+    #[must_use]
+    pub fn iter(&self) -> std::slice::Iter<'_, CompiledFeature> {
+        self.features.iter()
     }
 }
 
@@ -590,6 +638,20 @@ mod tests {
 
         assert!(display.is_empty());
         assert!(display.to_string().is_empty());
+    }
+
+    #[test]
+    fn compiled_features_display_len_and_iter_match_features() {
+        let display =
+            CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl, CompiledFeature::Xattr]);
+
+        assert_eq!(display.len(), display.features().len());
+        let collected: Vec<_> = display.iter().copied().collect();
+        assert_eq!(collected, display.features());
+
+        let empty = CompiledFeaturesDisplay::new(Vec::new());
+        assert_eq!(empty.len(), 0);
+        assert!(empty.iter().next().is_none());
     }
 
     #[test]
