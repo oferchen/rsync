@@ -1,5 +1,5 @@
 use core::fmt;
-use std::io::{self, Read, Write};
+use std::io::{self, IoSlice, Read, Write};
 
 /// Errors that can occur while updating the rolling checksum state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,6 +192,74 @@ impl RollingChecksum {
         self.s1 = s1 & 0xffff;
         self.s2 = s2 & 0xffff;
         self.len = self.len.saturating_add(chunk.len());
+    }
+
+    /// Updates the checksum using a vectored slice of byte buffers.
+    ///
+    /// The method mirrors calling [`update`](Self::update) for each buffer in
+    /// order while avoiding repeated truncation of the internal state. Empty
+    /// buffers are skipped, allowing callers to forward `readv`/`writev` style
+    /// slices directly without preprocessing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_checksums::RollingChecksum;
+    /// use std::io::IoSlice;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// let chunks = [IoSlice::new(b"hel"), IoSlice::new(b"lo")];
+    /// checksum.update_vectored(&chunks);
+    ///
+    /// let mut reference = RollingChecksum::new();
+    /// reference.update(b"hello");
+    ///
+    /// assert_eq!(checksum.digest(), reference.digest());
+    /// assert_eq!(checksum.value(), reference.value());
+    /// ```
+    #[doc(alias = "writev")]
+    #[inline]
+    pub fn update_vectored(&mut self, buffers: &[IoSlice<'_>]) {
+        if buffers.is_empty() {
+            return;
+        }
+
+        let mut s1 = self.s1;
+        let mut s2 = self.s2;
+        let mut len = self.len;
+
+        for slice in buffers {
+            let chunk = slice.as_ref();
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let mut iter = chunk.chunks_exact(4);
+            for block in &mut iter {
+                s1 = s1.wrapping_add(u32::from(block[0]));
+                s2 = s2.wrapping_add(s1);
+
+                s1 = s1.wrapping_add(u32::from(block[1]));
+                s2 = s2.wrapping_add(s1);
+
+                s1 = s1.wrapping_add(u32::from(block[2]));
+                s2 = s2.wrapping_add(s1);
+
+                s1 = s1.wrapping_add(u32::from(block[3]));
+                s2 = s2.wrapping_add(s1);
+            }
+
+            for &byte in iter.remainder() {
+                s1 = s1.wrapping_add(u32::from(byte));
+                s2 = s2.wrapping_add(s1);
+            }
+
+            len = len.saturating_add(chunk.len());
+        }
+
+        self.s1 = s1 & 0xffff;
+        self.s2 = s2 & 0xffff;
+        self.len = len;
     }
 
     /// Updates the checksum by consuming data from an [`io::Read`] implementation.
@@ -764,7 +832,7 @@ mod tests {
     use super::*;
 
     use proptest::prelude::*;
-    use std::io::{self, Cursor, Read};
+    use std::io::{self, Cursor, IoSlice, Read};
 
     fn reference_digest(data: &[u8]) -> RollingDigest {
         let mut s1: u64 = 0;
@@ -1276,6 +1344,43 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
+    #[test]
+    fn update_vectored_matches_sequential_updates() {
+        let chunks = vec![
+            b"vector".to_vec(),
+            Vec::new(),
+            b"ed".to_vec(),
+            b" input".to_vec(),
+        ];
+
+        let mut sequential = RollingChecksum::new();
+        for chunk in &chunks {
+            sequential.update(chunk);
+        }
+
+        let slices: Vec<IoSlice<'_>> = chunks
+            .iter()
+            .map(|chunk| IoSlice::new(chunk.as_slice()))
+            .collect();
+
+        let mut vectored = RollingChecksum::new();
+        vectored.update_vectored(&slices);
+
+        assert_eq!(vectored.digest(), sequential.digest());
+        assert_eq!(vectored.value(), sequential.value());
+    }
+
+    #[test]
+    fn update_vectored_noop_for_empty_buffer_list() {
+        let mut checksum = RollingChecksum::new();
+        checksum.update(b"seed");
+        let digest = checksum.digest();
+
+        checksum.update_vectored(&[]);
+
+        assert_eq!(checksum.digest(), digest);
+    }
+
     proptest! {
         #[test]
         fn rolling_update_matches_single_pass(chunks in chunked_sequences()) {
@@ -1320,6 +1425,23 @@ mod tests {
                     prop_assert_eq!(rolling.value(), recomputed.value());
                 }
             }
+        }
+
+        #[test]
+        fn vectored_update_matches_chunked_input(chunks in chunked_sequences()) {
+            let mut sequential = RollingChecksum::new();
+            for chunk in &chunks {
+                sequential.update(chunk);
+            }
+
+            let slices: Vec<IoSlice<'_>> =
+                chunks.iter().map(|chunk| IoSlice::new(chunk.as_slice())).collect();
+
+            let mut vectored = RollingChecksum::new();
+            vectored.update_vectored(&slices);
+
+            prop_assert_eq!(vectored.digest(), sequential.digest());
+            prop_assert_eq!(vectored.value(), sequential.value());
         }
 
         #[test]
