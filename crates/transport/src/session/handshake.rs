@@ -503,7 +503,8 @@ pub fn negotiate_session_parts<R>(
 where
     R: Read + Write,
 {
-    negotiate_session(reader, desired_protocol).map(SessionHandshake::into_stream_parts)
+    let stream = sniff_negotiation_stream(reader)?;
+    negotiate_session_parts_from_stream(stream, desired_protocol)
 }
 
 /// Negotiates an rsync session while reusing a caller supplied sniffer.
@@ -542,8 +543,8 @@ pub fn negotiate_session_parts_with_sniffer<R>(
 where
     R: Read + Write,
 {
-    negotiate_session_with_sniffer(reader, desired_protocol, sniffer)
-        .map(SessionHandshake::into_stream_parts)
+    let stream = sniff_negotiation_stream_with_sniffer(reader, sniffer)?;
+    negotiate_session_parts_from_stream(stream, desired_protocol)
 }
 
 /// Negotiates an rsync session using a pre-sniffed [`NegotiatedStream`].
@@ -582,4 +583,73 @@ where
             crate::negotiation::NEGOTIATION_PROLOGUE_UNDETERMINED_MSG,
         )),
     }
+}
+
+/// Negotiates an rsync session from a pre-sniffed stream and returns the decomposed parts.
+///
+/// This convenience wrapper mirrors [`negotiate_session_from_stream`] but immediately converts the
+/// resulting [`SessionHandshake`] into [`SessionHandshakeParts`]. Callers that already possess a
+/// [`NegotiatedStream`]—for instance after invoking
+/// [`sniff_negotiation_stream`](crate::sniff_negotiation_stream)—can therefore obtain the replaying
+/// stream parts and negotiated metadata without rebuilding the handshake manually.
+///
+/// # Errors
+///
+/// Propagates any I/O error produced while driving [`negotiate_session_from_stream`].
+///
+/// # Examples
+///
+/// ```
+/// use rsync_protocol::ProtocolVersion;
+/// use rsync_transport::{
+///     negotiate_session_parts_from_stream, sniff_negotiation_stream, SessionHandshakeParts,
+/// };
+/// use std::io::{self, Cursor, Read, Write};
+///
+/// #[derive(Debug)]
+/// struct Loopback {
+///     reader: Cursor<Vec<u8>>,
+///     written: Vec<u8>,
+/// }
+///
+/// impl Loopback {
+///     fn new(advertised: ProtocolVersion) -> Self {
+///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
+///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
+///     }
+/// }
+///
+/// impl Read for Loopback {
+///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+///         self.reader.read(buf)
+///     }
+/// }
+///
+/// impl Write for Loopback {
+///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+///         self.written.extend_from_slice(buf);
+///         Ok(buf.len())
+///     }
+///
+///     fn flush(&mut self) -> io::Result<()> {
+///         Ok(())
+///     }
+/// }
+///
+/// let remote = ProtocolVersion::from_supported(31).unwrap();
+/// let stream = sniff_negotiation_stream(Loopback::new(remote)).unwrap();
+/// let parts: SessionHandshakeParts<_> =
+///     negotiate_session_parts_from_stream(stream, ProtocolVersion::NEWEST).unwrap();
+///
+/// assert!(parts.is_binary());
+/// assert_eq!(parts.negotiated_protocol(), remote);
+/// ```
+pub fn negotiate_session_parts_from_stream<R>(
+    stream: NegotiatedStream<R>,
+    desired_protocol: ProtocolVersion,
+) -> io::Result<SessionHandshakeParts<R>>
+where
+    R: Read + Write,
+{
+    negotiate_session_from_stream(stream, desired_protocol).map(SessionHandshake::into_stream_parts)
 }
