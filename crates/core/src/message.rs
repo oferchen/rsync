@@ -64,7 +64,9 @@ fn map_message_reserve_error(err: TryReserveError) -> io::Error {
 /// multiple messages in succession without paying repeated allocation costs. Because
 /// [`MessageScratch`] implements [`Copy`], callers may freely duplicate values when storing per-
 /// thread caches or passing scratch buffers between helper functions without incurring
-/// additional allocations.
+/// additional allocations. When managing scratch storage manually is inconvenient, use
+/// [`MessageScratch::with_thread_local`] to borrow the thread-local buffer that backs
+/// [`Message::to_bytes`], [`Message::render_to`], and related helpers.
 ///
 /// # Examples
 ///
@@ -94,6 +96,42 @@ impl MessageScratch {
             code_digits: [0; 20],
             line_digits: [0; 20],
         }
+    }
+
+    /// Executes a closure with the thread-local scratch buffer.
+    ///
+    /// The helper reuses the thread-local storage maintained by this module so callers can render
+    /// multiple messages without explicitly storing a [`MessageScratch`]. When the thread-local
+    /// instance is temporarily unavailable—such as when the current thread already borrowed it—the
+    /// function transparently falls back to a fresh buffer. This mirrors the strategy used by
+    /// [`Message::render_to`] and [`Message::to_bytes`], ensuring consistent performance semantics
+    /// across the workspace.
+    ///
+    /// # Examples
+    ///
+    /// Render a message using the shared scratch buffer and inspect the resulting length.
+    ///
+    /// ```
+    /// use rsync_core::{
+    ///     message::{Message, MessageScratch, Role},
+    ///     message_source,
+    /// };
+    ///
+    /// let len = MessageScratch::with_thread_local(|scratch| {
+    ///     let message = Message::error(23, "delta-transfer failure")
+    ///         .with_role(Role::Sender)
+    ///         .with_source(message_source!());
+    ///     message.as_segments(scratch, false).len()
+    /// });
+    ///
+    /// assert!(len > 0);
+    /// ```
+    #[inline]
+    pub fn with_thread_local<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut MessageScratch) -> R,
+    {
+        with_thread_local_scratch(f)
     }
 }
 
@@ -1425,7 +1463,7 @@ impl Message {
         include_newline: bool,
         f: impl FnOnce(&MessageSegments<'_>) -> R,
     ) -> R {
-        with_thread_local_scratch(|scratch| {
+        MessageScratch::with_thread_local(|scratch| {
             let segments = self.as_segments(scratch, include_newline);
             f(&segments)
         })
@@ -1964,7 +2002,7 @@ impl Message {
     #[inline]
     #[must_use = "formatter writes can fail; propagate errors to preserve upstream diagnostics"]
     pub fn render_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        with_thread_local_scratch(|scratch| self.render_to_with_scratch(scratch, writer))
+        MessageScratch::with_thread_local(|scratch| self.render_to_with_scratch(scratch, writer))
     }
 
     /// Renders the message followed by a newline into an arbitrary [`fmt::Write`] implementor.
@@ -1992,7 +2030,9 @@ impl Message {
     #[inline]
     #[must_use = "newline rendering can fail; handle formatting errors to retain diagnostics"]
     pub fn render_line_to<W: fmt::Write>(&self, writer: &mut W) -> fmt::Result {
-        with_thread_local_scratch(|scratch| self.render_line_to_with_scratch(scratch, writer))
+        MessageScratch::with_thread_local(|scratch| {
+            self.render_line_to_with_scratch(scratch, writer)
+        })
     }
 
     /// Returns the rendered message as a [`Vec<u8>`].
@@ -2019,7 +2059,7 @@ impl Message {
     #[inline]
     #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        with_thread_local_scratch(|scratch| self.to_bytes_with_scratch(scratch))
+        MessageScratch::with_thread_local(|scratch| self.to_bytes_with_scratch(scratch))
     }
 
     /// Returns the rendered message followed by a newline as a [`Vec<u8>`].
@@ -2042,7 +2082,7 @@ impl Message {
     #[inline]
     #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
     pub fn to_line_bytes(&self) -> io::Result<Vec<u8>> {
-        with_thread_local_scratch(|scratch| self.to_line_bytes_with_scratch(scratch))
+        MessageScratch::with_thread_local(|scratch| self.to_line_bytes_with_scratch(scratch))
     }
 
     /// Writes the rendered message into an [`io::Write`] implementor.
@@ -2075,7 +2115,9 @@ impl Message {
     #[inline]
     #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        with_thread_local_scratch(|scratch| self.render_to_writer_with_scratch(scratch, writer))
+        MessageScratch::with_thread_local(|scratch| {
+            self.render_to_writer_with_scratch(scratch, writer)
+        })
     }
 
     /// Writes the rendered message followed by a newline into an [`io::Write`] implementor.
@@ -2103,7 +2145,7 @@ impl Message {
     #[inline]
     #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
     pub fn render_line_to_writer<W: IoWrite>(&self, writer: &mut W) -> io::Result<()> {
-        with_thread_local_scratch(|scratch| {
+        MessageScratch::with_thread_local(|scratch| {
             self.render_line_to_writer_with_scratch(scratch, writer)
         })
     }
@@ -2135,7 +2177,9 @@ impl Message {
     /// ```
     #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
-        with_thread_local_scratch(|scratch| self.append_to_vec_with_scratch(scratch, buffer))
+        MessageScratch::with_thread_local(|scratch| {
+            self.append_to_vec_with_scratch(scratch, buffer)
+        })
     }
 
     /// Appends the rendered message followed by a newline into the provided buffer.
@@ -2161,7 +2205,9 @@ impl Message {
     /// ```
     #[must_use = "buffer growth can fail; handle allocation or I/O errors when appending diagnostics"]
     pub fn append_line_to_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
-        with_thread_local_scratch(|scratch| self.append_line_to_vec_with_scratch(scratch, buffer))
+        MessageScratch::with_thread_local(|scratch| {
+            self.append_line_to_vec_with_scratch(scratch, buffer)
+        })
     }
 
     /// Streams the rendered message into an [`io::Write`] implementor using caller-provided scratch buffers.
@@ -2657,6 +2703,18 @@ mod tests {
     #[track_caller]
     fn tracked_rsync_info_macro() -> Message {
         rsync_info!("negotiation complete")
+    }
+
+    #[test]
+    fn message_scratch_with_thread_local_borrows_shared_buffer() {
+        let len = MessageScratch::with_thread_local(|scratch| {
+            let message = Message::error(23, "delta-transfer failure")
+                .with_role(Role::Sender)
+                .with_source(message_source!());
+            message.as_segments(scratch, false).len()
+        });
+
+        assert!(len > 0);
     }
 
     #[test]
