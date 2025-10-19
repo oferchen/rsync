@@ -330,10 +330,12 @@ impl<'a> MessageSegments<'a> {
     ///
     /// The helper prefers vectored writes when the message spans multiple
     /// segments so downstream sinks receive the payload in a single
-    /// [`write_vectored`](IoWrite::write_vectored) call. When the writer reports
-    /// that vectored I/O is unsupported or performs a partial write, the
-    /// remaining bytes are flushed sequentially to mirror upstream rsync's
-    /// formatting logic.
+    /// [`write_vectored`](IoWrite::write_vectored) call. Leading empty slices are
+    /// trimmed before issuing the first vectored write to avoid writers
+    /// reporting a spurious [`io::ErrorKind::WriteZero`] even though payload
+    /// bytes remain. When the writer reports that vectored I/O is unsupported or
+    /// performs a partial write, the remaining bytes are flushed sequentially to
+    /// mirror upstream rsync's formatting logic.
     ///
     /// # Examples
     ///
@@ -372,7 +374,7 @@ impl<'a> MessageSegments<'a> {
         }
 
         let mut storage = self.segments;
-        let mut view: &mut [IoSlice<'a>] = &mut storage[..self.count];
+        let mut view = Self::trim_leading_empty_slices_mut(&mut storage[..self.count]);
         let mut remaining = self.total_len;
 
         while !view.is_empty() && remaining != 0 {
@@ -389,6 +391,7 @@ impl<'a> MessageSegments<'a> {
                     }
 
                     IoSlice::advance_slices(&mut view, written);
+                    view = Self::trim_leading_empty_slices_mut(view);
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) if err.kind() == io::ErrorKind::Unsupported => break,
@@ -413,6 +416,26 @@ impl<'a> MessageSegments<'a> {
         }
 
         Ok(())
+    }
+
+    #[inline]
+    fn trim_leading_empty_slices_mut<'b>(
+        mut slices: &'b mut [IoSlice<'a>],
+    ) -> &'b mut [IoSlice<'a>] {
+        loop {
+            let Some(is_empty) = slices.first().map(|slice| slice.as_ref().is_empty()) else {
+                return slices;
+            };
+
+            if !is_empty {
+                return slices;
+            }
+
+            let (_, rest) = slices
+                .split_first_mut()
+                .expect("slice is non-empty after first() check");
+            slices = rest;
+        }
     }
 
     /// Extends the provided buffer with the rendered message bytes.
@@ -3934,6 +3957,43 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct LeadingEmptyAwareWriter {
+        buffer: Vec<u8>,
+        vectored_calls: usize,
+        write_calls: usize,
+    }
+
+    impl io::Write for LeadingEmptyAwareWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_calls += 1;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            self.vectored_calls += 1;
+
+            if bufs
+                .first()
+                .map_or(false, |slice| slice.as_ref().is_empty())
+            {
+                return Ok(0);
+            }
+
+            let mut total = 0;
+            for slice in bufs {
+                self.buffer.extend_from_slice(slice.as_ref());
+                total += slice.len();
+            }
+            Ok(total)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn segments_write_to_prefers_vectored_io() {
         let message = Message::error(11, "error in file IO")
@@ -3990,6 +4050,38 @@ mod tests {
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 1);
+    }
+
+    #[test]
+    fn segments_write_to_skips_leading_empty_slices_before_vectored_write() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut segments = message.as_segments(&mut scratch, false);
+
+        let original_count = segments.count;
+        assert!(original_count + 1 <= MAX_MESSAGE_SEGMENTS);
+
+        for index in (0..original_count).rev() {
+            segments.segments[index + 1] = segments.segments[index];
+        }
+        segments.segments[0] = IoSlice::new(&[]);
+        segments.count = original_count + 1;
+        // The total length remains unchanged because the new segment is empty.
+
+        let mut writer = LeadingEmptyAwareWriter::default();
+        segments
+            .write_to(&mut writer)
+            .expect("leading empty slices should not trigger write_zero errors");
+
+        assert_eq!(writer.buffer, message.to_bytes().unwrap());
+        assert_eq!(
+            writer.vectored_calls, 1,
+            "vectored path should succeed once"
+        );
+        assert_eq!(writer.write_calls, 0, "no sequential fallback expected");
     }
 
     #[test]
