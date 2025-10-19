@@ -321,6 +321,17 @@ impl<'a> MessageSegments<'a> {
             return Ok(());
         }
 
+        if self.count == 1 {
+            let bytes = self.segments[0].as_ref();
+
+            if bytes.is_empty() {
+                return Ok(());
+            }
+
+            writer.write_all(bytes)?;
+            return Ok(());
+        }
+
         let mut storage = self.segments;
         let mut view: &mut [IoSlice<'a>] = &mut storage[..self.count];
         let mut remaining = self.total_len;
@@ -1035,6 +1046,10 @@ impl Message {
         let mut total_len = 0usize;
 
         let mut push = |slice: &'a [u8]| {
+            if slice.is_empty() {
+                return;
+            }
+
             debug_assert!(
                 count < segments.len(),
                 "message segments exceeded allocation"
@@ -3532,6 +3547,24 @@ mod tests {
 
         assert_eq!(writer.written, message.to_line_bytes().unwrap());
         assert!(writer.vectored_calls >= 1);
+    }
+
+    #[test]
+    fn segments_write_to_skips_vectored_for_single_segment() {
+        let message = Message::info("");
+        let mut scratch = MessageScratch::new();
+        let segments = message.as_segments(&mut scratch, false);
+
+        assert_eq!(segments.segment_count(), 1);
+
+        let mut writer = RecordingWriter::new();
+        segments
+            .write_to(&mut writer)
+            .expect("single-segment writes succeed");
+
+        assert_eq!(writer.vectored_calls, 0, "vectored path should be skipped");
+        assert_eq!(writer.write_calls, 1, "single write_all call expected");
+        assert_eq!(writer.buffer, message.to_bytes().unwrap());
     }
 
     #[test]
