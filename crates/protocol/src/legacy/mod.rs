@@ -32,14 +32,16 @@ pub use bytes::{
 };
 #[allow(unused_imports)]
 pub use greeting::write_legacy_daemon_greeting;
+#[allow(unused_imports)]
 pub use greeting::{
     DigestListTokens, LegacyDaemonGreeting, LegacyDaemonGreetingOwned,
     format_legacy_daemon_greeting, parse_legacy_daemon_greeting,
     parse_legacy_daemon_greeting_details, parse_legacy_daemon_greeting_owned,
 };
+#[allow(unused_imports)]
 pub use lines::{
-    LegacyDaemonMessage, parse_legacy_daemon_message, parse_legacy_error_message,
-    parse_legacy_warning_message,
+    LegacyDaemonMessage, format_legacy_daemon_message, parse_legacy_daemon_message,
+    parse_legacy_error_message, parse_legacy_warning_message, write_legacy_daemon_message,
 };
 
 pub(super) fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
