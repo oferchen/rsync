@@ -114,8 +114,8 @@ impl std::error::Error for ParseProtocolVersionError {}
 
 /// A single negotiated rsync protocol version.
 ///
-/// The value typically originates from the [`--protocol`](https://download.samba.org/pub/rsync/rsync.1#opt--protocol)
-/// command-line flag or the protocol byte exchanged during the initial
+/// The value typically originates from the `--protocol` command-line flag or the
+/// protocol byte exchanged during the initial
 /// handshake.
 ///
 /// # Examples
