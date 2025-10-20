@@ -147,34 +147,30 @@ thread_local! {
     static THREAD_LOCAL_SCRATCH: RefCell<MessageScratch> = const { RefCell::new(MessageScratch::new()) };
 }
 
-fn call_with_scratch<F, R>(closure: &mut Option<F>, scratch: &mut MessageScratch) -> R
-where
-    F: FnOnce(&mut MessageScratch) -> R,
-{
-    let f = closure
-        .take()
-        .expect("message scratch closure invoked multiple times");
-    f(scratch)
-}
-
 fn with_thread_local_scratch<F, R>(f: F) -> R
 where
     F: FnOnce(&mut MessageScratch) -> R,
 {
-    let mut closure = Some(f);
+    let closure = RefCell::new(Some(f));
+    let result = RefCell::new(None);
 
-    if let Ok(Some(result)) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
+    if let Ok(_) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
         if let Ok(mut guard) = scratch.try_borrow_mut() {
-            return Some(call_with_scratch(&mut closure, &mut guard));
+            if let Some(func) = closure.borrow_mut().take() {
+                *result.borrow_mut() = Some(func(&mut guard));
+            }
         }
-
-        None
     }) {
-        return result;
+        if let Some(output) = result.borrow_mut().take() {
+            return output;
+        }
     }
 
     let mut scratch = MessageScratch::new();
-    call_with_scratch(&mut closure, &mut scratch)
+    match closure.into_inner() {
+        Some(func) => func(&mut scratch),
+        None => panic!("message scratch closure invoked multiple times"),
+    }
 }
 
 /// Collection of slices that jointly render an [`Message`].
