@@ -19,3 +19,6 @@ xattr = []
 zstd = []
 iconv = []
 sd-notify = []
+
+[dev-dependencies]
+tempfile = "3.10"

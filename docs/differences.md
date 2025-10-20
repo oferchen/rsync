@@ -7,13 +7,15 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **Client binary lacks transfer functionality**
-  - *Impact*: The `rsync` binary exists but only serves `--help` and `--version`.
-    Transfer attempts exit with code `1` and explain that the delta-transfer
-    engine has not been implemented via `core::client::run_client`.
-  - *Removal plan*: Implement the delta-transfer engine plus supporting crates
-    and teach `core::client::run_client` to drive them so real synchronisation
-    sessions succeed.
+- **Client binary implements local copies only**
+  - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
+    regular files and directory trees. Remote transfers, metadata
+    preservation, filters, compression, and progress reporting remain
+    unavailable.
+  - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
+    extend `core::client::run_client` to orchestrate protocol negotiation and
+    metadata handling, and validate the resulting behaviour via the parity
+    harness.
 - **Daemon functionality missing**
   - *Impact*: The `rsyncd` binary now exists but reports that daemon support is
     unavailable. Launch attempts exit with code `1` and render a diagnostic via

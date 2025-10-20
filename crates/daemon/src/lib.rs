@@ -390,8 +390,7 @@ mod tests {
 
     #[test]
     fn help_flag_renders_output() {
-        let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -423,7 +422,10 @@ mod tests {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [OsString::from("oc-rsyncd"), OsString::from("--version=extra")],
+            [
+                OsString::from("oc-rsyncd"),
+                OsString::from("--version=extra"),
+            ],
             &mut stdout,
             &mut stderr,
         );
