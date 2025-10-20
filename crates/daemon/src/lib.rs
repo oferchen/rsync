@@ -160,10 +160,10 @@ const HELP_TEXT: &str = concat!(
     "Daemon mode is under active development. This build recognises:\n",
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
-    "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
-    "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
-    "  --once              Accept a single connection and exit.\n",
-    "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
+    "  --bind, --address ADDR  Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
+    "  --port PORT             Listen on the supplied TCP port (default 8730).\n",
+    "  --once                  Accept a single connection and exit.\n",
+    "  --max-sessions N        Accept N connections before exiting (N > 0).\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
     "negotiated protocol as 32, and replies with an @ERROR diagnostic while full\n",
@@ -219,23 +219,16 @@ impl RuntimeOptions {
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
-            if argument == "--port" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value("--port"))?;
-                options.port = parse_port(value)?;
-            } else if argument == "--bind" || argument == "--address" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value(argument.to_string_lossy().as_ref()))?;
-                options.bind_address = parse_bind_address(value)?;
+            if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
+                options.port = parse_port(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
+                options.bind_address = parse_bind_address(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
+                options.bind_address = parse_bind_address(&value)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
-            } else if argument == "--max-sessions" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value("--max-sessions"))?;
-                let max = parse_max_sessions(value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
+                let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
             } else {
                 return Err(unsupported_option(argument.clone()));
@@ -253,6 +246,32 @@ impl RuntimeOptions {
         self.max_sessions = Some(value);
         Ok(())
     }
+}
+
+fn take_option_value<'a, I>(
+    argument: &'a OsString,
+    iter: &mut I,
+    option: &str,
+) -> Result<Option<OsString>, DaemonError>
+where
+    I: Iterator<Item = &'a OsString>,
+{
+    if argument == option {
+        let value = iter
+            .next()
+            .cloned()
+            .ok_or_else(|| missing_argument_value(option))?;
+        return Ok(Some(value));
+    }
+
+    let text = argument.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(option) {
+        if let Some(value) = rest.strip_prefix('=') {
+            return Ok(Some(OsString::from(value)));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
@@ -711,6 +730,32 @@ mod tests {
 
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn runtime_options_accepts_inline_values() {
+        let args = vec![
+            OsString::from("--port=9000"),
+            OsString::from("--bind=::1"),
+            OsString::from("--max-sessions=3"),
+        ];
+
+        let options = RuntimeOptions::parse(&args).expect("inline options accepted");
+
+        assert_eq!(options.port, 9000);
+        assert_eq!(options.bind_address, "::1".parse::<IpAddr>().expect("ipv6"));
+        assert_eq!(options.max_sessions.map(|value| value.get()), Some(3));
+    }
+
+    #[test]
+    fn runtime_options_supports_address_alias() {
+        let args = vec![OsString::from("--address=192.0.2.1")];
+        let options = RuntimeOptions::parse(&args).expect("address alias accepted");
+
+        assert_eq!(
+            options.bind_address,
+            "192.0.2.1".parse::<IpAddr>().expect("ipv4")
+        );
     }
 
     #[test]
