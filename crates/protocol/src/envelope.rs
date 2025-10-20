@@ -31,23 +31,32 @@ const PAYLOAD_MASK: u32 = 0x00FF_FFFF;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum LogCode {
+    #[doc(alias = "FNONE")]
     /// Placeholder that is never transmitted on the wire (`FNONE`).
     None = 0,
+    #[doc(alias = "FERROR_XFER")]
     /// Fatal transfer error (`FERROR_XFER`).
     ErrorXfer = 1,
+    #[doc(alias = "FINFO")]
     /// Informational log message (`FINFO`).
     Info = 2,
+    #[doc(alias = "FERROR")]
     /// Non-fatal error (`FERROR`).
     Error = 3,
+    #[doc(alias = "FWARNING")]
     /// Warning message (`FWARNING`).
     Warning = 4,
+    #[doc(alias = "FERROR_SOCKET")]
     /// Error emitted by the sibling process over the receiver/generator pipe
     /// (`FERROR_SOCKET`).
     ErrorSocket = 5,
+    #[doc(alias = "FLOG")]
     /// Log message only written to the daemon logs (`FLOG`).
     Log = 6,
+    #[doc(alias = "FCLIENT")]
     /// Client-only message (`FCLIENT`).
     Client = 7,
+    #[doc(alias = "FERROR_UTF8")]
     /// UTF-8 conversion problem reported by a sibling (`FERROR_UTF8`).
     ErrorUtf8 = 8,
 }
@@ -214,41 +223,59 @@ impl std::error::Error for ParseLogCodeError {}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum MessageCode {
+    #[doc(alias = "MSG_DATA")]
     /// Raw file data written to the multiplexed stream.
     Data = 0,
+    #[doc(alias = "MSG_ERROR_XFER")]
     /// Fatal transfer error (`FERROR_XFER`).
     ErrorXfer = 1,
+    #[doc(alias = "MSG_INFO")]
     /// Informational log message (`FINFO`).
     Info = 2,
+    #[doc(alias = "MSG_ERROR")]
     /// Non-fatal error (`FERROR`).
     Error = 3,
+    #[doc(alias = "MSG_WARNING")]
     /// Warning message (`FWARNING`).
     Warning = 4,
+    #[doc(alias = "MSG_ERROR_SOCKET")]
     /// Error emitted by the sibling process over the receiver/generator pipe
     /// (`FERROR_SOCKET`).
     ErrorSocket = 5,
+    #[doc(alias = "MSG_LOG")]
     /// Log message only written to the daemon logs (`FLOG`).
     Log = 6,
+    #[doc(alias = "MSG_CLIENT")]
     /// Client-only message (`FCLIENT`).
     Client = 7,
+    #[doc(alias = "MSG_ERROR_UTF8")]
     /// UTF-8 conversion problem reported by a sibling (`FERROR_UTF8`).
     ErrorUtf8 = 8,
+    #[doc(alias = "MSG_REDO")]
     /// Request to reprocess a specific file-list index.
     Redo = 9,
+    #[doc(alias = "MSG_STATS")]
     /// Transfer statistics destined for the generator.
     Stats = 10,
+    #[doc(alias = "MSG_IO_ERROR")]
     /// Sender encountered an I/O error while accessing the source tree.
     IoError = 22,
+    #[doc(alias = "MSG_IO_TIMEOUT")]
     /// Daemon communicating its timeout to the peer.
     IoTimeout = 33,
+    #[doc(alias = "MSG_NOOP")]
     /// Legacy no-op message (protocol 30 compatibility).
     NoOp = 42,
+    #[doc(alias = "MSG_ERROR_EXIT")]
     /// Synchronizes an error exit across processes (protocol ≥ 31).
     ErrorExit = 86,
+    #[doc(alias = "MSG_SUCCESS")]
     /// Receiver reports a successfully updated file.
     Success = 100,
+    #[doc(alias = "MSG_DELETED")]
     /// Receiver reports a deleted file.
     Deleted = 101,
+    #[doc(alias = "MSG_NO_SEND")]
     /// Sender failed to open a requested file.
     NoSend = 102,
 }
