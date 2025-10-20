@@ -7,12 +7,19 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **No client or daemon binaries**
-  - *Impact*: Users cannot execute transfers because `bin/oc-rsync` and `bin/oc-rsyncd`
-    are absent.
-  - *Removal plan*: Introduce the `cli` and `daemon` crates described in the
-    workspace layout, ensure they invoke the shared `core` facade, and verify
-    CLI/daemon parity via snapshot and interop tests.
+- **Client binary lacks transfer functionality**
+  - *Impact*: The `rsync` binary exists but only serves `--help` and `--version`.
+    Transfer attempts exit with code `1` and explain that the delta-transfer
+    engine has not been implemented.
+  - *Removal plan*: Finish the CLI parser, connect it to `core::run_client`,
+    and integrate the future transfer engine so real synchronisation sessions
+    succeed.
+- **Daemon binary absent**
+  - *Impact*: No `rsyncd` binary ships yet, preventing daemon mode or module
+    hosting.
+  - *Removal plan*: Implement the `daemon` crate and associated transport loop,
+    wire it into the `core` facade, and validate behaviour via the parity
+    harness once the transfer engine is available.
 - **Transfer engine and metadata pipeline missing**
   - *Impact*: Delta transfer, metadata preservation, filters, and compression are
     unavailable. The `core` crate currently only exposes message formatting

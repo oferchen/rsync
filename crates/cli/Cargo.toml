@@ -1,0 +1,11 @@
+[package]
+name = "rsync-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4.5.17", features = ["std"] }
+rsync-core = { path = "../core" }

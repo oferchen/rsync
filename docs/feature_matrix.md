@@ -20,7 +20,7 @@ binary so documentation never overstates parity.
 | Core | Centralised message formatting with role/version trailers | Implemented | `core::message::Message` reproduces upstream `rsync error:`/`rsync warning:` prefixes, normalises source paths to repo-relative form, and appends `[role=3.4.1-rust]` trailers. | `crates/core/src/message.rs` |
 | Core | Version metadata and standard banner formatting | Implemented | `version_metadata()` exposes upstream constants and renders the canonical `--version` banner (`rsync  version 3.4.1-rust  protocol version 32`, copyright notice, and web site). | `crates/core/src/version.rs` |
 | Logging | Message sinks with newline policy and scratch-buffer reuse | Implemented | `MessageSink` wraps `io::Write`, reuses `MessageScratch`, and mirrors upstream newline handling for diagnostics while providing mapping/flush helpers. | `crates/logging/src/lib.rs` |
-| Workspace | CLI front-end (`bin/oc-rsync`) | Missing | No CLI crate or binary exists yet; command-line parsing and help parity are outstanding. | _n/a_ |
+| Workspace | CLI front-end (`bin/rsync`) | Partial | The binary exists and serves `--help`/`--version`. Transfer attempts exit with code `1` because the engine and option parser are not yet wired up. | `crates/cli`, `bin/rsync` |
 | Transport | Binary negotiation orchestration | Implemented | `binary::negotiate_binary_session` drives the remote-shell handshake, clamps the negotiated protocol, and returns the replaying stream together with the peer advertisement. | `crates/transport/src/binary.rs` |
 | Transport | Unified session handshake facade | Implemented | `session::negotiate_session` routes to binary or legacy handshakes, reports negotiated/clamped protocol metadata, and rehydrates sniffers so callers can resume without replaying the transport. | `crates/transport/src/session/handshake.rs` |
 | Workspace | Daemon server (`bin/oc-rsyncd`) | Missing | Daemon crate, config parser, and transport loop have not been implemented. | _n/a_ |
@@ -29,5 +29,7 @@ binary so documentation never overstates parity.
 | Quality | Packaging (deb/rpm), SBOM, systemd unit | Missing | Packaging artifacts are absent pending higher-layer implementation. | _n/a_ |
 
 Status legend: **Implemented** — behavior is present and backed by tests in this
-repository. **Missing** — code has not been written yet; entries remain until the
-corresponding crates/binaries land and parity is verified.
+repository. **Partial** — functionality exists but key capabilities are
+disabled or incomplete pending follow-up work. **Missing** — code has not been
+written yet; entries remain until the corresponding crates/binaries land and
+parity is verified.
