@@ -414,6 +414,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "rsync-core",
+ "rsync-logging",
  "tempfile",
 ]
 
@@ -436,6 +437,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "rsync-core",
+ "rsync-logging",
  "rsync-protocol",
 ]
 
