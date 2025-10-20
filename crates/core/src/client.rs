@@ -16,9 +16,9 @@
 //!   builder is offered so future options (e.g. logging verbosity) can be wired
 //!   through without breaking call sites.
 //! - [`run_client`] executes the client flow. For now the implementation mirrors
-//!   a simplified subset of upstream behaviour by copying files and directories
-//!   on the local filesystem without delta compression or metadata
-//!   preservation.
+//!   a simplified subset of upstream behaviour by copying files, directories,
+//!   and symbolic links on the local filesystem without delta compression or
+//!   metadata preservation.
 //! - [`ClientError`] carries the exit code and fully formatted
 //!   [`Message`](crate::message::Message) so binaries can surface diagnostics via
 //!   the central rendering helpers.
@@ -172,8 +172,8 @@ impl Error for ClientError {}
 /// Runs the client orchestration using the provided configuration.
 ///
 /// The current implementation offers best-effort local copies covering
-/// directories and regular files. Metadata preservation, delta compression, and
-/// remote transports remain unimplemented.
+/// directories, regular files, and symbolic links. Metadata preservation, delta
+/// compression, and remote transports remain unimplemented.
 pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
@@ -249,6 +249,56 @@ mod tests {
 
         let copied_file = dest_root.join("nested").join("file.txt");
         assert_eq!(fs::read(copied_file).expect("read copied"), b"tree");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_copies_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().expect("tempdir");
+        let target_file = tmp.path().join("target.txt");
+        fs::write(&target_file, b"symlink target").expect("write target");
+
+        let source_link = tmp.path().join("source-link");
+        symlink(&target_file, &source_link).expect("create source symlink");
+
+        let destination_link = tmp.path().join("dest-link");
+        let config = ClientConfig::builder()
+            .transfer_args([source_link.clone(), destination_link.clone()])
+            .build();
+
+        run_client(config).expect("link copy succeeds");
+
+        let copied = fs::read_link(destination_link).expect("read copied link");
+        assert_eq!(copied, target_file);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_preserves_symbolic_links_in_directories() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let nested = source_root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let target_file = tmp.path().join("target.txt");
+        fs::write(&target_file, b"data").expect("write target");
+        let link_path = nested.join("link");
+        symlink(&target_file, &link_path).expect("create link");
+
+        let dest_root = tmp.path().join("destination");
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), dest_root.clone()])
+            .build();
+
+        run_client(config).expect("directory copy succeeds");
+
+        let copied_link = dest_root.join("nested").join("link");
+        let copied_target = fs::read_link(copied_link).expect("read copied link");
+        assert_eq!(copied_target, target_file);
     }
 }
 
@@ -364,10 +414,16 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
 
             copy_file(source, &target)?;
         } else if file_type.is_symlink() {
-            return Err(invalid_argument_error(
-                "symbolic links are not supported in this build",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+            let target = if destination_state.is_dir {
+                let name = source.file_name().ok_or_else(|| {
+                    invalid_argument_error("cannot determine link name", PARTIAL_TRANSFER_EXIT_CODE)
+                })?;
+                spec.destination.join(name)
+            } else {
+                spec.destination.clone()
+            };
+
+            copy_symlink(source, &target)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -399,10 +455,7 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Cli
         } else if entry_type.is_file() {
             copy_file(&entry_path, &target_path)?;
         } else if entry_type.is_symlink() {
-            return Err(invalid_argument_error(
-                "symbolic links are not supported in this build",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+            copy_symlink(&entry_path, &target_path)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -424,6 +477,55 @@ fn copy_file(source: &Path, destination: &Path) -> Result<(), ClientError> {
 
     fs::copy(source, destination).map_err(|error| io_error("copy file", source, error))?;
     Ok(())
+}
+
+fn copy_symlink(source: &Path, destination: &Path) -> Result<(), ClientError> {
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|error| io_error("create parent directory", parent, error))?;
+        }
+    }
+
+    match fs::remove_file(destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
+            return Err(invalid_argument_error(
+                "cannot replace existing directory with symbolic link",
+                PARTIAL_TRANSFER_EXIT_CODE,
+            ));
+        }
+        Err(error) => {
+            return Err(io_error("remove existing destination", destination, error));
+        }
+    }
+
+    let target =
+        fs::read_link(source).map_err(|error| io_error("read symbolic link", source, error))?;
+
+    create_symlink(&target, source, destination)
+        .map_err(|error| io_error("create symbolic link", destination, error))?;
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    symlink(target, destination)
+}
+
+#[cfg(windows)]
+fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    match source.metadata() {
+        Ok(metadata) if metadata.file_type().is_dir() => symlink_dir(target, destination),
+        Ok(_) => symlink_file(target, destination),
+        Err(_) => symlink_file(target, destination),
+    }
 }
 
 fn missing_operands_error() -> ClientError {
