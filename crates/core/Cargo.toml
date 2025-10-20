@@ -10,8 +10,8 @@ build = "build.rs"
 
 [dependencies]
 rsync-protocol = { path = "../protocol" }
+rsync-meta = { path = "../meta" }
 libc = "0.2"
-filetime = "0.2"
 
 [features]
 default = []
@@ -22,4 +22,5 @@ iconv = []
 sd-notify = []
 
 [dev-dependencies]
+filetime = "0.2"
 tempfile = "3.10"
