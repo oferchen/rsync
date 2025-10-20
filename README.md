@@ -27,6 +27,8 @@ The workspace currently contains the following published crates:
   [`local_copy`](crates/engine/src/local_copy.rs) module provides deterministic
   local filesystem copies for regular files, directories, and symbolic links
   while preserving permissions and timestamps.
+- `crates/walk` — deterministic filesystem traversal that emits ordered file
+  lists while enforcing relative-path safety and optional symlink following.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
   and local copy support (regular files, directories, and symbolic links) by
   delegating to `rsync_core::client`.
