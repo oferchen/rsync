@@ -79,7 +79,9 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::time::Duration;
 
-use rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopyPlan};
+use rsync_engine::local_copy::{
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyPlan,
+};
 use rsync_protocol::ProtocolVersion;
 use rsync_transport::negotiate_legacy_daemon_session;
 
@@ -103,6 +105,7 @@ const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClientConfig {
     transfer_args: Vec<OsString>,
+    dry_run: bool,
 }
 
 impl ClientConfig {
@@ -123,12 +126,19 @@ impl ClientConfig {
     pub fn has_transfer_request(&self) -> bool {
         !self.transfer_args.is_empty()
     }
+
+    /// Returns whether the run should avoid mutating the destination filesystem.
+    #[must_use]
+    pub const fn dry_run(&self) -> bool {
+        self.dry_run
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
+    dry_run: bool,
 }
 
 impl ClientConfigBuilder {
@@ -143,11 +153,19 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables dry-run mode.
+    #[must_use]
+    pub const fn dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
         ClientConfig {
             transfer_args: self.transfer_args,
+            dry_run: self.dry_run,
         }
     }
 }
@@ -198,7 +216,13 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
 
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
-    plan.execute().map_err(map_local_copy_error)
+
+    if config.dry_run() {
+        plan.execute_with(LocalCopyExecution::DryRun)
+    } else {
+        plan.execute()
+    }
+    .map_err(map_local_copy_error)
 }
 
 #[cfg(test)]
@@ -222,6 +246,17 @@ mod tests {
             &[OsString::from("source"), OsString::from("dest")]
         );
         assert!(config.has_transfer_request());
+        assert!(!config.dry_run());
+    }
+
+    #[test]
+    fn builder_enables_dry_run() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .dry_run(true)
+            .build();
+
+        assert!(config.dry_run());
     }
 
     #[test]
@@ -249,6 +284,23 @@ mod tests {
         run_client(config).expect("copy succeeds");
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
+    }
+
+    #[test]
+    fn run_client_dry_run_skips_copy() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("dest.txt");
+        fs::write(&source, b"dry-run").expect("write source");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .dry_run(true)
+            .build();
+
+        run_client(config).expect("dry-run succeeds");
+
+        assert!(!destination.exists());
     }
 
     #[test]
