@@ -13,8 +13,8 @@
 //!
 //! Functionality is decomposed into focused modules. The initial module,
 //! [`local_copy`], exposes [`LocalCopyPlan`](local_copy::LocalCopyPlan) which
-//! performs recursive copies of regular files, directories, and symbolic links
-//! while preserving permissions and timestamps through the [`rsync_meta`]
+//! performs recursive copies of regular files, directories, symbolic links, and
+//! FIFOs while preserving permissions and timestamps through the [`rsync_meta`]
 //! helpers. The design keeps path parsing and copying logic in the engine layer
 //! so both the CLI and daemon facades can drive local transfers through a single
 //! interface.
