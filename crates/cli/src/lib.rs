@@ -6,8 +6,8 @@
 //!
 //! `rsync_cli` implements the thin command-line front-end for the Rust `rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
-//! command-line switches that are currently supported (`--help` and
-//! `--version`, and `--dry-run`) and delegates local copy operations to
+//! command-line switches that are currently supported (`--help`/`-h`,
+//! `--version`/`-V`, and `--dry-run`/`-n`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -83,14 +83,14 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [--help] [--version] [--dry-run] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
     "following options are recognised:\n",
-    "  --help      Show this help message and exit.\n",
-    "  --version   Output version information and exit.\n",
-    "  --dry-run   Validate transfers without modifying the destination.\n",
+    "  -h, --help       Show this help message and exit.\n",
+    "  -V, --version    Output version information and exit.\n",
+    "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -115,6 +115,7 @@ fn clap_command() -> Command {
         .arg(
             Arg::new("help")
                 .long("help")
+                .short('h')
                 .help("Show this help message and exit.")
                 .action(ArgAction::SetTrue),
         )
@@ -314,7 +315,7 @@ impl UnsupportedOption {
         let option = self.option.to_string_lossy();
         rsync_error!(
             1,
-            "unsupported option '{}': this build currently supports only --help, --version, and --dry-run",
+            "unsupported option '{}': this build currently supports only --help/-h, --version/-V, and --dry-run/-n",
             option
         )
         .with_role(Role::Client)
@@ -322,7 +323,7 @@ impl UnsupportedOption {
 
     fn fallback_text(&self) -> String {
         format!(
-            "unsupported option '{}': this build currently supports only --help, --version, and --dry-run",
+            "unsupported option '{}': this build currently supports only --help/-h, --version/-V, and --dry-run/-n",
             self.option.to_string_lossy()
         )
     }
@@ -403,8 +404,30 @@ mod tests {
     }
 
     #[test]
+    fn short_version_flag_renders_report() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-V")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default().human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
     fn help_flag_renders_static_help_snapshot() {
         let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = render_help();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn short_help_flag_renders_static_help_snapshot() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-h")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -588,6 +611,29 @@ mod tests {
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("--dry-run"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn short_dry_run_flag_skips_destination_mutation() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        fs::write(&source, b"contents").expect("write source");
+        let destination = tmp.path().join("dest.txt");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-n"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
         ]);
