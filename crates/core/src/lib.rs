@@ -11,8 +11,8 @@
 //!
 //! # Design
 //!
-//! The current surface consists of the [`message`] and [`version`] modules. The
-//! message facade implements [`Message`] together with helpers such as
+//! The current surface consists of the [`client`], [`message`], and [`version`]
+//! modules. The message facade implements [`Message`] together with helpers such as
 //! [`message::message_source`] for capturing repo-relative source locations.
 //! Higher layers construct messages through this API to ensure trailer roles and
 //! version suffixes are formatted consistently. The [`version`] module exposes
@@ -21,6 +21,8 @@
 //!
 //! # Invariants
 //!
+//! - [`client::run_client`] reports the delta-transfer engine gap using the same
+//!   message wording as the CLI previously emitted.
 //! - Message trailers always include the `3.4.1-rust` version string.
 //! - Source locations are normalised to repo-relative POSIX-style paths, even on
 //!   Windows builds.
@@ -53,6 +55,8 @@
 //!
 //! - [`rsync_core::message::strings`] exposes upstream-aligned exit-code wording
 //!   so higher layers render identical diagnostics.
+//! - [`client::ClientConfig`] mirrors the structure that future CLI layers will
+//!   populate before invoking the transfer engine.
 //! - [`rsync_exit_code!`] constructs canonical exit-code diagnostics while recording
 //!   the caller's source location, keeping message provenance consistent across the
 //!   workspace.
@@ -61,6 +65,8 @@
 //! - [`rsync_transport`] for replaying transport wrappers that emit these
 //!   messages when negotiation fails.
 
+/// Client orchestration helpers consumed by the CLI binary.
+pub mod client;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
 /// Version constants and capability helpers used by CLI and daemon entry points.
