@@ -72,7 +72,11 @@ impl LocalCopyPlan {
     /// The operands must contain at least one source and a destination. A
     /// trailing path separator on a source operand mirrors upstream rsync's
     /// behaviour of copying the directory *contents* rather than the directory
-    /// itself.
+    /// itself. Remote operands such as `host::module`, `host:/path`, or
+    /// `rsync://server/module` are rejected with
+    /// [`LocalCopyArgumentError::RemoteOperandUnsupported`] so callers receive a
+    /// deterministic diagnostic explaining that this build only supports local
+    /// filesystem copies.
     ///
     /// # Errors
     ///
@@ -111,6 +115,12 @@ impl LocalCopyPlan {
         if destination_operand.is_empty() {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::EmptyDestinationOperand,
+            ));
+        }
+
+        if operand_is_remote(destination_operand.as_os_str()) {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::RemoteOperandUnsupported,
             ));
         }
 
@@ -286,6 +296,8 @@ pub enum LocalCopyArgumentError {
     ReplaceDirectoryWithSymlink,
     /// Attempted to replace a non-directory with a directory.
     ReplaceNonDirectoryWithDirectory,
+    /// Encountered an operand that refers to a remote host or module.
+    RemoteOperandUnsupported,
 }
 
 impl LocalCopyArgumentError {
@@ -308,6 +320,9 @@ impl LocalCopyArgumentError {
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
+            Self::RemoteOperandUnsupported => {
+                "remote operands are not supported: this build handles local filesystem copies only"
+            }
         }
     }
 }
@@ -324,6 +339,12 @@ impl SourceSpec {
         if operand.is_empty() {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::EmptySourceOperand,
+            ));
+        }
+
+        if operand_is_remote(operand.as_os_str()) {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::RemoteOperandUnsupported,
             ));
         }
 
@@ -719,6 +740,38 @@ fn has_trailing_separator(path: &OsStr) -> bool {
     }
 }
 
+fn operand_is_remote(path: &OsStr) -> bool {
+    let text = path.to_string_lossy();
+
+    if text.starts_with("rsync://") {
+        return true;
+    }
+
+    if text.contains("::") {
+        return true;
+    }
+
+    if let Some(colon_index) = text.find(':') {
+        let after = &text[colon_index + 1..];
+        if after.starts_with(':') {
+            return true;
+        }
+
+        let before = &text[..colon_index];
+        if before.contains('/') || before.contains('\\') {
+            return false;
+        }
+
+        if colon_index == 1 && before.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    false
+}
+
 #[cfg(unix)]
 fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::unix::fs::symlink;
@@ -770,6 +823,43 @@ mod tests {
             error.kind(),
             LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::EmptyDestinationOperand)
         ));
+    }
+
+    #[test]
+    fn plan_rejects_remote_module_source() {
+        let operands = vec![OsString::from("host::module"), OsString::from("dest")];
+        let error = LocalCopyPlan::from_operands(&operands).expect_err("remote module");
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::RemoteOperandUnsupported)
+        ));
+    }
+
+    #[test]
+    fn plan_rejects_remote_shell_source() {
+        let operands = vec![OsString::from("host:/path"), OsString::from("dest")];
+        let error = LocalCopyPlan::from_operands(&operands).expect_err("remote shell source");
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::RemoteOperandUnsupported)
+        ));
+    }
+
+    #[test]
+    fn plan_rejects_remote_destination() {
+        let operands = vec![OsString::from("src"), OsString::from("rsync://host/module")];
+        let error = LocalCopyPlan::from_operands(&operands).expect_err("remote destination");
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::RemoteOperandUnsupported)
+        ));
+    }
+
+    #[test]
+    fn plan_accepts_windows_drive_style_paths() {
+        let operands = vec![OsString::from("C:\\source"), OsString::from("C:\\dest")];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan accepts drive paths");
+        assert_eq!(plan.sources().len(), 1);
     }
 
     #[test]
