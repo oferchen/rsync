@@ -435,6 +435,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "rsync-core",
+ "rsync-protocol",
 ]
 
 [[package]]
