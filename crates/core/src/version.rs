@@ -149,7 +149,7 @@ pub fn build_revision() -> &'static str {
 #[must_use]
 pub fn build_info_line() -> String {
     format!(
-        "Rust rsync implementation (protocol {}); {}; source: {}; revision/build #{}",
+        "Rust rsync implementation supporting protocol version {}; {}; source: {}; revision/build #{}",
         HIGHEST_PROTOCOL_VERSION,
         BUILD_TOOLCHAIN,
         SOURCE_URL,
