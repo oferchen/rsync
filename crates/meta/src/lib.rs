@@ -7,9 +7,9 @@
 //! `rsync_meta` centralises metadata preservation helpers used by the Rust
 //! rsync workspace. The crate focuses on reproducing upstream `rsync`
 //! semantics for permission bits and timestamp propagation when copying files,
-//! directories, symbolic links, and FIFOs on local filesystems. Higher layers
-//! wire the helpers into transfer pipelines so metadata handling remains
-//! consistent across client and daemon roles.
+//! directories, symbolic links, device nodes, and FIFOs on local filesystems.
+//! Higher layers wire the helpers into transfer pipelines so metadata handling
+//! remains consistent across client and daemon roles.
 //!
 //! # Design
 //!
@@ -20,6 +20,9 @@
 //!   without following the link target.
 //! - [`create_fifo`] materialises FIFOs before metadata is applied, allowing
 //!   higher layers to reproduce upstream handling of named pipes.
+//! - [`create_device_node`] builds character and block device nodes from the
+//!   metadata observed on the source filesystem so downstream code can
+//!   faithfully mirror special files during local copies.
 //!
 //! Errors are reported via [`MetadataError`], which stores the failing path and
 //! operation context. Callers can integrate the error into user-facing
@@ -245,6 +248,18 @@ pub fn create_fifo(destination: &Path, metadata: &fs::Metadata) -> Result<(), Me
     create_fifo_inner(destination, metadata)
 }
 
+/// Creates a device node at `destination` that mirrors the supplied metadata.
+///
+/// The helper reconstructs the original major and minor device numbers when
+/// running on Unix platforms. Non-Unix platforms report an error indicating
+/// that device node creation is unsupported.
+pub fn create_device_node(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    create_device_node_inner(destination, metadata)
+}
+
 #[cfg(unix)]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
     use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
@@ -256,6 +271,42 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
     Ok(())
 }
 
+#[cfg(unix)]
+fn create_device_node_inner(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    use rustix::fs::{CWD, FileType, Mode, major, makedev, minor, mknodat};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
+    let file_type = metadata.file_type();
+    let node_type = if file_type.is_char_device() {
+        FileType::CharacterDevice
+    } else if file_type.is_block_device() {
+        FileType::BlockDevice
+    } else {
+        return Err(MetadataError::new(
+            "create device",
+            destination,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "metadata does not describe a device node",
+            ),
+        ));
+    };
+
+    let mode_bits = metadata.permissions().mode() & 0o777;
+    let mode = Mode::from_bits_truncate(mode_bits);
+    let raw = metadata.rdev();
+    let device = makedev(major(raw), minor(raw));
+
+    mknodat(CWD, destination, node_type, mode, device).map_err(|error| {
+        MetadataError::new("create device", destination, io::Error::from(error))
+    })?;
+
+    Ok(())
+}
+
 #[cfg(not(unix))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
     Err(MetadataError::new(
@@ -264,6 +315,21 @@ fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(),
         io::Error::new(
             io::ErrorKind::Unsupported,
             "FIFO creation is not supported on this platform",
+        ),
+    ))
+}
+
+#[cfg(not(unix))]
+fn create_device_node_inner(
+    destination: &Path,
+    _metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    Err(MetadataError::new(
+        "create device",
+        destination,
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "device node creation is not supported on this platform",
         ),
     ))
 }
