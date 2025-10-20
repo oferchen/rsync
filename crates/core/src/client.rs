@@ -623,10 +623,15 @@ fn copy_directory_recursive(
     for entry in entries {
         let entry = entry.map_err(|error| io_error("read directory entry", source, error))?;
         let entry_path = entry.path();
-        let entry_metadata = entry
-            .metadata()
+        let entry_type = entry
+            .file_type()
             .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
-        let entry_type = entry_metadata.file_type();
+        let entry_metadata = if entry_type.is_symlink() {
+            fs::symlink_metadata(&entry_path)
+        } else {
+            entry.metadata()
+        }
+        .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
         let target_path = destination.join(entry.file_name());
 
         if entry_type.is_dir() {
