@@ -527,6 +527,42 @@ mod tests {
         handle.join().expect("server thread");
     }
 
+    #[test]
+    fn run_module_list_reports_authentication_required() {
+        let responses = vec!["@RSYNCD: AUTHREQD modules\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let error = run_module_list(request).expect_err("auth requirement should surface");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("requires authentication"));
+        assert!(rendered.contains("modules"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_access_denied() {
+        let responses = vec!["@RSYNCD: DENIED host rules\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let error = run_module_list(request).expect_err("denied response should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("denied access"));
+        assert!(rendered.contains("host rules"));
+
+        handle.join().expect("server thread");
+    }
+
     fn spawn_stub_daemon(
         responses: Vec<&'static str>,
     ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
@@ -630,6 +666,26 @@ fn daemon_protocol_error(text: &str) -> ClientError {
         format!("unexpected response from daemon: {text}"),
         PROTOCOL_INCOMPATIBLE_EXIT_CODE,
     )
+}
+
+fn daemon_authentication_required_error(reason: &str) -> ClientError {
+    let detail = if reason.is_empty() {
+        "daemon requires authentication for module listing".to_string()
+    } else {
+        format!("daemon requires authentication for module listing: {reason}")
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}
+
+fn daemon_access_denied_error(reason: &str) -> ClientError {
+    let detail = if reason.is_empty() {
+        "daemon denied access to module listing".to_string()
+    } else {
+        format!("daemon denied access to module listing: {reason}")
+    };
+
+    daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
 }
 
 fn remote_operands_unsupported() -> ClientError {
@@ -984,11 +1040,21 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
             match payload {
                 "OK" => {
                     acknowledged = true;
+                    continue;
                 }
                 "EXIT" => break,
-                _ => return Err(daemon_protocol_error(&line)),
+                _ => {
+                    if let Some(reason) = payload.strip_prefix("AUTHREQD") {
+                        return Err(daemon_authentication_required_error(reason.trim()));
+                    }
+
+                    if let Some(reason) = payload.strip_prefix("DENIED") {
+                        return Err(daemon_access_denied_error(reason.trim()));
+                    }
+
+                    return Err(daemon_protocol_error(&line));
+                }
             }
-            continue;
         }
 
         if let Some(payload) = line.strip_prefix("@ERROR: ") {
