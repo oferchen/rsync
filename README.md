@@ -1,11 +1,11 @@
 # oc-rsync (Rust rsync implementation, protocol 32)
 
-This workspace hosts a Rust implementation of rsync with protocol 32 support
-branded as **oc-rsync**. The long-term goal is byte-for-byte parity with the
-original tool while modernising the implementation in Rust. The project follows
-the requirements outlined in the repository's Codex Mission Brief and
-implements modules as cohesive crates so both the `oc-rsync` CLI and the
-`oc-rsyncd` daemon reuse the same core logic.
+This workspace hosts a Rust rsync implementation supporting protocol version 32
+under the **oc-rsync** and **oc-rsyncd** binaries. The long-term goal is
+byte-for-byte parity with upstream behaviour while modernising the
+implementation in Rust. The project follows the requirements outlined in the
+repository's Codex Mission Brief and implements modules as cohesive crates so
+both binaries reuse the same core logic.
 
 ## Repository layout
 
