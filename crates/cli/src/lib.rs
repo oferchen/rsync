@@ -492,6 +492,34 @@ mod tests {
     }
 
     #[test]
+    fn module_list_username_prefix_is_rejected() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("rsync://user@localhost/"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("daemon usernames are not supported"));
+    }
+
+    #[test]
+    fn module_list_username_prefix_legacy_syntax_is_rejected() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("user@localhost::"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("daemon usernames are not supported"));
+    }
+
+    #[test]
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
