@@ -426,6 +426,7 @@ dependencies = [
  "rsync-engine",
  "rsync-meta",
  "rsync-protocol",
+ "rsync-transport",
  "tempfile",
 ]
 
