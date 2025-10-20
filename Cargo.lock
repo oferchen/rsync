@@ -478,6 +478,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsync-walk"
+version = "0.0.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "rsyncd-bin"
 version = "0.0.0"
 dependencies = [
