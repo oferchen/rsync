@@ -761,8 +761,8 @@ mod tests {
         encoded.extend_from_slice(&[0x42]);
         let mut slice: &[u8] = &encoded;
 
-        let decoded = CompatibilityFlags::decode_from_slice_mut(&mut slice)
-            .expect("decoding should succeed");
+        let decoded =
+            CompatibilityFlags::decode_from_slice_mut(&mut slice).expect("decoding should succeed");
 
         assert_eq!(decoded, flags);
         assert_eq!(slice, &[0x42]);
