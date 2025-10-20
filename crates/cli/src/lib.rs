@@ -7,7 +7,7 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, and `--dry-run`/`-n`) and delegates local copy operations to
+//! `--version`/`-V`, `--dry-run`/`-n`, and `--delete`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -20,7 +20,7 @@
 //! iterator of arguments together with handles for standard output and error,
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help`, `--version`, and `--dry-run` flags while treating all other
+//! parse that recognises `--help`, `--version`, `--dry-run`, and `--delete` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
 //! deterministic local copy pipeline.
@@ -84,7 +84,7 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] [--delete] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -92,6 +92,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
+    "      --delete     Remove destination files that are absent from the source.\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -104,6 +105,7 @@ struct ParsedArgs {
     show_help: bool,
     show_version: bool,
     dry_run: bool,
+    delete: bool,
     remainder: Vec<OsString>,
 }
 
@@ -135,6 +137,12 @@ fn clap_command() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("delete")
+                .long("delete")
+                .help("Remove destination files that are absent from the source.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -161,6 +169,7 @@ where
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
     let dry_run = matches.get_flag("dry-run");
+    let delete = matches.get_flag("delete");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -170,6 +179,7 @@ where
         show_help,
         show_version,
         dry_run,
+        delete,
         remainder,
     })
 }
@@ -280,6 +290,7 @@ where
     let config = ClientConfig::builder()
         .transfer_args(remainder)
         .dry_run(parsed.dry_run)
+        .delete(parsed.delete)
         .build();
 
     match run_core_client(config) {
@@ -587,6 +598,19 @@ mod tests {
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains(error.to_string().trim()));
+    }
+
+    #[test]
+    fn delete_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.delete);
     }
 
     #[test]

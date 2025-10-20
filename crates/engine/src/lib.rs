@@ -68,4 +68,6 @@
 
 pub mod local_copy;
 
-pub use local_copy::{LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyPlan};
+pub use local_copy::{
+    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
+};
