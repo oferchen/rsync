@@ -434,6 +434,26 @@ mod tests {
     }
 
     #[test]
+    fn module_list_request_rejects_username_in_rsync_url() {
+        let operands = vec![OsString::from("rsync://user@example.com/")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("username prefixes should be rejected");
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("daemon usernames are not supported"));
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
+    fn module_list_request_rejects_username_in_legacy_syntax() {
+        let operands = vec![OsString::from("user@example.com::")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("username prefixes should be rejected");
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("daemon usernames are not supported"));
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
     fn run_module_list_collects_entries() {
         let responses = vec![
             "@RSYNCD: OK\n",
@@ -585,6 +605,13 @@ fn remote_operands_unsupported() -> ClientError {
     )
 }
 
+fn daemon_usernames_unsupported() -> ClientError {
+    daemon_error(
+        "daemon usernames are not supported: this build handles anonymous module listings only",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
 fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
     let bytes = reader.read_line(&mut line)?;
@@ -698,6 +725,7 @@ impl ModuleListRequest {
 fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
     let mut parts = rest.splitn(2, '/');
     let host_port = parts.next().unwrap_or("");
+    let host_port = strip_daemon_username(host_port)?;
     let remainder = parts.next();
 
     if let Some(path) = remainder {
@@ -719,6 +747,8 @@ fn parse_host_port(input: &str) -> Result<DaemonAddress, ClientError> {
             FEATURE_UNAVAILABLE_EXIT_CODE,
         ));
     }
+
+    let input = strip_daemon_username(input)?;
 
     if let Some(host) = input.strip_prefix('[') {
         let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
@@ -768,6 +798,29 @@ fn split_host_port(input: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((&host[..], &port[1..]))
+}
+
+fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
+    if let Some(idx) = input.rfind('@') {
+        let (user, host) = input.split_at(idx);
+        if user.is_empty() {
+            return Err(daemon_error(
+                "daemon username must be non-empty",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            ));
+        }
+
+        if host.len() <= 1 {
+            return Err(daemon_error(
+                "daemon host must be non-empty",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            ));
+        }
+
+        return Err(daemon_usernames_unsupported());
+    }
+
+    Ok(input)
 }
 
 /// Describes the module entries advertised by a daemon.
