@@ -9,7 +9,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 - **Client binary implements local copies only**
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
-    regular files and directory trees. Remote transfers, metadata
+    regular files, directory trees, and symbolic links. Remote transfers, metadata
     preservation, filters, compression, and progress reporting remain
     unavailable.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
