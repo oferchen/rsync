@@ -210,8 +210,9 @@ impl RollingChecksum {
     /// Updates the checksum by consuming data from an [`io::Read`] implementation.
     ///
     /// The method repeatedly fills `buffer` and forwards the consumed bytes to
-    /// [`update`](Self::update). It returns the total number of bytes read so
-    /// callers can validate that the expected amount of data was processed.
+    /// [`update`](Self::update). It returns the total number of bytes read—
+    /// saturating at [`u64::MAX`]—so callers can validate that the expected amount
+    /// of data was processed without observing integer wraparound.
     ///
     /// Providing an empty buffer is rejected to avoid an infinite read loop on
     /// streams that yield zero-byte reads. The buffer is reused for each read
@@ -263,7 +264,7 @@ impl RollingChecksum {
                 Ok(0) => break,
                 Ok(read) => {
                     self.update(&buffer[..read]);
-                    total += read as u64;
+                    Self::saturating_increment_total(&mut total, read);
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) => return Err(err),
@@ -308,6 +309,12 @@ impl RollingChecksum {
         }
 
         u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })
+    }
+
+    #[inline]
+    fn saturating_increment_total(total: &mut u64, amount: usize) {
+        let increment = u64::try_from(amount).unwrap_or(u64::MAX);
+        *total = total.saturating_add(increment);
     }
 
     #[inline]
@@ -511,7 +518,9 @@ impl RollingDigest {
     /// [`RollingDigest`] directly. The buffer must be non-empty; otherwise an
     /// [`io::ErrorKind::InvalidInput`] error is returned. The `len` reported by
     /// the digest matches the total number of bytes consumed from `reader`
-    /// (clamped to [`usize::MAX`] just like [`RollingChecksum`]).
+    /// (clamped to [`usize::MAX`] just like [`RollingChecksum`]), while the
+    /// helper itself reports the read byte count as a [`u64`] saturated at
+    /// [`u64::MAX`].
     ///
     /// # Errors
     ///
@@ -1258,6 +1267,28 @@ mod tests {
 
         assert_eq!(checksum.digest(), manual.digest());
         assert_eq!(checksum.value(), manual.value());
+    }
+
+    #[test]
+    fn saturating_increment_total_clamps_to_u64_max() {
+        let mut total = u64::MAX - 1;
+        RollingChecksum::saturating_increment_total(&mut total, usize::MAX);
+        assert_eq!(total, u64::MAX);
+
+        RollingChecksum::saturating_increment_total(&mut total, 1);
+        assert_eq!(total, u64::MAX);
+    }
+
+    #[test]
+    fn saturating_increment_total_handles_large_usize_values() {
+        let mut total = 0u64;
+        RollingChecksum::saturating_increment_total(&mut total, usize::MAX);
+
+        if usize::BITS > 64 {
+            assert_eq!(total, u64::MAX);
+        } else {
+            assert_eq!(total, u64::try_from(usize::MAX).unwrap());
+        }
     }
 
     struct InterruptingReader<'a> {
