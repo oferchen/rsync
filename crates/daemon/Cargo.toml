@@ -1,0 +1,12 @@
+[package]
+name = "rsync-daemon"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+clap = { version = "4.5.49", features = ["std"] }
+rsync-core = { path = "../core" }
