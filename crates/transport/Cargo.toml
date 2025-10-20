@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Transport helpers for the Rust rsync reimplementation"
+description = "Transport helpers for the Rust rsync implementation"
 
 [dependencies]
 rsync-protocol = { path = "../protocol" }

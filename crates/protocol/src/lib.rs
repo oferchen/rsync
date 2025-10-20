@@ -5,7 +5,7 @@
 //! # Overview
 //!
 //! `rsync_protocol` implements the negotiation and multiplexing primitives
-//! required by the Rust `rsync` reimplementation. The crate mirrors upstream
+//! required by the Rust `rsync` implementation. The crate mirrors upstream
 //! rsync 3.4.1 behaviour so higher layers can negotiate protocol versions,
 //! interpret legacy daemon banners, and exchange multiplexed frames without
 //! depending on the original C sources.

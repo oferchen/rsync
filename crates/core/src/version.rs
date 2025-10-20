@@ -6,7 +6,7 @@
 //! feature-detection helpers that drive the `--version` output of the Rust
 //! `oc-rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
 //! canonical base version while appending the `-rust` suffix that brands this
-//! reimplementation.
+//! implementation.
 //!
 //! # Design
 //!
@@ -149,7 +149,8 @@ pub fn build_revision() -> &'static str {
 #[must_use]
 pub fn build_info_line() -> String {
     format!(
-        "{}; source: {}; build #{}",
+        "Rust rsync implementation (protocol {}); {}; source: {}; build #{}",
+        HIGHEST_PROTOCOL_VERSION,
         BUILD_TOOLCHAIN,
         SOURCE_URL,
         build_revision()
@@ -166,6 +167,9 @@ pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
 /// Full version string rendered by user-visible banners.
 #[doc(alias = "3.4.1-rust")]
 pub const RUST_VERSION: &str = "3.4.1-rust";
+
+/// Highest protocol version supported by this build.
+pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
 
 /// Static metadata describing the standard version banner rendered by `oc-rsync`.
 ///
@@ -1801,6 +1805,7 @@ mod tests {
         assert_eq!(metadata.subprotocol_version(), SUBPROTOCOL_VERSION);
         assert_eq!(metadata.copyright_notice(), COPYRIGHT_NOTICE);
         assert_eq!(metadata.web_site(), WEB_SITE);
+        assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
     }
 
     #[test]
