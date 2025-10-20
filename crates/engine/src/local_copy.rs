@@ -12,7 +12,9 @@
 //! - [`LocalCopyError`] mirrors upstream exit codes so higher layers can render
 //!   canonical diagnostics.
 //! - Helper functions preserve metadata after content writes, matching upstream
-//!   rsync's ordering.
+//!   rsync's ordering and covering regular files, directories, symbolic links,
+//!   FIFOs, and device nodes. Hard linked files are reproduced as hard links in
+//!   the destination when the platform exposes inode identifiers.
 //!
 //! # Invariants
 //!
@@ -39,6 +41,8 @@
 //! ```
 
 use std::cmp::Ordering;
+#[cfg(unix)]
+use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -48,7 +52,7 @@ use std::path::{Path, PathBuf};
 
 use rsync_meta::{
     MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
-    create_fifo,
+    create_device_node, create_fifo,
 };
 
 /// Exit code returned when operand validation fails.
@@ -177,6 +181,68 @@ impl LocalCopyExecution {
     const fn is_dry_run(self) -> bool {
         matches!(self, Self::DryRun)
     }
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct HardLinkTracker {
+    entries: HashMap<HardLinkKey, PathBuf>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct HardLinkKey {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
+impl HardLinkTracker {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    fn existing_target(&self, metadata: &fs::Metadata) -> Option<PathBuf> {
+        Self::key(metadata).and_then(|key| self.entries.get(&key).cloned())
+    }
+
+    fn record(&mut self, metadata: &fs::Metadata, destination: &Path) {
+        if let Some(key) = Self::key(metadata) {
+            self.entries.insert(key, destination.to_path_buf());
+        }
+    }
+
+    fn key(metadata: &fs::Metadata) -> Option<HardLinkKey> {
+        use std::os::unix::fs::MetadataExt;
+
+        if metadata.nlink() > 1 {
+            Some(HardLinkKey {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+#[derive(Default)]
+struct HardLinkTracker;
+
+#[cfg(not(unix))]
+impl HardLinkTracker {
+    const fn new() -> Self {
+        Self
+    }
+
+    fn existing_target(&self, _metadata: &fs::Metadata) -> Option<PathBuf> {
+        None
+    }
+
+    fn record(&mut self, _metadata: &fs::Metadata, _destination: &Path) {}
 }
 
 /// Error produced when planning or executing a local copy fails.
@@ -446,6 +512,7 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
+    let mut hard_links = HardLinkTracker::new();
 
     if plan.destination.force_directory() {
         ensure_destination_directory(destination_path, &mut destination_state, mode)?;
@@ -479,7 +546,7 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(source_path, &target, &metadata, mode)?;
+            copy_directory_recursive(source_path, &target, &metadata, mode, &mut hard_links)?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -490,7 +557,7 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
                 destination_path.to_path_buf()
             };
 
-            copy_file(source_path, &target, &metadata, mode)?;
+            copy_file(source_path, &target, &metadata, mode, &mut hard_links)?;
         } else if file_type.is_symlink() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -513,6 +580,17 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
             };
 
             copy_fifo(&target, &metadata, mode)?;
+        } else if is_device(&file_type) {
+            let target = if destination_behaves_like_directory {
+                let name = source_path.file_name().ok_or_else(|| {
+                    LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
+                })?;
+                destination_path.join(name)
+            } else {
+                destination_path.to_path_buf()
+            };
+
+            copy_device(&target, &metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -546,6 +624,7 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    hard_links: &mut HardLinkTracker,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -583,11 +662,15 @@ fn copy_directory_recursive(
         let target_path = destination.join(Path::new(&file_name));
 
         if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path, &entry_metadata, mode)?;
+            copy_directory_recursive(&entry_path, &target_path, &entry_metadata, mode, hard_links)?;
         } else if entry_type.is_file() {
-            copy_file(&entry_path, &target_path, &entry_metadata, mode)?;
+            copy_file(&entry_path, &target_path, &entry_metadata, mode, hard_links)?;
         } else if entry_type.is_symlink() {
             copy_symlink(&entry_path, &target_path, &entry_metadata, mode)?;
+        } else if is_fifo(&entry_type) {
+            copy_fifo(&target_path, &entry_metadata, mode)?;
+        } else if is_device(&entry_type) {
+            copy_device(&target_path, &entry_metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -607,6 +690,7 @@ fn copy_file(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    hard_links: &mut HardLinkTracker,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -665,9 +749,38 @@ fn copy_file(
         return Ok(());
     }
 
+    if let Some(existing_target) = hard_links.existing_target(metadata) {
+        match fs::hard_link(&existing_target, destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                fs::remove_file(destination).map_err(|remove_error| {
+                    LocalCopyError::io(
+                        "remove existing destination",
+                        destination.to_path_buf(),
+                        remove_error,
+                    )
+                })?;
+                fs::hard_link(&existing_target, destination).map_err(|link_error| {
+                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                })?;
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "create hard link",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        hard_links.record(metadata, destination);
+        return Ok(());
+    }
+
     fs::copy(source, destination)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    hard_links.record(metadata, destination);
     Ok(())
 }
 
@@ -752,6 +865,91 @@ fn copy_fifo(
     }
 
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
+    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    Ok(())
+}
+
+fn copy_device(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    mode: LocalCopyExecution,
+) -> Result<(), LocalCopyError> {
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            if mode.is_dry_run() {
+                match fs::symlink_metadata(parent) {
+                    Ok(existing) if !existing.file_type().is_dir() => {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "inspect existing destination",
+                            parent.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                fs::create_dir_all(parent).map_err(|error| {
+                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                })?;
+            }
+        }
+    }
+
+    if mode.is_dry_run() {
+        match fs::symlink_metadata(destination) {
+            Ok(existing) => {
+                if existing.file_type().is_dir() {
+                    return Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        return Ok(());
+    }
+
+    match fs::symlink_metadata(destination) {
+        Ok(existing) => {
+            if existing.file_type().is_dir() {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+                ));
+            }
+
+            fs::remove_file(destination).map_err(|error| {
+                LocalCopyError::io(
+                    "remove existing destination",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    }
+
+    create_device_node(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     Ok(())
 }
@@ -950,6 +1148,21 @@ fn is_fifo(file_type: &fs::FileType) -> bool {
         use std::os::unix::fs::FileTypeExt;
 
         return file_type.is_fifo();
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file_type;
+        false
+    }
+}
+
+fn is_device(file_type: &fs::FileType) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+
+        return file_type.is_char_device() || file_type.is_block_device();
     }
 
     #[cfg(not(unix))]
@@ -1242,6 +1455,53 @@ mod tests {
         assert_eq!(dest_mtime, mtime);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn execute_copies_fifo_within_directory() {
+        use filetime::{FileTime, set_file_times};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let nested = source_root.join("dir");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let source_fifo = nested.join("pipe");
+        mknodat(
+            CWD,
+            &source_fifo,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o620),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let atime = FileTime::from_unix_time(1_700_070_000, 111_000_000);
+        let mtime = FileTime::from_unix_time(1_700_080_000, 222_000_000);
+        set_file_times(&source_fifo, atime, mtime).expect("set fifo timestamps");
+        fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o620))
+            .expect("set fifo permissions");
+
+        let dest_root = temp.path().join("dest");
+        let operands = vec![
+            source_root.into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute().expect("fifo copy succeeds");
+
+        let dest_fifo = dest_root.join("dir").join("pipe");
+        let metadata = fs::symlink_metadata(&dest_fifo).expect("dest fifo metadata");
+        assert!(metadata.file_type().is_fifo());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o620);
+        let dest_atime = FileTime::from_last_access_time(&metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+    }
+
     #[test]
     fn execute_with_trailing_separator_copies_contents() {
         let temp = tempdir().expect("tempdir");
@@ -1304,5 +1564,39 @@ mod tests {
             }
             other => panic!("unexpected error kind: {:?}", other),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_preserves_hard_links() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        let file_a = source_root.join("file-a");
+        let file_b = source_root.join("file-b");
+        fs::write(&file_a, b"shared").expect("write source file");
+        fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+        let dest_root = temp.path().join("dest");
+        let operands = vec![
+            source_root.into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute().expect("copy succeeds");
+
+        let dest_a = dest_root.join("file-a");
+        let dest_b = dest_root.join("file-b");
+        let metadata_a = fs::metadata(&dest_a).expect("metadata a");
+        let metadata_b = fs::metadata(&dest_b).expect("metadata b");
+
+        assert_eq!(metadata_a.ino(), metadata_b.ino());
+        assert_eq!(metadata_a.nlink(), 2);
+        assert_eq!(metadata_b.nlink(), 2);
+        assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
+        assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
     }
 }
