@@ -66,7 +66,7 @@
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 
 use std::error::Error;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -300,12 +300,40 @@ mod tests {
         let copied_target = fs::read_link(copied_link).expect("read copied link");
         assert_eq!(copied_target, target_file);
     }
+
+    #[test]
+    fn run_client_merges_directory_contents_when_trailing_separator_present() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let nested = source_root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested");
+        let file_path = nested.join("file.txt");
+        fs::write(&file_path, b"contents").expect("write file");
+
+        let dest_root = tmp.path().join("dest");
+        let mut source_arg = source_root.clone().into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg, dest_root.clone().into_os_string()])
+            .build();
+
+        run_client(config).expect("directory contents copy succeeds");
+
+        assert!(dest_root.is_dir());
+        assert!(dest_root.join("nested").is_dir());
+        assert_eq!(
+            fs::read(dest_root.join("nested").join("file.txt")).expect("read copied"),
+            b"contents"
+        );
+        assert!(!dest_root.join("source").exists());
+    }
 }
 
 /// Transfer specification derived from parsed command-line arguments.
 #[derive(Debug)]
 struct TransferSpec {
-    sources: Vec<PathBuf>,
+    sources: Vec<SourceSpec>,
     destination: PathBuf,
 }
 
@@ -315,13 +343,16 @@ impl TransferSpec {
             return Err(missing_operands_error());
         }
 
-        let sources: Vec<PathBuf> = args[..args.len() - 1]
+        let sources: Vec<SourceSpec> = args[..args.len() - 1]
             .iter()
-            .map(|arg| PathBuf::from(arg))
+            .map(SourceSpec::from_argument)
             .collect();
         let destination = PathBuf::from(&args[args.len() - 1]);
 
-        if sources.iter().any(|source| source.as_os_str().is_empty()) {
+        if sources
+            .iter()
+            .any(|source| source.path.as_os_str().is_empty())
+        {
             return Err(invalid_argument_error(
                 "source operands must be non-empty",
                 PARTIAL_TRANSFER_EXIT_CODE,
@@ -346,6 +377,56 @@ impl TransferSpec {
 struct DestinationState {
     exists: bool,
     is_dir: bool,
+}
+
+#[derive(Clone, Debug)]
+struct SourceSpec {
+    path: PathBuf,
+    copy_contents: bool,
+}
+
+impl SourceSpec {
+    fn from_argument(argument: &OsString) -> Self {
+        let copy_contents = has_trailing_separator(argument.as_os_str());
+        Self {
+            path: PathBuf::from(argument),
+            copy_contents,
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn copy_contents(&self) -> bool {
+        self.copy_contents
+    }
+}
+
+fn has_trailing_separator(path: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = path.as_bytes();
+        return !bytes.is_empty() && bytes.ends_with(&[b'/']);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        if let Some(ch) = path.encode_wide().rev().find(|&ch| ch != 0) {
+            return ch == b'/' as u16 || ch == b'\\' as u16;
+        }
+        return false;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let text = path.to_string_lossy();
+        return text.ends_with('/') || text.ends_with('\\');
+    }
 }
 
 fn query_destination_state(path: &Path) -> Result<DestinationState, ClientError> {
@@ -384,13 +465,16 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
     }
 
     for source in &spec.sources {
-        let metadata = fs::symlink_metadata(source)
-            .map_err(|error| io_error("access source", source, error))?;
+        let source_path = source.path();
+        let metadata = fs::symlink_metadata(source_path)
+            .map_err(|error| io_error("access source", source_path, error))?;
         let file_type = metadata.file_type();
 
         if file_type.is_dir() {
-            let target = if destination_state.is_dir || multiple_sources {
-                let name = source.file_name().ok_or_else(|| {
+            let target = if source.copy_contents() {
+                spec.destination.clone()
+            } else if destination_state.is_dir || multiple_sources {
+                let name = source_path.file_name().ok_or_else(|| {
                     invalid_argument_error(
                         "cannot determine directory name",
                         PARTIAL_TRANSFER_EXIT_CODE,
@@ -401,10 +485,10 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_directory_recursive(source, &target)?;
+            copy_directory_recursive(source_path, &target)?;
         } else if file_type.is_file() {
             let target = if destination_state.is_dir {
-                let name = source.file_name().ok_or_else(|| {
+                let name = source_path.file_name().ok_or_else(|| {
                     invalid_argument_error("cannot determine file name", PARTIAL_TRANSFER_EXIT_CODE)
                 })?;
                 spec.destination.join(name)
@@ -412,10 +496,10 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_file(source, &target)?;
+            copy_file(source_path, &target)?;
         } else if file_type.is_symlink() {
             let target = if destination_state.is_dir {
-                let name = source.file_name().ok_or_else(|| {
+                let name = source_path.file_name().ok_or_else(|| {
                     invalid_argument_error("cannot determine link name", PARTIAL_TRANSFER_EXIT_CODE)
                 })?;
                 spec.destination.join(name)
@@ -423,7 +507,7 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_symlink(source, &target)?;
+            copy_symlink(source_path, &target)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
