@@ -19,7 +19,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     comprehensive metadata handling, and validate the resulting behaviour via
     the parity harness.
 - **Daemon functionality incomplete**
-  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
+  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config` before explaining that
     transfers are unavailable. Authentication, authorization, real module

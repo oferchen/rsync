@@ -1,10 +1,11 @@
-# rsync (Rust reimplementation)
+# oc-rsync (Rust reimplementation of rsync 3.4.1)
 
 This workspace hosts a from-scratch Rust port of rsync 3.4.1 (protocol 32)
-with the long-term goal of matching upstream behaviour byte-for-byte. The
-project follows the requirements outlined in the repository's Codex Mission
-Brief and implements modules as cohesive crates so both the future CLI and
-rsync daemon reuse the same core logic.
+branded as **oc-rsync**. The long-term goal is byte-for-byte parity with the
+original tool while modernising the implementation in Rust. The project follows
+the requirements outlined in the repository's Codex Mission Brief and
+implements modules as cohesive crates so both the `oc-rsync` CLI and the
+`oc-rsyncd` daemon reuse the same core logic.
 
 ## Repository layout
 

@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
+//! `rsync_daemon` provides the thin command-line front-end for the Rust `oc-rsyncd`
 //! binary. The crate now exposes a deterministic daemon loop capable of
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
