@@ -166,7 +166,8 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
             "client functionality is unavailable in this build: the delta-transfer engine has not been implemented yet",
         )
     }
-    .with_role(Role::Client);
+    .with_role(Role::Client)
+    .with_source(crate::message_source!());
 
     Err(ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message))
 }
