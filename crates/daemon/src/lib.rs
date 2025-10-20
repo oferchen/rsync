@@ -45,7 +45,7 @@
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
-//! let status = run(["rsyncd", "--version"], &mut stdout, &mut stderr);
+//! let status = run(["oc-rsyncd", "--version"], &mut stdout, &mut stderr);
 //!
 //! assert_eq!(status, 0);
 //! assert!(stderr.is_empty());
@@ -198,7 +198,7 @@ struct ParsedArgs {
 }
 
 fn clap_command() -> Command {
-    Command::new("rsyncd")
+    Command::new("oc-rsyncd")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -233,7 +233,7 @@ where
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
     if args.is_empty() {
-        args.push(OsString::from("rsyncd"));
+        args.push(OsString::from("oc-rsyncd"));
     }
 
     let mut matches = clap_command().try_get_matches_from(args)?;
@@ -378,7 +378,8 @@ mod tests {
 
     #[test]
     fn version_flag_renders_report() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--version")]);
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -389,7 +390,8 @@ mod tests {
 
     #[test]
     fn help_flag_renders_output() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -401,7 +403,7 @@ mod tests {
     #[test]
     fn transfer_request_reports_missing_daemon() {
         let (code, stdout, stderr) =
-            run_with_args([OsStr::new("rsyncd"), OsStr::new("--no-detach")]);
+            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--no-detach")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -415,13 +417,13 @@ mod tests {
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
-            .try_get_matches_from(vec!["rsyncd", "--version=extra"])
+            .try_get_matches_from(vec!["oc-rsyncd", "--version=extra"])
             .unwrap_err();
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [OsString::from("rsyncd"), OsString::from("--version=extra")],
+            [OsString::from("oc-rsyncd"), OsString::from("--version=extra")],
             &mut stdout,
             &mut stderr,
         );
