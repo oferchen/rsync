@@ -66,6 +66,7 @@
 //!   orchestration.
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 
+use std::cmp::Ordering;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -233,6 +234,28 @@ mod tests {
         run_client(config).expect("copy succeeds");
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
+    }
+
+    #[test]
+    fn read_directory_entries_sorted_orders_entries() {
+        let tmp = tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir(root.join("b_dir")).expect("create b_dir");
+        fs::create_dir(root.join("a_dir")).expect("create a_dir");
+        fs::write(root.join("c.txt"), b"c").expect("write c");
+        fs::write(root.join("a.txt"), b"a").expect("write a");
+
+        let entries = read_directory_entries_sorted(root).expect("read entries");
+        let names: Vec<OsString> = entries.into_iter().map(|entry| entry.file_name).collect();
+
+        let expected = vec![
+            OsString::from("a.txt"),
+            OsString::from("a_dir"),
+            OsString::from("b_dir"),
+            OsString::from("c.txt"),
+        ];
+
+        assert_eq!(names, expected);
     }
 
     #[test]
@@ -619,17 +642,16 @@ fn copy_directory_recursive(
         }
     }
 
-    let entries =
-        fs::read_dir(source).map_err(|error| io_error("read directory", source, error))?;
+    let entries = read_directory_entries_sorted(source)?;
 
     for entry in entries {
-        let entry = entry.map_err(|error| io_error("read directory entry", source, error))?;
-        let entry_path = entry.path();
-        let entry_metadata = entry
-            .metadata()
-            .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
+        let DirectoryEntry {
+            file_name,
+            path: entry_path,
+            metadata: entry_metadata,
+        } = entry;
         let entry_type = entry_metadata.file_type();
-        let target_path = destination.join(entry.file_name());
+        let target_path = destination.join(Path::new(&file_name));
 
         if entry_type.is_dir() {
             copy_directory_recursive(&entry_path, &target_path, &entry_metadata)?;
@@ -650,6 +672,56 @@ fn copy_directory_recursive(
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct DirectoryEntry {
+    file_name: OsString,
+    path: PathBuf,
+    metadata: fs::Metadata,
+}
+
+fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, ClientError> {
+    let mut entries = Vec::new();
+    let read_dir = fs::read_dir(path).map_err(|error| io_error("read directory", path, error))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|error| io_error("read directory entry", path, error))?;
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path)
+            .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
+        entries.push(DirectoryEntry {
+            file_name: entry.file_name(),
+            path: entry_path,
+            metadata,
+        });
+    }
+
+    entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+    Ok(entries)
+}
+
+fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        return left.as_bytes().cmp(right.as_bytes());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        let left_wide: Vec<u16> = left.encode_wide().collect();
+        let right_wide: Vec<u16> = right.encode_wide().collect();
+        return left_wide.cmp(&right_wide);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        return left.to_string_lossy().cmp(&right.to_string_lossy());
+    }
 }
 
 fn copy_file(
