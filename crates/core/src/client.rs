@@ -79,6 +79,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::time::Duration;
 
@@ -110,6 +111,7 @@ pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    bandwidth_limit: Option<BandwidthLimit>,
 }
 
 impl ClientConfig {
@@ -145,6 +147,12 @@ impl ClientConfig {
     pub const fn delete(&self) -> bool {
         self.delete
     }
+
+    /// Returns the requested bandwidth limit, if any.
+    #[must_use]
+    pub fn bandwidth_limit(&self) -> Option<BandwidthLimit> {
+        self.bandwidth_limit
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -153,6 +161,7 @@ pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    bandwidth_limit: Option<BandwidthLimit>,
 }
 
 impl ClientConfigBuilder {
@@ -184,6 +193,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the optional bandwidth limit to apply during transfers.
+    #[must_use]
+    #[doc(alias = "--bwlimit")]
+    pub fn bandwidth_limit(mut self, limit: Option<BandwidthLimit>) -> Self {
+        self.bandwidth_limit = limit;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -191,7 +208,37 @@ impl ClientConfigBuilder {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
             delete: self.delete,
+            bandwidth_limit: self.bandwidth_limit,
         }
+    }
+}
+
+/// Bandwidth limit expressed in bytes per second.
+///
+/// # Examples
+/// ```
+/// use rsync_core::client::BandwidthLimit;
+/// use std::num::NonZeroU64;
+///
+/// let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
+/// assert_eq!(limit.bytes_per_second().get(), 1024);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BandwidthLimit {
+    bytes_per_second: NonZeroU64,
+}
+
+impl BandwidthLimit {
+    /// Creates a new [`BandwidthLimit`] from the supplied byte-per-second value.
+    #[must_use]
+    pub const fn from_bytes_per_second(bytes_per_second: NonZeroU64) -> Self {
+        Self { bytes_per_second }
+    }
+
+    /// Returns the configured rate in bytes per second.
+    #[must_use]
+    pub const fn bytes_per_second(self) -> NonZeroU64 {
+        self.bytes_per_second
     }
 }
 
@@ -242,7 +289,13 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
 
-    let options = LocalCopyOptions::default().delete(config.delete());
+    let options = LocalCopyOptions::default()
+        .delete(config.delete())
+        .bandwidth_limit(
+            config
+                .bandwidth_limit()
+                .map(|limit| limit.bytes_per_second()),
+        );
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -259,6 +312,7 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::num::NonZeroU64;
     use std::thread;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -295,6 +349,17 @@ mod tests {
             .build();
 
         assert!(config.delete());
+    }
+
+    #[test]
+    fn builder_sets_bandwidth_limit() {
+        let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(4096).unwrap());
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .bandwidth_limit(Some(limit))
+            .build();
+
+        assert_eq!(config.bandwidth_limit(), Some(limit));
     }
 
     #[test]

@@ -66,10 +66,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
+use std::num::NonZeroU64;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
-    client::{ClientConfig, ModuleListRequest, run_client as run_core_client, run_module_list},
+    client::{
+        BandwidthLimit, ClientConfig, ModuleListRequest, run_client as run_core_client,
+        run_module_list,
+    },
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
@@ -84,7 +88,7 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] [--delete] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -93,6 +97,7 @@ const HELP_TEXT: &str = concat!(
     "  -V, --version    Output version information and exit.\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -107,6 +112,7 @@ struct ParsedArgs {
     dry_run: bool,
     delete: bool,
     remainder: Vec<OsString>,
+    bwlimit: Option<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -143,6 +149,15 @@ fn clap_command() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("bwlimit")
+                .long("bwlimit")
+                .value_name("RATE")
+                .help("Limit I/O bandwidth in KiB/s (0 disables the limit).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -174,6 +189,9 @@ where
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let bwlimit = matches
+        .remove_one::<OsString>("bwlimit")
+        .map(|value| value.into());
 
     Ok(ParsedArgs {
         show_help,
@@ -181,6 +199,7 @@ where
         dry_run,
         delete,
         remainder,
+        bwlimit,
     })
 }
 
@@ -256,6 +275,19 @@ where
         }
     };
 
+    let bandwidth_limit = match parsed.bwlimit {
+        Some(ref value) => match parse_bandwidth_limit(value) {
+            Ok(limit) => limit,
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
     match ModuleListRequest::from_operands(&remainder) {
         Ok(Some(request)) => {
             return match run_module_list(request) {
@@ -291,6 +323,7 @@ where
         .transfer_args(remainder)
         .dry_run(parsed.dry_run)
         .delete(parsed.delete)
+        .bandwidth_limit(bandwidth_limit)
         .build();
 
     match run_core_client(config) {
@@ -368,6 +401,54 @@ fn extract_operands(arguments: Vec<OsString>) -> Result<Vec<OsString>, Unsupport
     }
 
     Ok(operands)
+}
+
+fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
+    let text = argument.to_string_lossy();
+    if text.is_empty() {
+        return Err(rsync_error!(
+            1,
+            "invalid value for --bwlimit: rate must be a non-negative integer"
+        )
+        .with_role(Role::Client));
+    }
+
+    let (digits, multiplier) = match text.chars().last() {
+        Some('k') | Some('K') => (&text[..text.len() - 1], 1024u64),
+        Some('m') | Some('M') => (&text[..text.len() - 1], 1024u64 * 1024u64),
+        Some('g') | Some('G') => (&text[..text.len() - 1], 1024u64 * 1024u64 * 1024u64),
+        _ => (text.as_ref(), 1024u64),
+    };
+
+    let digits = digits.trim();
+    if digits.is_empty() {
+        return Err(rsync_error!(
+            1,
+            "invalid value for --bwlimit: rate must be a non-negative integer"
+        )
+        .with_role(Role::Client));
+    }
+
+    let raw = digits.parse::<u64>().map_err(|_| {
+        rsync_error!(
+            1,
+            "invalid value for --bwlimit: rate must be a non-negative integer"
+        )
+        .with_role(Role::Client)
+    })?;
+
+    let scaled = raw
+        .checked_mul(multiplier)
+        .ok_or_else(|| rsync_error!(1, "--bwlimit value is too large").with_role(Role::Client))?;
+
+    if scaled == 0 {
+        return Ok(None);
+    }
+
+    match NonZeroU64::new(scaled) {
+        Some(bytes) => Ok(Some(BandwidthLimit::from_bytes_per_second(bytes))),
+        None => Ok(None),
+    }
 }
 
 fn render_module_list<W: Write>(
@@ -487,6 +568,43 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"cli copy"
         );
+    }
+
+    #[test]
+    fn transfer_request_with_bwlimit_copies_file() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"limited").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--bwlimit=2048"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"limited"
+        );
+    }
+
+    #[test]
+    fn bwlimit_invalid_value_reports_error() {
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=oops")]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("invalid value for --bwlimit"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 
     #[test]
