@@ -63,7 +63,7 @@
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
 //! - `bin/rsync` for the binary crate that wires `run` into `main`.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
@@ -200,9 +200,19 @@ where
         return 0;
     }
 
-    let config = ClientConfig::builder()
-        .transfer_args(parsed.remainder)
-        .build();
+    let remainder = match extract_operands(parsed.remainder) {
+        Ok(operands) => operands,
+        Err(unsupported) => {
+            let message = unsupported.to_message();
+            let fallback = unsupported.fallback_text();
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(stderr, "{fallback}");
+            }
+            return 1;
+        }
+    };
+
+    let config = ClientConfig::builder().transfer_args(remainder).build();
 
     match run_core_client(config) {
         Ok(()) => 0,
@@ -223,6 +233,62 @@ where
 pub fn exit_code_from(status: i32) -> std::process::ExitCode {
     let clamped = status.clamp(0, MAX_EXIT_CODE);
     std::process::ExitCode::from(clamped as u8)
+}
+
+#[derive(Debug)]
+struct UnsupportedOption {
+    option: OsString,
+}
+
+impl UnsupportedOption {
+    fn new(option: OsString) -> Self {
+        Self { option }
+    }
+
+    fn to_message(&self) -> Message {
+        let option = self.option.to_string_lossy();
+        rsync_error!(
+            1,
+            "unsupported option '{}': this build currently supports only --help and --version",
+            option
+        )
+        .with_role(Role::Client)
+    }
+
+    fn fallback_text(&self) -> String {
+        format!(
+            "unsupported option '{}': this build currently supports only --help and --version",
+            self.option.to_string_lossy()
+        )
+    }
+}
+
+fn is_option(argument: &OsStr) -> bool {
+    let text = argument.to_string_lossy();
+    let mut chars = text.chars();
+    matches!(chars.next(), Some('-')) && chars.next().is_some()
+}
+
+fn extract_operands(arguments: Vec<OsString>) -> Result<Vec<OsString>, UnsupportedOption> {
+    let mut operands = Vec::new();
+    let mut accept_everything = false;
+
+    for argument in arguments {
+        if !accept_everything {
+            if argument == "--" {
+                accept_everything = true;
+                continue;
+            }
+
+            if is_option(argument.as_os_str()) {
+                return Err(UnsupportedOption::new(argument));
+            }
+        }
+
+        operands.push(argument);
+    }
+
+    Ok(operands)
 }
 
 #[cfg(test)]
@@ -266,7 +332,7 @@ mod tests {
 
     #[test]
     fn transfer_request_reports_missing_operands() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-av")]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("oc-rsync")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -323,5 +389,65 @@ mod tests {
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains(error.to_string().trim()));
+    }
+
+    #[test]
+    fn unsupported_short_option_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-av"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("unsupported option '-av'"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
+    fn unsupported_long_option_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--dry-run"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("unsupported option '--dry-run'"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
+    fn operands_after_end_of_options_are_preserved() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("-source");
+        let destination = tmp.path().join("dest.txt");
+        fs::write(&source, b"dash source").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            fs::read(destination).expect("read destination"),
+            b"dash source"
+        );
     }
 }
