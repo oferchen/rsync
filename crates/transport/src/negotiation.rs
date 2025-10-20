@@ -387,6 +387,19 @@ impl CopyToSliceError {
     pub const fn provided(self) -> usize {
         self.provided
     }
+
+    /// Returns how many additional bytes would have satisfied the copy request.
+    ///
+    /// The value saturates when the provided length exceeds the recorded requirement so the
+    /// method remains robust even if the error is constructed with inconsistent inputs. Callers
+    /// that surface diagnostics to users can therefore embed the `missing` count directly in their
+    /// messages without worrying about underflow. When produced by
+    /// [`NegotiationBufferedSlices::copy_to_slice`], the return value matches `required - provided`,
+    /// mirroring the conventions used by upstream rsync when reporting undersized scratch buffers.
+    #[must_use]
+    pub const fn missing(self) -> usize {
+        self.required.saturating_sub(self.provided)
+    }
 }
 
 impl fmt::Display for CopyToSliceError {
@@ -3387,8 +3400,11 @@ mod tests {
             .copy_to_slice(&mut buffer)
             .expect_err("buffer is too small");
 
-        assert!(err.required() > err.provided());
+        let expected_len = b"@RSYNCD: 31.0\nreply".len();
+
+        assert_eq!(err.required(), expected_len);
         assert_eq!(err.provided(), buffer.len());
+        assert_eq!(err.missing(), expected_len - buffer.len());
     }
 
     #[test]

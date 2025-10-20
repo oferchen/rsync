@@ -781,6 +781,18 @@ impl CopyToSliceError {
     pub const fn provided(self) -> usize {
         self.provided
     }
+
+    /// Returns how many additional bytes were necessary to satisfy the copy operation.
+    ///
+    /// The calculation uses saturating subtraction so that callers can report the missing capacity
+    /// directly in diagnostics even if the error was created with inconsistent inputs. When the
+    /// error originates from [`MessageSegments::copy_to_slice`], the result matches
+    /// `required - provided`, mirroring upstream rsync's messaging when a scratch buffer is too
+    /// small to hold the fully rendered diagnostic.
+    #[must_use]
+    pub const fn missing(self) -> usize {
+        self.required.saturating_sub(self.provided)
+    }
 }
 
 impl fmt::Display for CopyToSliceError {
@@ -3647,6 +3659,7 @@ mod tests {
 
         assert_eq!(err.required(), segments.len());
         assert_eq!(err.provided(), buffer.len());
+        assert_eq!(err.missing(), segments.len() - buffer.len());
     }
 
     #[test]
