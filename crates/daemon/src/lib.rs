@@ -243,23 +243,16 @@ impl RuntimeOptions {
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
-            if argument == "--port" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value("--port"))?;
-                options.port = parse_port(value)?;
-            } else if argument == "--bind" || argument == "--address" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value(argument.to_string_lossy().as_ref()))?;
-                options.bind_address = parse_bind_address(value)?;
+            if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
+                options.port = parse_port(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
+                options.bind_address = parse_bind_address(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
+                options.bind_address = parse_bind_address(&value)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
-            } else if argument == "--max-sessions" {
-                let value = iter
-                    .next()
-                    .ok_or_else(|| missing_argument_value("--max-sessions"))?;
-                let max = parse_max_sessions(value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
+                let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
             } else if argument == "--module" {
                 let value = iter
@@ -290,6 +283,32 @@ impl RuntimeOptions {
     fn modules(&self) -> &[ModuleDefinition] {
         &self.modules
     }
+}
+
+fn take_option_value<'a, I>(
+    argument: &'a OsString,
+    iter: &mut I,
+    option: &str,
+) -> Result<Option<OsString>, DaemonError>
+where
+    I: Iterator<Item = &'a OsString>,
+{
+    if argument == option {
+        let value = iter
+            .next()
+            .cloned()
+            .ok_or_else(|| missing_argument_value(option))?;
+        return Ok(Some(value));
+    }
+
+    let text = argument.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(option) {
+        if let Some(value) = rest.strip_prefix('=') {
+            return Ok(Some(OsString::from(value)));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
