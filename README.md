@@ -30,8 +30,8 @@ The workspace currently contains the following published crates:
 - `crates/walk` — deterministic filesystem traversal that emits ordered file
   lists while enforcing relative-path safety and optional symlink following.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
-  and local copy support (regular files, directories, and symbolic links) by
-  delegating to `rsync_core::client`.
+  `--dry-run`, and local copy support (regular files, directories, and symbolic
+  links) by delegating to `rsync_core::client`.
 
 ## Binaries
 
