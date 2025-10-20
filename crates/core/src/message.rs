@@ -427,8 +427,13 @@ impl<'a> MessageSegments<'a> {
                     return Err(io::Error::from(io::ErrorKind::WriteZero));
                 }
                 Ok(written) => {
-                    debug_assert!(written <= remaining);
-                    remaining = remaining.saturating_sub(written);
+                    if written > remaining {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "writer reported more bytes than available in message",
+                        ));
+                    }
+                    remaining -= written;
 
                     if remaining == 0 {
                         return Ok(());
@@ -461,8 +466,13 @@ impl<'a> MessageSegments<'a> {
                     return Err(io::Error::from(io::ErrorKind::WriteZero));
                 }
                 Ok(written) => {
-                    debug_assert!(written <= remaining);
-                    remaining = remaining.saturating_sub(written);
+                    if written > remaining {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "writer reported more bytes than available in message",
+                        ));
+                    }
+                    remaining -= written;
 
                     if remaining == 0 {
                         return Ok(());
@@ -4453,6 +4463,34 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct OverreportingWriter {
+        buffer: Vec<u8>,
+    }
+
+    impl io::Write for OverreportingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            let mut total = 0usize;
+
+            for buf in bufs {
+                let slice = buf.as_ref();
+                self.buffer.extend_from_slice(slice);
+                total += slice.len();
+            }
+
+            Ok(total.saturating_add(1))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
     struct ZeroProgressWriter {
         write_calls: usize,
     }
@@ -4696,5 +4734,25 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
         assert_eq!(writer.write_calls, 0, "sequential writes should not run");
+    }
+
+    #[test]
+    fn segments_write_to_errors_when_writer_overreports_progress() {
+        let message = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut writer = OverreportingWriter::default();
+
+        let err = {
+            let segments = message.as_segments(&mut scratch, false);
+            segments
+                .write_to(&mut writer)
+                .expect_err("overreporting writer must trigger an error")
+        };
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(writer.buffer, message.to_bytes().unwrap());
     }
 }
