@@ -11,6 +11,7 @@ build = "build.rs"
 [dependencies]
 rsync-protocol = { path = "../protocol" }
 libc = "0.2"
+filetime = "0.2"
 
 [features]
 default = []
