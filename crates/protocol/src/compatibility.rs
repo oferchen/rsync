@@ -553,7 +553,7 @@ impl CompatibilityFlags {
     /// assert_eq!(slice, &[0x7F]);
     /// ```
     pub fn decode_from_slice_mut(bytes: &mut &[u8]) -> io::Result<Self> {
-        match Self::decode_from_slice(*bytes) {
+        match Self::decode_from_slice(bytes) {
             Ok((flags, remainder)) => {
                 *bytes = remainder;
                 Ok(flags)
