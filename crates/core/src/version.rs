@@ -149,7 +149,7 @@ pub fn build_revision() -> &'static str {
 #[must_use]
 pub fn build_info_line() -> String {
     format!(
-        "Rust rsync implementation (protocol {}); {}; source: {}; build #{}",
+        "Rust rsync implementation (protocol {}); {}; source: {}; revision/build #{}",
         HIGHEST_PROTOCOL_VERSION,
         BUILD_TOOLCHAIN,
         SOURCE_URL,
@@ -189,7 +189,7 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
 ///
 /// assert!(banner.starts_with("oc-rsync  version 3.4.1-rust"));
 /// assert!(banner.contains("protocol version 32"));
-/// assert!(banner.contains("build #"));
+/// assert!(banner.contains("revision/build #"));
 /// assert!(banner.contains("https://github.com/oferchen/rsync"));
 /// ```
 #[doc(alias = "--version")]
@@ -270,7 +270,7 @@ impl VersionMetadata {
     pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         write!(
             writer,
-            "{}  version {} (build #{})  protocol version {}",
+            "{}  version {} (revision/build #{})  protocol version {}",
             self.program_name(),
             self.rust_version(),
             build_revision(),
@@ -1819,7 +1819,7 @@ mod tests {
 
         let expected = format!(
             concat!(
-                "oc-rsync  version 3.4.1-rust (build #{build_revision})  protocol version 32\n",
+                "oc-rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
                 "Copyright (C) 2025 by Ofer Chen.\n",
                 "Web site: https://github.com/oferchen/rsync\n"
             ),
@@ -1907,7 +1907,7 @@ mod tests {
         let build_info = build_info_line();
         let expected = format!(
             concat!(
-                "oc-rsync  version 3.4.1-rust (build #{build_revision})  protocol version 32\n",
+                "oc-rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
                 "Copyright (C) 2025 by Ofer Chen.\n",
                 "Web site: https://github.com/oferchen/rsync\n",
                 "Capabilities:\n",
