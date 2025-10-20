@@ -455,6 +455,46 @@ impl<W> MessageSink<W> {
         }
     }
 
+    /// Returns a shared reference to the underlying writer.
+    ///
+    /// The reference allows callers to inspect buffered diagnostics without
+    /// consuming the sink. This mirrors APIs such as
+    /// [`std::io::BufWriter::get_ref`], making it convenient to peek at
+    /// in-memory buffers (for example, when testing message renderers) while
+    /// continuing to reuse the same [`MessageSink`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let sink = MessageSink::new(Vec::<u8>::new());
+    /// assert!(sink.writer().is_empty());
+    /// ```
+    #[must_use]
+    pub fn writer(&self) -> &W {
+        &self.writer
+    }
+
+    /// Returns a mutable reference to the underlying writer.
+    ///
+    /// This is useful when integrations need to adjust writer state before
+    /// emitting additional diagnostics. The sink keeps ownership of the writer,
+    /// so logging can continue after the mutation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_logging::MessageSink;
+    ///
+    /// let mut sink = MessageSink::new(Vec::<u8>::new());
+    /// sink.writer_mut().extend_from_slice(b"prefill");
+    /// assert_eq!(sink.writer().as_slice(), b"prefill");
+    /// ```
+    pub fn writer_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
     /// Returns the current [`LineMode`].
     #[must_use]
     pub const fn line_mode(&self) -> LineMode {
@@ -1022,6 +1062,21 @@ mod tests {
 
         let rendered = String::from_utf8(sink.into_inner()).expect("utf-8");
         assert_eq!(rendered, "rsync info: ready\n");
+    }
+
+    #[test]
+    fn writer_accessors_expose_underlying_writer() {
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        assert!(sink.writer().is_empty());
+
+        sink.writer_mut().extend_from_slice(b"prefill");
+        sink.write(Message::info("status")).expect("write succeeds");
+
+        let expected = b"prefillrsync info: status\n".to_vec();
+        assert_eq!(sink.writer().as_slice(), expected.as_slice());
+
+        let rendered = sink.into_inner();
+        assert_eq!(rendered, expected);
     }
 
     #[test]
