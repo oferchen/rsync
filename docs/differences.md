@@ -20,9 +20,10 @@ referenced functionality ships and parity is verified by tests or goldens.
     the parity harness.
 - **Daemon functionality incomplete**
   - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
-    `@RSYNCD:` handshake, and responds with an `@ERROR` message explaining that
-    module serving is unavailable. Real module configuration, authentication,
-    and file transfers remain unimplemented.
+    `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
+    a subset of `rsyncd.conf` supplied through `--config` before explaining that
+    transfers are unavailable. Authentication, authorization, real module
+    serving, and advanced directives remain unimplemented.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.
