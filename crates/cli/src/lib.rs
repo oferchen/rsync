@@ -74,6 +74,7 @@ use rsync_core::{
     rsync_error,
     version::VersionInfoReport,
 };
+use rsync_logging::MessageSink;
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
@@ -178,9 +179,9 @@ fn render_help() -> String {
     HELP_TEXT.to_string()
 }
 
-/// Writes a [`Message`] to the supplied writer, appending a newline.
-fn write_message<W: Write>(message: &Message, writer: &mut W) -> io::Result<()> {
-    message.render_line_to_writer(writer)
+/// Writes a [`Message`] to the supplied sink, appending a newline.
+fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::Result<()> {
+    sink.write(message)
 }
 
 /// Runs the CLI using the provided argument iterator and output handles.
@@ -196,20 +197,21 @@ where
     Out: Write,
     Err: Write,
 {
+    let mut stderr_sink = MessageSink::new(stderr);
     match parse_args(arguments) {
-        Ok(parsed) => execute(parsed, stdout, stderr),
+        Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
             let mut message = rsync_error!(1, "{}", error);
             message = message.with_role(Role::Client);
-            if write_message(&message, stderr).is_err() {
-                let _ = writeln!(stderr, "{}", error);
+            if write_message(&message, &mut stderr_sink).is_err() {
+                let _ = writeln!(stderr_sink.writer_mut(), "{}", error);
             }
             1
         }
     }
 }
 
-fn execute<Out, Err>(parsed: ParsedArgs, stdout: &mut Out, stderr: &mut Err) -> i32
+fn execute<Out, Err>(parsed: ParsedArgs, stdout: &mut Out, stderr: &mut MessageSink<Err>) -> i32
 where
     Out: Write,
     Err: Write,
@@ -238,7 +240,7 @@ where
             let message = unsupported.to_message();
             let fallback = unsupported.fallback_text();
             if write_message(&message, stderr).is_err() {
-                let _ = writeln!(stderr, "{fallback}");
+                let _ = writeln!(stderr.writer_mut(), "{fallback}");
             }
             return 1;
         }
@@ -257,7 +259,7 @@ where
                 Err(error) => {
                     if write_message(error.message(), stderr).is_err() {
                         let _ = writeln!(
-                            stderr,
+                            stderr.writer_mut(),
                             "rsync error: daemon functionality is unavailable in this build (code {})",
                             error.exit_code()
                         );
@@ -269,7 +271,7 @@ where
         Ok(None) => {}
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
-                let _ = writeln!(stderr, "{}", error);
+                let _ = writeln!(stderr.writer_mut(), "{}", error);
             }
             return error.exit_code();
         }
@@ -285,7 +287,7 @@ where
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
                 let _ = writeln!(
-                    stderr,
+                    stderr.writer_mut(),
                     "rsync error: client functionality is unavailable in this build (code 1)",
                 );
             }
