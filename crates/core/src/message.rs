@@ -2798,6 +2798,31 @@ mod tests {
     }
 
     #[test]
+    fn message_scratch_with_thread_local_reenters_with_fresh_buffer() {
+        MessageScratch::with_thread_local(|outer| {
+            let outer_addr = outer as *mut MessageScratch as usize;
+
+            let nested_len = MessageScratch::with_thread_local(|inner| {
+                let inner_addr = inner as *mut MessageScratch as usize;
+                assert_ne!(
+                    inner_addr, outer_addr,
+                    "reentrant borrow should receive a distinct scratch buffer"
+                );
+
+                let message = Message::info("nested reentry");
+                message.as_segments(inner, false).len()
+            });
+
+            assert!(nested_len > 0);
+
+            let outer_len = Message::warning("outer after reentry")
+                .as_segments(outer, false)
+                .len();
+            assert!(outer_len > 0);
+        });
+    }
+
+    #[test]
     fn message_new_allows_dynamic_severity() {
         let warning = Message::new(Severity::Warning, "dynamic warning");
         assert_eq!(warning.severity(), Severity::Warning);
