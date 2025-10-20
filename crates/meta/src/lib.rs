@@ -60,8 +60,7 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::client`] integrates these helpers for local filesystem
-//!   copies.
+//! - The core client integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
 use std::fmt;
