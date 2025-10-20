@@ -11,3 +11,4 @@ publish = false
 clap = { version = "4.5.49", features = ["std"] }
 rsync-core = { path = "../core" }
 rsync-protocol = { path = "../protocol" }
+rsync-logging = { path = "../logging" }
