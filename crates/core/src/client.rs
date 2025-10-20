@@ -487,17 +487,33 @@ fn copy_symlink(source: &Path, destination: &Path) -> Result<(), ClientError> {
         }
     }
 
-    match fs::remove_file(destination) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
-            return Err(invalid_argument_error(
-                "cannot replace existing directory with symbolic link",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+
+            if file_type.is_symlink() {
+                if file_type.is_dir() {
+                    fs::remove_dir(destination).map_err(|error| {
+                        io_error("remove existing destination", destination, error)
+                    })?;
+                } else {
+                    fs::remove_file(destination).map_err(|error| {
+                        io_error("remove existing destination", destination, error)
+                    })?;
+                }
+            } else if file_type.is_dir() {
+                return Err(invalid_argument_error(
+                    "cannot replace existing directory with symbolic link",
+                    PARTIAL_TRANSFER_EXIT_CODE,
+                ));
+            } else {
+                fs::remove_file(destination)
+                    .map_err(|error| io_error("remove existing destination", destination, error))?;
+            }
         }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
-            return Err(io_error("remove existing destination", destination, error));
+            return Err(io_error("inspect existing destination", destination, error));
         }
     }
 
