@@ -387,6 +387,22 @@ mod tests {
     }
 
     #[test]
+    fn remote_operand_reports_diagnostic() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("host::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 23);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("remote operands are not supported"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
