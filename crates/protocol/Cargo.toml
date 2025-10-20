@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Protocol negotiation utilities for the Rust rsync reimplementation"
+description = "Protocol negotiation utilities for the Rust rsync implementation"
 
 [dependencies]
 
