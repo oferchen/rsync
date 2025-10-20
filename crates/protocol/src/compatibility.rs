@@ -528,6 +528,39 @@ impl CompatibilityFlags {
         let (value, remainder) = decode_varint(bytes)?;
         Ok((Self::new(value as u32), remainder))
     }
+
+    /// Decodes a compatibility flag bitfield from `bytes`, advancing the slice on success.
+    ///
+    /// The helper mirrors [`decode_from_slice`](Self::decode_from_slice) but updates `bytes` to point to
+    /// the remainder when decoding succeeds. Callers that process wire payloads sequentially can therefore
+    /// advance their input cursor without manually threading the remainder through intermediate variables.
+    /// If decoding fails the original slice is left untouched so transports can retry or surface the error
+    /// while still pointing at the offending data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::CompatibilityFlags;
+    ///
+    /// let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+    /// let mut encoded = Vec::new();
+    /// flags.encode_to_vec(&mut encoded).unwrap();
+    /// encoded.extend_from_slice(&[0x7F]);
+    /// let mut slice: &[u8] = &encoded;
+    /// let decoded = CompatibilityFlags::decode_from_slice_mut(&mut slice).unwrap();
+    ///
+    /// assert_eq!(decoded, flags);
+    /// assert_eq!(slice, &[0x7F]);
+    /// ```
+    pub fn decode_from_slice_mut(bytes: &mut &[u8]) -> io::Result<Self> {
+        match Self::decode_from_slice(*bytes) {
+            Ok((flags, remainder)) => {
+                *bytes = remainder;
+                Ok(flags)
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl FromIterator<KnownCompatibilityFlag> for CompatibilityFlags {
@@ -719,6 +752,31 @@ mod tests {
             assert_eq!(decoded, flags);
             assert!(remainder.is_empty());
         }
+    }
+
+    #[test]
+    fn decode_from_slice_mut_advances_input_on_success() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+        let mut encoded = encode(flags);
+        encoded.extend_from_slice(&[0x42]);
+        let mut slice: &[u8] = &encoded;
+
+        let decoded = CompatibilityFlags::decode_from_slice_mut(&mut slice)
+            .expect("decoding should succeed");
+
+        assert_eq!(decoded, flags);
+        assert_eq!(slice, &[0x42]);
+    }
+
+    #[test]
+    fn decode_from_slice_mut_preserves_input_on_error() {
+        let original: &[u8] = &[];
+        let mut slice = original;
+        let err = CompatibilityFlags::decode_from_slice_mut(&mut slice)
+            .expect_err("empty slice must error");
+
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(slice.is_empty());
     }
 
     #[test]
