@@ -62,7 +62,7 @@
 //! # See also
 //!
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
-//! - `bin/rsync` for the binary crate that wires `run` into `main`.
+//! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
