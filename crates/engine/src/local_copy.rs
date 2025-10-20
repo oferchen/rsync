@@ -588,6 +588,8 @@ fn copy_directory_recursive(
             copy_file(&entry_path, &target_path, &entry_metadata, mode)?;
         } else if entry_type.is_symlink() {
             copy_symlink(&entry_path, &target_path, &entry_metadata, mode)?;
+        } else if is_fifo(&entry_type) {
+            copy_fifo(&target_path, &entry_metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
