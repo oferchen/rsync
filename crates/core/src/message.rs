@@ -960,6 +960,34 @@ pub enum Role {
 }
 
 impl Role {
+    /// All trailer roles in the canonical ordering used by upstream diagnostics.
+    ///
+    /// The ordering mirrors how rsync labels emit trailer roles when rendering
+    /// diagnostics. Higher layers that need to iterate over every possible role
+    /// can depend on this constant rather than re-specifying the sequence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::message::Role;
+    ///
+    /// let labels: Vec<&str> = Role::ALL
+    ///     .into_iter()
+    ///     .map(|role| role.as_str())
+    ///     .collect();
+    ///
+    /// assert_eq!(labels, ["sender", "receiver", "generator", "server", "client", "daemon"]);
+    /// ```
+    #[doc(alias = "trailer roles")]
+    pub const ALL: [Self; 6] = [
+        Self::Sender,
+        Self::Receiver,
+        Self::Generator,
+        Self::Server,
+        Self::Client,
+        Self::Daemon,
+    ];
+
     /// Returns the lowercase trailer identifier used when formatting messages.
     ///
     /// The returned string matches the suffix rendered by upstream rsync. Keeping the
@@ -4321,6 +4349,27 @@ mod tests {
     #[test]
     fn role_from_str_rejects_unknown_labels() {
         assert!(Role::from_str("observer").is_err());
+    }
+
+    #[test]
+    fn role_all_lists_every_variant_once_in_canonical_order() {
+        assert_eq!(
+            Role::ALL,
+            [
+                Role::Sender,
+                Role::Receiver,
+                Role::Generator,
+                Role::Server,
+                Role::Client,
+                Role::Daemon,
+            ]
+        );
+
+        for (index, outer) in Role::ALL.iter().enumerate() {
+            for inner in Role::ALL.iter().skip(index + 1) {
+                assert_ne!(outer, inner, "Role::ALL must not contain duplicates");
+            }
+        }
     }
 
     #[test]
