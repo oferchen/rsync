@@ -15,11 +15,12 @@
 //! - [`ClientConfig`] encapsulates the caller-provided transfer arguments. A
 //!   builder is offered so future options (e.g. logging verbosity) can be wired
 //!   through without breaking call sites.
-//! - [`run_client`] executes the client flow. For now the implementation mirrors
-//!   a simplified subset of upstream behaviour by copying files, directories,
-//!   and symbolic links on the local filesystem while preserving permissions and
-//!   timestamps, but without delta compression or advanced metadata handling
-//!   such as ownership, ACLs, or extended attributes.
+//! - [`run_client`] executes the client flow. The helper delegates to
+//!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
+//!   behaviour by copying files, directories, and symbolic links on the local
+//!   filesystem while preserving permissions and timestamps, but without delta
+//!   compression or advanced metadata handling such as ownership, ACLs, or
+//!   extended attributes.
 //! - [`ClientError`] carries the exit code and fully formatted
 //!   [`Message`](crate::message::Message) so binaries can surface diagnostics via
 //!   the central rendering helpers.
@@ -65,18 +66,15 @@
 //! - [`crate::message`] for the formatting utilities reused by the client
 //!   orchestration.
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
+//! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
-use std::cmp::Ordering;
 use std::error::Error;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use rsync_meta::{
-    MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
-};
+use rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopyPlan};
 
 use crate::{
     message::{Message, Role},
@@ -185,9 +183,9 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
         return Err(missing_operands_error());
     }
 
-    let spec = TransferSpec::from_args(config.transfer_args())?;
-    copy_sources(&spec)?;
-    Ok(())
+    let plan =
+        LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
+    plan.execute().map_err(map_local_copy_error)
 }
 
 #[cfg(test)]
@@ -234,28 +232,6 @@ mod tests {
         run_client(config).expect("copy succeeds");
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
-    }
-
-    #[test]
-    fn read_directory_entries_sorted_orders_entries() {
-        let tmp = tempdir().expect("tempdir");
-        let root = tmp.path();
-        fs::create_dir(root.join("b_dir")).expect("create b_dir");
-        fs::create_dir(root.join("a_dir")).expect("create a_dir");
-        fs::write(root.join("c.txt"), b"c").expect("write c");
-        fs::write(root.join("a.txt"), b"a").expect("write a");
-
-        let entries = read_directory_entries_sorted(root).expect("read entries");
-        let names: Vec<OsString> = entries.into_iter().map(|entry| entry.file_name).collect();
-
-        let expected = vec![
-            OsString::from("a.txt"),
-            OsString::from("a_dir"),
-            OsString::from("b_dir"),
-            OsString::from("c.txt"),
-        ];
-
-        assert_eq!(names, expected);
     }
 
     #[test]
@@ -423,400 +399,6 @@ mod tests {
     }
 }
 
-/// Transfer specification derived from parsed command-line arguments.
-#[derive(Debug)]
-struct TransferSpec {
-    sources: Vec<SourceSpec>,
-    destination: PathBuf,
-}
-
-impl TransferSpec {
-    fn from_args(args: &[OsString]) -> Result<Self, ClientError> {
-        if args.len() < 2 {
-            return Err(missing_operands_error());
-        }
-
-        let sources: Vec<SourceSpec> = args[..args.len() - 1]
-            .iter()
-            .map(SourceSpec::from_argument)
-            .collect();
-        let destination = PathBuf::from(&args[args.len() - 1]);
-
-        if sources
-            .iter()
-            .any(|source| source.path.as_os_str().is_empty())
-        {
-            return Err(invalid_argument_error(
-                "source operands must be non-empty",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-
-        if destination.as_os_str().is_empty() {
-            return Err(invalid_argument_error(
-                "destination operand must be non-empty",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-
-        Ok(Self {
-            sources,
-            destination,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct DestinationState {
-    exists: bool,
-    is_dir: bool,
-}
-
-#[derive(Clone, Debug)]
-struct SourceSpec {
-    path: PathBuf,
-    copy_contents: bool,
-}
-
-impl SourceSpec {
-    fn from_argument(argument: &OsString) -> Self {
-        let copy_contents = has_trailing_separator(argument.as_os_str());
-        Self {
-            path: PathBuf::from(argument),
-            copy_contents,
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn copy_contents(&self) -> bool {
-        self.copy_contents
-    }
-}
-
-fn has_trailing_separator(path: &OsStr) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-
-        let bytes = path.as_bytes();
-        return !bytes.is_empty() && bytes.ends_with(&[b'/']);
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-
-        if let Some(ch) = path.encode_wide().rev().find(|&ch| ch != 0) {
-            return ch == b'/' as u16 || ch == b'\\' as u16;
-        }
-        return false;
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let text = path.to_string_lossy();
-        return text.ends_with('/') || text.ends_with('\\');
-    }
-}
-
-fn query_destination_state(path: &Path) -> Result<DestinationState, ClientError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            let file_type = metadata.file_type();
-            Ok(DestinationState {
-                exists: true,
-                is_dir: file_type.is_dir(),
-            })
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DestinationState::default()),
-        Err(error) => Err(io_error("inspect destination", path, error)),
-    }
-}
-
-fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
-    let multiple_sources = spec.sources.len() > 1;
-    let mut destination_state = query_destination_state(&spec.destination)?;
-
-    if multiple_sources {
-        if destination_state.exists && !destination_state.is_dir {
-            return Err(invalid_argument_error(
-                "destination must be an existing directory when copying multiple sources",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-
-        if !destination_state.exists {
-            fs::create_dir_all(&spec.destination).map_err(|error| {
-                io_error("create destination directory", &spec.destination, error)
-            })?;
-            destination_state.exists = true;
-            destination_state.is_dir = true;
-        }
-    }
-
-    for source in &spec.sources {
-        let source_path = source.path();
-        let metadata = fs::symlink_metadata(source_path)
-            .map_err(|error| io_error("access source", source_path, error))?;
-        let file_type = metadata.file_type();
-
-        if file_type.is_dir() {
-            let target = if source.copy_contents() {
-                spec.destination.clone()
-            } else if destination_state.is_dir || multiple_sources {
-                let name = source_path.file_name().ok_or_else(|| {
-                    invalid_argument_error(
-                        "cannot determine directory name",
-                        PARTIAL_TRANSFER_EXIT_CODE,
-                    )
-                })?;
-                spec.destination.join(name)
-            } else {
-                spec.destination.clone()
-            };
-
-            copy_directory_recursive(source_path, &target, &metadata)?;
-        } else if file_type.is_file() {
-            let target = if destination_state.is_dir {
-                let name = source_path.file_name().ok_or_else(|| {
-                    invalid_argument_error("cannot determine file name", PARTIAL_TRANSFER_EXIT_CODE)
-                })?;
-                spec.destination.join(name)
-            } else {
-                spec.destination.clone()
-            };
-
-            copy_file(source_path, &target, &metadata)?;
-        } else if file_type.is_symlink() {
-            let target = if destination_state.is_dir {
-                let name = source_path.file_name().ok_or_else(|| {
-                    invalid_argument_error("cannot determine link name", PARTIAL_TRANSFER_EXIT_CODE)
-                })?;
-                spec.destination.join(name)
-            } else {
-                spec.destination.clone()
-            };
-
-            copy_symlink(source_path, &target, &metadata)?;
-        } else {
-            return Err(invalid_argument_error(
-                "unsupported file type encountered",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn copy_directory_recursive(
-    source: &Path,
-    destination: &Path,
-    metadata: &fs::Metadata,
-) -> Result<(), ClientError> {
-    let mut destination_preexisted = false;
-
-    match fs::symlink_metadata(destination) {
-        Ok(existing) => {
-            if !existing.file_type().is_dir() {
-                return Err(invalid_argument_error(
-                    "cannot replace non-directory destination with directory",
-                    PARTIAL_TRANSFER_EXIT_CODE,
-                ));
-            }
-            destination_preexisted = true;
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir_all(destination)
-                .map_err(|error| io_error("create directory", destination, error))?;
-        }
-        Err(error) => {
-            return Err(io_error(
-                "inspect destination directory",
-                destination,
-                error,
-            ));
-        }
-    }
-
-    let entries = read_directory_entries_sorted(source)?;
-
-    for entry in entries {
-        let DirectoryEntry {
-            file_name,
-            path: entry_path,
-            metadata: entry_metadata,
-        } = entry;
-        let entry_type = entry_metadata.file_type();
-        let target_path = destination.join(Path::new(&file_name));
-
-        if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path, &entry_metadata)?;
-        } else if entry_type.is_file() {
-            copy_file(&entry_path, &target_path, &entry_metadata)?;
-        } else if entry_type.is_symlink() {
-            copy_symlink(&entry_path, &target_path, &entry_metadata)?;
-        } else {
-            return Err(invalid_argument_error(
-                "unsupported file type encountered",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-    }
-
-    if !destination_preexisted {
-        apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
-    }
-
-    Ok(())
-}
-
-#[derive(Debug)]
-struct DirectoryEntry {
-    file_name: OsString,
-    path: PathBuf,
-    metadata: fs::Metadata,
-}
-
-fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, ClientError> {
-    let mut entries = Vec::new();
-    let read_dir = fs::read_dir(path).map_err(|error| io_error("read directory", path, error))?;
-
-    for entry in read_dir {
-        let entry = entry.map_err(|error| io_error("read directory entry", path, error))?;
-        let entry_path = entry.path();
-        let metadata = fs::symlink_metadata(&entry_path)
-            .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
-        entries.push(DirectoryEntry {
-            file_name: entry.file_name(),
-            path: entry_path,
-            metadata,
-        });
-    }
-
-    entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
-    Ok(entries)
-}
-
-fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-
-        return left.as_bytes().cmp(right.as_bytes());
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-
-        let left_wide: Vec<u16> = left.encode_wide().collect();
-        let right_wide: Vec<u16> = right.encode_wide().collect();
-        return left_wide.cmp(&right_wide);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        return left.to_string_lossy().cmp(&right.to_string_lossy());
-    }
-}
-
-fn copy_file(
-    source: &Path,
-    destination: &Path,
-    metadata: &fs::Metadata,
-) -> Result<(), ClientError> {
-    if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|error| io_error("create parent directory", parent, error))?;
-        }
-    }
-
-    fs::copy(source, destination).map_err(|error| io_error("copy file", source, error))?;
-    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
-    Ok(())
-}
-
-fn copy_symlink(
-    source: &Path,
-    destination: &Path,
-    metadata: &fs::Metadata,
-) -> Result<(), ClientError> {
-    if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|error| io_error("create parent directory", parent, error))?;
-        }
-    }
-
-    match fs::symlink_metadata(destination) {
-        Ok(metadata) => {
-            let file_type = metadata.file_type();
-
-            if file_type.is_symlink() {
-                if file_type.is_dir() {
-                    fs::remove_dir(destination).map_err(|error| {
-                        io_error("remove existing destination", destination, error)
-                    })?;
-                } else {
-                    fs::remove_file(destination).map_err(|error| {
-                        io_error("remove existing destination", destination, error)
-                    })?;
-                }
-            } else if file_type.is_dir() {
-                return Err(invalid_argument_error(
-                    "cannot replace existing directory with symbolic link",
-                    PARTIAL_TRANSFER_EXIT_CODE,
-                ));
-            } else {
-                fs::remove_file(destination)
-                    .map_err(|error| io_error("remove existing destination", destination, error))?;
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(io_error("inspect existing destination", destination, error));
-        }
-    }
-
-    let target =
-        fs::read_link(source).map_err(|error| io_error("read symbolic link", source, error))?;
-
-    create_symlink(&target, source, destination)
-        .map_err(|error| io_error("create symbolic link", destination, error))?;
-
-    apply_symlink_metadata(destination, metadata).map_err(map_metadata_error)?;
-
-    Ok(())
-}
-
-fn map_metadata_error(error: MetadataError) -> ClientError {
-    let (context, path, source) = error.into_parts();
-    io_error(context, &path, source)
-}
-
-#[cfg(unix)]
-fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::unix::fs::symlink;
-
-    symlink(target, destination)
-}
-
-#[cfg(windows)]
-fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::fs::{symlink_dir, symlink_file};
-
-    match source.metadata() {
-        Ok(metadata) if metadata.file_type().is_dir() => symlink_dir(target, destination),
-        Ok(_) => symlink_file(target, destination),
-        Err(_) => symlink_file(target, destination),
-    }
-}
-
 fn missing_operands_error() -> ClientError {
     let message = rsync_error!(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -829,6 +411,21 @@ fn missing_operands_error() -> ClientError {
 fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError {
     let message = rsync_error!(exit_code, "{}", text).with_role(Role::Client);
     ClientError::new(exit_code, message)
+}
+
+fn map_local_copy_error(error: LocalCopyError) -> ClientError {
+    let exit_code = error.exit_code();
+    match error.into_kind() {
+        LocalCopyErrorKind::MissingSourceOperands => missing_operands_error(),
+        LocalCopyErrorKind::InvalidArgument(reason) => {
+            invalid_argument_error(reason.message(), exit_code)
+        }
+        LocalCopyErrorKind::Io {
+            action,
+            path,
+            source,
+        } => io_error(action, &path, source),
+    }
 }
 
 fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {

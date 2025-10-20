@@ -25,15 +25,15 @@ referenced functionality ships and parity is verified by tests or goldens.
     and module orchestration described in the mission brief, then replace the
     placeholder diagnostic with real session handling.
 - **Transfer engine and metadata pipeline incomplete**
-  - *Impact*: Delta transfer, ownership/xattrs/ACLs, filters, and compression are
-    unavailable. The new `rsync_meta` crate handles permission and timestamp
-    preservation for local copies, but higher-level metadata and remote
-    orchestration remain absent, so the core crate cannot yet drive protocol
-    negotiation into a real transfer.
-  - *Removal plan*: Implement the `engine`, `filters`, and `compress` crates,
-    extend `rsync_meta` to cover the remaining metadata, and integrate the
-    resulting pipeline with `core` client/daemon orchestration before running
-    the parity harness.
+  - *Impact*: The `rsync_engine` crate provides deterministic local copies for
+    regular files, directories, and symbolic links, but delta transfer,
+    ownership/xattrs/ACLs, filters, and compression remain unavailable. Remote
+    orchestration is still missing, preventing the client from negotiating
+    network transports.
+  - *Removal plan*: Extend the engine with delta-transfer support and integrate
+    `filters`, `compress`, and enhanced metadata handling from `rsync_meta`.
+    Wire the resulting pipeline into both client and daemon orchestration and
+    validate it via the parity harness.
 - **No interop or packaging automation**
   - *Impact*: There is no exit-code oracle, goldens, CI interop matrix, or
     packaging artifacts, preventing validation against upstream and distribution
