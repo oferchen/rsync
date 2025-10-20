@@ -71,6 +71,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -189,6 +190,8 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs as unix_fs;
     use tempfile::tempdir;
 
     #[test]
@@ -252,28 +255,50 @@ mod tests {
         assert_eq!(fs::read(copied_file).expect("read copied"), b"tree");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn run_client_rejects_destination_inside_source_directory() {
+    fn run_client_copies_symbolic_link() {
         let tmp = tempdir().expect("tempdir");
-        let source_root = tmp.path().join("source");
-        let nested = source_root.join("nested");
-        fs::create_dir_all(&nested).expect("create nested");
+        let target = tmp.path().join("target.txt");
+        fs::write(&target, b"payload").expect("write target");
 
-        let destination = source_root.join("nested");
+        let link = tmp.path().join("link");
+        unix_fs::symlink(&target, &link).expect("create link");
 
+        let destination = tmp.path().join("copied");
         let config = ClientConfig::builder()
-            .transfer_args([source_root.clone(), destination.clone()])
+            .transfer_args([link.clone(), destination.clone()])
             .build();
 
-        let error = run_client(config).expect_err("destination within source should be rejected");
+        run_client(config).expect("copy symlink succeeds");
 
-        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
-        let rendered = error.message().to_string();
-        assert!(rendered.contains("destination is inside the source"));
-        assert!(
-            nested.exists(),
-            "rejection should not remove existing directories"
-        );
+        let copied_target = fs::read_link(&destination).expect("read copied link");
+        assert_eq!(copied_target, target);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_overwrites_existing_symbolic_link() {
+        let tmp = tempdir().expect("tempdir");
+        let original_target = tmp.path().join("original.txt");
+        let new_target = tmp.path().join("new.txt");
+        fs::write(&original_target, b"original").expect("write original");
+        fs::write(&new_target, b"new").expect("write new");
+
+        let source_link = tmp.path().join("source-link");
+        unix_fs::symlink(&new_target, &source_link).expect("create source link");
+
+        let destination_link = tmp.path().join("dest-link");
+        unix_fs::symlink(&original_target, &destination_link).expect("create dest link");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_link.clone(), destination_link.clone()])
+            .build();
+
+        run_client(config).expect("overwrite symlink succeeds");
+
+        let copied_target = fs::read_link(&destination_link).expect("read overwritten link");
+        assert_eq!(copied_target, new_target);
     }
 }
 
@@ -390,10 +415,19 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
 
             copy_file(source, &target)?;
         } else if file_type.is_symlink() {
-            return Err(invalid_argument_error(
-                "symbolic links are not supported in this build",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+            let target = if destination_state.is_dir {
+                let name = source.file_name().ok_or_else(|| {
+                    invalid_argument_error(
+                        "cannot determine symbolic link name",
+                        PARTIAL_TRANSFER_EXIT_CODE,
+                    )
+                })?;
+                spec.destination.join(name)
+            } else {
+                spec.destination.clone()
+            };
+
+            copy_symlink(source, &target, file_type.is_dir())?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -459,10 +493,7 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Cli
         } else if entry_type.is_file() {
             copy_file(&entry_path, &target_path)?;
         } else if entry_type.is_symlink() {
-            return Err(invalid_argument_error(
-                "symbolic links are not supported in this build",
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+            copy_symlink(&entry_path, &target_path, entry_type.is_dir())?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -484,6 +515,93 @@ fn copy_file(source: &Path, destination: &Path) -> Result<(), ClientError> {
 
     fs::copy(source, destination).map_err(|error| io_error("copy file", source, error))?;
     Ok(())
+}
+
+fn copy_symlink(
+    source: &Path,
+    destination: &Path,
+    source_is_directory: bool,
+) -> Result<(), ClientError> {
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|error| io_error("create parent directory", parent, error))?;
+        }
+    }
+
+    let target =
+        fs::read_link(source).map_err(|error| io_error("read symbolic link", source, error))?;
+
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+
+            if file_type.is_symlink() {
+                match fs::remove_file(destination) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == ErrorKind::IsADirectory => {
+                        fs::remove_dir(destination).map_err(|error| {
+                            io_error(
+                                "remove existing directory symbolic link",
+                                destination,
+                                error,
+                            )
+                        })?;
+                    }
+                    Err(error) => {
+                        return Err(io_error("remove existing file", destination, error));
+                    }
+                }
+            } else if file_type.is_dir() {
+                return Err(invalid_argument_error(
+                    "cannot replace existing directory with symbolic link",
+                    PARTIAL_TRANSFER_EXIT_CODE,
+                ));
+            } else {
+                fs::remove_file(destination)
+                    .map_err(|error| io_error("remove existing file", destination, error))?;
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(io_error("inspect destination", destination, error));
+        }
+    }
+
+    create_symlink(&target, destination, source_is_directory)
+        .map_err(|error| io_error("create symbolic link", destination, error))?;
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, destination: &Path, _source_is_directory: bool) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    symlink(target, destination)
+}
+
+#[cfg(windows)]
+fn create_symlink(target: &Path, destination: &Path, source_is_directory: bool) -> io::Result<()> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    if source_is_directory {
+        symlink_dir(target, destination)
+    } else {
+        symlink_file(target, destination)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_symlink(
+    _target: &Path,
+    _destination: &Path,
+    _source_is_directory: bool,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "symbolic links are not supported on this platform",
+    ))
 }
 
 fn missing_operands_error() -> ClientError {
