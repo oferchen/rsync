@@ -152,18 +152,13 @@ where
     F: FnOnce(&mut MessageScratch) -> R,
 {
     let closure = RefCell::new(Some(f));
-    let result = RefCell::new(None);
 
-    if let Ok(_) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
-        if let Ok(mut guard) = scratch.try_borrow_mut() {
-            if let Some(func) = closure.borrow_mut().take() {
-                *result.borrow_mut() = Some(func(&mut guard));
-            }
-        }
+    if let Ok(Some(output)) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
+        let mut guard = scratch.try_borrow_mut().ok()?;
+        let func = closure.borrow_mut().take()?;
+        Some(func(&mut guard))
     }) {
-        if let Some(output) = result.borrow_mut().take() {
-            return output;
-        }
+        return output;
     }
 
     let mut scratch = MessageScratch::new();
@@ -4891,7 +4886,7 @@ mod tests {
             segments.segment_count() > 1,
             "test requires multiple segments"
         );
-        assert!(segments.len() > 0, "message must contain bytes");
+        assert!(!segments.is_empty(), "message must contain bytes");
 
         segments.total_len = segments
             .total_len
