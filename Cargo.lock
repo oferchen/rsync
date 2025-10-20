@@ -439,6 +439,7 @@ dependencies = [
  "rsync-core",
  "rsync-logging",
  "rsync-protocol",
+ "tempfile",
 ]
 
 [[package]]

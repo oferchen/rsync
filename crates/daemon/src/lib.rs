@@ -129,13 +129,15 @@
 //! - [`rsync_core::version`] for the shared `--version` banner helpers.
 //! - [`rsync_core::client`] for the analogous client-facing orchestration.
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
@@ -186,6 +188,7 @@ const HELP_TEXT: &str = concat!(
     "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
+    "  --config FILE      Load module definitions from FILE (rsyncd.conf subset).\n",
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
@@ -248,7 +251,7 @@ impl Default for RuntimeOptions {
 impl RuntimeOptions {
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
         let mut options = Self::default();
-        let mut seen_modules = std::collections::HashSet::new();
+        let mut seen_modules = HashSet::new();
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
@@ -258,6 +261,8 @@ impl RuntimeOptions {
                 options.bind_address = parse_bind_address(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
                 options.bind_address = parse_bind_address(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
+                options.load_config_modules(&value, &mut seen_modules)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -286,6 +291,24 @@ impl RuntimeOptions {
         }
 
         self.max_sessions = Some(value);
+        Ok(())
+    }
+
+    fn load_config_modules(
+        &mut self,
+        value: &OsString,
+        seen_modules: &mut HashSet<String>,
+    ) -> Result<(), DaemonError> {
+        let path = PathBuf::from(value.clone());
+        let modules = parse_config_modules(&path)?;
+
+        for module in modules {
+            if !seen_modules.insert(module.name.clone()) {
+                return Err(duplicate_module(&module.name));
+            }
+            self.modules.push(module);
+        }
+
         Ok(())
     }
 
@@ -318,6 +341,169 @@ where
     }
 
     Ok(None)
+}
+
+fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonError> {
+    let contents =
+        fs::read_to_string(path).map_err(|error| config_io_error("read", path, error))?;
+    let mut modules = Vec::new();
+    let mut current: Option<ModuleDefinitionBuilder> = None;
+
+    for (index, raw_line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let line = raw_line.trim();
+
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if line.starts_with('[') {
+            let end = line.find(']').ok_or_else(|| {
+                config_parse_error(path, line_number, "unterminated module header")
+            })?;
+            let name = line[1..end].trim();
+
+            if name.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "module name must be non-empty",
+                ));
+            }
+
+            ensure_valid_module_name(name)
+                .map_err(|msg| config_parse_error(path, line_number, msg))?;
+
+            let trailing = line[end + 1..].trim();
+            if !trailing.is_empty() && !trailing.starts_with('#') && !trailing.starts_with(';') {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "unexpected characters after module header",
+                ));
+            }
+
+            if let Some(builder) = current.take() {
+                modules.push(builder.finish(path)?);
+            }
+
+            current = Some(ModuleDefinitionBuilder::new(name.to_string(), line_number));
+            continue;
+        }
+
+        let (key, value) = line.split_once('=').ok_or_else(|| {
+            config_parse_error(path, line_number, "expected 'key = value' directive")
+        })?;
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim();
+
+        let builder = current.as_mut().ok_or_else(|| {
+            config_parse_error(path, line_number, "directive outside module section")
+        })?;
+
+        match key.as_str() {
+            "path" => {
+                if value.is_empty() {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        "module path directive must not be empty",
+                    ));
+                }
+                builder.set_path(PathBuf::from(value), path, line_number)?;
+            }
+            "comment" => {
+                let comment = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+                builder.set_comment(comment, path, line_number)?;
+            }
+            _ => {
+                // Unsupported directives are ignored for now.
+            }
+        }
+    }
+
+    if let Some(builder) = current {
+        modules.push(builder.finish(path)?);
+    }
+
+    Ok(modules)
+}
+
+struct ModuleDefinitionBuilder {
+    name: String,
+    path: Option<PathBuf>,
+    comment: Option<String>,
+    declaration_line: usize,
+}
+
+impl ModuleDefinitionBuilder {
+    fn new(name: String, line: usize) -> Self {
+        Self {
+            name,
+            path: None,
+            comment: None,
+            declaration_line: line,
+        }
+    }
+
+    fn set_path(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.path.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'path' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.path = Some(path);
+        Ok(())
+    }
+
+    fn set_comment(
+        &mut self,
+        comment: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.comment.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'comment' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.comment = comment;
+        Ok(())
+    }
+
+    fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
+        let path = self.path.ok_or_else(|| {
+            config_parse_error(
+                config_path,
+                self.declaration_line,
+                format!(
+                    "module '{}' is missing required 'path' directive",
+                    self.name
+                ),
+            )
+        })?;
+
+        Ok(ModuleDefinition {
+            name: self.name,
+            path,
+            comment: self.comment,
+        })
+    }
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
@@ -636,19 +822,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
     })?;
 
     let name = name_part.trim();
-    if name.is_empty() {
-        return Err(config_error(
-            "module name must be non-empty and cannot contain whitespace".to_string(),
-        ));
-    }
-    if name
-        .chars()
-        .any(|ch| ch.is_whitespace() || ch == '/' || ch == '\\')
-    {
-        return Err(config_error(
-            "module name cannot contain whitespace or path separators".to_string(),
-        ));
-    }
+    ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_string()))?;
 
     let (path_part, comment_part) = match remainder.split_once(',') {
         Some((path, comment)) => (path, Some(comment.trim().to_string())),
@@ -677,6 +851,38 @@ fn unsupported_option(option: OsString) -> DaemonError {
 fn config_error(text: String) -> DaemonError {
     let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+fn config_parse_error(path: &Path, line: usize, message: impl Into<String>) -> DaemonError {
+    let text = format!(
+        "failed to parse config '{}': {} (line {})",
+        path.display(),
+        message.into(),
+        line
+    );
+    let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
+    DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+fn config_io_error(action: &str, path: &Path, error: io::Error) -> DaemonError {
+    let text = format!("failed to {action} config '{}': {error}", path.display());
+    let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
+    DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+fn ensure_valid_module_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("module name must be non-empty and cannot contain whitespace");
+    }
+
+    if name
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch == '/' || ch == '\\')
+    {
+        return Err("module name cannot contain whitespace or path separators");
+    }
+
+    Ok(())
 }
 
 fn duplicate_argument(option: &str) -> DaemonError {
@@ -786,6 +992,7 @@ mod tests {
     use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
+    use tempfile::NamedTempFile;
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -835,6 +1042,71 @@ mod tests {
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
+    }
+
+    #[test]
+    fn runtime_options_load_modules_from_config_file() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\ncomment = Documentation\n\n[logs]\npath=/var/log\n"
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name, "docs");
+        assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
+        assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
+        assert_eq!(modules[1].name, "logs");
+        assert_eq!(modules[1].path, PathBuf::from("/var/log"));
+        assert!(modules[1].comment.is_none());
+    }
+
+    #[test]
+    fn runtime_options_rejects_config_missing_path() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\ncomment = sample\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("missing path should error");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("missing required 'path' directive")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_module_across_config_and_cli() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+            OsString::from("--module"),
+            OsString::from("docs=/other/path"),
+        ])
+        .expect_err("duplicate module should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate module definition 'docs'")
+        );
     }
 
     #[test]
