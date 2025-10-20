@@ -129,6 +129,8 @@ impl ClientConfig {
 
     /// Returns whether the run should avoid mutating the destination filesystem.
     #[must_use]
+    #[doc(alias = "--dry-run")]
+    #[doc(alias = "-n")]
     pub const fn dry_run(&self) -> bool {
         self.dry_run
     }
@@ -155,6 +157,8 @@ impl ClientConfigBuilder {
 
     /// Enables or disables dry-run mode.
     #[must_use]
+    #[doc(alias = "--dry-run")]
+    #[doc(alias = "-n")]
     pub const fn dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
         self
