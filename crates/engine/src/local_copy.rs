@@ -63,7 +63,7 @@ const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalCopyPlan {
     sources: Vec<SourceSpec>,
-    destination: PathBuf,
+    destination: DestinationSpec,
 }
 
 impl LocalCopyPlan {
@@ -107,12 +107,14 @@ impl LocalCopyPlan {
             ));
         }
 
-        let destination = PathBuf::from(&operands[operands.len() - 1]);
-        if destination.as_os_str().is_empty() {
+        let destination_operand = &operands[operands.len() - 1];
+        if destination_operand.is_empty() {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::EmptyDestinationOperand,
             ));
         }
+
+        let destination = DestinationSpec::from_operand(destination_operand);
 
         Ok(Self {
             sources,
@@ -129,7 +131,7 @@ impl LocalCopyPlan {
     /// Returns the planned destination path.
     #[must_use]
     pub fn destination(&self) -> &Path {
-        &self.destination
+        self.destination.path()
     }
 
     /// Executes the planned copy.
@@ -358,9 +360,59 @@ struct DirectoryEntry {
     metadata: fs::Metadata,
 }
 
+/// Destination operand capturing directory semantics requested by the caller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DestinationSpec {
+    path: PathBuf,
+    force_directory: bool,
+}
+
+impl DestinationSpec {
+    fn from_operand(operand: &OsString) -> Self {
+        let force_directory = has_trailing_separator(operand.as_os_str());
+        Self {
+            path: PathBuf::from(operand),
+            force_directory,
+        }
+    }
+
+    /// Returns the destination path supplied by the caller.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Reports whether the operand explicitly requested directory semantics.
+    #[must_use]
+    pub const fn force_directory(&self) -> bool {
+        self.force_directory
+    }
+}
+
 fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
     let multiple_sources = plan.sources.len() > 1;
-    let mut destination_state = query_destination_state(&plan.destination)?;
+    let destination_path = plan.destination.path();
+    let mut destination_state = query_destination_state(destination_path)?;
+
+    if plan.destination.force_directory() {
+        if destination_state.exists && !destination_state.is_dir {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::DestinationMustBeDirectory,
+            ));
+        }
+
+        if !destination_state.exists {
+            fs::create_dir_all(destination_path).map_err(|error| {
+                LocalCopyError::io(
+                    "create destination directory",
+                    destination_path.to_path_buf(),
+                    error,
+                )
+            })?;
+            destination_state.exists = true;
+            destination_state.is_dir = true;
+        }
+    }
 
     if multiple_sources {
         if destination_state.exists && !destination_state.is_dir {
@@ -370,10 +422,10 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
         }
 
         if !destination_state.exists {
-            fs::create_dir_all(&plan.destination).map_err(|error| {
+            fs::create_dir_all(destination_path).map_err(|error| {
                 LocalCopyError::io(
                     "create destination directory",
-                    plan.destination.clone(),
+                    destination_path.to_path_buf(),
                     error,
                 )
             })?;
@@ -381,6 +433,9 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
             destination_state.is_dir = true;
         }
     }
+
+    let destination_behaves_like_directory =
+        destination_state.is_dir || plan.destination.force_directory();
 
     for source in &plan.sources {
         let source_path = source.path();
@@ -391,38 +446,38 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
 
         if file_type.is_dir() {
             let target = if source.copy_contents() {
-                plan.destination.clone()
-            } else if destination_state.is_dir || multiple_sources {
+                destination_path.to_path_buf()
+            } else if destination_behaves_like_directory || multiple_sources {
                 let name = source_path.file_name().ok_or_else(|| {
                     LocalCopyError::invalid_argument(
                         LocalCopyArgumentError::DirectoryNameUnavailable,
                     )
                 })?;
-                plan.destination.join(name)
+                destination_path.join(name)
             } else {
-                plan.destination.clone()
+                destination_path.to_path_buf()
             };
 
             copy_directory_recursive(source_path, &target, &metadata)?;
         } else if file_type.is_file() {
-            let target = if destination_state.is_dir {
+            let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
                     LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
                 })?;
-                plan.destination.join(name)
+                destination_path.join(name)
             } else {
-                plan.destination.clone()
+                destination_path.to_path_buf()
             };
 
             copy_file(source_path, &target, &metadata)?;
         } else if file_type.is_symlink() {
-            let target = if destination_state.is_dir {
+            let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
                     LocalCopyError::invalid_argument(LocalCopyArgumentError::LinkNameUnavailable)
                 })?;
-                plan.destination.join(name)
+                destination_path.join(name)
             } else {
-                plan.destination.clone()
+                destination_path.to_path_buf()
             };
 
             copy_symlink(source_path, &target, &metadata)?;
@@ -722,6 +777,25 @@ mod tests {
         let operands = vec![OsString::from("dir/"), OsString::from("dest")];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         assert!(plan.sources()[0].copy_contents());
+    }
+
+    #[test]
+    fn execute_creates_directory_for_trailing_destination_separator() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"payload").expect("write source");
+
+        let dest_dir = temp.path().join("dest");
+        let mut destination_operand = dest_dir.clone().into_os_string();
+        destination_operand.push(std::path::MAIN_SEPARATOR_STR);
+
+        let operands = vec![source.clone().into_os_string(), destination_operand];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute().expect("copy succeeds");
+
+        let copied = dest_dir.join(source.file_name().expect("source name"));
+        assert_eq!(fs::read(copied).expect("read copied"), b"payload");
     }
 
     #[test]
