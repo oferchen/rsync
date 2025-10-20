@@ -1448,6 +1448,80 @@ fn session_handshake_clone_preserves_stream_state() {
     assert_eq!(clone_transport.flushes(), original_transport.flushes());
 }
 
+#[test]
+fn session_handshake_parts_from_binary_components_round_trips() {
+    let remote = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote));
+
+    let parts = negotiate_session_parts(transport, ProtocolVersion::NEWEST)
+        .expect("binary negotiation succeeds");
+    let (remote_advertised, remote_protocol, local_advertised, negotiated, stream_parts) = parts
+        .clone()
+        .into_binary()
+        .expect("binary components available");
+
+    let rebuilt = SessionHandshakeParts::from_binary_components(
+        remote_advertised,
+        remote_protocol,
+        local_advertised,
+        negotiated,
+        stream_parts,
+    );
+
+    assert!(rebuilt.is_binary());
+    assert_eq!(rebuilt.remote_protocol(), remote_protocol);
+    assert_eq!(rebuilt.local_advertised_protocol(), local_advertised);
+    assert_eq!(rebuilt.negotiated_protocol(), negotiated);
+
+    let transport = rebuilt
+        .clone()
+        .into_handshake()
+        .into_binary()
+        .expect("binary handshake reconstructed")
+        .into_stream()
+        .into_inner();
+
+    assert_eq!(
+        transport.writes(),
+        &binary_handshake_bytes(local_advertised)
+    );
+    assert_eq!(transport.flushes(), 1);
+}
+
+#[test]
+fn session_handshake_parts_from_legacy_components_round_trips() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let parts = negotiate_session_parts(transport, ProtocolVersion::NEWEST)
+        .expect("legacy negotiation succeeds");
+    let (greeting, negotiated, stream_parts) = parts
+        .clone()
+        .into_legacy()
+        .expect("legacy components available");
+    let expected_protocol = negotiated;
+    let expected_advertised = greeting.advertised_protocol();
+
+    let rebuilt = SessionHandshakeParts::from_legacy_components(greeting, negotiated, stream_parts);
+
+    assert!(rebuilt.is_legacy());
+    assert_eq!(rebuilt.negotiated_protocol(), expected_protocol);
+    let rebuilt_greeting = rebuilt
+        .server_greeting()
+        .expect("legacy parts expose greeting");
+    assert_eq!(rebuilt_greeting.advertised_protocol(), expected_advertised);
+
+    let transport = rebuilt
+        .clone()
+        .into_handshake()
+        .into_legacy()
+        .expect("legacy handshake reconstructed")
+        .into_stream()
+        .into_inner();
+
+    assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
+    assert_eq!(transport.flushes(), 1);
+}
+
 #[derive(Debug)]
 struct InstrumentedTransport {
     inner: MemoryTransport,
