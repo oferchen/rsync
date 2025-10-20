@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "bin/rsync",
-    "bin/rsyncd",
+    "bin/oc-rsync",
+    "bin/oc-rsyncd",
     "crates/cli",
     "crates/checksums",
     "crates/core",
