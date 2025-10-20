@@ -530,8 +530,6 @@ fn copy_directory_recursive(
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
-    let mut destination_preexisted = false;
-
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
             if !existing.file_type().is_dir() {
@@ -539,7 +537,6 @@ fn copy_directory_recursive(
                     LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
                 ));
             }
-            destination_preexisted = true;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if !mode.is_dry_run() {
@@ -581,7 +578,7 @@ fn copy_directory_recursive(
         }
     }
 
-    if !destination_preexisted && !mode.is_dry_run() {
+    if !mode.is_dry_run() {
         apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
     }
 
