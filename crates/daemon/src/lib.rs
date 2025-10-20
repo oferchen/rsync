@@ -5,11 +5,13 @@
 //! # Overview
 //!
 //! `rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
-//! binary. The crate now exposes a minimal daemon loop capable of accepting a
-//! single legacy (`@RSYNCD:`) TCP connection, greeting the peer with protocol
-//! `32`, and replying with an explanatory `@ERROR` message before closing the
-//! session. The observable handshake is deterministic so higher layers can
-//! exercise negotiation code paths while the full module orchestration lands.
+//! binary. The crate now exposes a deterministic daemon loop capable of
+//! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
+//! with protocol `32`, and replying with an explanatory `@ERROR` message before
+//! closing the session. The number of connections can be capped via
+//! command-line flags, allowing integration tests to exercise the handshake
+//! without leaving background threads running indefinitely while keeping the
+//! default behaviour ready for long-lived daemons once module serving lands.
 //!
 //! # Design
 //!
@@ -19,7 +21,8 @@
 //!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
 //!   full daemon support lands.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
-//!   serves a single legacy connection using deterministic handshake semantics.
+//!   serves one or more legacy connections using deterministic handshake
+//!   semantics.
 //! - [`render_help`] returns a deterministic description of the limited daemon
 //!   capabilities available today, keeping the help text aligned with actual
 //!   behaviour until the parity help renderer is implemented.
@@ -59,7 +62,7 @@
 //! ```
 //!
 //! Launching the daemon binds a TCP listener (defaulting to `127.0.0.1:8730`),
-//! accepts a single legacy connection, and responds with an explanatory error.
+//! accepts a legacy connection, and responds with an explanatory error.
 //!
 //! ```
 //! use rsync_daemon::{run_daemon, DaemonConfig};
@@ -74,7 +77,7 @@
 //! drop(listener);
 //!
 //! let config = DaemonConfig::builder()
-//!     .arguments(["--port", &port.to_string()])
+//!     .arguments(["--port", &port.to_string(), "--once"])
 //!     .build();
 //!
 //! let handle = thread::spawn(move || run_daemon(config));
@@ -118,6 +121,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
@@ -156,12 +160,14 @@ const HELP_TEXT: &str = concat!(
     "Daemon mode is under active development. This build recognises:\n",
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
-    "  --bind ADDR   Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
-    "  --port PORT   Listen on the supplied TCP port (default 8730).\n",
+    "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
+    "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
+    "  --once              Accept a single connection and exit.\n",
+    "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
     "\n",
-    "The listener accepts a single legacy @RSYNCD: connection, reports the\n",
-    "negotiated protocol as 32, and replies with an @ERROR diagnostic while\n",
-    "full module support is implemented.\n",
+    "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
+    "negotiated protocol as 32, and replies with an @ERROR diagnostic while full\n",
+    "module support is implemented.\n",
 );
 
 /// Configuration describing the requested daemon operation.
@@ -194,6 +200,7 @@ impl DaemonConfig {
 struct RuntimeOptions {
     bind_address: IpAddr,
     port: u16,
+    max_sessions: Option<NonZeroUsize>,
 }
 
 impl Default for RuntimeOptions {
@@ -201,6 +208,7 @@ impl Default for RuntimeOptions {
         Self {
             bind_address: DEFAULT_BIND_ADDRESS,
             port: DEFAULT_PORT,
+            max_sessions: None,
         }
     }
 }
@@ -221,12 +229,29 @@ impl RuntimeOptions {
                     .next()
                     .ok_or_else(|| missing_argument_value(argument.to_string_lossy().as_ref()))?;
                 options.bind_address = parse_bind_address(value)?;
+            } else if argument == "--once" {
+                options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
+            } else if argument == "--max-sessions" {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| missing_argument_value("--max-sessions"))?;
+                let max = parse_max_sessions(value)?;
+                options.set_max_sessions(max)?;
             } else {
                 return Err(unsupported_option(argument.clone()));
             }
         }
 
         Ok(options)
+    }
+
+    fn set_max_sessions(&mut self, value: NonZeroUsize) -> Result<(), DaemonError> {
+        if self.max_sessions.is_some() {
+            return Err(duplicate_argument("--max-sessions"));
+        }
+
+        self.max_sessions = Some(value);
+        Ok(())
     }
 }
 
@@ -300,7 +325,7 @@ impl Error for DaemonError {}
 /// while keeping the observable output stable.
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     let options = RuntimeOptions::parse(config.arguments())?;
-    serve_single_connection(options)
+    serve_connections(options)
 }
 
 /// Parsed command produced by [`parse_args`].
@@ -374,18 +399,40 @@ fn write_message<W: Write>(message: &Message, writer: &mut W) -> io::Result<()> 
     message.render_line_to_writer(writer)
 }
 
-fn serve_single_connection(options: RuntimeOptions) -> Result<(), DaemonError> {
-    let listen_addr = SocketAddr::new(options.bind_address, options.port);
+fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
+    let requested_addr = SocketAddr::new(options.bind_address, options.port);
     let listener =
-        TcpListener::bind(listen_addr).map_err(|error| bind_error(listen_addr, error))?;
-    let (stream, peer_addr) = listener
-        .accept()
-        .map_err(|error| accept_error(listen_addr, error))?;
+        TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
+    let local_addr = listener.local_addr().unwrap_or(requested_addr);
 
-    configure_stream(&stream)
-        .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
-    handle_legacy_session(stream)
-        .map_err(|error| stream_error(Some(peer_addr), "serve legacy handshake", error))
+    let mut served = 0usize;
+
+    loop {
+        match listener.accept() {
+            Ok((stream, peer_addr)) => {
+                configure_stream(&stream)
+                    .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
+                handle_legacy_session(stream).map_err(|error| {
+                    stream_error(Some(peer_addr), "serve legacy handshake", error)
+                })?;
+                served = served.saturating_add(1);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                continue;
+            }
+            Err(error) => {
+                return Err(accept_error(local_addr, error));
+            }
+        }
+
+        if let Some(limit) = options.max_sessions {
+            if served >= limit.get() {
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn configure_stream(stream: &TcpStream) -> io::Result<()> {
@@ -435,6 +482,15 @@ fn parse_bind_address(value: &OsString) -> Result<IpAddr, DaemonError> {
         .map_err(|_| config_error(format!("invalid bind address '{text}'")))
 }
 
+fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
+    let text = value.to_string_lossy();
+    let parsed: usize = text
+        .parse()
+        .map_err(|_| config_error(format!("invalid value for --max-sessions: '{text}'")))?;
+    NonZeroUsize::new(parsed)
+        .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_string()))
+}
+
 fn unsupported_option(option: OsString) -> DaemonError {
     let text = format!("unsupported daemon argument '{}'", option.to_string_lossy());
     config_error(text)
@@ -443,6 +499,10 @@ fn unsupported_option(option: OsString) -> DaemonError {
 fn config_error(text: String) -> DaemonError {
     let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+fn duplicate_argument(option: &str) -> DaemonError {
+    config_error(format!("duplicate daemon argument '{option}'"))
 }
 
 fn bind_error(address: SocketAddr, error: io::Error) -> DaemonError {
@@ -580,7 +640,11 @@ mod tests {
         drop(listener);
 
         let config = DaemonConfig::builder()
-            .arguments([OsString::from("--port"), OsString::from(port.to_string())])
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--once"),
+            ])
             .build();
 
         let handle = thread::spawn(move || run_daemon(config));
@@ -604,6 +668,47 @@ mod tests {
         assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_honours_max_sessions() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--max-sessions"),
+                OsString::from("2"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        for _ in 0..2 {
+            let mut stream = connect_with_retries(port);
+            let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("greeting");
+            assert_eq!(line, "@RSYNCD: 32.0\n");
+
+            stream.write_all(b"module\n").expect("send module request");
+            stream.flush().expect("flush module request");
+
+            line.clear();
+            reader.read_line(&mut line).expect("error message");
+            assert!(line.starts_with("@ERROR:"));
+
+            line.clear();
+            reader.read_line(&mut line).expect("exit message");
+            assert_eq!(line, "@RSYNCD: EXIT\n");
+        }
+
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
     }
@@ -660,6 +765,42 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("invalid value for --port")
+        );
+    }
+
+    #[test]
+    fn run_daemon_rejects_invalid_max_sessions() {
+        let config = DaemonConfig::builder()
+            .arguments([OsString::from("--max-sessions"), OsString::from("0")])
+            .build();
+
+        let error = run_daemon(config).expect_err("invalid max sessions should fail");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("--max-sessions must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn run_daemon_rejects_duplicate_session_limits() {
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--once"),
+                OsString::from("--max-sessions"),
+                OsString::from("2"),
+            ])
+            .build();
+
+        let error = run_daemon(config).expect_err("duplicate session limits should fail");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate daemon argument '--max-sessions'")
         );
     }
 
