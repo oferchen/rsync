@@ -440,6 +440,7 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
+    let destination_preexisted = destination_state.exists;
 
     if plan.destination.force_directory() {
         ensure_destination_directory(destination_path, &mut destination_state, mode)?;
@@ -473,7 +474,8 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(source_path, &target, &metadata, mode)?;
+            let skip_metadata = source.copy_contents() && destination_preexisted;
+            copy_directory_recursive(source_path, &target, &metadata, mode, skip_metadata)?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -529,6 +531,7 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    skip_metadata: bool,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -566,7 +569,13 @@ fn copy_directory_recursive(
         let target_path = destination.join(Path::new(&file_name));
 
         if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path, &entry_metadata, mode)?;
+            copy_directory_recursive(
+                &entry_path,
+                &target_path,
+                &entry_metadata,
+                mode,
+                false,
+            )?;
         } else if entry_type.is_file() {
             copy_file(&entry_path, &target_path, &entry_metadata, mode)?;
         } else if entry_type.is_symlink() {
@@ -578,7 +587,7 @@ fn copy_directory_recursive(
         }
     }
 
-    if !mode.is_dry_run() {
+    if !mode.is_dry_run() && !skip_metadata {
         apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
     }
 
