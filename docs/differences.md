@@ -24,15 +24,16 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief, then replace the
     placeholder diagnostic with real session handling.
-- **Transfer engine and metadata pipeline missing**
-  - *Impact*: Delta transfer, metadata preservation, filters, and compression are
-    unavailable. The `core` crate currently only exposes message formatting
-    helpers, so there is no orchestration that wires negotiation into an actual
-    file transfer.
-  - *Removal plan*: Implement the `engine`, `meta`, `filters`, and `compress`
-    crates with exhaustive unit/integration coverage, extend `core` with the
-    client/daemon orchestration APIs, then connect them through the workspace
-    facade before re-running the parity harness.
+- **Transfer engine and metadata pipeline incomplete**
+  - *Impact*: Delta transfer, ownership/xattrs/ACLs, filters, and compression are
+    unavailable. The new `rsync_meta` crate handles permission and timestamp
+    preservation for local copies, but higher-level metadata and remote
+    orchestration remain absent, so the core crate cannot yet drive protocol
+    negotiation into a real transfer.
+  - *Removal plan*: Implement the `engine`, `filters`, and `compress` crates,
+    extend `rsync_meta` to cover the remaining metadata, and integrate the
+    resulting pipeline with `core` client/daemon orchestration before running
+    the parity harness.
 - **No interop or packaging automation**
   - *Impact*: There is no exit-code oracle, goldens, CI interop matrix, or
     packaging artifacts, preventing validation against upstream and distribution
