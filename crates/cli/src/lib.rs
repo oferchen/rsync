@@ -363,6 +363,10 @@ fn render_module_list<W: Write>(
     writer: &mut W,
     list: &rsync_core::client::ModuleList,
 ) -> io::Result<()> {
+    for line in list.motd_lines() {
+        writeln!(writer, "{}", line)?;
+    }
+
     for entry in list.entries() {
         if let Some(comment) = entry.comment() {
             writeln!(writer, "{}\t{}", entry.name(), comment)?;
@@ -493,6 +497,7 @@ mod tests {
     #[test]
     fn remote_daemon_listing_prints_modules() {
         let (addr, handle) = spawn_stub_daemon(vec![
+            "@RSYNCD: MOTD Welcome to the test daemon\n",
             "@RSYNCD: OK\n",
             "first\tFirst module\n",
             "second\n",
@@ -507,6 +512,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("Welcome to the test daemon"));
         assert!(rendered.contains("first\tFirst module"));
         assert!(rendered.contains("second"));
 

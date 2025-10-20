@@ -546,6 +546,8 @@ mod tests {
     #[test]
     fn run_module_list_collects_entries() {
         let responses = vec![
+            "@RSYNCD: MOTD Welcome to the test daemon\n",
+            "@RSYNCD: MOTD Maintenance window at 02:00 UTC\n",
             "@RSYNCD: OK\n",
             "alpha\tPrimary module\n",
             "beta\n",
@@ -558,6 +560,13 @@ mod tests {
         };
 
         let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(
+            list.motd_lines(),
+            &[
+                String::from("Welcome to the test daemon"),
+                String::from("Maintenance window at 02:00 UTC"),
+            ]
+        );
         assert_eq!(list.entries().len(), 2);
         assert_eq!(list.entries()[0].name(), "alpha");
         assert_eq!(list.entries()[0].comment(), Some("Primary module"));
@@ -1005,19 +1014,26 @@ fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
 /// Describes the module entries advertised by a daemon.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModuleList {
+    motd: Vec<String>,
     entries: Vec<ModuleListEntry>,
 }
 
 impl ModuleList {
-    /// Creates a new list from the supplied entries.
-    fn new(entries: Vec<ModuleListEntry>) -> Self {
-        Self { entries }
+    /// Creates a new list from the supplied entries and optional MOTD lines.
+    fn new(motd: Vec<String>, entries: Vec<ModuleListEntry>) -> Self {
+        Self { motd, entries }
     }
 
     /// Returns the advertised module entries.
     #[must_use]
     pub fn entries(&self) -> &[ModuleListEntry] {
         &self.entries
+    }
+
+    /// Returns the optional message-of-the-day lines emitted by the daemon.
+    #[must_use]
+    pub fn motd_lines(&self) -> &[String] {
+        &self.motd
     }
 }
 
@@ -1087,6 +1103,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
         .map_err(|error| socket_error("flush", addr.socket_addr_display(), error))?;
 
     let mut entries = Vec::new();
+    let mut motd = Vec::new();
     let mut acknowledged = false;
 
     while let Some(line) = read_trimmed_line(&mut reader)
@@ -1106,6 +1123,11 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 
                     if let Some(reason) = payload.strip_prefix("DENIED") {
                         return Err(daemon_access_denied_error(reason.trim()));
+                    }
+
+                    if !acknowledged {
+                        motd.push(normalize_motd_payload(payload));
+                        continue;
                     }
 
                     return Err(daemon_protocol_error(&line));
@@ -1133,5 +1155,14 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
         ));
     }
 
-    Ok(ModuleList::new(entries))
+    Ok(ModuleList::new(motd, entries))
+}
+
+fn normalize_motd_payload(payload: &str) -> String {
+    for prefix in ["MOTD ", "MOTD", "motd ", "motd"] {
+        if let Some(rest) = payload.strip_prefix(prefix) {
+            return rest.trim_start().to_string();
+        }
+    }
+    payload.to_string()
 }
