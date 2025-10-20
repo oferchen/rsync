@@ -1,11 +1,13 @@
 [workspace]
 members = [
     "bin/rsync",
+    "bin/rsyncd",
     "crates/cli",
     "crates/checksums",
     "crates/core",
-    "crates/protocol",
+    "crates/daemon",
     "crates/logging",
+    "crates/protocol",
     "crates/transport",
 ]
 resolver = "2"

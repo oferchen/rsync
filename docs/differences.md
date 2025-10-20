@@ -14,12 +14,14 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates
     and teach `core::client::run_client` to drive them so real synchronisation
     sessions succeed.
-- **Daemon binary absent**
-  - *Impact*: No `rsyncd` binary ships yet, preventing daemon mode or module
-    hosting.
-  - *Removal plan*: Implement the `daemon` crate and associated transport loop,
-    wire it into the `core` facade, and validate behaviour via the parity
-    harness once the transfer engine is available.
+- **Daemon functionality missing**
+  - *Impact*: The `rsyncd` binary now exists but reports that daemon support is
+    unavailable. Launch attempts exit with code `1` and render a diagnostic via
+    `rsync_daemon::run_daemon` explaining that the server mode has not been
+    implemented.
+  - *Removal plan*: Implement the daemon transport loop, configuration parser,
+    and module orchestration described in the mission brief, then replace the
+    placeholder diagnostic with real session handling.
 - **Transfer engine and metadata pipeline missing**
   - *Impact*: Delta transfer, metadata preservation, filters, and compression are
     unavailable. The `core` crate currently only exposes message formatting
