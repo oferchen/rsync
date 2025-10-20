@@ -50,13 +50,17 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use rsync_meta::{
     MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
     create_device_node, create_fifo,
 };
+
+const COPY_BUFFER_SIZE: usize = 128 * 1024;
 
 /// Exit code returned when operand validation fails.
 const INVALID_OPERAND_EXIT_CODE: i32 = 23;
@@ -199,13 +203,17 @@ impl LocalCopyExecution {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LocalCopyOptions {
     delete: bool,
+    bandwidth_limit: Option<NonZeroU64>,
 }
 
 impl LocalCopyOptions {
     /// Creates a new [`LocalCopyOptions`] value with defaults applied.
     #[must_use]
     pub const fn new() -> Self {
-        Self { delete: false }
+        Self {
+            delete: false,
+            bandwidth_limit: None,
+        }
     }
 
     /// Requests that destination files absent from the source be removed.
@@ -216,10 +224,24 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Applies an optional bandwidth limit expressed in bytes per second.
+    #[must_use]
+    #[doc(alias = "--bwlimit")]
+    pub const fn bandwidth_limit(mut self, limit: Option<NonZeroU64>) -> Self {
+        self.bandwidth_limit = limit;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
         self.delete
+    }
+
+    /// Returns the configured bandwidth limit, if any, in bytes per second.
+    #[must_use]
+    pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
+        self.bandwidth_limit
     }
 }
 
@@ -283,6 +305,109 @@ impl HardLinkTracker {
     }
 
     fn record(&mut self, _metadata: &fs::Metadata, _destination: &Path) {}
+}
+
+struct CopyContext {
+    mode: LocalCopyExecution,
+    options: LocalCopyOptions,
+    hard_links: HardLinkTracker,
+    limiter: Option<BandwidthLimiter>,
+}
+
+impl CopyContext {
+    fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
+        let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
+        Self {
+            mode,
+            options,
+            hard_links: HardLinkTracker::new(),
+            limiter,
+        }
+    }
+
+    fn mode(&self) -> LocalCopyExecution {
+        self.mode
+    }
+
+    fn options(&self) -> LocalCopyOptions {
+        self.options
+    }
+
+    fn split_mut(&mut self) -> (&mut HardLinkTracker, Option<&mut BandwidthLimiter>) {
+        let Self {
+            hard_links,
+            limiter,
+            ..
+        } = self;
+        (hard_links, limiter.as_mut())
+    }
+}
+
+struct BandwidthLimiter {
+    rate: f64,
+    allowance: f64,
+    last_check: Instant,
+}
+
+impl BandwidthLimiter {
+    fn new(limit: NonZeroU64) -> Self {
+        let rate = limit.get() as f64;
+        Self {
+            rate,
+            allowance: rate,
+            last_check: Instant::now(),
+        }
+    }
+
+    fn register(&mut self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_check).as_secs_f64();
+        self.last_check = now;
+
+        self.allowance = (self.allowance + elapsed * self.rate).min(self.rate);
+
+        let mut remaining = bytes as f64;
+
+        if self.allowance >= remaining {
+            self.allowance -= remaining;
+            return;
+        }
+
+        remaining -= self.allowance;
+        self.allowance = 0.0;
+
+        let wait_seconds = remaining / self.rate;
+        if wait_seconds.is_finite() && wait_seconds > 0.0 {
+            sleep_for(Duration::from_secs_f64(wait_seconds));
+            self.last_check = Instant::now();
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn sleep_for(duration: Duration) {
+    if !duration.is_zero() {
+        std::thread::sleep(duration);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RECORDED_SLEEPS: std::cell::RefCell<Vec<Duration>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn sleep_for(duration: Duration) {
+    RECORDED_SLEEPS.with(|log| log.borrow_mut().push(duration));
+}
+
+#[cfg(test)]
+pub(super) fn take_recorded_sleeps() -> Vec<Duration> {
+    RECORDED_SLEEPS.with(|log| std::mem::take(&mut *log.borrow_mut()))
 }
 
 /// Error produced when planning or executing a local copy fails.
@@ -553,17 +678,18 @@ fn copy_sources(
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
 ) -> Result<(), LocalCopyError> {
+    let mut context = CopyContext::new(mode, options);
+
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
-    let mut hard_links = HardLinkTracker::new();
 
     if plan.destination.force_directory() {
-        ensure_destination_directory(destination_path, &mut destination_state, mode)?;
+        ensure_destination_directory(destination_path, &mut destination_state, context.mode())?;
     }
 
     if multiple_sources {
-        ensure_destination_directory(destination_path, &mut destination_state, mode)?;
+        ensure_destination_directory(destination_path, &mut destination_state, context.mode())?;
     }
 
     let destination_behaves_like_directory =
@@ -590,14 +716,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(
-                source_path,
-                &target,
-                &metadata,
-                mode,
-                options,
-                &mut hard_links,
-            )?;
+            copy_directory_recursive(&mut context, source_path, &target, &metadata)?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -608,7 +727,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_file(source_path, &target, &metadata, mode, &mut hard_links)?;
+            copy_file(&mut context, source_path, &target, &metadata)?;
         } else if file_type.is_symlink() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -619,7 +738,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_symlink(source_path, &target, &metadata, mode)?;
+            copy_symlink(source_path, &target, &metadata, context.mode())?;
         } else if is_fifo(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -630,7 +749,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_fifo(&target, &metadata, mode)?;
+            copy_fifo(&target, &metadata, context.mode())?;
         } else if is_device(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -641,7 +760,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_device(&target, &metadata, mode)?;
+            copy_device(&target, &metadata, context.mode())?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -671,12 +790,10 @@ fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyErr
 }
 
 fn copy_directory_recursive(
+    context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    mode: LocalCopyExecution,
-    options: LocalCopyOptions,
-    hard_links: &mut HardLinkTracker,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -687,7 +804,7 @@ fn copy_directory_recursive(
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if !mode.is_dry_run() {
+            if !context.mode().is_dry_run() {
                 fs::create_dir_all(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
@@ -712,22 +829,15 @@ fn copy_directory_recursive(
         let target_path = destination.join(Path::new(file_name));
 
         if entry_type.is_dir() {
-            copy_directory_recursive(
-                entry_path,
-                &target_path,
-                entry_metadata,
-                mode,
-                options,
-                hard_links,
-            )?;
+            copy_directory_recursive(context, entry_path, &target_path, entry_metadata)?;
         } else if entry_type.is_file() {
-            copy_file(entry_path, &target_path, entry_metadata, mode, hard_links)?;
+            copy_file(context, entry_path, &target_path, entry_metadata)?;
         } else if entry_type.is_symlink() {
-            copy_symlink(entry_path, &target_path, entry_metadata, mode)?;
+            copy_symlink(entry_path, &target_path, entry_metadata, context.mode())?;
         } else if is_fifo(&entry_type) {
-            copy_fifo(&target_path, entry_metadata, mode)?;
+            copy_fifo(&target_path, entry_metadata, context.mode())?;
         } else if is_device(&entry_type) {
-            copy_device(&target_path, entry_metadata, mode)?;
+            copy_device(&target_path, entry_metadata, context.mode())?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -735,11 +845,11 @@ fn copy_directory_recursive(
         }
     }
 
-    if options.delete_extraneous() {
-        delete_extraneous_entries(destination, &entries, mode)?;
+    if context.options().delete_extraneous() {
+        delete_extraneous_entries(destination, &entries, context.mode())?;
     }
 
-    if !mode.is_dry_run() {
+    if !context.mode().is_dry_run() {
         apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
     }
 
@@ -747,12 +857,12 @@ fn copy_directory_recursive(
 }
 
 fn copy_file(
+    context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    mode: LocalCopyExecution,
-    hard_links: &mut HardLinkTracker,
 ) -> Result<(), LocalCopyError> {
+    let mode = context.mode();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -810,6 +920,8 @@ fn copy_file(
         return Ok(());
     }
 
+    let (hard_links, mut limiter) = context.split_mut();
+
     if let Some(existing_target) = hard_links.existing_target(metadata) {
         match fs::hard_link(&existing_target, destination) {
             Ok(()) => {}
@@ -838,8 +950,33 @@ fn copy_file(
         return Ok(());
     }
 
-    fs::copy(source, destination)
+    let mut reader = fs::File::open(source)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    let mut writer = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(destination)
+        .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        if read == 0 {
+            break;
+        }
+
+        if let Some(ref mut limiter) = limiter {
+            limiter.register(read);
+        }
+
+        writer
+            .write_all(&buffer[..read])
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+    }
+
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
     Ok(())
@@ -1356,6 +1493,8 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::num::NonZeroU64;
+    use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
@@ -1785,5 +1924,70 @@ mod tests {
         assert_eq!(metadata_b.nlink(), 2);
         assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
         assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
+    }
+
+    #[test]
+    fn execute_with_bandwidth_limit_records_sleep() {
+        super::take_recorded_sleeps();
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        fs::write(&source, vec![0xAA; 4 * 1024]).expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options =
+            LocalCopyOptions::default().bandwidth_limit(Some(NonZeroU64::new(1024).unwrap()));
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest").len(), 4 * 1024);
+
+        let recorded = super::take_recorded_sleeps();
+        assert!(
+            !recorded.is_empty(),
+            "expected bandwidth limiter to schedule sleeps"
+        );
+        let total = recorded
+            .into_iter()
+            .fold(Duration::ZERO, |acc, duration| acc + duration);
+        let expected = Duration::from_secs(3);
+        let diff = if total > expected {
+            total - expected
+        } else {
+            expected - total
+        };
+        assert!(
+            diff <= Duration::from_millis(50),
+            "expected sleep duration near {:?}, got {:?}",
+            expected,
+            total
+        );
+    }
+
+    #[test]
+    fn execute_without_bandwidth_limit_does_not_sleep() {
+        super::take_recorded_sleeps();
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"no limit").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        plan.execute().expect("copy succeeds");
+
+        assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
+        let recorded = super::take_recorded_sleeps();
+        assert!(recorded.is_empty(), "unexpected sleep durations recorded");
     }
 }
