@@ -31,6 +31,15 @@ The workspace currently contains the following published crates:
   and local copy support (regular files, directories, and symbolic links) by
   delegating to `rsync_core::client`.
 
+## Binaries
+
+- `bin/oc-rsync` — thin wrapper that locks standard streams and invokes
+  [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the resulting exit
+  status into `std::process::ExitCode`.
+- `bin/oc-rsyncd` — placeholder wrapper that wires the CLI arguments into
+  [`rsync_daemon::run`](crates/daemon/src/lib.rs) while daemon functionality is
+  implemented.
+
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync`, but delta transfer,
 remote transports, ownership/xattr/ACL handling, filters, and compression are
