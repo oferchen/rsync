@@ -10,10 +10,10 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Client binary lacks transfer functionality**
   - *Impact*: The `rsync` binary exists but only serves `--help` and `--version`.
     Transfer attempts exit with code `1` and explain that the delta-transfer
-    engine has not been implemented.
-  - *Removal plan*: Finish the CLI parser, connect it to `core::run_client`,
-    and integrate the future transfer engine so real synchronisation sessions
-    succeed.
+    engine has not been implemented via `core::client::run_client`.
+  - *Removal plan*: Implement the delta-transfer engine plus supporting crates
+    and teach `core::client::run_client` to drive them so real synchronisation
+    sessions succeed.
 - **Daemon binary absent**
   - *Impact*: No `rsyncd` binary ships yet, preventing daemon mode or module
     hosting.
