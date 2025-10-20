@@ -9,13 +9,13 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 - **Client binary implements local copies only**
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
-    regular files, directory trees, and symbolic links. Remote transfers, metadata
-    preservation, filters, compression, and progress reporting remain
-    unavailable.
+    regular files, directory trees, and symbolic links while preserving
+    permissions and timestamps. Remote transfers, ownership/xattrs/ACLs,
+    filters, compression, and progress reporting remain unavailable.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
-    metadata handling, and validate the resulting behaviour via the parity
-    harness.
+    comprehensive metadata handling, and validate the resulting behaviour via
+    the parity harness.
 - **Daemon functionality missing**
   - *Impact*: The `rsyncd` binary now exists but reports that daemon support is
     unavailable. Launch attempts exit with code `1` and render a diagnostic via
