@@ -20,6 +20,9 @@
 //!   full daemon support lands.
 //! - [`run_daemon`] centralises the feature-gap diagnostic so both the CLI and
 //!   future tests report the same wording and exit code.
+//! - [`render_help`] returns a deterministic description of the limited daemon
+//!   capabilities available today, keeping the help text aligned with actual
+//!   behaviour until the parity help renderer is implemented.
 //!
 //! # Invariants
 //!
@@ -86,6 +89,22 @@ const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
+
+/// Deterministic help text describing the currently supported daemon surface.
+const HELP_TEXT: &str = concat!(
+    "oc-rsyncd 3.4.1-rust\n",
+    "https://github.com/oferchen/rsync\n",
+    "\n",
+    "Usage: oc-rsyncd [--help] [--version] [ARGS...]\n",
+    "\n",
+    "Daemon mode is under active development. This build recognises only\n",
+    "the following options:\n",
+    "  --help      Show this help message and exit.\n",
+    "  --version   Output version information and exit.\n",
+    "\n",
+    "Launching the daemon currently emits a diagnostic explaining that\n",
+    "server functionality has not shipped.\n",
+);
 
 /// Configuration describing the requested daemon operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -253,7 +272,7 @@ where
 }
 
 fn render_help() -> String {
-    clap_command().render_help().to_string()
+    HELP_TEXT.to_string()
 }
 
 fn write_message<W: Write>(message: &Message, writer: &mut W) -> io::Result<()> {
@@ -293,6 +312,7 @@ where
     if parsed.show_help {
         let help = render_help();
         if stdout.write_all(help.as_bytes()).is_err() {
+            let _ = writeln!(stdout, "{help}");
             return 1;
         }
         return 0;
@@ -389,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn help_flag_renders_output() {
+    fn help_flag_renders_static_help_snapshot() {
         let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
