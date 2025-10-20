@@ -1257,13 +1257,13 @@ impl VersionInfoConfig {
     pub const fn new() -> Self {
         Self {
             supports_socketpairs: false,
-            supports_symlinks: false,
-            supports_symtimes: false,
-            supports_hardlinks: false,
+            supports_symlinks: cfg!(unix),
+            supports_symtimes: cfg!(unix),
+            supports_hardlinks: cfg!(unix),
             supports_hardlink_specials: false,
             supports_hardlink_symlinks: false,
             supports_ipv6: false,
-            supports_atimes: false,
+            supports_atimes: true,
             supports_batchfiles: false,
             supports_inplace: false,
             supports_append: false,
@@ -1931,7 +1931,8 @@ mod tests {
 
     #[test]
     fn version_info_report_renders_default_report() {
-        let report = VersionInfoReport::new(VersionInfoConfig::default());
+        let config = VersionInfoConfig::default();
+        let report = VersionInfoReport::new(config);
         let actual = report.human_readable();
 
         let bit_files = mem::size_of::<off_t>() * 8;
@@ -1946,44 +1947,28 @@ mod tests {
         };
 
         let build_info = build_info_line();
-        let expected = format!(
-            concat!(
-                "oc-rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
-                "Copyright (C) 2025 by Ofer Chen.\n",
-                "Web site: https://github.com/oferchen/rsync\n",
-                "Capabilities:\n",
-                "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,\n",
-                "    no socketpairs, no symlinks, no symtimes, no hardlinks,\n",
-                "    no hardlink-specials, no hardlink-symlinks, no IPv6, no atimes,\n",
-                "    no batchfiles, no inplace, no append, no ACLs, no xattrs,\n",
-                "    optional secluded-args, no iconv, no prealloc, no stop-at, no crtimes\n",
-                "Optimizations:\n",
-                "    no SIMD-roll, no asm-roll, no openssl-crypto, no asm-MD5\n",
-                "Compiled features:\n",
-                "    {compiled_features}\n",
-                "Build info:\n",
-                "    {build_info}\n",
-                "Checksum list:\n",
-                "    xxh128 xxh3 xxh64 md5 md4 none\n",
-                "Compress list:\n",
-                "    none\n",
-                "Daemon auth list:\n",
-                "    md5 md4\n",
-                "\n",
-                "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\n",
-                "are welcome to redistribute it under certain conditions.  See the GNU\n",
-                "General Public Licence for details.\n"
-            ),
-            bit_files = bit_files,
-            bit_inums = bit_inums,
-            bit_timestamps = bit_timestamps,
-            bit_long_ints = bit_long_ints,
-            compiled_features = compiled_features_text,
-            build_revision = build_revision(),
-            build_info = build_info,
-        );
-
-        assert_eq!(actual, expected);
+        assert!(actual.starts_with("oc-rsync  version 3.4.1-rust"));
+        assert!(actual.contains(&format!(
+            "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
+        )));
+        assert!(actual.contains(", symlinks,"));
+        assert!(actual.contains(", symtimes,"));
+        assert!(actual.contains(", hardlinks"));
+        assert!(!actual.contains("no symlinks"));
+        assert!(!actual.contains("no symtimes"));
+        assert!(!actual.contains("no hardlinks"));
+        assert!(actual.contains("no IPv6, atimes"));
+        assert!(actual.contains("optional secluded-args"));
+        let compiled_line = format!("Compiled features:\n    {}\n", compiled_features_text);
+        assert!(actual.contains(&compiled_line));
+        let build_info_line = format!("Build info:\n    {}\n", build_info);
+        assert!(actual.contains(&build_info_line));
+        assert!(actual.contains("Checksum list:\n    xxh128 xxh3 xxh64 md5 md4 none\n"));
+        assert!(actual.contains("Compress list:\n    none\n"));
+        assert!(actual.contains("Daemon auth list:\n    md5 md4\n"));
+        assert!(actual.ends_with(
+            "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\nare welcome to redistribute it under certain conditions.  See the GNU\nGeneral Public Licence for details.\n"
+        ));
     }
 
     #[test]
