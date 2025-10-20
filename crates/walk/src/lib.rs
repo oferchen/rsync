@@ -5,7 +5,7 @@
 //! # Overview
 //!
 //! `rsync_walk` provides a deterministic filesystem traversal used by the Rust
-//! rsync reimplementation when constructing file lists. The walker enumerates
+//! rsync implementation when constructing file lists. The walker enumerates
 //! regular files, directories, and symbolic links while enforcing relative-path
 //! constraints so callers cannot accidentally escape the configured root. The
 //! implementation keeps ordering stable across platforms by sorting directory

@@ -1,6 +1,6 @@
-# oc-rsync (Rust reimplementation of rsync 3.4.1)
+# oc-rsync (Rust rsync implementation, protocol 32)
 
-This workspace hosts a from-scratch Rust port of rsync 3.4.1 (protocol 32)
+This workspace hosts a Rust implementation of rsync with protocol 32 support
 branded as **oc-rsync**. The long-term goal is byte-for-byte parity with the
 original tool while modernising the implementation in Rust. The project follows
 the requirements outlined in the repository's Codex Mission Brief and
