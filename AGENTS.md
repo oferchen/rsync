@@ -40,7 +40,7 @@ pub fn main() -> ExitCode {
 
 ---
 
-### 2) Daemon (rsyncd)
+### 2) Daemon (oc-rsyncd)
 
 * **Binary**: `bin/oc-rsyncd`
 * **Depends on**: `daemon`, `core`, `transport`, `logging`

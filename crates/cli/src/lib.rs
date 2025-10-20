@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_cli` implements the thin command-line front-end for the Rust `rsync`
+//! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
 //! `--version`/`-V`, and `--dry-run`/`-n`) and delegates local copy operations to

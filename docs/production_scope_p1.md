@@ -72,7 +72,7 @@ This document freezes the mandatory scope that must reach green status before th
 ## Packaging & Artifacts
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
-- Systemd `rsyncd.service` unit
+- Systemd `oc-rsyncd.service` unit
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 
 ## Deterministic Test Environment

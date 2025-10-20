@@ -2,7 +2,7 @@
 name = "rsync-walk"
 version = "0.0.0"
 edition = "2024"
-authors = ["rsync rust port contributors"]
+authors = ["Ofer Chen"]
 license = "GPL-3.0-or-later"
 description = "Deterministic filesystem walker for the Rust rsync implementation"
 repository = "https://github.com/oferchen/rsync"
