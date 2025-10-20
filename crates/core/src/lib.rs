@@ -53,6 +53,9 @@
 //!
 //! - [`rsync_core::message::strings`] exposes upstream-aligned exit-code wording
 //!   so higher layers render identical diagnostics.
+//! - [`rsync_exit_code!`] constructs canonical exit-code diagnostics while recording
+//!   the caller's source location, keeping message provenance consistent across the
+//!   workspace.
 //! - [`rsync_protocol`] for the negotiation helpers that feed protocol numbers
 //!   into user-facing diagnostics.
 //! - [`rsync_transport`] for replaying transport wrappers that emit these

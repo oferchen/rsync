@@ -1296,6 +1296,46 @@ macro_rules! rsync_info {
     }};
 }
 
+/// Constructs a [`Message`] using the canonical wording for a known exit code.
+///
+/// The macro delegates to [`Message::from_exit_code`] and attaches the caller's source location
+/// via [`macro@tracked_message_source`]. Returning an [`Option`] mirrors the underlying helper:
+/// upstream rsync only assigns stock diagnostics to a fixed set of exit codes. Callers can use
+/// [`Option::unwrap_or_else`] to supply bespoke text when the exit code is not recognised.
+///
+/// Because the macro relies on [`macro@tracked_message_source`], functions annotated with
+/// `#[track_caller]` propagate their call-site into the rendered diagnostic just like the other
+/// `rsync_*` macros.
+///
+/// # Examples
+///
+/// Emit the canonical message for exit code 23 and assert that it carries the standard wording
+/// and caller location:
+///
+/// ```
+/// use rsync_core::{message::Role, rsync_exit_code};
+///
+/// fn render() -> rsync_core::message::Message {
+///     rsync_exit_code!(23).expect("exit code 23 is defined").with_role(Role::Sender)
+/// }
+///
+/// let message = render();
+/// assert_eq!(message.code(), Some(23));
+/// let rendered = message.to_string();
+/// assert!(rendered.contains("rsync error: some files/attrs were not transferred"));
+/// assert!(rendered.contains("(code 23)"));
+/// assert!(message.source().is_some());
+/// ```
+#[macro_export]
+macro_rules! rsync_exit_code {
+    ($code:expr $(,)?) => {{
+        match $crate::message::Message::from_exit_code($code) {
+            Some(message) => Some(message.with_source($crate::tracked_message_source!())),
+            None => None,
+        }
+    }};
+}
+
 /// Structured representation of an rsync user-visible message.
 ///
 /// # Examples
@@ -2701,7 +2741,7 @@ fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{rsync_error, rsync_info, rsync_warning};
+    use crate::{rsync_error, rsync_exit_code, rsync_info, rsync_warning};
     use std::collections::HashSet;
     use std::ffi::OsStr;
     use std::io::{self, IoSlice};
@@ -2730,6 +2770,11 @@ mod tests {
     #[track_caller]
     fn tracked_rsync_info_macro() -> Message {
         rsync_info!("negotiation complete")
+    }
+
+    #[track_caller]
+    fn tracked_rsync_exit_code_macro() -> Message {
+        rsync_exit_code!(23).expect("exit code 23 is defined")
     }
 
     #[test]
@@ -4341,6 +4386,35 @@ mod tests {
     fn rsync_info_macro_honors_track_caller() {
         let expected_line = line!() + 1;
         let message = tracked_rsync_info_macro();
+        let source = message.source().expect("macro records source location");
+
+        assert_eq!(source.line(), expected_line);
+        assert!(source.path().ends_with("crates/core/src/message.rs"));
+    }
+
+    #[test]
+    fn rsync_exit_code_macro_returns_message_for_known_code() {
+        let message = rsync_exit_code!(23).expect("exit code 23 is defined");
+
+        assert_eq!(message.severity(), Severity::Error);
+        assert_eq!(message.code(), Some(23));
+        assert!(
+            message
+                .text()
+                .contains("some files/attrs were not transferred")
+        );
+        assert!(message.source().is_some());
+    }
+
+    #[test]
+    fn rsync_exit_code_macro_returns_none_for_unknown_code() {
+        assert!(rsync_exit_code!(7).is_none());
+    }
+
+    #[test]
+    fn rsync_exit_code_macro_honors_track_caller() {
+        let expected_line = line!() + 1;
+        let message = tracked_rsync_exit_code_macro();
         let source = message.source().expect("macro records source location");
 
         assert_eq!(source.line(), expected_line);
