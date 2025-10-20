@@ -9,7 +9,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 - **Client binary implements local copies and daemon module listing only**
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
-    regular files, directory trees, and symbolic links while preserving
+    regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. A `--dry-run` flag validates transfers without
     mutating the destination. The client can contact an `rsync://` daemon to
     list available modules, but remote transfers, ownership/xattrs/ACLs,

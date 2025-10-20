@@ -26,13 +26,13 @@ The workspace currently contains the following published crates:
   writers, mirroring upstream `rsync`'s logging pipeline.
 - `crates/engine` — the transfer engine facade. The current
   [`local_copy`](crates/engine/src/local_copy.rs) module provides deterministic
-  local filesystem copies for regular files, directories, and symbolic links
-  while preserving permissions and timestamps.
+  local filesystem copies for regular files, directories, symbolic links, and
+  named pipes (FIFOs) while preserving permissions and timestamps.
 - `crates/walk` — deterministic filesystem traversal that emits ordered file
   lists while enforcing relative-path safety and optional symlink following.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
-  `--dry-run`, and local copy support (regular files, directories, and symbolic
-  links) by delegating to `rsync_core::client`.
+  `--dry-run`, and local copy support (regular files, directories, symbolic
+  links, and FIFOs) by delegating to `rsync_core::client`.
 
 ## Binaries
 

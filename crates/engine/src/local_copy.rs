@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 
 use rsync_meta::{
     MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
+    create_fifo,
 };
 
 /// Exit code returned when operand validation fails.
@@ -319,6 +320,8 @@ pub enum LocalCopyArgumentError {
     ReplaceDirectoryWithSymlink,
     /// Attempted to replace an existing directory with a regular file.
     ReplaceDirectoryWithFile,
+    /// Attempted to replace an existing directory with a special file.
+    ReplaceDirectoryWithSpecial,
     /// Attempted to replace a non-directory with a directory.
     ReplaceNonDirectoryWithDirectory,
     /// Encountered an operand that refers to a remote host or module.
@@ -343,6 +346,9 @@ impl LocalCopyArgumentError {
                 "cannot replace existing directory with symbolic link"
             }
             Self::ReplaceDirectoryWithFile => "cannot replace existing directory with regular file",
+            Self::ReplaceDirectoryWithSpecial => {
+                "cannot replace existing directory with special file"
+            }
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
@@ -496,6 +502,17 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
             };
 
             copy_symlink(source_path, &target, &metadata, mode)?;
+        } else if is_fifo(&file_type) {
+            let target = if destination_behaves_like_directory {
+                let name = source_path.file_name().ok_or_else(|| {
+                    LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
+                })?;
+                destination_path.join(name)
+            } else {
+                destination_path.to_path_buf()
+            };
+
+            copy_fifo(&target, &metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -650,6 +667,91 @@ fn copy_file(
 
     fs::copy(source, destination)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    Ok(())
+}
+
+fn copy_fifo(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    mode: LocalCopyExecution,
+) -> Result<(), LocalCopyError> {
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            if mode.is_dry_run() {
+                match fs::symlink_metadata(parent) {
+                    Ok(existing) if !existing.file_type().is_dir() => {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "inspect existing destination",
+                            parent.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                fs::create_dir_all(parent).map_err(|error| {
+                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                })?;
+            }
+        }
+    }
+
+    if mode.is_dry_run() {
+        match fs::symlink_metadata(destination) {
+            Ok(existing) => {
+                if existing.file_type().is_dir() {
+                    return Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        return Ok(());
+    }
+
+    match fs::symlink_metadata(destination) {
+        Ok(existing) => {
+            if existing.file_type().is_dir() {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+                ));
+            }
+
+            fs::remove_file(destination).map_err(|error| {
+                LocalCopyError::io(
+                    "remove existing destination",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    }
+
+    create_fifo(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     Ok(())
 }
@@ -839,6 +941,21 @@ fn has_trailing_separator(path: &OsStr) -> bool {
     {
         let text = path.to_string_lossy();
         text.ends_with('/') || text.ends_with('\\')
+    }
+}
+
+fn is_fifo(file_type: &fs::FileType) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+
+        return file_type.is_fifo();
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file_type;
+        false
     }
 }
 
@@ -1079,6 +1196,48 @@ mod tests {
         assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
         let dest_atime = FileTime::from_last_access_time(&metadata);
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_copies_fifo() {
+        use filetime::{FileTime, set_file_times};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+        let temp = tempdir().expect("tempdir");
+        let source_fifo = temp.path().join("source.pipe");
+        mknodat(
+            CWD,
+            &source_fifo,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o640),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let atime = FileTime::from_unix_time(1_700_050_000, 123_000_000);
+        let mtime = FileTime::from_unix_time(1_700_060_000, 456_000_000);
+        set_file_times(&source_fifo, atime, mtime).expect("set fifo timestamps");
+        fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o640))
+            .expect("set fifo permissions");
+
+        let destination_fifo = temp.path().join("dest.pipe");
+        let operands = vec![
+            source_fifo.into_os_string(),
+            destination_fifo.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute().expect("fifo copy succeeds");
+
+        let dest_metadata = fs::symlink_metadata(&destination_fifo).expect("dest metadata");
+        assert!(dest_metadata.file_type().is_fifo());
+        assert_eq!(dest_metadata.permissions().mode() & 0o777, 0o640);
+        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
     }
