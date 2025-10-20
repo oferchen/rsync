@@ -97,7 +97,13 @@
 //! let mut line = String::new();
 //! reader.read_line(&mut line)?;
 //! assert_eq!(line, "@RSYNCD: 32.0\n");
+//! stream.write_all(b"@RSYNCD: 32.0\n")?;
+//! stream.flush()?;
+//! line.clear();
+//! reader.read_line(&mut line)?;
+//! assert_eq!(line, "@RSYNCD: OK\n");
 //! stream.write_all(b"module\n")?;
+//! stream.flush()?;
 //! line.clear();
 //! reader.read_line(&mut line)?;
 //! assert!(line.starts_with("@ERROR:"));
@@ -130,7 +136,9 @@ use rsync_core::{
     rsync_error,
     version::VersionInfoReport,
 };
-use rsync_protocol::{LegacyDaemonMessage, ProtocolVersion, format_legacy_daemon_message};
+use rsync_protocol::{
+    LegacyDaemonMessage, ProtocolVersion, format_legacy_daemon_message, parse_legacy_daemon_message,
+};
 
 /// Exit code used when daemon functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -467,11 +475,12 @@ fn handle_legacy_session(stream: TcpStream) -> io::Result<()> {
     reader.get_mut().write_all(greeting.as_bytes())?;
     reader.get_mut().flush()?;
 
-    let mut request = String::new();
-    match reader.read_line(&mut request) {
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-        Err(error) => return Err(error),
+    if let Some(line) = read_trimmed_line(&mut reader)? {
+        if let Ok(LegacyDaemonMessage::Version(_)) = parse_legacy_daemon_message(&line) {
+            let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
+            reader.get_mut().write_all(ok.as_bytes())?;
+            reader.get_mut().flush()?;
+        }
     }
 
     reader
@@ -483,6 +492,21 @@ fn handle_legacy_session(stream: TcpStream) -> io::Result<()> {
     reader.get_mut().flush()?;
 
     Ok(())
+}
+
+fn read_trimmed_line(reader: &mut BufReader<TcpStream>) -> io::Result<Option<String>> {
+    let mut line = String::new();
+    match reader.read_line(&mut line) {
+        Ok(0) => Ok(None),
+        Ok(_) => {
+            while matches!(line.as_bytes().last(), Some(b'\n') | Some(b'\r')) {
+                line.pop();
+            }
+            Ok(Some(line))
+        }
+        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn missing_argument_value(option: &str) -> DaemonError {
@@ -675,6 +699,15 @@ mod tests {
         reader.read_line(&mut line).expect("greeting");
         assert_eq!(line, "@RSYNCD: 32.0\n");
 
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
         stream.write_all(b"module\n").expect("send module request");
         stream.flush().expect("flush module request");
 
@@ -715,6 +748,15 @@ mod tests {
             let mut line = String::new();
             reader.read_line(&mut line).expect("greeting");
             assert_eq!(line, "@RSYNCD: 32.0\n");
+
+            stream
+                .write_all(b"@RSYNCD: 32.0\n")
+                .expect("send handshake response");
+            stream.flush().expect("flush handshake response");
+
+            line.clear();
+            reader.read_line(&mut line).expect("handshake ack");
+            assert_eq!(line, "@RSYNCD: OK\n");
 
             stream.write_all(b"module\n").expect("send module request");
             stream.flush().expect("flush module request");
