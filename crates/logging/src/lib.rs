@@ -219,11 +219,23 @@ impl From<LineMode> for bool {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[doc(alias = "--msgs2stderr")]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MessageSink<W> {
     writer: W,
     scratch: MessageScratch,
     line_mode: LineMode,
+}
+
+impl<W> fmt::Debug for MessageSink<W>
+where
+    W: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MessageSink")
+            .field("writer", &self.writer)
+            .field("line_mode", &self.line_mode)
+            .finish()
+    }
 }
 
 /// RAII guard that temporarily overrides a [`MessageSink`]'s [`LineMode`].
@@ -1010,6 +1022,21 @@ mod tests {
     use super::*;
     use rsync_core::message::{Message, MessageScratch};
     use std::io::{self, Cursor, Write};
+
+    #[test]
+    fn debug_representation_mentions_writer_and_line_mode() {
+        let sink = MessageSink::with_line_mode(Vec::<u8>::new(), LineMode::WithoutNewline);
+        let rendered = format!("{:?}", sink);
+        assert!(rendered.starts_with("MessageSink"));
+        assert!(
+            rendered.contains("writer: []"),
+            "debug output should expose the writer state"
+        );
+        assert!(
+            rendered.contains("line_mode: WithoutNewline"),
+            "debug output should reflect the configured line mode"
+        );
+    }
 
     #[derive(Default)]
     struct TrackingWriter {
