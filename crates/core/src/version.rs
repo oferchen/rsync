@@ -115,8 +115,11 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
     bitmap
 };
 
-/// Program name rendered by `oc-rsync` when displaying version banners.
+/// Program name rendered by the `oc-rsync` client when displaying version banners.
 pub const PROGRAM_NAME: &str = "oc-rsync";
+
+/// Program name rendered by the `oc-rsyncd` daemon when displaying version banners.
+pub const DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";
@@ -319,8 +322,14 @@ impl Default for VersionMetadata {
 #[doc(alias = "--version")]
 #[must_use]
 pub const fn version_metadata() -> VersionMetadata {
+    version_metadata_for_program(PROGRAM_NAME)
+}
+
+/// Returns version metadata that renders a banner for the supplied program name.
+#[must_use]
+pub const fn version_metadata_for_program(program_name: &'static str) -> VersionMetadata {
     VersionMetadata {
-        program_name: PROGRAM_NAME,
+        program_name,
         upstream_version: UPSTREAM_BASE_VERSION,
         rust_version: RUST_VERSION,
         protocol_version: ProtocolVersion::NEWEST,
@@ -1512,9 +1521,13 @@ impl Default for VersionInfoConfigBuilder {
 ///
 /// Instances of this type use [`VersionMetadata`] together with [`VersionInfoConfig`] to reproduce
 /// upstream rsync's capability report. Callers may override the checksum, compression, and daemon
-/// authentication lists to match the negotiated feature set of the final binary.
+/// authentication lists to match the negotiated feature set of the final binary. When rendering
+/// banners for a different binary (for example, `oc-rsyncd`), construct the report with
+/// [`with_program_name`](Self::with_program_name) so the prologue reflects the appropriate binary
+/// name while retaining all other metadata.
 #[derive(Clone, Debug)]
 pub struct VersionInfoReport {
+    metadata: VersionMetadata,
     config: VersionInfoConfig,
     checksum_algorithms: Vec<Cow<'static, str>>,
     compress_algorithms: Vec<Cow<'static, str>>,
@@ -1531,7 +1544,14 @@ impl VersionInfoReport {
     /// Creates a report using the supplied configuration and default algorithm lists.
     #[must_use]
     pub fn new(config: VersionInfoConfig) -> Self {
+        Self::with_metadata(version_metadata(), config)
+    }
+
+    /// Creates a report using explicit version metadata and default algorithm lists.
+    #[must_use]
+    pub fn with_metadata(metadata: VersionMetadata, config: VersionInfoConfig) -> Self {
         Self {
+            metadata,
             config,
             checksum_algorithms: default_checksum_algorithms(),
             compress_algorithms: default_compress_algorithms(),
@@ -1543,6 +1563,19 @@ impl VersionInfoReport {
     #[must_use]
     pub const fn config(&self) -> &VersionInfoConfig {
         &self.config
+    }
+
+    /// Returns the metadata associated with the report.
+    #[must_use]
+    pub const fn metadata(&self) -> VersionMetadata {
+        self.metadata
+    }
+
+    /// Returns a report with the supplied program name.
+    #[must_use]
+    pub fn with_program_name(mut self, program_name: &'static str) -> Self {
+        self.metadata = version_metadata_for_program(program_name);
+        self
     }
 
     /// Replaces the checksum algorithm list used in the rendered report.
@@ -1595,7 +1628,7 @@ impl VersionInfoReport {
     /// assert!(rendered.contains("Checksum list:"));
     /// ```
     pub fn write_human_readable<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
-        version_metadata().write_standard_banner(writer)?;
+        self.metadata.write_standard_banner(writer)?;
         self.write_info_sections(writer)?;
         self.write_named_list(writer, "Checksum list", &self.checksum_algorithms)?;
         self.write_named_list(writer, "Compress list", &self.compress_algorithms)?;
@@ -1809,6 +1842,14 @@ mod tests {
     }
 
     #[test]
+    fn version_metadata_for_program_overrides_program_name() {
+        let metadata = version_metadata_for_program(DAEMON_PROGRAM_NAME);
+
+        assert_eq!(metadata.program_name(), DAEMON_PROGRAM_NAME);
+        assert_eq!(metadata.protocol_version(), ProtocolVersion::NEWEST);
+    }
+
+    #[test]
     fn version_metadata_renders_standard_banner() {
         let metadata = version_metadata();
         let mut rendered = String::new();
@@ -1960,6 +2001,15 @@ mod tests {
         assert!(rendered.contains("Compiled features:\n"));
         let build_info = build_info_line();
         assert!(rendered.contains(&format!("Build info:\n    {}\n", build_info)));
+    }
+
+    #[test]
+    fn version_info_report_with_program_name_updates_banner() {
+        let report = VersionInfoReport::new(VersionInfoConfig::default())
+            .with_program_name(DAEMON_PROGRAM_NAME);
+        let banner = report.metadata().standard_banner();
+
+        assert!(banner.starts_with("oc-rsyncd  version"));
     }
 
     #[test]
