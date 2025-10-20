@@ -549,7 +549,8 @@ impl<'a> MessageSegments<'a> {
         slices
     }
 
-    /// Extends the provided buffer with the rendered message bytes.
+    /// Attempts to extend the provided buffer with the rendered message bytes without mapping
+    /// allocation failures.
     ///
     /// The method ensures enough capacity for the rendered message by using
     /// [`Vec::try_reserve_exact`], avoiding the exponential growth strategy of
@@ -558,16 +559,20 @@ impl<'a> MessageSegments<'a> {
     /// [`Vec::resize`] would otherwise perform. This keeps allocations tight for
     /// call sites that accumulate multiple diagnostics into a single [`Vec<u8>`]
     /// without going through the [`Write`](IoWrite) trait while ensuring no
-    /// redundant memory writes occur.
+    /// redundant memory writes occur. When allocation fails the original
+    /// [`TryReserveError`] is returned to the caller, allowing higher layers to
+    /// surface precise diagnostics or retry with an alternative strategy.
     ///
     /// # Examples
     ///
     /// ```
+    /// # use std::collections::TryReserveError;
     /// use rsync_core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
     ///
+    /// # fn demo() -> Result<(), TryReserveError> {
     /// let mut scratch = MessageScratch::new();
     /// let message = Message::error(23, "delta-transfer failure")
     ///     .with_role(Role::Sender)
@@ -576,15 +581,17 @@ impl<'a> MessageSegments<'a> {
     /// let segments = message.as_segments(&mut scratch, false);
     /// let mut buffer = b"prefix: ".to_vec();
     /// let prefix_len = buffer.len();
-    /// let appended = segments.extend_vec(&mut buffer)?;
+    /// let appended = segments.try_extend_vec(&mut buffer)?;
     ///
     /// assert_eq!(&buffer[..prefix_len], b"prefix: ");
     /// assert_eq!(&buffer[prefix_len..], message.to_bytes().unwrap().as_slice());
     /// assert_eq!(appended, message.to_bytes().unwrap().len());
-    /// # Ok::<(), std::io::Error>(())
+    /// # Ok(())
+    /// # }
+    /// # demo().unwrap();
     /// ```
     #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
-    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
+    pub fn try_extend_vec(&self, buffer: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.is_empty() {
             return Ok(0);
         }
@@ -593,12 +600,10 @@ impl<'a> MessageSegments<'a> {
         let spare = buffer.capacity().saturating_sub(buffer.len());
         if spare < required {
             let additional = required - spare;
-            buffer
-                .try_reserve_exact(additional)
-                .map_err(map_message_reserve_error)?;
+            buffer.try_reserve_exact(additional)?;
             debug_assert!(
                 buffer.capacity().saturating_sub(buffer.len()) >= required,
-                "MessageSegments::extend_vec must reserve enough capacity for the entire message",
+                "MessageSegments::try_extend_vec must reserve enough capacity for the entire message",
             );
         }
 
@@ -614,6 +619,18 @@ impl<'a> MessageSegments<'a> {
 
         debug_assert_eq!(buffer.len() - start, required);
         Ok(required)
+    }
+
+    /// Extends the provided buffer with the rendered message bytes.
+    ///
+    /// This convenience wrapper maps the [`TryReserveError`] returned by
+    /// [`Self::try_extend_vec`] into an [`io::Error`] so callers that already
+    /// operate in I/O contexts do not need to handle allocation failures
+    /// explicitly.
+    #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
+    pub fn extend_vec(&self, buffer: &mut Vec<u8>) -> io::Result<usize> {
+        self.try_extend_vec(buffer)
+            .map_err(map_message_reserve_error)
     }
 
     /// Copies the rendered message into the provided slice.
@@ -3444,6 +3461,49 @@ mod tests {
 
         let appended = segments
             .extend_vec(&mut buffer)
+            .expect("empty segments should not alter the buffer");
+
+        assert_eq!(appended, 0);
+        assert_eq!(buffer, expected);
+        assert_eq!(buffer.capacity(), capacity);
+    }
+
+    #[test]
+    fn message_segments_try_extend_vec_appends_bytes() {
+        let message = Message::error(12, "example failure")
+            .with_role(Role::Server)
+            .with_source(message_source!());
+        let mut scratch = MessageScratch::new();
+
+        let segments = message.as_segments(&mut scratch, false);
+        let mut buffer = b"prefix: ".to_vec();
+        let prefix_len = buffer.len();
+        let appended = segments
+            .try_extend_vec(&mut buffer)
+            .expect("Vec<u8> growth should succeed for small messages");
+
+        assert_eq!(&buffer[..prefix_len], b"prefix: ");
+        assert_eq!(
+            &buffer[prefix_len..],
+            message.to_bytes().unwrap().as_slice()
+        );
+        assert_eq!(appended, message.to_bytes().unwrap().len());
+    }
+
+    #[test]
+    fn message_segments_try_extend_vec_noop_for_empty_segments() {
+        let segments = MessageSegments {
+            segments: [IoSlice::new(&[]); MAX_MESSAGE_SEGMENTS],
+            count: 0,
+            total_len: 0,
+        };
+
+        let mut buffer = b"static prefix".to_vec();
+        let expected = buffer.clone();
+        let capacity = buffer.capacity();
+
+        let appended = segments
+            .try_extend_vec(&mut buffer)
             .expect("empty segments should not alter the buffer");
 
         assert_eq!(appended, 0);
