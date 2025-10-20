@@ -16,14 +16,14 @@ referenced functionality ships and parity is verified by tests or goldens.
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, and validate the resulting behaviour via
     the parity harness.
-- **Daemon functionality missing**
-  - *Impact*: The `rsyncd` binary now exists but reports that daemon support is
-    unavailable. Launch attempts exit with code `1` and render a diagnostic via
-    `rsync_daemon::run_daemon` explaining that the server mode has not been
-    implemented.
+- **Daemon functionality incomplete**
+  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
+    `@RSYNCD:` handshake, and responds with an `@ERROR` message explaining that
+    module serving is unavailable. Real module configuration, authentication,
+    and file transfers remain unimplemented.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
-    and module orchestration described in the mission brief, then replace the
-    placeholder diagnostic with real session handling.
+    and module orchestration described in the mission brief so negotiated
+    sessions can progress beyond the initial diagnostic.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, and symbolic links, but delta transfer,
