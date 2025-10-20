@@ -2,7 +2,7 @@
 name = "rsync-meta"
 version = "0.0.0"
 edition = "2024"
-authors = ["Ofer Chen"]
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 description = "Metadata preservation helpers for the Rust rsync implementation"
 repository = "https://github.com/oferchen/rsync"
