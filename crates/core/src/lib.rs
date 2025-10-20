@@ -57,6 +57,8 @@
 //!   so higher layers render identical diagnostics.
 //! - [`client::ClientConfig`] mirrors the structure that future CLI layers will
 //!   populate before invoking the transfer engine.
+//! - [`client::ModuleListRequest`] exposes the daemon module listing helpers used
+//!   by the CLI to retrieve `rsync://` module tables during development.
 //! - [`rsync_exit_code!`] constructs canonical exit-code diagnostics while recording
 //!   the caller's source location, keeping message provenance consistent across the
 //!   workspace.

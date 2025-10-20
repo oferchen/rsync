@@ -7,11 +7,12 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **Client binary implements local copies only**
+- **Client binary implements local copies and daemon module listing only**
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, and symbolic links while preserving
-    permissions and timestamps. Remote transfers, ownership/xattrs/ACLs,
-    filters, compression, and progress reporting remain unavailable.
+    permissions and timestamps. It can now contact an `rsync://` daemon to list
+    available modules, but remote transfers, ownership/xattrs/ACLs, filters,
+    compression, and progress reporting remain unavailable.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, and validate the resulting behaviour via
