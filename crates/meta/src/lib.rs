@@ -1,0 +1,351 @@
+#![deny(unsafe_code)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+
+//! # Overview
+//!
+//! `rsync_meta` centralises metadata preservation helpers used by the Rust
+//! rsync workspace. The crate focuses on reproducing upstream `rsync`
+//! semantics for permission bits and timestamp propagation when copying files,
+//! directories, and symbolic links on local filesystems. Higher layers wire the
+//! helpers into transfer pipelines so metadata handling remains consistent
+//! across client and daemon roles.
+//!
+//! # Design
+//!
+//! The crate exposes three primary entry points:
+//! - [`apply_file_metadata`] sets permissions and timestamps on regular files.
+//! - [`apply_directory_metadata`] mirrors metadata for directories.
+//! - [`apply_symlink_metadata`] applies timestamp changes to symbolic links
+//!   without following the link target.
+//!
+//! Errors are reported via [`MetadataError`], which stores the failing path and
+//! operation context. Callers can integrate the error into user-facing
+//! diagnostics while retaining the underlying [`io::Error`].
+//!
+//! # Invariants
+//!
+//! - All helpers avoid following symbolic links unless explicitly requested.
+//! - Permission preservation is best-effort on non-Unix platforms where only
+//!   the read-only flag may be applied.
+//! - Timestamp propagation always uses nanosecond precision via the
+//!   [`filetime`] crate.
+//!
+//! # Errors
+//!
+//! Operations surface [`MetadataError`] when the underlying filesystem call
+//! fails. The error exposes the context string, path, and original [`io::Error`]
+//! so higher layers can render diagnostics consistent with upstream `rsync`.
+//!
+//! # Examples
+//!
+//! ```
+//! use rsync_meta::{apply_file_metadata, MetadataError};
+//! use std::fs;
+//! use std::path::Path;
+//!
+//! # fn demo() -> Result<(), MetadataError> {
+//! let source = Path::new("source.txt");
+//! let dest = Path::new("dest.txt");
+//! fs::write(source, b"data").expect("write source");
+//! fs::write(dest, b"data").expect("write dest");
+//! let metadata = fs::metadata(source).expect("source metadata");
+//! apply_file_metadata(dest, &metadata)?;
+//! # fs::remove_file(source).expect("remove source");
+//! # fs::remove_file(dest).expect("remove dest");
+//! Ok(())
+//! # }
+//! # demo().unwrap();
+//! ```
+//!
+//! # See also
+//!
+//! - [`rsync_core::client`] integrates these helpers for local filesystem
+//!   copies.
+//! - [`filetime`] for lower-level timestamp manipulation utilities.
+
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use filetime::{FileTime, set_file_times, set_symlink_file_times};
+
+/// Error produced when metadata preservation fails.
+#[derive(Debug)]
+pub struct MetadataError {
+    context: &'static str,
+    path: PathBuf,
+    source: io::Error,
+}
+
+impl MetadataError {
+    /// Creates a new [`MetadataError`] from the supplied context, path, and source error.
+    fn new(context: &'static str, path: &Path, source: io::Error) -> Self {
+        Self {
+            context,
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+
+    /// Returns the operation being performed when the error occurred.
+    #[must_use]
+    pub const fn context(&self) -> &'static str {
+        self.context
+    }
+
+    /// Returns the path involved in the failing operation.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the underlying [`io::Error`] that triggered this failure.
+    #[must_use]
+    pub fn source_error(&self) -> &io::Error {
+        &self.source
+    }
+
+    /// Consumes the error and returns its constituent parts.
+    #[must_use]
+    pub fn into_parts(self) -> (&'static str, PathBuf, io::Error) {
+        (self.context, self.path, self.source)
+    }
+}
+
+impl fmt::Display for MetadataError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to {} '{}': {}",
+            self.context,
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for MetadataError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Applies metadata from `metadata` to the destination directory.
+///
+/// The helper preserves permission bits (best-effort on non-Unix targets) and
+/// nanosecond timestamps.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] when filesystem operations fail.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_meta::{apply_directory_metadata, MetadataError};
+/// use std::fs;
+/// use tempfile::tempdir;
+///
+/// # fn demo() -> Result<(), MetadataError> {
+/// let temp = tempdir().expect("tempdir");
+/// let source = temp.path().join("src-dir");
+/// let dest = temp.path().join("dst-dir");
+/// fs::create_dir(&source).expect("create source");
+/// fs::create_dir(&dest).expect("create dest");
+/// let metadata = fs::metadata(&source).expect("source metadata");
+/// apply_directory_metadata(&dest, &metadata)?;
+/// Ok(())
+/// # }
+/// # demo().unwrap();
+/// ```
+pub fn apply_directory_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    set_permissions_like(metadata, destination)?;
+    set_timestamp_like(metadata, destination, true)?;
+    Ok(())
+}
+
+/// Applies metadata from `metadata` to the destination file.
+///
+/// The helper preserves permission bits (best-effort on non-Unix targets) and
+/// nanosecond timestamps.
+pub fn apply_file_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    set_permissions_like(metadata, destination)?;
+    set_timestamp_like(metadata, destination, true)?;
+    Ok(())
+}
+
+/// Applies metadata from `metadata` to the destination symbolic link without
+/// following the link target.
+pub fn apply_symlink_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    set_timestamp_like(metadata, destination, false)?;
+    Ok(())
+}
+
+fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = metadata.permissions().mode();
+        let permissions = PermissionsExt::from_mode(mode);
+        fs::set_permissions(destination, permissions)
+            .map_err(|error| MetadataError::new("preserve permissions", destination, error))?
+    }
+
+    #[cfg(not(unix))]
+    {
+        let readonly = metadata.permissions().readonly();
+        let mut destination_permissions = fs::metadata(destination)
+            .map_err(|error| {
+                MetadataError::new("inspect destination permissions", destination, error)
+            })?
+            .permissions();
+        destination_permissions.set_readonly(readonly);
+        fs::set_permissions(destination, destination_permissions)
+            .map_err(|error| MetadataError::new("preserve permissions", destination, error))?
+    }
+
+    Ok(())
+}
+
+fn set_timestamp_like(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let accessed = FileTime::from_last_access_time(metadata);
+    let modified = FileTime::from_last_modification_time(metadata);
+
+    if follow_symlinks {
+        set_file_times(destination, accessed, modified)
+            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?
+    } else {
+        set_symlink_file_times(destination, accessed, modified)
+            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    fn current_mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::metadata(path).expect("metadata").permissions().mode()
+    }
+
+    #[test]
+    fn file_permissions_and_times_are_preserved() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&source, PermissionsExt::from_mode(0o640))
+                .expect("set source perms");
+        }
+
+        let atime = FileTime::from_unix_time(1_700_000_000, 111_000_000);
+        let mtime = FileTime::from_unix_time(1_700_000_100, 222_000_000);
+        set_file_times(&source, atime, mtime).expect("set source times");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_file_metadata(&dest, &metadata).expect("apply file metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_atime = FileTime::from_last_access_time(&dest_meta);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+
+        #[cfg(unix)]
+        {
+            assert_eq!(current_mode(&dest) & 0o777, 0o640);
+        }
+    }
+
+    #[test]
+    fn directory_permissions_and_times_are_preserved() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-dir");
+        let dest = temp.path().join("dest-dir");
+        fs::create_dir(&source).expect("create source dir");
+        fs::create_dir(&dest).expect("create dest dir");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&source, PermissionsExt::from_mode(0o751))
+                .expect("set source perms");
+        }
+
+        let atime = FileTime::from_unix_time(1_700_010_000, 0);
+        let mtime = FileTime::from_unix_time(1_700_020_000, 333_000_000);
+        set_file_times(&source, atime, mtime).expect("set source times");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_directory_metadata(&dest, &metadata).expect("apply dir metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_atime = FileTime::from_last_access_time(&dest_meta);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+
+        #[cfg(unix)]
+        {
+            assert_eq!(current_mode(&dest) & 0o777, 0o751);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_times_are_preserved_without_following_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let target = temp.path().join("target.txt");
+        fs::write(&target, b"data").expect("write target");
+
+        let source_link = temp.path().join("source-link");
+        let dest_link = temp.path().join("dest-link");
+        symlink(&target, &source_link).expect("create source link");
+        symlink(&target, &dest_link).expect("create dest link");
+
+        let atime = FileTime::from_unix_time(1_700_030_000, 444_000_000);
+        let mtime = FileTime::from_unix_time(1_700_040_000, 555_000_000);
+        set_symlink_file_times(&source_link, atime, mtime).expect("set link times");
+
+        let metadata = fs::symlink_metadata(&source_link).expect("metadata");
+        apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
+
+        let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
+        let dest_atime = FileTime::from_last_access_time(&dest_meta);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+
+        let dest_target = fs::read_link(&dest_link).expect("read dest link");
+        assert_eq!(dest_target, target);
+    }
+}

@@ -73,7 +73,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use filetime::{FileTime, set_file_times, set_symlink_file_times};
+use rsync_meta::{
+    MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
+};
 
 use crate::{
     message::{Message, Role},
@@ -644,7 +646,7 @@ fn copy_directory_recursive(
     }
 
     if !destination_preexisted {
-        apply_directory_metadata(destination, metadata)?;
+        apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
     }
 
     Ok(())
@@ -663,7 +665,7 @@ fn copy_file(
     }
 
     fs::copy(source, destination).map_err(|error| io_error("copy file", source, error))?;
-    apply_file_metadata(destination, metadata)?;
+    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     Ok(())
 }
 
@@ -715,73 +717,14 @@ fn copy_symlink(
     create_symlink(&target, source, destination)
         .map_err(|error| io_error("create symbolic link", destination, error))?;
 
-    apply_symlink_metadata(destination, metadata)?;
+    apply_symlink_metadata(destination, metadata).map_err(map_metadata_error)?;
 
     Ok(())
 }
 
-fn apply_directory_metadata(
-    destination: &Path,
-    metadata: &fs::Metadata,
-) -> Result<(), ClientError> {
-    set_permissions_like(metadata, destination)?;
-    set_timestamp_like(metadata, destination, true)?;
-    Ok(())
-}
-
-fn apply_file_metadata(destination: &Path, metadata: &fs::Metadata) -> Result<(), ClientError> {
-    set_permissions_like(metadata, destination)?;
-    set_timestamp_like(metadata, destination, true)?;
-    Ok(())
-}
-
-fn apply_symlink_metadata(destination: &Path, metadata: &fs::Metadata) -> Result<(), ClientError> {
-    set_timestamp_like(metadata, destination, false)?;
-    Ok(())
-}
-
-fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), ClientError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mode = metadata.permissions().mode();
-        let permissions = PermissionsExt::from_mode(mode);
-        fs::set_permissions(destination, permissions)
-            .map_err(|error| io_error("preserve permissions", destination, error))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let readonly = metadata.permissions().readonly();
-        let mut destination_permissions = fs::metadata(destination)
-            .map_err(|error| io_error("inspect destination permissions", destination, error))?
-            .permissions();
-        destination_permissions.set_readonly(readonly);
-        fs::set_permissions(destination, destination_permissions)
-            .map_err(|error| io_error("preserve permissions", destination, error))?;
-    }
-
-    Ok(())
-}
-
-fn set_timestamp_like(
-    metadata: &fs::Metadata,
-    destination: &Path,
-    follow_symlinks: bool,
-) -> Result<(), ClientError> {
-    let accessed = FileTime::from_last_access_time(metadata);
-    let modified = FileTime::from_last_modification_time(metadata);
-
-    if follow_symlinks {
-        set_file_times(destination, accessed, modified)
-            .map_err(|error| io_error("preserve timestamps", destination, error))?;
-    } else {
-        set_symlink_file_times(destination, accessed, modified)
-            .map_err(|error| io_error("preserve timestamps", destination, error))?;
-    }
-
-    Ok(())
+fn map_metadata_error(error: MetadataError) -> ClientError {
+    let (context, path, source) = error.into_parts();
+    io_error(context, &path, source)
 }
 
 #[cfg(unix)]
