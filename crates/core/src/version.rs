@@ -129,6 +129,15 @@ pub const COPYRIGHT_NOTICE: &str = "(C) 1996-2025 by Andrew Tridgell, Wayne Davi
 /// Web site advertised by upstream rsync in `--version` output.
 pub const WEB_SITE: &str = "https://rsync.samba.org/";
 
+/// Repository URL advertised by version banners and documentation.
+pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
+
+/// Human-readable toolchain description rendered in `--version` output.
+pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
+
+/// Combined build information line appended to the capability report.
+pub const BUILD_INFO_LINE: &str = "Built in Rust 2024; source: https://github.com/oferchen/rsync";
+
 /// Subprotocol version appended to the negotiated protocol when non-zero.
 pub const SUBPROTOCOL_VERSION: u8 = 0;
 
@@ -1573,7 +1582,7 @@ impl VersionInfoReport {
     fn info_items(&self) -> Vec<InfoItem> {
         let config = self.config;
 
-        vec![
+        let mut items = vec![
             InfoItem::Section("Capabilities"),
             bits_entry::<off_t>("files"),
             bits_entry::<ino_t>("inums"),
@@ -1602,7 +1611,20 @@ impl VersionInfoReport {
             capability_entry("asm-roll", config.supports_asm_roll),
             capability_entry("openssl-crypto", config.supports_openssl_crypto),
             capability_entry("asm-MD5", config.supports_asm_md5),
-        ]
+        ];
+
+        items.push(InfoItem::Section("Compiled features"));
+        let compiled_features = compiled_features_display();
+        if compiled_features.is_empty() {
+            items.push(InfoItem::Entry(Cow::Borrowed("none")));
+        } else {
+            items.push(InfoItem::Entry(Cow::Owned(compiled_features.to_string())));
+        }
+
+        items.push(InfoItem::Section("Build info"));
+        items.push(InfoItem::Entry(Cow::Borrowed(BUILD_INFO_LINE)));
+
+        items
     }
 }
 
@@ -1720,6 +1742,12 @@ mod tests {
         let bit_inums = mem::size_of::<ino_t>() * 8;
         let bit_timestamps = mem::size_of::<time_t>() * 8;
         let bit_long_ints = mem::size_of::<i64>() * 8;
+        let compiled_features_display = compiled_features_display();
+        let compiled_features_text = if compiled_features_display.is_empty() {
+            "none".to_owned()
+        } else {
+            compiled_features_display.to_string()
+        };
 
         let expected = format!(
             concat!(
@@ -1734,6 +1762,10 @@ mod tests {
                 "    optional secluded-args, no iconv, no prealloc, no stop-at, no crtimes\n",
                 "Optimizations:\n",
                 "    no SIMD-roll, no asm-roll, no openssl-crypto, no asm-MD5\n",
+                "Compiled features:\n",
+                "    {compiled_features}\n",
+                "Build info:\n",
+                "    {build_info}\n",
                 "Checksum list:\n",
                 "    xxh128 xxh3 xxh64 md5 md4 none\n",
                 "Compress list:\n",
@@ -1749,6 +1781,8 @@ mod tests {
             bit_inums = bit_inums,
             bit_timestamps = bit_timestamps,
             bit_long_ints = bit_long_ints,
+            compiled_features = compiled_features_text,
+            build_info = BUILD_INFO_LINE,
         );
 
         assert_eq!(actual, expected);
@@ -1766,6 +1800,24 @@ mod tests {
         assert!(rendered.contains("Checksum list:\n    alpha\n"));
         assert!(rendered.contains("Compress list:\n    beta\n"));
         assert!(rendered.contains("Daemon auth list:\n    gamma\n"));
+        assert!(rendered.contains("Compiled features:\n"));
+        assert!(rendered.contains(&format!("Build info:\n    {}\n", BUILD_INFO_LINE)));
+    }
+
+    #[test]
+    fn version_info_report_includes_compiled_feature_section() {
+        let report = VersionInfoReport::new(VersionInfoConfig::default());
+        let rendered = report.human_readable();
+
+        let compiled_features_display = compiled_features_display();
+        let expected_line = if compiled_features_display.is_empty() {
+            "Compiled features:\n    none\n".to_owned()
+        } else {
+            format!("Compiled features:\n    {}\n", compiled_features_display)
+        };
+
+        assert!(rendered.contains(&expected_line));
+        assert!(rendered.contains(&format!("Build info:\n    {}\n", BUILD_INFO_LINE)));
     }
 
     #[test]
