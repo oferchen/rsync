@@ -65,6 +65,7 @@
 //!   orchestration.
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 
+use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -250,6 +251,30 @@ mod tests {
         let copied_file = dest_root.join("nested").join("file.txt");
         assert_eq!(fs::read(copied_file).expect("read copied"), b"tree");
     }
+
+    #[test]
+    fn run_client_rejects_destination_inside_source_directory() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let nested = source_root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested");
+
+        let destination = source_root.join("nested");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), destination.clone()])
+            .build();
+
+        let error = run_client(config).expect_err("destination within source should be rejected");
+
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("destination is inside the source"));
+        assert!(
+            nested.exists(),
+            "rejection should not remove existing directories"
+        );
+    }
 }
 
 /// Transfer specification derived from parsed command-line arguments.
@@ -351,6 +376,7 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
+            ensure_directory_target_is_valid(source, &target)?;
             copy_directory_recursive(source, &target)?;
         } else if file_type.is_file() {
             let target = if destination_state.is_dir {
@@ -377,6 +403,40 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
     }
 
     Ok(())
+}
+
+fn ensure_directory_target_is_valid(source: &Path, destination: &Path) -> Result<(), ClientError> {
+    let source_abs = fs::canonicalize(source)
+        .map_err(|error| io_error("canonicalize source directory", source, error))?;
+    let destination_abs = absolute_path_allowing_missing(destination)?;
+
+    if destination_abs.starts_with(&source_abs) {
+        let text = format!(
+            "refusing to copy directory '{src}' into '{dst}' because the destination is inside the source",
+            src = source.display(),
+            dst = destination.display(),
+        );
+        return Err(invalid_argument_error(&text, PARTIAL_TRANSFER_EXIT_CODE));
+    }
+
+    Ok(())
+}
+
+fn absolute_path_allowing_missing(path: &Path) -> Result<PathBuf, ClientError> {
+    match fs::canonicalize(path) {
+        Ok(canonical) => Ok(canonical),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if path.is_absolute() {
+                Ok(path.to_path_buf())
+            } else {
+                let cwd = env::current_dir().map_err(|cwd_error| {
+                    io_error("determine current directory", Path::new("."), cwd_error)
+                })?;
+                Ok(cwd.join(path))
+            }
+        }
+        Err(error) => Err(io_error("canonicalize destination", path, error)),
+    }
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), ClientError> {
