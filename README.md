@@ -38,9 +38,10 @@ The workspace currently contains the following published crates:
 - `bin/oc-rsync` — thin wrapper that locks standard streams and invokes
   [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the resulting exit
   status into `std::process::ExitCode`.
-- `bin/oc-rsyncd` — placeholder wrapper that wires the CLI arguments into
-  [`rsync_daemon::run`](crates/daemon/src/lib.rs) while daemon functionality is
-  implemented.
+- `bin/oc-rsyncd` — daemon wrapper that binds the requested TCP socket,
+  performs the legacy `@RSYNCD:` handshake, lists configured in-memory modules
+  for `#list` requests, and reports that full module transfers are still under
+  development.
 
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync`, but delta transfer,
