@@ -393,6 +393,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsync-daemon"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "rsync-core",
+]
+
+[[package]]
 name = "rsync-logging"
 version = "0.0.0"
 dependencies = [
@@ -412,6 +420,13 @@ version = "0.0.0"
 dependencies = [
  "proptest",
  "rsync-protocol",
+]
+
+[[package]]
+name = "rsyncd-bin"
+version = "0.0.0"
+dependencies = [
+ "rsync-daemon",
 ]
 
 [[package]]
