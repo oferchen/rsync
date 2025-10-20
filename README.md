@@ -24,11 +24,13 @@ The workspace currently contains the following published crates:
   `MessageScratch` buffers when streaming diagnostics into arbitrary
   writers, mirroring upstream `rsync`'s logging pipeline.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
-  and local copy support by delegating to `rsync_core::client`.
+  and local copy support (regular files, directories, and symbolic links) by
+  delegating to `rsync_core::client`.
 
 Higher-level crates such as `daemon`, `engine`, and `meta` have not been
 implemented yet. The `core` crate currently ships a deterministic local copy
-helper that mirrors `rsync SOURCE DEST` for regular files and directories, but
+helper that mirrors `rsync SOURCE DEST` for regular files, directories, and
+symbolic links, but
 delta compression, metadata preservation, filters, and remote transports remain
 to be written. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.
