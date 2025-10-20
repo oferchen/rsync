@@ -634,12 +634,12 @@ fn copy_directory_recursive(
         .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
         let target_path = destination.join(entry.file_name());
 
-        if entry_type.is_dir() {
+        if entry_type.is_symlink() {
+            copy_symlink(&entry_path, &target_path, &entry_metadata)?;
+        } else if entry_type.is_dir() {
             copy_directory_recursive(&entry_path, &target_path, &entry_metadata)?;
         } else if entry_type.is_file() {
             copy_file(&entry_path, &target_path, &entry_metadata)?;
-        } else if entry_type.is_symlink() {
-            copy_symlink(&entry_path, &target_path, &entry_metadata)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
