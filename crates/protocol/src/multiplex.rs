@@ -617,6 +617,16 @@ fn write_all_vectored<W: Write + ?Sized>(
     let mut use_vectored = true;
 
     'outer: while !header.is_empty() || !payload.is_empty() {
+        let header_len = header.len();
+        let payload_len = payload.len();
+        let available = if use_vectored {
+            header_len + payload_len
+        } else if header_len != 0 {
+            header_len
+        } else {
+            payload_len
+        };
+
         let written = if use_vectored {
             loop {
                 let result = if header.is_empty() {
@@ -666,10 +676,19 @@ fn write_all_vectored<W: Write + ?Sized>(
             }
         };
 
+        if written > available {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "writer reported writing {written} bytes but only {available} bytes were provided for multiplexed frame"
+                ),
+            ));
+        }
+
         let mut remaining = written;
-        if !header.is_empty() {
-            if remaining >= header.len() {
-                remaining -= header.len();
+        if header_len != 0 {
+            if remaining >= header_len {
+                remaining -= header_len;
                 header = &[];
             } else {
                 header = &header[remaining..];
@@ -677,8 +696,8 @@ fn write_all_vectored<W: Write + ?Sized>(
             }
         }
 
-        if remaining > 0 && !payload.is_empty() {
-            if remaining >= payload.len() {
+        if remaining > 0 && payload_len != 0 {
+            if remaining == payload_len {
                 payload = &[];
             } else {
                 payload = &payload[remaining..];
@@ -1482,6 +1501,91 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
         assert_eq!(err.to_string(), "failed to write multiplexed message");
+    }
+
+    #[test]
+    fn send_msg_errors_when_vectored_writer_overreports_progress() {
+        struct OverreportingWriter;
+
+        impl Write for OverreportingWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                panic!("vectored path should be used");
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                let provided: usize = bufs.iter().map(|buf| buf.len()).sum();
+                Ok(provided + 1)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = OverreportingWriter;
+        let err = send_msg(&mut writer, MessageCode::Info, b"payload").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("writer reported writing 12 bytes"),
+            "error message should report written byte count: {rendered}"
+        );
+        assert!(
+            rendered.contains("only 11 bytes were provided"),
+            "error message should report available byte count: {rendered}"
+        );
+    }
+
+    #[test]
+    fn send_msg_errors_when_write_overreports_progress_after_fallback() {
+        struct OverreportingSequentialWriter {
+            vectored_attempts: usize,
+        }
+
+        impl OverreportingSequentialWriter {
+            fn new() -> Self {
+                Self {
+                    vectored_attempts: 0,
+                }
+            }
+        }
+
+        impl Write for OverreportingSequentialWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(buf.len() + 1)
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                self.vectored_attempts += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "vectored IO disabled",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = OverreportingSequentialWriter::new();
+        let err = send_msg(&mut writer, MessageCode::Info, b"payload").unwrap_err();
+
+        assert_eq!(
+            writer.vectored_attempts, 1,
+            "fallback should be attempted once"
+        );
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("writer reported writing 5 bytes"),
+            "error message should report overreported progress: {rendered}"
+        );
+        assert!(
+            rendered.contains("only 4 bytes were provided"),
+            "error message should mention header length: {rendered}"
+        );
     }
 
     #[test]
