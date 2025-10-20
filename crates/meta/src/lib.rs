@@ -7,9 +7,9 @@
 //! `rsync_meta` centralises metadata preservation helpers used by the Rust
 //! rsync workspace. The crate focuses on reproducing upstream `rsync`
 //! semantics for permission bits and timestamp propagation when copying files,
-//! directories, and symbolic links on local filesystems. Higher layers wire the
-//! helpers into transfer pipelines so metadata handling remains consistent
-//! across client and daemon roles.
+//! directories, symbolic links, and FIFOs on local filesystems. Higher layers
+//! wire the helpers into transfer pipelines so metadata handling remains
+//! consistent across client and daemon roles.
 //!
 //! # Design
 //!
@@ -18,6 +18,8 @@
 //! - [`apply_directory_metadata`] mirrors metadata for directories.
 //! - [`apply_symlink_metadata`] applies timestamp changes to symbolic links
 //!   without following the link target.
+//! - [`create_fifo`] materialises FIFOs before metadata is applied, allowing
+//!   higher layers to reproduce upstream handling of named pipes.
 //!
 //! Errors are reported via [`MetadataError`], which stores the failing path and
 //! operation context. Callers can integrate the error into user-facing
@@ -190,6 +192,80 @@ pub fn apply_symlink_metadata(
 ) -> Result<(), MetadataError> {
     set_timestamp_like(metadata, destination, false)?;
     Ok(())
+}
+
+/// Creates a FIFO at `destination` so metadata can be applied afterwards.
+///
+/// The function mirrors upstream rsync behaviour by using the source
+/// permissions as the mode during creation before delegating to
+/// [`apply_file_metadata`] for the final permission and timestamp state.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the FIFO cannot be created. This typically
+/// occurs when the underlying filesystem does not support FIFOs or the process
+/// lacks the required permissions.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_meta::{create_fifo, apply_file_metadata, MetadataError};
+/// use std::fs;
+/// #[cfg(unix)]
+/// use std::os::unix::fs::FileTypeExt;
+/// use tempfile::tempdir;
+///
+/// # fn demo() -> Result<(), MetadataError> {
+/// let temp = tempdir().expect("tempdir");
+/// let source_dir = temp.path().join("source");
+/// let dest_dir = temp.path().join("dest");
+/// fs::create_dir_all(&source_dir).expect("create source");
+/// fs::create_dir_all(&dest_dir).expect("create dest");
+/// let source_fifo = source_dir.join("pipe");
+/// # #[cfg(unix)] {
+/// rustix::fs::mknodat(
+///     rustix::fs::CWD,
+///     &source_fifo,
+///     rustix::fs::FileType::Fifo,
+///     rustix::fs::Mode::from_bits_truncate(0o640),
+///     rustix::fs::makedev(0, 0),
+/// )
+/// .expect("mkfifo");
+/// let metadata = fs::symlink_metadata(&source_fifo).expect("fifo metadata");
+/// let dest_fifo = dest_dir.join("pipe");
+/// create_fifo(&dest_fifo, &metadata)?;
+/// apply_file_metadata(&dest_fifo, &metadata)?;
+/// assert!(fs::symlink_metadata(&dest_fifo).expect("dest metadata").file_type().is_fifo());
+/// # }
+/// # Ok(())
+/// # }
+/// # demo().unwrap();
+/// ```
+pub fn create_fifo(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
+    create_fifo_inner(destination, metadata)
+}
+
+#[cfg(unix)]
+fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
+    use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = Mode::from_bits_truncate(metadata.permissions().mode());
+    mknodat(CWD, destination, FileType::Fifo, mode, makedev(0, 0))
+        .map_err(|error| MetadataError::new("create fifo", destination, io::Error::from(error)))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
+    Err(MetadataError::new(
+        "create fifo",
+        destination,
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FIFO creation is not supported on this platform",
+        ),
+    ))
 }
 
 fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), MetadataError> {
