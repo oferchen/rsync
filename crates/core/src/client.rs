@@ -460,14 +460,60 @@ fn absolute_path_allowing_missing(path: &Path) -> Result<PathBuf, ClientError> {
     match fs::canonicalize(path) {
         Ok(canonical) => Ok(canonical),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if path.is_absolute() {
-                Ok(path.to_path_buf())
+            let mut absolute = if path.is_absolute() {
+                path.to_path_buf()
             } else {
-                let cwd = env::current_dir().map_err(|cwd_error| {
-                    io_error("determine current directory", Path::new("."), cwd_error)
-                })?;
-                Ok(cwd.join(path))
+                env::current_dir()
+                    .map_err(|cwd_error| {
+                        io_error("determine current directory", Path::new("."), cwd_error)
+                    })?
+                    .join(path)
+            };
+
+            absolute = absolute.components().collect();
+
+            let mut current = absolute.clone();
+            let mut missing_components = Vec::new();
+
+            loop {
+                match fs::metadata(&current) {
+                    Ok(_) => break,
+                    Err(metadata_error) if metadata_error.kind() == io::ErrorKind::NotFound => {
+                        let parent = current.parent().map(Path::to_path_buf).ok_or_else(|| {
+                            io_error("canonicalize destination", &current, metadata_error)
+                        })?;
+                        let component = current.file_name().ok_or_else(|| {
+                            io_error(
+                                "canonicalize destination",
+                                &current,
+                                io::Error::new(
+                                    io::ErrorKind::NotFound,
+                                    "path component missing while canonicalizing",
+                                ),
+                            )
+                        })?;
+                        missing_components.push(component.to_os_string());
+                        current = parent;
+                    }
+                    Err(metadata_error) => {
+                        return Err(io_error(
+                            "canonicalize destination",
+                            &current,
+                            metadata_error,
+                        ));
+                    }
+                }
             }
+
+            let mut canonical = fs::canonicalize(&current).map_err(|canonical_error| {
+                io_error("canonicalize destination", &current, canonical_error)
+            })?;
+
+            for component in missing_components.iter().rev() {
+                canonical.push(component);
+            }
+
+            Ok(canonical)
         }
         Err(error) => Err(io_error("canonicalize destination", path, error)),
     }
