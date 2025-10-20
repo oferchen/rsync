@@ -23,16 +23,18 @@ The workspace currently contains the following published crates:
 - `crates/logging` — newline-aware message sinks that reuse
   `MessageScratch` buffers when streaming diagnostics into arbitrary
   writers, mirroring upstream `rsync`'s logging pipeline.
+- `crates/engine` — the transfer engine facade. The current
+  [`local_copy`](crates/engine/src/local_copy.rs) module provides deterministic
+  local filesystem copies for regular files, directories, and symbolic links
+  while preserving permissions and timestamps.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
   and local copy support (regular files, directories, and symbolic links) by
   delegating to `rsync_core::client`.
 
-Higher-level crates such as `daemon`, `engine`, and `meta` have not been
-implemented yet. The `core` crate currently ships a deterministic local copy
-helper that mirrors `rsync SOURCE DEST` for regular files, directories, and
-symbolic links, but
-delta compression, metadata preservation, filters, and remote transports remain
-to be written. Current gaps and parity status are tracked in
+Higher-level crates such as `daemon` remain under development. The new engine
+module powers the local copy mode shipped by `oc-rsync`, but delta transfer,
+remote transports, ownership/xattr/ACL handling, filters, and compression are
+still pending. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started

@@ -423,6 +423,7 @@ version = "0.0.0"
 dependencies = [
  "filetime",
  "libc",
+ "rsync-engine",
  "rsync-meta",
  "rsync-protocol",
  "tempfile",
@@ -434,6 +435,15 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "rsync-core",
+]
+
+[[package]]
+name = "rsync-engine"
+version = "0.0.0"
+dependencies = [
+ "filetime",
+ "rsync-meta",
+ "tempfile",
 ]
 
 [[package]]
