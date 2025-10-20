@@ -11,7 +11,8 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. A `--dry-run` flag validates transfers without
-    mutating the destination. The client can contact an `rsync://` daemon to
+    mutating the destination, and `--delete` removes destination entries that
+    are absent from the source. The client can contact an `rsync://` daemon to
     list available modules, but remote transfers, ownership/xattrs/ACLs,
     filters, compression, and progress reporting remain unavailable.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
