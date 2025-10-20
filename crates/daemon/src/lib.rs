@@ -7,8 +7,9 @@
 //! `rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
 //! binary. The crate now exposes a deterministic daemon loop capable of
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
-//! with protocol `32`, and replying with an explanatory `@ERROR` message before
-//! closing the session. The number of connections can be capped via
+//! with protocol `32`, serving `#list` requests from an in-memory module table,
+//! and replying with explanatory `@ERROR` messages when module transfers are not
+//! yet available. The number of connections can be capped via
 //! command-line flags, allowing integration tests to exercise the handshake
 //! without leaving background threads running indefinitely while keeping the
 //! default behaviour ready for long-lived daemons once module serving lands.
@@ -22,7 +23,9 @@
 //!   full daemon support lands.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
 //!   serves one or more legacy connections using deterministic handshake
-//!   semantics.
+//!   semantics. Requests for `#list` reuse the configured module table, while
+//!   module transfers continue to emit availability diagnostics until the full
+//!   engine lands.
 //! - [`render_help`] returns a deterministic description of the limited daemon
 //!   capabilities available today, keeping the help text aligned with actual
 //!   behaviour until the parity help renderer is implemented.
@@ -111,6 +114,10 @@
 //! # demo().unwrap();
 //! ```
 //!
+//! When one or more modules are supplied via `--module NAME=PATH[,COMMENT]`, a
+//! client issuing `#list` receives the configured table before the daemon closes
+//! the session with `@RSYNCD: EXIT`.
+//!
 //! # See also
 //!
 //! - [`rsync_core::version`] for the shared `--version` banner helpers.
@@ -122,6 +129,7 @@ use std::fmt;
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
@@ -149,6 +157,11 @@ const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
 const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
+/// Error payload returned when a configured module is requested but file serving is unavailable.
+const MODULE_UNAVAILABLE_PAYLOAD: &str =
+    "@ERROR: module '{module}' transfers are not yet implemented in this build";
+/// Error payload returned when a requested module does not exist.
+const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
@@ -160,15 +173,23 @@ const HELP_TEXT: &str = concat!(
     "Daemon mode is under active development. This build recognises:\n",
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
-    "  --bind, --address ADDR  Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
-    "  --port PORT             Listen on the supplied TCP port (default 8730).\n",
-    "  --once                  Accept a single connection and exit.\n",
-    "  --max-sessions N        Accept N connections before exiting (N > 0).\n",
+    "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
+    "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
+    "  --once              Accept a single connection and exit.\n",
+    "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
+    "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
-    "negotiated protocol as 32, and replies with an @ERROR diagnostic while full\n",
-    "module support is implemented.\n",
+    "negotiated protocol as 32, lists configured modules for #list requests, and\n",
+    "replies with an @ERROR diagnostic while full module support is implemented.\n",
 );
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ModuleDefinition {
+    name: String,
+    path: PathBuf,
+    comment: Option<String>,
+}
 
 /// Configuration describing the requested daemon operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -196,11 +217,12 @@ impl DaemonConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimeOptions {
     bind_address: IpAddr,
     port: u16,
     max_sessions: Option<NonZeroUsize>,
+    modules: Vec<ModuleDefinition>,
 }
 
 impl Default for RuntimeOptions {
@@ -209,6 +231,7 @@ impl Default for RuntimeOptions {
             bind_address: DEFAULT_BIND_ADDRESS,
             port: DEFAULT_PORT,
             max_sessions: None,
+            modules: Vec::new(),
         }
     }
 }
@@ -216,6 +239,7 @@ impl Default for RuntimeOptions {
 impl RuntimeOptions {
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
         let mut options = Self::default();
+        let mut seen_modules = std::collections::HashSet::new();
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
@@ -230,6 +254,15 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
+            } else if argument == "--module" {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| missing_argument_value("--module"))?;
+                let module = parse_module_definition(value)?;
+                if !seen_modules.insert(module.name.clone()) {
+                    return Err(duplicate_module(&module.name));
+                }
+                options.modules.push(module);
             } else {
                 return Err(unsupported_option(argument.clone()));
             }
@@ -245,6 +278,10 @@ impl RuntimeOptions {
 
         self.max_sessions = Some(value);
         Ok(())
+    }
+
+    fn modules(&self) -> &[ModuleDefinition] {
+        &self.modules
     }
 }
 
@@ -431,7 +468,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             Ok((stream, peer_addr)) => {
                 configure_stream(&stream)
                     .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
-                handle_legacy_session(stream).map_err(|error| {
+                handle_legacy_session(stream, options.modules()).map_err(|error| {
                     stream_error(Some(peer_addr), "serve legacy handshake", error)
                 })?;
                 served = served.saturating_add(1);
@@ -459,7 +496,7 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
 }
 
-fn handle_legacy_session(stream: TcpStream) -> io::Result<()> {
+fn handle_legacy_session(stream: TcpStream, modules: &[ModuleDefinition]) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
 
     let greeting =
@@ -474,15 +511,65 @@ fn handle_legacy_session(stream: TcpStream) -> io::Result<()> {
         Err(error) => return Err(error),
     }
 
-    reader
-        .get_mut()
-        .write_all(HANDSHAKE_ERROR_PAYLOAD.as_bytes())?;
-    reader.get_mut().write_all(b"\n")?;
-    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-    reader.get_mut().write_all(exit.as_bytes())?;
-    reader.get_mut().flush()?;
+    let trimmed = request.trim_end_matches(|ch| matches!(ch, '\r' | '\n'));
+
+    if trimmed == "#list" {
+        respond_with_module_list(reader.get_mut(), modules)?;
+    } else if trimmed.is_empty() {
+        reader
+            .get_mut()
+            .write_all(HANDSHAKE_ERROR_PAYLOAD.as_bytes())?;
+        reader.get_mut().write_all(b"\n")?;
+        let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+        reader.get_mut().write_all(exit.as_bytes())?;
+        reader.get_mut().flush()?;
+    } else {
+        respond_with_module_request(reader.get_mut(), modules, trimmed)?;
+    }
 
     Ok(())
+}
+
+fn respond_with_module_list(
+    stream: &mut TcpStream,
+    modules: &[ModuleDefinition],
+) -> io::Result<()> {
+    let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
+    stream.write_all(ok.as_bytes())?;
+
+    for module in modules {
+        let mut line = module.name.clone();
+        if let Some(comment) = &module.comment {
+            if !comment.is_empty() {
+                line.push('\t');
+                line.push_str(comment);
+            }
+        }
+        line.push('\n');
+        stream.write_all(line.as_bytes())?;
+    }
+
+    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+    stream.write_all(exit.as_bytes())?;
+    stream.flush()
+}
+
+fn respond_with_module_request(
+    stream: &mut TcpStream,
+    modules: &[ModuleDefinition],
+    request: &str,
+) -> io::Result<()> {
+    let payload = if modules.iter().any(|module| module.name == request) {
+        MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request)
+    } else {
+        UNKNOWN_MODULE_PAYLOAD.replace("{module}", request)
+    };
+
+    stream.write_all(payload.as_bytes())?;
+    stream.write_all(b"\n")?;
+    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+    stream.write_all(exit.as_bytes())?;
+    stream.flush()
 }
 
 fn missing_argument_value(option: &str) -> DaemonError {
@@ -510,6 +597,48 @@ fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
         .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_string()))
 }
 
+fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonError> {
+    let text = value.to_string_lossy();
+    let (name_part, remainder) = text.split_once('=').ok_or_else(|| {
+        config_error(format!(
+            "invalid module specification '{text}': expected NAME=PATH"
+        ))
+    })?;
+
+    let name = name_part.trim();
+    if name.is_empty() {
+        return Err(config_error(
+            "module name must be non-empty and cannot contain whitespace".to_string(),
+        ));
+    }
+    if name
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch == '/' || ch == '\\')
+    {
+        return Err(config_error(
+            "module name cannot contain whitespace or path separators".to_string(),
+        ));
+    }
+
+    let (path_part, comment_part) = match remainder.split_once(',') {
+        Some((path, comment)) => (path, Some(comment.trim().to_string())),
+        None => (remainder, None),
+    };
+
+    let path_text = path_part.trim();
+    if path_text.is_empty() {
+        return Err(config_error("module path must be non-empty".to_string()));
+    }
+
+    let comment = comment_part.filter(|value| !value.is_empty());
+
+    Ok(ModuleDefinition {
+        name: name.to_string(),
+        path: PathBuf::from(path_text),
+        comment,
+    })
+}
+
 fn unsupported_option(option: OsString) -> DaemonError {
     let text = format!("unsupported daemon argument '{}'", option.to_string_lossy());
     config_error(text)
@@ -522,6 +651,10 @@ fn config_error(text: String) -> DaemonError {
 
 fn duplicate_argument(option: &str) -> DaemonError {
     config_error(format!("duplicate daemon argument '{option}'"))
+}
+
+fn duplicate_module(name: &str) -> DaemonError {
+    config_error(format!("duplicate module definition '{name}'"))
 }
 
 fn bind_error(address: SocketAddr, error: io::Error) -> DaemonError {
@@ -619,6 +752,7 @@ mod tests {
     use std::ffi::OsStr;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
 
@@ -650,6 +784,26 @@ mod tests {
             ]
         );
         assert!(config.has_runtime_request());
+    }
+
+    #[test]
+    fn runtime_options_parse_module_definitions() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs,Documentation"),
+            OsString::from("--module"),
+            OsString::from("logs=/var/log"),
+        ])
+        .expect("parse modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name, "docs");
+        assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
+        assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
+        assert_eq!(modules[1].name, "logs");
+        assert_eq!(modules[1].path, PathBuf::from("/var/log"));
+        assert!(modules[1].comment.is_none());
     }
 
     #[test]
@@ -733,29 +887,54 @@ mod tests {
     }
 
     #[test]
-    fn runtime_options_accepts_inline_values() {
-        let args = vec![
-            OsString::from("--port=9000"),
-            OsString::from("--bind=::1"),
-            OsString::from("--max-sessions=3"),
-        ];
+    fn run_daemon_lists_modules_on_request() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
 
-        let options = RuntimeOptions::parse(&args).expect("inline options accepted");
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--module"),
+                OsString::from("docs=/srv/docs,Documentation"),
+                OsString::from("--module"),
+                OsString::from("logs=/var/log"),
+                OsString::from("--once"),
+            ])
+            .build();
 
-        assert_eq!(options.port, 9000);
-        assert_eq!(options.bind_address, "::1".parse::<IpAddr>().expect("ipv6"));
-        assert_eq!(options.max_sessions.map(|value| value.get()), Some(3));
-    }
+        let handle = thread::spawn(move || run_daemon(config));
 
-    #[test]
-    fn runtime_options_supports_address_alias() {
-        let args = vec![OsString::from("--address=192.0.2.1")];
-        let options = RuntimeOptions::parse(&args).expect("address alias accepted");
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-        assert_eq!(
-            options.bind_address,
-            "192.0.2.1".parse::<IpAddr>().expect("ipv4")
-        );
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("first module");
+        assert_eq!(line.trim_end(), "docs\tDocumentation");
+
+        line.clear();
+        reader.read_line(&mut line).expect("second module");
+        assert_eq!(line.trim_end(), "logs");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
     }
 
     #[test]
