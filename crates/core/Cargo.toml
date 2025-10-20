@@ -12,6 +12,7 @@ build = "build.rs"
 rsync-protocol = { path = "../protocol" }
 rsync-meta = { path = "../meta" }
 rsync-engine = { path = "../engine" }
+rsync-transport = { path = "../transport" }
 libc = "0.2"
 
 [features]

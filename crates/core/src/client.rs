@@ -21,6 +21,9 @@
 //!   filesystem while preserving permissions and timestamps, but without delta
 //!   compression or advanced metadata handling such as ownership, ACLs, or
 //!   extended attributes.
+//! - [`ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
+//!   `host::`) and [`run_module_list`] connects to the remote daemon using the
+//!   legacy `@RSYNCD:` negotiation to retrieve the advertised module table.
 //! - [`ClientError`] carries the exit code and fully formatted
 //!   [`Message`](crate::message::Message) so binaries can surface diagnostics via
 //!   the central rendering helpers.
@@ -71,10 +74,14 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::path::Path;
+use std::time::Duration;
 
 use rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopyPlan};
+use rsync_protocol::ProtocolVersion;
+use rsync_transport::negotiate_legacy_daemon_session;
 
 use crate::{
     message::{Message, Role},
@@ -85,6 +92,12 @@ use crate::{
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// Exit code used when a copy partially or wholly fails.
 const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
+/// Exit code returned when socket I/O fails.
+const SOCKET_IO_EXIT_CODE: i32 = 10;
+/// Exit code returned when a daemon violates the protocol.
+const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
+/// Timeout applied to daemon sockets to avoid hanging handshakes.
+const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -192,6 +205,10 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
@@ -397,6 +414,110 @@ mod tests {
         );
         assert!(!dest_root.join("source").exists());
     }
+
+    #[test]
+    fn module_list_request_detects_remote_url() {
+        let operands = vec![OsString::from("rsync://example.com:8730/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "example.com");
+        assert_eq!(request.address().port(), 8730);
+    }
+
+    #[test]
+    fn module_list_request_rejects_remote_transfer() {
+        let operands = vec![OsString::from("rsync://example.com/module")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("module transfer should be rejected");
+        assert!(error.message().to_string().contains("remote operands"));
+    }
+
+    #[test]
+    fn run_module_list_collects_entries() {
+        let responses = vec![
+            "@RSYNCD: OK\n",
+            "alpha\tPrimary module\n",
+            "beta\n",
+            "@RSYNCD: EXIT\n",
+        ];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.entries()[0].name(), "alpha");
+        assert_eq!(list.entries()[0].comment(), Some("Primary module"));
+        assert_eq!(list.entries()[1].name(), "beta");
+        assert_eq!(list.entries()[1].comment(), None);
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_daemon_error() {
+        let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let error = run_module_list(request).expect_err("daemon error should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(error.message().to_string().contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    fn spawn_stub_daemon(
+        responses: Vec<&'static str>,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub daemon");
+        let addr = listener.local_addr().expect("local addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_connection(stream, responses);
+            }
+        });
+
+        (addr, handle)
+    }
+
+    fn handle_connection(mut stream: TcpStream, responses: Vec<&'static str>) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("set write timeout");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("write greeting");
+        stream.flush().expect("flush greeting");
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read client greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read request");
+        assert_eq!(line, "#list\n");
+
+        for response in responses {
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .expect("write response");
+        }
+        reader.get_mut().flush().expect("flush response");
+    }
 }
 
 fn missing_operands_error() -> ClientError {
@@ -437,4 +558,338 @@ fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
     );
     let message = rsync_error!(PARTIAL_TRANSFER_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
+}
+
+fn socket_error(action: &str, target: impl fmt::Display, error: io::Error) -> ClientError {
+    let text = format!("failed to {action} {target}: {error}");
+    let message = rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Client);
+    ClientError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientError {
+    let message = rsync_error!(exit_code, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(exit_code, message)
+}
+
+fn daemon_protocol_error(text: &str) -> ClientError {
+    daemon_error(
+        format!("unexpected response from daemon: {text}"),
+        PROTOCOL_INCOMPATIBLE_EXIT_CODE,
+    )
+}
+
+fn remote_operands_unsupported() -> ClientError {
+    daemon_error(
+        "remote operands are not supported: this build handles local filesystem copies only",
+        PARTIAL_TRANSFER_EXIT_CODE,
+    )
+}
+
+fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = String::new();
+    let bytes = reader.read_line(&mut line)?;
+
+    if bytes == 0 {
+        return Ok(None);
+    }
+
+    while line.ends_with('\n') || line.ends_with('\r') {
+        line.pop();
+    }
+
+    Ok(Some(line))
+}
+
+/// Target daemon address used for module listing requests.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DaemonAddress {
+    host: String,
+    port: u16,
+}
+
+impl DaemonAddress {
+    /// Creates a new daemon address from the supplied host and port.
+    pub fn new(host: String, port: u16) -> Result<Self, ClientError> {
+        if host.trim().is_empty() {
+            return Err(daemon_error(
+                "daemon host must be non-empty",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            ));
+        }
+        Ok(Self { host, port })
+    }
+
+    /// Returns the daemon host name or address.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Returns the daemon TCP port.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn socket_addr_display(&self) -> SocketAddrDisplay<'_> {
+        SocketAddrDisplay {
+            host: &self.host,
+            port: self.port,
+        }
+    }
+}
+
+struct SocketAddrDisplay<'a> {
+    host: &'a str,
+    port: u16,
+}
+
+impl fmt::Display for SocketAddrDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.host.contains(':') && !self.host.starts_with('[') {
+            write!(f, "[{}]:{}", self.host, self.port)
+        } else {
+            write!(f, "{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// Specification describing a daemon module listing request parsed from CLI operands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModuleListRequest {
+    address: DaemonAddress,
+}
+
+impl ModuleListRequest {
+    /// Attempts to derive a module listing request from CLI-style operands.
+    pub fn from_operands(operands: &[OsString]) -> Result<Option<Self>, ClientError> {
+        if operands.len() != 1 {
+            return Ok(None);
+        }
+
+        Self::from_operand(&operands[0])
+    }
+
+    fn from_operand(operand: &OsString) -> Result<Option<Self>, ClientError> {
+        let text = operand.to_string_lossy();
+
+        if let Some(rest) = text.strip_prefix("rsync://") {
+            return parse_rsync_url(rest).map(Some);
+        }
+
+        if let Some((host_part, module_part)) = text.split_once("::") {
+            if module_part.is_empty() {
+                let address = parse_host_port(host_part)?;
+                return Ok(Some(Self { address }));
+            }
+            return Err(remote_operands_unsupported());
+        }
+
+        Ok(None)
+    }
+
+    /// Returns the parsed daemon address.
+    #[must_use]
+    pub fn address(&self) -> &DaemonAddress {
+        &self.address
+    }
+}
+
+fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
+    let mut parts = rest.splitn(2, '/');
+    let host_port = parts.next().unwrap_or("");
+    let remainder = parts.next();
+
+    if let Some(path) = remainder {
+        if !path.is_empty() {
+            return Err(remote_operands_unsupported());
+        }
+    }
+
+    let address = parse_host_port(host_port)?;
+    Ok(ModuleListRequest { address })
+}
+
+fn parse_host_port(input: &str) -> Result<DaemonAddress, ClientError> {
+    const DEFAULT_PORT: u16 = 873;
+
+    if input.is_empty() {
+        return Err(daemon_error(
+            "daemon host must be non-empty",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        ));
+    }
+
+    if let Some(host) = input.strip_prefix('[') {
+        let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
+        return DaemonAddress::new(address, port);
+    }
+
+    if let Some((host, port)) = split_host_port(input) {
+        let port = port
+            .parse::<u16>()
+            .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
+        return DaemonAddress::new(host.to_string(), port);
+    }
+
+    DaemonAddress::new(input.to_string(), DEFAULT_PORT)
+}
+
+fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), ClientError> {
+    let (addr, remainder) = host.split_once(']').ok_or_else(|| {
+        daemon_error(
+            "invalid bracketed daemon host",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    if remainder.is_empty() {
+        return Ok((addr.to_string(), default_port));
+    }
+
+    let port = remainder
+        .strip_prefix(':')
+        .ok_or_else(|| {
+            daemon_error(
+                "invalid bracketed daemon host",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            )
+        })?
+        .parse::<u16>()
+        .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
+
+    Ok((addr.to_string(), port))
+}
+
+fn split_host_port(input: &str) -> Option<(&str, &str)> {
+    let idx = input.rfind(':')?;
+    let (host, port) = input.split_at(idx);
+    if host.contains(':') {
+        return None;
+    }
+    Some((&host[..], &port[1..]))
+}
+
+/// Describes the module entries advertised by a daemon.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ModuleList {
+    entries: Vec<ModuleListEntry>,
+}
+
+impl ModuleList {
+    /// Creates a new list from the supplied entries.
+    fn new(entries: Vec<ModuleListEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// Returns the advertised module entries.
+    #[must_use]
+    pub fn entries(&self) -> &[ModuleListEntry] {
+        &self.entries
+    }
+}
+
+/// Entry describing a single daemon module.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModuleListEntry {
+    name: String,
+    comment: Option<String>,
+}
+
+impl ModuleListEntry {
+    fn from_line(line: &str) -> Self {
+        match line.split_once('\t') {
+            Some((name, comment)) => Self {
+                name: name.to_string(),
+                comment: if comment.is_empty() {
+                    None
+                } else {
+                    Some(comment.to_string())
+                },
+            },
+            None => Self {
+                name: line.to_string(),
+                comment: None,
+            },
+        }
+    }
+
+    /// Returns the module name advertised by the daemon.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the optional comment associated with the module.
+    #[must_use]
+    pub fn comment(&self) -> Option<&str> {
+        self.comment.as_deref()
+    }
+}
+
+/// Performs a daemon module listing by connecting to the supplied address.
+pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
+    let addr = request.address();
+
+    let stream = TcpStream::connect((addr.host.as_str(), addr.port))
+        .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
+    stream
+        .set_read_timeout(Some(DAEMON_SOCKET_TIMEOUT))
+        .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+    stream
+        .set_write_timeout(Some(DAEMON_SOCKET_TIMEOUT))
+        .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+
+    let handshake = negotiate_legacy_daemon_session(stream, ProtocolVersion::NEWEST)
+        .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
+    let stream = handshake.into_stream();
+    let mut reader = BufReader::new(stream);
+
+    reader
+        .get_mut()
+        .write_all(b"#list\n")
+        .map_err(|error| socket_error("write to", addr.socket_addr_display(), error))?;
+    reader
+        .get_mut()
+        .flush()
+        .map_err(|error| socket_error("flush", addr.socket_addr_display(), error))?;
+
+    let mut entries = Vec::new();
+    let mut acknowledged = false;
+
+    while let Some(line) = read_trimmed_line(&mut reader)
+        .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
+    {
+        if let Some(payload) = line.strip_prefix("@RSYNCD: ") {
+            match payload {
+                "OK" => {
+                    acknowledged = true;
+                }
+                "EXIT" => break,
+                _ => return Err(daemon_protocol_error(&line)),
+            }
+            continue;
+        }
+
+        if let Some(payload) = line.strip_prefix("@ERROR: ") {
+            return Err(daemon_error(
+                payload.to_string(),
+                PARTIAL_TRANSFER_EXIT_CODE,
+            ));
+        }
+
+        if !acknowledged {
+            return Err(daemon_protocol_error(&line));
+        }
+
+        entries.push(ModuleListEntry::from_line(&line));
+    }
+
+    if !acknowledged {
+        return Err(daemon_protocol_error(
+            "daemon did not acknowledge module listing",
+        ));
+    }
+
+    Ok(ModuleList::new(entries))
 }

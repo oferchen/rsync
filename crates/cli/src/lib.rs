@@ -69,7 +69,7 @@ use std::io::{self, Write};
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
-    client::{ClientConfig, run_client as run_core_client},
+    client::{ClientConfig, ModuleListRequest, run_client as run_core_client, run_module_list},
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
@@ -232,6 +232,37 @@ where
         }
     };
 
+    match ModuleListRequest::from_operands(&remainder) {
+        Ok(Some(request)) => {
+            return match run_module_list(request) {
+                Ok(list) => {
+                    if render_module_list(stdout, &list).is_err() {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                Err(error) => {
+                    if write_message(error.message(), stderr).is_err() {
+                        let _ = writeln!(
+                            stderr,
+                            "rsync error: daemon functionality is unavailable in this build (code {})",
+                            error.exit_code()
+                        );
+                    }
+                    error.exit_code()
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(error) => {
+            if write_message(error.message(), stderr).is_err() {
+                let _ = writeln!(stderr, "{}", error);
+            }
+            return error.exit_code();
+        }
+    }
+
     let config = ClientConfig::builder().transfer_args(remainder).build();
 
     match run_core_client(config) {
@@ -311,10 +342,28 @@ fn extract_operands(arguments: Vec<OsString>) -> Result<Vec<OsString>, Unsupport
     Ok(operands)
 }
 
+fn render_module_list<W: Write>(
+    writer: &mut W,
+    list: &rsync_core::client::ModuleList,
+) -> io::Result<()> {
+    for entry in list.entries() {
+        if let Some(comment) = entry.comment() {
+            writeln!(writer, "{}\t{}", entry.name(), comment)?;
+        } else {
+            writeln!(writer, "{}", entry.name())?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::Duration;
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -403,6 +452,46 @@ mod tests {
     }
 
     #[test]
+    fn remote_daemon_listing_prints_modules() {
+        let (addr, handle) = spawn_stub_daemon(vec![
+            "@RSYNCD: OK\n",
+            "first\tFirst module\n",
+            "second\n",
+            "@RSYNCD: EXIT\n",
+        ]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("first\tFirst module"));
+        assert!(rendered.contains("second"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn remote_daemon_error_is_reported() {
+        let (addr, handle) = spawn_stub_daemon(vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+
+        assert_eq!(code, 23);
+        assert!(stdout.is_empty());
+
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
@@ -485,5 +574,51 @@ mod tests {
             fs::read(destination).expect("read destination"),
             b"dash source"
         );
+    }
+
+    fn spawn_stub_daemon(
+        responses: Vec<&'static str>,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub daemon");
+        let addr = listener.local_addr().expect("local addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_connection(stream, responses);
+            }
+        });
+
+        (addr, handle)
+    }
+
+    fn handle_connection(mut stream: TcpStream, responses: Vec<&'static str>) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("set write timeout");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("write greeting");
+        stream.flush().expect("flush greeting");
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read client greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read request");
+        assert_eq!(line, "#list\n");
+
+        for response in responses {
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .expect("write response");
+        }
+        reader.get_mut().flush().expect("flush response");
     }
 }
