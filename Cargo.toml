@@ -6,6 +6,7 @@ members = [
     "crates/checksums",
     "crates/core",
     "crates/daemon",
+    "crates/engine",
     "crates/logging",
     "crates/meta",
     "crates/protocol",

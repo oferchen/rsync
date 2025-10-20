@@ -1,0 +1,16 @@
+[package]
+name = "rsync-engine"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Transfer engine components for the Rust rsync implementation"
+repository = "https://github.com/oferchen/rsync"
+
+[dependencies]
+rsync-meta = { path = "../meta" }
+
+[dev-dependencies]
+filetime = "0.2"
+tempfile = "3.10"
