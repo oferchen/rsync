@@ -454,6 +454,40 @@ mod tests {
     }
 
     #[test]
+    fn module_list_request_supports_ipv6_in_rsync_url() {
+        let operands = vec![OsString::from("rsync://[2001:db8::1]/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "2001:db8::1");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_supports_ipv6_in_legacy_syntax() {
+        let operands = vec![OsString::from("[fe80::1]::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "fe80::1");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_rejects_ipv6_module_transfer() {
+        let operands = vec![OsString::from("[fe80::1]::module")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("module transfers should be rejected");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("remote operands are not supported")
+        );
+    }
+
+    #[test]
     fn run_module_list_collects_entries() {
         let responses = vec![
             "@RSYNCD: OK\n",
@@ -704,7 +738,7 @@ impl ModuleListRequest {
             return parse_rsync_url(rest).map(Some);
         }
 
-        if let Some((host_part, module_part)) = text.split_once("::") {
+        if let Some((host_part, module_part)) = split_daemon_host_module(&text) {
             if module_part.is_empty() {
                 let address = parse_host_port(host_part)?;
                 return Ok(Some(Self { address }));
@@ -763,6 +797,39 @@ fn parse_host_port(input: &str) -> Result<DaemonAddress, ClientError> {
     }
 
     DaemonAddress::new(input.to_string(), DEFAULT_PORT)
+}
+
+fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
+    let mut in_brackets = false;
+    let mut previous_colon = None;
+
+    for (idx, ch) in input.char_indices() {
+        match ch {
+            '[' => {
+                in_brackets = true;
+                previous_colon = None;
+            }
+            ']' => {
+                in_brackets = false;
+                previous_colon = None;
+            }
+            ':' if !in_brackets => {
+                if let Some(prev) = previous_colon {
+                    if prev + 1 == idx {
+                        let host = &input[..prev];
+                        let module = &input[idx + 1..];
+                        return Some((host, module));
+                    }
+                }
+                previous_colon = Some(idx);
+            }
+            _ => {
+                previous_colon = None;
+            }
+        }
+    }
+
+    None
 }
 
 fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), ClientError> {
