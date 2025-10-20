@@ -151,7 +151,30 @@ impl LocalCopyPlan {
     /// Reports [`LocalCopyError`] variants when operand validation fails or I/O
     /// operations encounter errors.
     pub fn execute(&self) -> Result<(), LocalCopyError> {
-        copy_sources(self)
+        self.execute_with(LocalCopyExecution::Apply)
+    }
+
+    /// Executes the planned copy using the requested execution mode.
+    ///
+    /// When [`LocalCopyExecution::DryRun`] is selected the filesystem is left
+    /// untouched while operand validation and readability checks still occur.
+    pub fn execute_with(&self, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
+        copy_sources(self, mode)
+    }
+}
+
+/// Describes how a [`LocalCopyPlan`] should be executed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalCopyExecution {
+    /// Perform the copy and mutate the destination filesystem.
+    Apply,
+    /// Validate the copy without mutating the destination tree.
+    DryRun,
+}
+
+impl LocalCopyExecution {
+    const fn is_dry_run(self) -> bool {
+        matches!(self, Self::DryRun)
     }
 }
 
@@ -294,6 +317,8 @@ pub enum LocalCopyArgumentError {
     UnsupportedFileType,
     /// Attempted to replace an existing directory with a symbolic link.
     ReplaceDirectoryWithSymlink,
+    /// Attempted to replace an existing directory with a regular file.
+    ReplaceDirectoryWithFile,
     /// Attempted to replace a non-directory with a directory.
     ReplaceNonDirectoryWithDirectory,
     /// Encountered an operand that refers to a remote host or module.
@@ -317,6 +342,7 @@ impl LocalCopyArgumentError {
             Self::ReplaceDirectoryWithSymlink => {
                 "cannot replace existing directory with symbolic link"
             }
+            Self::ReplaceDirectoryWithFile => "cannot replace existing directory with regular file",
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
@@ -410,49 +436,17 @@ impl DestinationSpec {
     }
 }
 
-fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
+fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
 
     if plan.destination.force_directory() {
-        if destination_state.exists && !destination_state.is_dir {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::DestinationMustBeDirectory,
-            ));
-        }
-
-        if !destination_state.exists {
-            fs::create_dir_all(destination_path).map_err(|error| {
-                LocalCopyError::io(
-                    "create destination directory",
-                    destination_path.to_path_buf(),
-                    error,
-                )
-            })?;
-            destination_state.exists = true;
-            destination_state.is_dir = true;
-        }
+        ensure_destination_directory(destination_path, &mut destination_state, mode)?;
     }
 
     if multiple_sources {
-        if destination_state.exists && !destination_state.is_dir {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::DestinationMustBeDirectory,
-            ));
-        }
-
-        if !destination_state.exists {
-            fs::create_dir_all(destination_path).map_err(|error| {
-                LocalCopyError::io(
-                    "create destination directory",
-                    destination_path.to_path_buf(),
-                    error,
-                )
-            })?;
-            destination_state.exists = true;
-            destination_state.is_dir = true;
-        }
+        ensure_destination_directory(destination_path, &mut destination_state, mode)?;
     }
 
     let destination_behaves_like_directory =
@@ -479,7 +473,7 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(source_path, &target, &metadata)?;
+            copy_directory_recursive(source_path, &target, &metadata, mode)?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -490,7 +484,7 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
                 destination_path.to_path_buf()
             };
 
-            copy_file(source_path, &target, &metadata)?;
+            copy_file(source_path, &target, &metadata, mode)?;
         } else if file_type.is_symlink() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -501,7 +495,7 @@ fn copy_sources(plan: &LocalCopyPlan) -> Result<(), LocalCopyError> {
                 destination_path.to_path_buf()
             };
 
-            copy_symlink(source_path, &target, &metadata)?;
+            copy_symlink(source_path, &target, &metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -534,6 +528,7 @@ fn copy_directory_recursive(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
     let mut destination_preexisted = false;
 
@@ -547,9 +542,11 @@ fn copy_directory_recursive(
             destination_preexisted = true;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir_all(destination).map_err(|error| {
-                LocalCopyError::io("create directory", destination.to_path_buf(), error)
-            })?;
+            if !mode.is_dry_run() {
+                fs::create_dir_all(destination).map_err(|error| {
+                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
+                })?;
+            }
         }
         Err(error) => {
             return Err(LocalCopyError::io(
@@ -572,11 +569,11 @@ fn copy_directory_recursive(
         let target_path = destination.join(Path::new(&file_name));
 
         if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path, &entry_metadata)?;
+            copy_directory_recursive(&entry_path, &target_path, &entry_metadata, mode)?;
         } else if entry_type.is_file() {
-            copy_file(&entry_path, &target_path, &entry_metadata)?;
+            copy_file(&entry_path, &target_path, &entry_metadata, mode)?;
         } else if entry_type.is_symlink() {
-            copy_symlink(&entry_path, &target_path, &entry_metadata)?;
+            copy_symlink(&entry_path, &target_path, &entry_metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -584,7 +581,7 @@ fn copy_directory_recursive(
         }
     }
 
-    if !destination_preexisted {
+    if !destination_preexisted && !mode.is_dry_run() {
         apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
     }
 
@@ -595,13 +592,63 @@ fn copy_file(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-            })?;
+            if mode.is_dry_run() {
+                match fs::symlink_metadata(parent) {
+                    Ok(existing) if !existing.file_type().is_dir() => {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "inspect existing destination",
+                            parent.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                fs::create_dir_all(parent).map_err(|error| {
+                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                })?;
+            }
         }
+    }
+
+    if mode.is_dry_run() {
+        match fs::symlink_metadata(destination) {
+            Ok(existing) => {
+                if existing.file_type().is_dir() {
+                    return Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::ReplaceDirectoryWithFile,
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        if let Err(error) = fs::File::open(source) {
+            return Err(LocalCopyError::io(
+                "open source file",
+                source.to_path_buf(),
+                error,
+            ));
+        }
+
+        return Ok(());
     }
 
     fs::copy(source, destination)
@@ -614,12 +661,32 @@ fn copy_symlink(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-            })?;
+            if mode.is_dry_run() {
+                match fs::symlink_metadata(parent) {
+                    Ok(existing) if !existing.file_type().is_dir() => {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "inspect existing destination",
+                            parent.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                fs::create_dir_all(parent).map_err(|error| {
+                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                })?;
+            }
         }
     }
 
@@ -632,13 +699,15 @@ fn copy_symlink(
                 ));
             }
 
-            fs::remove_file(destination).map_err(|error| {
-                LocalCopyError::io(
-                    "remove existing destination",
-                    destination.to_path_buf(),
-                    error,
-                )
-            })?;
+            if !mode.is_dry_run() {
+                fs::remove_file(destination).map_err(|error| {
+                    LocalCopyError::io(
+                        "remove existing destination",
+                        destination.to_path_buf(),
+                        error,
+                    )
+                })?;
+            }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -653,12 +722,48 @@ fn copy_symlink(
     let target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
 
+    if mode.is_dry_run() {
+        return Ok(());
+    }
+
     create_symlink(&target, source, destination).map_err(|error| {
         LocalCopyError::io("create symbolic link", destination.to_path_buf(), error)
     })?;
 
     apply_symlink_metadata(destination, metadata).map_err(map_metadata_error)?;
 
+    Ok(())
+}
+
+fn ensure_destination_directory(
+    destination_path: &Path,
+    state: &mut DestinationState,
+    mode: LocalCopyExecution,
+) -> Result<(), LocalCopyError> {
+    if state.exists {
+        if !state.is_dir {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::DestinationMustBeDirectory,
+            ));
+        }
+        return Ok(());
+    }
+
+    if mode.is_dry_run() {
+        state.exists = true;
+        state.is_dir = true;
+        return Ok(());
+    }
+
+    fs::create_dir_all(destination_path).map_err(|error| {
+        LocalCopyError::io(
+            "create destination directory",
+            destination_path.to_path_buf(),
+            error,
+        )
+    })?;
+    state.exists = true;
+    state.is_dir = true;
     Ok(())
 }
 
@@ -998,5 +1103,50 @@ mod tests {
         plan.execute().expect("copy succeeds");
         assert!(dest_root.join("nested").exists());
         assert!(!dest_root.join("source").exists());
+    }
+
+    #[test]
+    fn execute_with_dry_run_leaves_destination_absent() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"preview").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute_with(LocalCopyExecution::DryRun)
+            .expect("dry-run succeeds");
+
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_with_dry_run_detects_directory_conflict() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"data").expect("write source");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        let conflict_dir = dest_root.join("source.txt");
+        fs::create_dir_all(&conflict_dir).expect("create conflicting directory");
+
+        let operands = vec![source.into_os_string(), dest_root.into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let error = plan
+            .execute_with(LocalCopyExecution::DryRun)
+            .expect_err("dry-run should detect conflict");
+
+        match error.into_kind() {
+            LocalCopyErrorKind::InvalidArgument(reason) => {
+                assert_eq!(reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
+            }
+            other => panic!("unexpected error kind: {:?}", other),
+        }
     }
 }

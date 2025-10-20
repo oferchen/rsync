@@ -7,7 +7,7 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help` and
-//! `--version`) and delegates local copy operations to
+//! `--version`, and `--dry-run`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -20,7 +20,7 @@
 //! iterator of arguments together with handles for standard output and error,
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help` and `--version` flags while treating all other
+//! parse that recognises `--help`, `--version`, and `--dry-run` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
 //! deterministic local copy pipeline.
@@ -83,13 +83,14 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [--help] [--version] SOURCE... DEST\n",
+    "Usage: oc-rsync [--help] [--version] [--dry-run] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
     "following options are recognised:\n",
     "  --help      Show this help message and exit.\n",
     "  --version   Output version information and exit.\n",
+    "  --dry-run   Validate transfers without modifying the destination.\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -101,6 +102,7 @@ const HELP_TEXT: &str = concat!(
 struct ParsedArgs {
     show_help: bool,
     show_version: bool,
+    dry_run: bool,
     remainder: Vec<OsString>,
 }
 
@@ -121,6 +123,13 @@ fn clap_command() -> Command {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("dry-run")
+                .long("dry-run")
+                .short('n')
+                .help("Validate transfers without modifying the destination.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -149,6 +158,7 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
+    let dry_run = matches.get_flag("dry-run");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -157,6 +167,7 @@ where
     Ok(ParsedArgs {
         show_help,
         show_version,
+        dry_run,
         remainder,
     })
 }
@@ -263,7 +274,10 @@ where
         }
     }
 
-    let config = ClientConfig::builder().transfer_args(remainder).build();
+    let config = ClientConfig::builder()
+        .transfer_args(remainder)
+        .dry_run(parsed.dry_run)
+        .build();
 
     match run_core_client(config) {
         Ok(()) => 0,
@@ -300,7 +314,7 @@ impl UnsupportedOption {
         let option = self.option.to_string_lossy();
         rsync_error!(
             1,
-            "unsupported option '{}': this build currently supports only --help and --version",
+            "unsupported option '{}': this build currently supports only --help, --version, and --dry-run",
             option
         )
         .with_role(Role::Client)
@@ -308,7 +322,7 @@ impl UnsupportedOption {
 
     fn fallback_text(&self) -> String {
         format!(
-            "unsupported option '{}': this build currently supports only --help and --version",
+            "unsupported option '{}': this build currently supports only --help, --version, and --dry-run",
             self.option.to_string_lossy()
         )
     }
@@ -562,20 +576,26 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_long_option_reports_error() {
+    fn dry_run_flag_skips_destination_mutation() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        fs::write(&source, b"contents").expect("write source");
+        let destination = tmp.path().join("dest.txt");
+
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("--dry-run"),
-            OsString::from("source"),
-            OsString::from("dest"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
         ]);
 
-        assert_eq!(code, 1);
+        assert_eq!(code, 0);
         assert!(stdout.is_empty());
-
-        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("unsupported option '--dry-run'"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert!(stderr.is_empty());
+        assert!(!destination.exists());
     }
 
     #[test]
