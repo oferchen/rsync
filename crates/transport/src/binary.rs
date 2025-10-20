@@ -24,8 +24,7 @@ use std::io::{self, Read, Write};
 #[derive(Clone, Debug)]
 pub struct BinaryHandshake<R> {
     stream: NegotiatedStream<R>,
-    remote_advertised: u32,
-    remote_protocol: ProtocolVersion,
+    remote_advertisement: RemoteProtocolAdvertisement,
     negotiated_protocol: ProtocolVersion,
     local_advertised: ProtocolVersion,
 }
@@ -89,8 +88,7 @@ pub struct BinaryHandshake<R> {
 /// ```
 #[derive(Clone, Debug)]
 pub struct BinaryHandshakeParts<R> {
-    remote_advertised: u32,
-    remote_protocol: ProtocolVersion,
+    remote_advertisement: RemoteProtocolAdvertisement,
     negotiated_protocol: ProtocolVersion,
     local_advertised: ProtocolVersion,
     stream: NegotiatedStreamParts<R>,
@@ -98,15 +96,13 @@ pub struct BinaryHandshakeParts<R> {
 
 impl<R> BinaryHandshakeParts<R> {
     const fn new(
-        remote_advertised: u32,
-        remote_protocol: ProtocolVersion,
+        remote_advertisement: RemoteProtocolAdvertisement,
         negotiated_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,
         stream: NegotiatedStreamParts<R>,
     ) -> Self {
         Self {
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream,
@@ -116,13 +112,13 @@ impl<R> BinaryHandshakeParts<R> {
     /// Returns the protocol number advertised by the remote peer before clamping.
     #[must_use]
     pub const fn remote_advertised_protocol(&self) -> u32 {
-        self.remote_advertised
+        self.remote_advertisement.advertised()
     }
 
     /// Returns the remote protocol version after clamping future advertisements.
     #[must_use]
     pub const fn remote_protocol(&self) -> ProtocolVersion {
-        self.remote_protocol
+        self.remote_advertisement.negotiated()
     }
 
     /// Returns the negotiated protocol after applying the caller's cap.
@@ -163,10 +159,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// [`ProtocolVersion::NEWEST`].
     #[must_use]
     pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
-        RemoteProtocolAdvertisement::from_raw(
-            self.remote_advertised_protocol(),
-            self.remote_protocol(),
-        )
+        self.remote_advertisement
     }
 
     /// Reports whether the negotiated protocol was reduced by the caller-specified cap.
@@ -256,16 +249,14 @@ impl<R> BinaryHandshakeParts<R> {
         F: FnOnce(R) -> T,
     {
         let Self {
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream,
         } = self;
 
         BinaryHandshakeParts::from_components(
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream.map_inner(map),
@@ -342,8 +333,7 @@ impl<R> BinaryHandshakeParts<R> {
         F: FnOnce(R) -> Result<T, (E, R)>,
     {
         let Self {
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream,
@@ -353,8 +343,7 @@ impl<R> BinaryHandshakeParts<R> {
             .try_map_inner(map)
             .map(|stream| {
                 BinaryHandshakeParts::from_components(
-                    remote_advertised,
-                    remote_protocol,
+                    remote_advertisement,
                     negotiated_protocol,
                     local_advertised,
                     stream,
@@ -363,8 +352,7 @@ impl<R> BinaryHandshakeParts<R> {
             .map_err(|err| {
                 err.map_original(|stream| {
                     BinaryHandshakeParts::from_components(
-                        remote_advertised,
-                        remote_protocol,
+                        remote_advertisement,
                         negotiated_protocol,
                         local_advertised,
                         stream,
@@ -428,8 +416,8 @@ impl<R> BinaryHandshakeParts<R> {
         NegotiatedStreamParts<R>,
     ) {
         (
-            self.remote_advertised,
-            self.remote_protocol,
+            self.remote_advertisement.advertised(),
+            self.remote_advertisement.negotiated(),
             self.local_advertised,
             self.negotiated_protocol,
             self.stream,
@@ -437,15 +425,13 @@ impl<R> BinaryHandshakeParts<R> {
     }
 
     fn from_components(
-        remote_advertised: u32,
-        remote_protocol: ProtocolVersion,
+        remote_advertisement: RemoteProtocolAdvertisement,
         negotiated_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,
         stream: NegotiatedStreamParts<R>,
     ) -> Self {
         Self::new(
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream,
@@ -470,13 +456,13 @@ impl<R> BinaryHandshake<R> {
     /// Returns the protocol version advertised by the remote peer.
     #[must_use]
     pub const fn remote_protocol(&self) -> ProtocolVersion {
-        self.remote_protocol
+        self.remote_advertisement.negotiated()
     }
 
     /// Returns the protocol byte advertised by the remote peer before clamping.
     #[must_use]
     pub const fn remote_advertised_protocol(&self) -> u32 {
-        self.remote_advertised
+        self.remote_advertisement.advertised()
     }
 
     /// Returns the protocol version the local peer advertised to the remote side.
@@ -493,7 +479,7 @@ impl<R> BinaryHandshake<R> {
     /// Reports whether the remote peer advertised a protocol newer than we support.
     #[must_use]
     pub const fn remote_protocol_was_clamped(&self) -> bool {
-        self.remote_advertisement().was_clamped()
+        self.remote_advertisement.was_clamped()
     }
 
     /// Returns the classification of the peer's protocol advertisement.
@@ -502,10 +488,7 @@ impl<R> BinaryHandshake<R> {
     /// wrapper and its decomposed form remain in sync.
     #[must_use]
     pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
-        RemoteProtocolAdvertisement::from_raw(
-            self.remote_advertised_protocol(),
-            self.remote_protocol(),
-        )
+        self.remote_advertisement
     }
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
@@ -568,7 +551,7 @@ impl<R> BinaryHandshake<R> {
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_protocol_was_capped(&self) -> bool {
-        local_cap_reduced_protocol(self.remote_protocol, self.negotiated_protocol)
+        local_cap_reduced_protocol(self.remote_protocol(), self.negotiated_protocol)
     }
 
     /// Returns a shared reference to the replaying stream.
@@ -619,8 +602,8 @@ impl<R> BinaryHandshake<R> {
         NegotiatedStream<R>,
     ) {
         (
-            self.remote_advertised,
-            self.remote_protocol,
+            self.remote_advertisement.advertised(),
+            self.remote_advertisement.negotiated(),
             self.local_advertised,
             self.negotiated_protocol,
             self.stream,
@@ -632,9 +615,10 @@ impl<R> BinaryHandshake<R> {
     pub fn into_parts(self) -> BinaryHandshakeParts<R> {
         let (remote_advertised, remote_protocol, local_advertised, negotiated_protocol, stream) =
             self.into_stream_parts();
+        let remote_advertisement =
+            RemoteProtocolAdvertisement::from_raw(remote_advertised, remote_protocol);
         BinaryHandshakeParts::from_components(
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
             stream,
@@ -673,8 +657,10 @@ impl<R> BinaryHandshake<R> {
 
         Self {
             stream,
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement: RemoteProtocolAdvertisement::from_raw(
+                remote_advertised,
+                remote_protocol,
+            ),
             local_advertised,
             negotiated_protocol,
         }
@@ -694,16 +680,14 @@ impl<R> BinaryHandshake<R> {
     {
         let Self {
             stream,
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
         } = self;
 
         BinaryHandshake {
             stream: stream.map_inner(map),
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
         }
@@ -722,8 +706,7 @@ impl<R> BinaryHandshake<R> {
     {
         let Self {
             stream,
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
         } = self;
@@ -732,16 +715,14 @@ impl<R> BinaryHandshake<R> {
             .try_map_inner(map)
             .map(|stream| BinaryHandshake {
                 stream,
-                remote_advertised,
-                remote_protocol,
+                remote_advertisement,
                 negotiated_protocol,
                 local_advertised,
             })
             .map_err(|err| {
                 err.map_original(|stream| BinaryHandshake {
                     stream,
-                    remote_advertised,
-                    remote_protocol,
+                    remote_advertisement,
                     negotiated_protocol,
                     local_advertised,
                 })
@@ -767,15 +748,14 @@ impl<R> BinaryHandshake<R> {
     ) {
         let Self {
             stream,
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement,
             negotiated_protocol,
             local_advertised,
         } = self;
 
         (
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement.advertised(),
+            remote_advertisement.negotiated(),
             local_advertised,
             negotiated_protocol,
             stream.into_parts(),
@@ -801,8 +781,10 @@ impl<R> BinaryHandshake<R> {
 
         Self {
             stream: parts.into_stream(),
-            remote_advertised,
-            remote_protocol,
+            remote_advertisement: RemoteProtocolAdvertisement::from_raw(
+                remote_advertised,
+                remote_protocol,
+            ),
             local_advertised,
             negotiated_protocol,
         }
@@ -909,11 +891,12 @@ where
         }
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
+    let remote_advertisement =
+        RemoteProtocolAdvertisement::from_raw(remote_advertised, remote_protocol);
 
     Ok(BinaryHandshake {
         stream,
-        remote_advertised,
-        remote_protocol,
+        remote_advertisement,
         local_advertised: desired_protocol,
         negotiated_protocol,
     })
