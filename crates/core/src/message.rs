@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 pub mod strings;
 
 const MAX_MESSAGE_SEGMENTS: usize = 18;
+const OVERREPORTED_BYTES_ERROR: &str = "writer reported more bytes than available in message";
 
 #[derive(Debug)]
 struct MessageBufferReserveError {
@@ -430,7 +431,7 @@ impl<'a> MessageSegments<'a> {
                     if written > remaining {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "writer reported more bytes than available in message",
+                            OVERREPORTED_BYTES_ERROR,
                         ));
                     }
                     remaining -= written;
@@ -469,7 +470,7 @@ impl<'a> MessageSegments<'a> {
                     if written > remaining {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "writer reported more bytes than available in message",
+                            OVERREPORTED_BYTES_ERROR,
                         ));
                     }
                     remaining -= written;
@@ -504,9 +505,16 @@ impl<'a> MessageSegments<'a> {
                 continue;
             }
 
+            if bytes.len() > remaining {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    OVERREPORTED_BYTES_ERROR,
+                ));
+            }
+
             writer.write_all(bytes)?;
             debug_assert!(bytes.len() <= remaining);
-            remaining = remaining.saturating_sub(bytes.len());
+            remaining -= bytes.len();
         }
 
         if remaining != 0 {
@@ -4786,6 +4794,34 @@ mod tests {
 
         assert_eq!(writer.written, message.to_bytes().unwrap());
         assert_eq!(writer.vectored_calls, 1);
+    }
+
+    #[test]
+    fn segments_write_to_errors_when_total_len_underreports_written_bytes() {
+        let message = Message::error(11, "error in file IO")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+
+        let mut scratch = MessageScratch::new();
+        let mut segments = message.as_segments(&mut scratch, false);
+        assert!(
+            segments.segment_count() > 1,
+            "test requires multiple segments"
+        );
+        assert!(segments.len() > 0, "message must contain bytes");
+
+        segments.total_len = segments
+            .total_len
+            .checked_sub(1)
+            .expect("total length should exceed one byte");
+
+        let mut writer = TrackingWriter::with_always_unsupported();
+
+        let err = segments
+            .write_to(&mut writer)
+            .expect_err("length mismatch must produce an error");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
