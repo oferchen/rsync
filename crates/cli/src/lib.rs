@@ -49,7 +49,7 @@
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
-//! let exit_code = run(["rsync", "--version"], &mut stdout, &mut stderr);
+//! let exit_code = run(["oc-rsync", "--version"], &mut stdout, &mut stderr);
 //!
 //! assert_eq!(exit_code, 0);
 //! assert!(!stdout.is_empty());
@@ -85,7 +85,7 @@ struct ParsedArgs {
 
 /// Builds the `clap` command used for parsing.
 fn clap_command() -> Command {
-    Command::new("rsync")
+    Command::new("oc-rsync")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -121,7 +121,7 @@ where
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
     if args.is_empty() {
-        args.push(OsString::from("rsync"));
+        args.push(OsString::from("oc-rsync"));
     }
 
     let mut matches = clap_command().try_get_matches_from(args)?;
@@ -241,7 +241,8 @@ mod tests {
 
     #[test]
     fn version_flag_renders_report() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("--version")]);
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -252,7 +253,8 @@ mod tests {
 
     #[test]
     fn help_flag_renders_clap_output() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("--help")]);
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -263,7 +265,8 @@ mod tests {
 
     #[test]
     fn transfer_request_reports_missing_engine() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("-av")]);
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("-av")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -277,13 +280,13 @@ mod tests {
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
-            .try_get_matches_from(vec!["rsync", "--version=extra"])
+            .try_get_matches_from(vec!["oc-rsync", "--version=extra"])
             .unwrap_err();
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [OsString::from("rsync"), OsString::from("--version=extra")],
+            [OsString::from("oc-rsync"), OsString::from("--version=extra")],
             &mut stdout,
             &mut stderr,
         );
