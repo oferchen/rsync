@@ -14,13 +14,16 @@
 //!
 //! - [`ClientConfig`] encapsulates the caller-provided transfer arguments. A
 //!   builder is offered so future options (e.g. logging verbosity) can be wired
-//!   through without breaking call sites.
+//!   through without breaking call sites. Today it exposes toggles for dry-run
+//!   validation (`--dry-run`) and extraneous-destination cleanup (`--delete`).
 //! - [`run_client`] executes the client flow. The helper delegates to
 //!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
 //!   filesystem while preserving permissions and timestamps, but without delta
 //!   compression or advanced metadata handling such as ownership, ACLs, or
-//!   extended attributes.
+//!   extended attributes. When deletion is requested, the helper removes
+//!   destination entries that are absent from the source tree before applying
+//!   metadata.
 //! - [`ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
 //!   `host::`) and [`run_module_list`] connects to the remote daemon using the
 //!   legacy `@RSYNCD:` negotiation to retrieve the advertised module table.
@@ -80,7 +83,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rsync_engine::local_copy::{
-    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyPlan,
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
 };
 use rsync_protocol::ProtocolVersion;
 use rsync_transport::negotiate_legacy_daemon_session;
@@ -106,6 +109,7 @@ const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
+    delete: bool,
 }
 
 impl ClientConfig {
@@ -134,6 +138,13 @@ impl ClientConfig {
     pub const fn dry_run(&self) -> bool {
         self.dry_run
     }
+
+    /// Returns whether extraneous destination files should be removed.
+    #[must_use]
+    #[doc(alias = "--delete")]
+    pub const fn delete(&self) -> bool {
+        self.delete
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -141,6 +152,7 @@ impl ClientConfig {
 pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
     dry_run: bool,
+    delete: bool,
 }
 
 impl ClientConfigBuilder {
@@ -164,12 +176,21 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables deletion of extraneous destination files.
+    #[must_use]
+    #[doc(alias = "--delete")]
+    pub const fn delete(mut self, delete: bool) -> Self {
+        self.delete = delete;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
         ClientConfig {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
+            delete: self.delete,
         }
     }
 }
@@ -221,12 +242,15 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
 
-    if config.dry_run() {
-        plan.execute_with(LocalCopyExecution::DryRun)
+    let options = LocalCopyOptions::default().delete(config.delete());
+    let mode = if config.dry_run() {
+        LocalCopyExecution::DryRun
     } else {
-        plan.execute()
-    }
-    .map_err(map_local_copy_error)
+        LocalCopyExecution::Apply
+    };
+
+    plan.execute_with_options(mode, options)
+        .map_err(map_local_copy_error)
 }
 
 #[cfg(test)]
@@ -261,6 +285,16 @@ mod tests {
             .build();
 
         assert!(config.dry_run());
+    }
+
+    #[test]
+    fn builder_enables_delete() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete(true)
+            .build();
+
+        assert!(config.delete());
     }
 
     #[test]
@@ -305,6 +339,65 @@ mod tests {
         run_client(config).expect("dry-run succeeds");
 
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn run_client_delete_removes_extraneous_entries() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_operand, dest_root.clone().into_os_string()])
+            .delete(true)
+            .build();
+
+        run_client(config).expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"fresh"
+        );
+        assert!(!dest_root.join("extra.txt").exists());
+    }
+
+    #[test]
+    fn run_client_delete_respects_dry_run() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_operand, dest_root.clone().into_os_string()])
+            .dry_run(true)
+            .delete(true)
+            .build();
+
+        run_client(config).expect("dry-run succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"stale"
+        );
+        assert!(dest_root.join("extra.txt").exists());
     }
 
     #[test]

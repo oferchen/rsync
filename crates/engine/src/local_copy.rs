@@ -11,6 +11,8 @@
 //!   [`LocalCopyPlan::execute`] for performing the copy.
 //! - [`LocalCopyError`] mirrors upstream exit codes so higher layers can render
 //!   canonical diagnostics.
+//! - [`LocalCopyOptions`] configures behaviours such as deleting destination
+//!   entries that are absent from the source when `--delete` is requested.
 //! - Helper functions preserve metadata after content writes, matching upstream
 //!   rsync's ordering and covering regular files, directories, symbolic links,
 //!   FIFOs, and device nodes. Hard linked files are reproduced as hard links in
@@ -43,6 +45,7 @@
 use std::cmp::Ordering;
 #[cfg(unix)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -156,7 +159,7 @@ impl LocalCopyPlan {
     /// Reports [`LocalCopyError`] variants when operand validation fails or I/O
     /// operations encounter errors.
     pub fn execute(&self) -> Result<(), LocalCopyError> {
-        self.execute_with(LocalCopyExecution::Apply)
+        self.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
     }
 
     /// Executes the planned copy using the requested execution mode.
@@ -164,7 +167,16 @@ impl LocalCopyPlan {
     /// When [`LocalCopyExecution::DryRun`] is selected the filesystem is left
     /// untouched while operand validation and readability checks still occur.
     pub fn execute_with(&self, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
-        copy_sources(self, mode)
+        self.execute_with_options(mode, LocalCopyOptions::default())
+    }
+
+    /// Executes the planned copy with additional behavioural options.
+    pub fn execute_with_options(
+        &self,
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+    ) -> Result<(), LocalCopyError> {
+        copy_sources(self, mode, options)
     }
 }
 
@@ -180,6 +192,34 @@ pub enum LocalCopyExecution {
 impl LocalCopyExecution {
     const fn is_dry_run(self) -> bool {
         matches!(self, Self::DryRun)
+    }
+}
+
+/// Options that influence how a [`LocalCopyPlan`] is executed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LocalCopyOptions {
+    delete: bool,
+}
+
+impl LocalCopyOptions {
+    /// Creates a new [`LocalCopyOptions`] value with defaults applied.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { delete: false }
+    }
+
+    /// Requests that destination files absent from the source be removed.
+    #[must_use]
+    #[doc(alias = "--delete")]
+    pub const fn delete(mut self, delete: bool) -> Self {
+        self.delete = delete;
+        self
+    }
+
+    /// Reports whether extraneous destination files should be removed.
+    #[must_use]
+    pub const fn delete_extraneous(&self) -> bool {
+        self.delete
     }
 }
 
@@ -508,7 +548,11 @@ impl DestinationSpec {
     }
 }
 
-fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
+fn copy_sources(
+    plan: &LocalCopyPlan,
+    mode: LocalCopyExecution,
+    options: LocalCopyOptions,
+) -> Result<(), LocalCopyError> {
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
@@ -546,7 +590,14 @@ fn copy_sources(plan: &LocalCopyPlan, mode: LocalCopyExecution) -> Result<(), Lo
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(source_path, &target, &metadata, mode, &mut hard_links)?;
+            copy_directory_recursive(
+                source_path,
+                &target,
+                &metadata,
+                mode,
+                options,
+                &mut hard_links,
+            )?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -624,6 +675,7 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    options: LocalCopyOptions,
     hard_links: &mut HardLinkTracker,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
@@ -652,30 +704,39 @@ fn copy_directory_recursive(
 
     let entries = read_directory_entries_sorted(source)?;
 
-    for entry in entries {
-        let DirectoryEntry {
-            file_name,
-            path: entry_path,
-            metadata: entry_metadata,
-        } = entry;
+    for entry in entries.iter() {
+        let file_name = &entry.file_name;
+        let entry_path = &entry.path;
+        let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
-        let target_path = destination.join(Path::new(&file_name));
+        let target_path = destination.join(Path::new(file_name));
 
         if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path, &entry_metadata, mode, hard_links)?;
+            copy_directory_recursive(
+                entry_path,
+                &target_path,
+                entry_metadata,
+                mode,
+                options,
+                hard_links,
+            )?;
         } else if entry_type.is_file() {
-            copy_file(&entry_path, &target_path, &entry_metadata, mode, hard_links)?;
+            copy_file(entry_path, &target_path, entry_metadata, mode, hard_links)?;
         } else if entry_type.is_symlink() {
-            copy_symlink(&entry_path, &target_path, &entry_metadata, mode)?;
+            copy_symlink(entry_path, &target_path, entry_metadata, mode)?;
         } else if is_fifo(&entry_type) {
-            copy_fifo(&target_path, &entry_metadata, mode)?;
+            copy_fifo(&target_path, entry_metadata, mode)?;
         } else if is_device(&entry_type) {
-            copy_device(&target_path, &entry_metadata, mode)?;
+            copy_device(&target_path, entry_metadata, mode)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
             ));
         }
+    }
+
+    if options.delete_extraneous() {
+        delete_extraneous_entries(destination, &entries, mode)?;
     }
 
     if !mode.is_dry_run() {
@@ -952,6 +1013,76 @@ fn copy_device(
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     Ok(())
+}
+
+fn delete_extraneous_entries(
+    destination: &Path,
+    source_entries: &[DirectoryEntry],
+    mode: LocalCopyExecution,
+) -> Result<(), LocalCopyError> {
+    let mut keep = HashSet::with_capacity(source_entries.len());
+    for entry in source_entries {
+        keep.insert(entry.file_name.clone());
+    }
+
+    let read_dir = match fs::read_dir(destination) {
+        Ok(iter) => iter,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "read destination directory",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    for entry in read_dir {
+        let entry = entry.map_err(|error| {
+            LocalCopyError::io("read destination entry", destination.to_path_buf(), error)
+        })?;
+        let name = entry.file_name();
+
+        if keep.contains(&name) {
+            continue;
+        }
+
+        let path = destination.join(&name);
+
+        if mode.is_dry_run() {
+            entry.file_type().map_err(|error| {
+                LocalCopyError::io("inspect extraneous destination entry", path, error)
+            })?;
+            continue;
+        }
+
+        let file_type = entry.file_type().map_err(|error| {
+            LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
+        })?;
+        remove_extraneous_path(path, file_type)?;
+    }
+
+    Ok(())
+}
+
+fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), LocalCopyError> {
+    let context = if file_type.is_dir() {
+        "remove extraneous directory"
+    } else {
+        "remove extraneous entry"
+    };
+
+    let result = if file_type.is_dir() {
+        fs::remove_dir_all(&path)
+    } else {
+        fs::remove_file(&path)
+    };
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(LocalCopyError::io(context, path, error)),
+    }
 }
 
 fn copy_symlink(
@@ -1484,10 +1615,9 @@ mod tests {
             .expect("set fifo permissions");
 
         let dest_root = temp.path().join("dest");
-        let operands = vec![
-            source_root.into_os_string(),
-            dest_root.clone().into_os_string(),
-        ];
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
         plan.execute().expect("fifo copy succeeds");
@@ -1519,6 +1649,63 @@ mod tests {
         plan.execute().expect("copy succeeds");
         assert!(dest_root.join("nested").exists());
         assert!(!dest_root.join("source").exists());
+    }
+
+    #[test]
+    fn execute_with_delete_removes_extraneous_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete(true);
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"fresh"
+        );
+        assert!(!dest_root.join("extra.txt").exists());
+    }
+
+    #[test]
+    fn execute_with_delete_respects_dry_run() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let operands = vec![
+            source_root.into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete(true);
+
+        plan.execute_with_options(LocalCopyExecution::DryRun, options)
+            .expect("dry-run succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"stale"
+        );
+        assert!(dest_root.join("extra.txt").exists());
     }
 
     #[test]
