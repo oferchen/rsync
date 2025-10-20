@@ -3,10 +3,10 @@
 //! # Overview
 //!
 //! `rsync_core::version` centralises the workspace version constants and
-//! feature-detection helpers that will eventually drive the `--version` output
-//! of the Rust `rsync` binaries. The module mirrors upstream rsync 3.4.1 by
-//! exposing the canonical base version while appending the `-rust` suffix that
-//! brands this reimplementation.
+//! feature-detection helpers that drive the `--version` output of the Rust
+//! `oc-rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
+//! canonical base version while appending the `-rust` suffix that brands this
+//! reimplementation.
 //!
 //! # Design
 //!
@@ -23,7 +23,7 @@
 //!   [`CompiledFeature::from_label`] for parsing user-provided strings.
 //! - [`VersionInfoReport`] renders the full `--version` text, including
 //!   capability sections and checksum/compressor listings, so the CLI can
-//!   display upstream-identical banners.
+//!   display upstream-identical banners branded for `oc-rsync`.
 //!
 //! This structure keeps other crates free of conditional compilation logic
 //! while avoiding string duplication across the workspace.
@@ -56,10 +56,11 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::message`] uses [`RUST_VERSION`] when rendering error trailers.
+//! - [`rsync_core::message`] uses [`RUST_VERSION`] when rendering error
+//!   trailers.
 //! - Future CLI modules rely on [`compiled_features`] and
-//!   [`VersionInfoReport`] to mirror upstream `--version` capability
-//!   listings.
+//!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
+//!   while advertising the Rust-branded binary name.
 
 use core::{
     fmt::{self, Write as FmtWrite},
@@ -114,20 +115,20 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
     bitmap
 };
 
-/// Program name used by upstream rsync when rendering version banners.
-pub const PROGRAM_NAME: &str = "rsync";
+/// Program name rendered by `oc-rsync` when displaying version banners.
+pub const PROGRAM_NAME: &str = "oc-rsync";
 
-/// First year included in upstream copyright notices.
-pub const COPYRIGHT_START_YEAR: &str = "1996";
+/// First copyright year advertised by the Rust implementation.
+pub const COPYRIGHT_START_YEAR: &str = "2025";
 
-/// Latest copyright year recorded by upstream rsync 3.4.1.
+/// Latest copyright year recorded by the Rust implementation.
 pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 
-/// Copyright notice rendered by upstream `print_rsync_version`.
-pub const COPYRIGHT_NOTICE: &str = "(C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.";
+/// Copyright notice rendered by `oc-rsync`.
+pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 
-/// Web site advertised by upstream rsync in `--version` output.
-pub const WEB_SITE: &str = "https://rsync.samba.org/";
+/// Web site advertised by `oc-rsync` in `--version` output.
+pub const WEB_SITE: &str = "https://github.com/oferchen/rsync";
 
 /// Repository URL advertised by version banners and documentation.
 pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
@@ -135,8 +136,25 @@ pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
 /// Human-readable toolchain description rendered in `--version` output.
 pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
 
-/// Combined build information line appended to the capability report.
-pub const BUILD_INFO_LINE: &str = "Built in Rust 2024; source: https://github.com/oferchen/rsync";
+/// Returns the Git revision baked into the build, if available.
+#[must_use]
+pub fn build_revision() -> &'static str {
+    match option_env!("OC_RSYNC_BUILD_REV") {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => "unknown",
+    }
+}
+
+/// Returns the build information line rendered in the capability section.
+#[must_use]
+pub fn build_info_line() -> String {
+    format!(
+        "{}; source: {}; build #{}",
+        BUILD_TOOLCHAIN,
+        SOURCE_URL,
+        build_revision()
+    )
+}
 
 /// Subprotocol version appended to the negotiated protocol when non-zero.
 pub const SUBPROTOCOL_VERSION: u8 = 0;
@@ -149,10 +167,11 @@ pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
 #[doc(alias = "3.4.1-rust")]
 pub const RUST_VERSION: &str = "3.4.1-rust";
 
-/// Static metadata describing the standard version banner rendered by rsync.
+/// Static metadata describing the standard version banner rendered by `oc-rsync`.
 ///
 /// The structure mirrors upstream `print_rsync_version()` so higher layers can
-/// render byte-identical banners without hard-coding strings at the call site.
+/// render byte-identical banners without hard-coding strings at the call site
+/// while honouring the Rust-specific branding.
 /// It captures the program name, version identifiers, protocol numbers, and the
 /// canonical copyright notice.
 ///
@@ -164,9 +183,10 @@ pub const RUST_VERSION: &str = "3.4.1-rust";
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();
 ///
-/// assert!(banner.starts_with("rsync  version 3.4.1-rust"));
+/// assert!(banner.starts_with("oc-rsync  version 3.4.1-rust"));
 /// assert!(banner.contains("protocol version 32"));
-/// assert!(banner.contains("https://rsync.samba.org/"));
+/// assert!(banner.contains("build #"));
+/// assert!(banner.contains("https://github.com/oferchen/rsync"));
 /// ```
 #[doc(alias = "--version")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -240,15 +260,16 @@ impl VersionMetadata {
     ///     .write_standard_banner(&mut rendered)
     ///     .expect("writing to a String never fails");
     ///
-    /// assert!(rendered.starts_with("rsync  version"));
+    /// assert!(rendered.starts_with("oc-rsync  version"));
     /// assert!(rendered.ends_with("\n"));
     /// ```
     pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         write!(
             writer,
-            "{}  version {}  protocol version {}",
+            "{}  version {} (build #{})  protocol version {}",
             self.program_name(),
             self.rust_version(),
+            build_revision(),
             self.protocol_version().as_u8()
         )?;
 
@@ -1709,7 +1730,7 @@ impl VersionInfoReport {
         }
 
         items.push(InfoItem::Section("Build info"));
-        items.push(InfoItem::Entry(Cow::Borrowed(BUILD_INFO_LINE)));
+        items.push(InfoItem::Entry(Cow::Owned(build_info_line())));
 
         debug_assert!(items.capacity() >= BASE_CAPACITY);
         items
@@ -1791,12 +1812,14 @@ mod tests {
             .write_standard_banner(&mut rendered)
             .expect("writing to String cannot fail");
 
-        let expected = concat!(
-            "rsync  version 3.4.1-rust  protocol version 32\n",
-            "Copyright (C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.\n",
-            "Web site: https://rsync.samba.org/\n"
-        )
-        .to_owned();
+        let expected = format!(
+            concat!(
+                "oc-rsync  version 3.4.1-rust (build #{build_revision})  protocol version 32\n",
+                "Copyright (C) 2025 by Ofer Chen.\n",
+                "Web site: https://github.com/oferchen/rsync\n"
+            ),
+            build_revision = build_revision(),
+        );
 
         assert_eq!(rendered, expected);
     }
@@ -1876,11 +1899,12 @@ mod tests {
             compiled_features_display.to_string()
         };
 
+        let build_info = build_info_line();
         let expected = format!(
             concat!(
-                "rsync  version 3.4.1-rust  protocol version 32\n",
-                "Copyright (C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others.\n",
-                "Web site: https://rsync.samba.org/\n",
+                "oc-rsync  version 3.4.1-rust (build #{build_revision})  protocol version 32\n",
+                "Copyright (C) 2025 by Ofer Chen.\n",
+                "Web site: https://github.com/oferchen/rsync\n",
                 "Capabilities:\n",
                 "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,\n",
                 "    no socketpairs, no symlinks, no symtimes, no hardlinks,\n",
@@ -1909,7 +1933,8 @@ mod tests {
             bit_timestamps = bit_timestamps,
             bit_long_ints = bit_long_ints,
             compiled_features = compiled_features_text,
-            build_info = BUILD_INFO_LINE,
+            build_revision = build_revision(),
+            build_info = build_info,
         );
 
         assert_eq!(actual, expected);
@@ -1928,7 +1953,8 @@ mod tests {
         assert!(rendered.contains("Compress list:\n    beta\n"));
         assert!(rendered.contains("Daemon auth list:\n    gamma\n"));
         assert!(rendered.contains("Compiled features:\n"));
-        assert!(rendered.contains(&format!("Build info:\n    {}\n", BUILD_INFO_LINE)));
+        let build_info = build_info_line();
+        assert!(rendered.contains(&format!("Build info:\n    {}\n", build_info)));
     }
 
     #[test]
@@ -1944,7 +1970,8 @@ mod tests {
         };
 
         assert!(rendered.contains(&expected_line));
-        assert!(rendered.contains(&format!("Build info:\n    {}\n", BUILD_INFO_LINE)));
+        let build_info = build_info_line();
+        assert!(rendered.contains(&format!("Build info:\n    {}\n", build_info)));
     }
 
     #[test]
