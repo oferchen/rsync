@@ -132,7 +132,7 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, ErrorKind, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -512,19 +512,24 @@ fn handle_legacy_session(stream: TcpStream, modules: &[ModuleDefinition]) -> io:
     reader.get_mut().write_all(greeting.as_bytes())?;
     reader.get_mut().flush()?;
 
+    let mut request = None;
+
     if let Some(line) = read_trimmed_line(&mut reader)? {
         if let Ok(LegacyDaemonMessage::Version(_)) = parse_legacy_daemon_message(&line) {
             let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
             reader.get_mut().write_all(ok.as_bytes())?;
             reader.get_mut().flush()?;
+            request = read_trimmed_line(&mut reader)?;
+        } else {
+            request = Some(line);
         }
     }
 
-    let trimmed = request.trim_end_matches(|ch| matches!(ch, '\r' | '\n'));
+    let request = request.unwrap_or_default();
 
-    if trimmed == "#list" {
+    if request == "#list" {
         respond_with_module_list(reader.get_mut(), modules)?;
-    } else if trimmed.is_empty() {
+    } else if request.is_empty() {
         reader
             .get_mut()
             .write_all(HANDSHAKE_ERROR_PAYLOAD.as_bytes())?;
@@ -533,10 +538,25 @@ fn handle_legacy_session(stream: TcpStream, modules: &[ModuleDefinition]) -> io:
         reader.get_mut().write_all(exit.as_bytes())?;
         reader.get_mut().flush()?;
     } else {
-        respond_with_module_request(reader.get_mut(), modules, trimmed)?;
+        respond_with_module_request(reader.get_mut(), modules, &request)?;
     }
 
     Ok(())
+}
+
+fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = String::new();
+    let bytes = reader.read_line(&mut line)?;
+
+    if bytes == 0 {
+        return Ok(None);
+    }
+
+    while line.ends_with('\n') || line.ends_with('\r') {
+        line.pop();
+    }
+
+    Ok(Some(line))
 }
 
 fn respond_with_module_list(
@@ -962,6 +982,21 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn read_trimmed_line_strips_crlf_terminators() {
+        let input: &[u8] = b"payload data\r\n";
+        let mut reader = BufReader::new(input);
+
+        let line = read_trimmed_line(&mut reader)
+            .expect("read line")
+            .expect("line available");
+
+        assert_eq!(line, "payload data");
+
+        let eof = read_trimmed_line(&mut reader).expect("eof read");
+        assert!(eof.is_none());
     }
 
     #[test]
