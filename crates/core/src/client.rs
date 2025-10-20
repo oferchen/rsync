@@ -17,8 +17,9 @@
 //!   through without breaking call sites.
 //! - [`run_client`] executes the client flow. For now the implementation mirrors
 //!   a simplified subset of upstream behaviour by copying files, directories,
-//!   and symbolic links on the local filesystem without delta compression or
-//!   metadata preservation.
+//!   and symbolic links on the local filesystem while preserving permissions and
+//!   timestamps, but without delta compression or advanced metadata handling
+//!   such as ownership, ACLs, or extended attributes.
 //! - [`ClientError`] carries the exit code and fully formatted
 //!   [`Message`](crate::message::Message) so binaries can surface diagnostics via
 //!   the central rendering helpers.
@@ -71,6 +72,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use filetime::{FileTime, set_file_times, set_symlink_file_times};
 
 use crate::{
     message::{Message, Role},
@@ -301,6 +304,71 @@ mod tests {
         assert_eq!(copied_target, target_file);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_client_preserves_file_metadata() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-metadata.txt");
+        let destination = tmp.path().join("dest-metadata.txt");
+        fs::write(&source, b"metadata").expect("write source");
+
+        let mode = 0o640;
+        fs::set_permissions(&source, PermissionsExt::from_mode(mode))
+            .expect("set source permissions");
+        let atime = FileTime::from_unix_time(1_700_000_000, 123_000_000);
+        let mtime = FileTime::from_unix_time(1_700_000_100, 456_000_000);
+        set_file_times(&source, atime, mtime).expect("set source timestamps");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .build();
+
+        run_client(config).expect("copy succeeds");
+
+        let dest_metadata = fs::metadata(&destination).expect("dest metadata");
+        assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
+        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_preserves_directory_metadata() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source-dir");
+        fs::create_dir(&source_dir).expect("create source dir");
+
+        let mode = 0o751;
+        fs::set_permissions(&source_dir, PermissionsExt::from_mode(mode))
+            .expect("set directory permissions");
+        let atime = FileTime::from_unix_time(1_700_010_000, 0);
+        let mtime = FileTime::from_unix_time(1_700_020_000, 789_000_000);
+        set_file_times(&source_dir, atime, mtime).expect("set directory timestamps");
+
+        let destination_dir = tmp.path().join("dest-dir");
+        let config = ClientConfig::builder()
+            .transfer_args([source_dir.clone(), destination_dir.clone()])
+            .build();
+
+        run_client(config).expect("directory copy succeeds");
+
+        let dest_metadata = fs::metadata(&destination_dir).expect("dest metadata");
+        assert!(dest_metadata.is_dir());
+        assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
+        let dest_atime = FileTime::from_last_access_time(&dest_metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
+        assert_eq!(dest_atime, atime);
+        assert_eq!(dest_mtime, mtime);
+    }
+
     #[test]
     fn run_client_merges_directory_contents_when_trailing_separator_present() {
         let tmp = tempdir().expect("tempdir");
@@ -485,7 +553,7 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_directory_recursive(source_path, &target)?;
+            copy_directory_recursive(source_path, &target, &metadata)?;
         } else if file_type.is_file() {
             let target = if destination_state.is_dir {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -496,7 +564,7 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_file(source_path, &target)?;
+            copy_file(source_path, &target, &metadata)?;
         } else if file_type.is_symlink() {
             let target = if destination_state.is_dir {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -507,7 +575,7 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
                 spec.destination.clone()
             };
 
-            copy_symlink(source_path, &target)?;
+            copy_symlink(source_path, &target, &metadata)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -519,9 +587,35 @@ fn copy_sources(spec: &TransferSpec) -> Result<(), ClientError> {
     Ok(())
 }
 
-fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), ClientError> {
-    fs::create_dir_all(destination)
-        .map_err(|error| io_error("create directory", destination, error))?;
+fn copy_directory_recursive(
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), ClientError> {
+    let mut destination_preexisted = false;
+
+    match fs::symlink_metadata(destination) {
+        Ok(existing) => {
+            if !existing.file_type().is_dir() {
+                return Err(invalid_argument_error(
+                    "cannot replace non-directory destination with directory",
+                    PARTIAL_TRANSFER_EXIT_CODE,
+                ));
+            }
+            destination_preexisted = true;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(destination)
+                .map_err(|error| io_error("create directory", destination, error))?;
+        }
+        Err(error) => {
+            return Err(io_error(
+                "inspect destination directory",
+                destination,
+                error,
+            ));
+        }
+    }
 
     let entries =
         fs::read_dir(source).map_err(|error| io_error("read directory", source, error))?;
@@ -529,17 +623,18 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Cli
     for entry in entries {
         let entry = entry.map_err(|error| io_error("read directory entry", source, error))?;
         let entry_path = entry.path();
-        let entry_type = entry
-            .file_type()
+        let entry_metadata = entry
+            .metadata()
             .map_err(|error| io_error("inspect directory entry", &entry_path, error))?;
+        let entry_type = entry_metadata.file_type();
         let target_path = destination.join(entry.file_name());
 
         if entry_type.is_dir() {
-            copy_directory_recursive(&entry_path, &target_path)?;
+            copy_directory_recursive(&entry_path, &target_path, &entry_metadata)?;
         } else if entry_type.is_file() {
-            copy_file(&entry_path, &target_path)?;
+            copy_file(&entry_path, &target_path, &entry_metadata)?;
         } else if entry_type.is_symlink() {
-            copy_symlink(&entry_path, &target_path)?;
+            copy_symlink(&entry_path, &target_path, &entry_metadata)?;
         } else {
             return Err(invalid_argument_error(
                 "unsupported file type encountered",
@@ -548,10 +643,18 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Cli
         }
     }
 
+    if !destination_preexisted {
+        apply_directory_metadata(destination, metadata)?;
+    }
+
     Ok(())
 }
 
-fn copy_file(source: &Path, destination: &Path) -> Result<(), ClientError> {
+fn copy_file(
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), ClientError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
@@ -560,10 +663,15 @@ fn copy_file(source: &Path, destination: &Path) -> Result<(), ClientError> {
     }
 
     fs::copy(source, destination).map_err(|error| io_error("copy file", source, error))?;
+    apply_file_metadata(destination, metadata)?;
     Ok(())
 }
 
-fn copy_symlink(source: &Path, destination: &Path) -> Result<(), ClientError> {
+fn copy_symlink(
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), ClientError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)
@@ -606,6 +714,72 @@ fn copy_symlink(source: &Path, destination: &Path) -> Result<(), ClientError> {
 
     create_symlink(&target, source, destination)
         .map_err(|error| io_error("create symbolic link", destination, error))?;
+
+    apply_symlink_metadata(destination, metadata)?;
+
+    Ok(())
+}
+
+fn apply_directory_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), ClientError> {
+    set_permissions_like(metadata, destination)?;
+    set_timestamp_like(metadata, destination, true)?;
+    Ok(())
+}
+
+fn apply_file_metadata(destination: &Path, metadata: &fs::Metadata) -> Result<(), ClientError> {
+    set_permissions_like(metadata, destination)?;
+    set_timestamp_like(metadata, destination, true)?;
+    Ok(())
+}
+
+fn apply_symlink_metadata(destination: &Path, metadata: &fs::Metadata) -> Result<(), ClientError> {
+    set_timestamp_like(metadata, destination, false)?;
+    Ok(())
+}
+
+fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), ClientError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = metadata.permissions().mode();
+        let permissions = PermissionsExt::from_mode(mode);
+        fs::set_permissions(destination, permissions)
+            .map_err(|error| io_error("preserve permissions", destination, error))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let readonly = metadata.permissions().readonly();
+        let mut destination_permissions = fs::metadata(destination)
+            .map_err(|error| io_error("inspect destination permissions", destination, error))?
+            .permissions();
+        destination_permissions.set_readonly(readonly);
+        fs::set_permissions(destination, destination_permissions)
+            .map_err(|error| io_error("preserve permissions", destination, error))?;
+    }
+
+    Ok(())
+}
+
+fn set_timestamp_like(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), ClientError> {
+    let accessed = FileTime::from_last_access_time(metadata);
+    let modified = FileTime::from_last_modification_time(metadata);
+
+    if follow_symlinks {
+        set_file_times(destination, accessed, modified)
+            .map_err(|error| io_error("preserve timestamps", destination, error))?;
+    } else {
+        set_symlink_file_times(destination, accessed, modified)
+            .map_err(|error| io_error("preserve timestamps", destination, error))?;
+    }
 
     Ok(())
 }
