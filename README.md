@@ -23,11 +23,14 @@ The workspace currently contains the following published crates:
 - `crates/logging` — newline-aware message sinks that reuse
   `MessageScratch` buffers when streaming diagnostics into arbitrary
   writers, mirroring upstream `rsync`'s logging pipeline.
+- `crates/cli` — the initial command-line front-end that exposes `--help` and
+  `--version` while reporting that transfer functionality is not yet available.
 
-Higher-level crates such as `cli`, `daemon`, `engine`, and `meta` have not been
+Higher-level crates such as `daemon`, `engine`, and `meta` have not been
 implemented yet. The `core` crate currently focuses on message formatting and
 source remapping utilities; transfer orchestration and other facade features
-remain to be written. Current gaps and parity status are tracked in
+remain to be written. The CLI therefore returns a diagnostic when a transfer is
+attempted. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
