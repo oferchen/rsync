@@ -8,8 +8,10 @@
 //! binary. The crate now exposes a deterministic daemon loop capable of
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
-//! and replying with explanatory `@ERROR` messages when module transfers are not
-//! yet available. The number of connections can be capped via
+//! authenticating `auth users` entries via the upstream challenge/response
+//! exchange backed by the configured secrets file, and replying with
+//! explanatory `@ERROR` messages when module transfers are not yet available.
+//! The number of connections can be capped via
 //! command-line flags, allowing integration tests to exercise the handshake
 //! without leaving background threads running indefinitely while keeping the
 //! default behaviour ready for long-lived daemons once module serving lands.
@@ -26,6 +28,10 @@
 //!   semantics. Requests for `#list` reuse the configured module table, while
 //!   module transfers continue to emit availability diagnostics until the full
 //!   engine lands.
+//! - Authentication mirrors upstream rsync: the daemon issues a base64-encoded
+//!   challenge, verifies the client's response against the configured secrets
+//!   file using MD5, and only then reports that transfers are unavailable while
+//!   the data path is under construction.
 //! - [`render_help`] returns a deterministic description of the limited daemon
 //!   capabilities available today, keeping the help text aligned with actual
 //!   behaviour until the parity help renderer is implemented.
@@ -140,12 +146,16 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
+use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{BandwidthParseError, parse_bandwidth_argument},
     message::{Message, Role},
@@ -1392,7 +1402,7 @@ fn handle_legacy_session(
         reader.get_mut().write_all(exit.as_bytes())?;
         reader.get_mut().flush()?;
     } else {
-        respond_with_module_request(reader.get_mut(), modules, &request, peer_addr.ip())?;
+        respond_with_module_request(&mut reader, modules, &request, peer_addr.ip())?;
     }
 
     Ok(())
@@ -1449,8 +1459,139 @@ fn respond_with_module_list(
     stream.flush()
 }
 
-fn respond_with_module_request(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AuthenticationStatus {
+    Granted,
+    Denied,
+}
+
+fn perform_module_authentication(
+    reader: &mut BufReader<TcpStream>,
+    module: &ModuleDefinition,
+    peer_ip: IpAddr,
+) -> io::Result<AuthenticationStatus> {
+    let challenge = generate_auth_challenge(peer_ip);
+    {
+        let stream = reader.get_mut();
+        let message = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired {
+            module: Some(&challenge),
+        });
+        stream.write_all(message.as_bytes())?;
+        stream.flush()?;
+    }
+
+    let response = match read_trimmed_line(reader)? {
+        Some(line) => line,
+        None => {
+            deny_module(reader.get_mut(), module, peer_ip)?;
+            return Ok(AuthenticationStatus::Denied);
+        }
+    };
+
+    let mut segments = response.splitn(2, |ch: char| ch.is_ascii_whitespace());
+    let username = segments.next().unwrap_or_default();
+    let digest = segments
+        .next()
+        .map(|segment| segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace()))
+        .unwrap_or("");
+
+    if username.is_empty() || digest.is_empty() {
+        deny_module(reader.get_mut(), module, peer_ip)?;
+        return Ok(AuthenticationStatus::Denied);
+    }
+
+    if !module.auth_users.iter().any(|user| user == username) {
+        deny_module(reader.get_mut(), module, peer_ip)?;
+        return Ok(AuthenticationStatus::Denied);
+    }
+
+    if !verify_secret_response(module, username, &challenge, digest)? {
+        deny_module(reader.get_mut(), module, peer_ip)?;
+        return Ok(AuthenticationStatus::Denied);
+    }
+
+    Ok(AuthenticationStatus::Granted)
+}
+
+fn generate_auth_challenge(peer_ip: IpAddr) -> String {
+    let mut input = [0u8; 32];
+    let address_text = peer_ip.to_string();
+    let address_bytes = address_text.as_bytes();
+    let copy_len = address_bytes.len().min(16);
+    input[..copy_len].copy_from_slice(&address_bytes[..copy_len]);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let seconds = (timestamp.as_secs() & u64::from(u32::MAX)) as u32;
+    let micros = timestamp.subsec_micros();
+    let pid = std::process::id();
+
+    input[16..20].copy_from_slice(&seconds.to_le_bytes());
+    input[20..24].copy_from_slice(&micros.to_le_bytes());
+    input[24..28].copy_from_slice(&pid.to_le_bytes());
+
+    let mut hasher = Md5::new();
+    hasher.update(&input);
+    let digest = hasher.finalize();
+    STANDARD_NO_PAD.encode(digest)
+}
+
+fn verify_secret_response(
+    module: &ModuleDefinition,
+    username: &str,
+    challenge: &str,
+    response: &str,
+) -> io::Result<bool> {
+    let secrets_path = match &module.secrets_file {
+        Some(path) => path,
+        None => return Ok(false),
+    };
+
+    let contents = fs::read_to_string(secrets_path)?;
+
+    for raw_line in contents.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if let Some((user, secret)) = line.split_once(':') {
+            if user == username {
+                let expected = compute_auth_response(secret, challenge);
+                return Ok(expected == response);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn compute_auth_response(secret: &str, challenge: &str) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(secret.as_bytes());
+    hasher.update(challenge.as_bytes());
+    let digest = hasher.finalize();
+    STANDARD_NO_PAD.encode(digest)
+}
+
+fn deny_module(
     stream: &mut TcpStream,
+    module: &ModuleDefinition,
+    peer_ip: IpAddr,
+) -> io::Result<()> {
+    let payload = ACCESS_DENIED_PAYLOAD
+        .replace("{module}", &module.name)
+        .replace("{addr}", &peer_ip.to_string());
+    stream.write_all(payload.as_bytes())?;
+    stream.write_all(b"\n")?;
+    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+    stream.write_all(exit.as_bytes())?;
+    stream.flush()
+}
+
+fn respond_with_module_request(
+    reader: &mut BufReader<TcpStream>,
     modules: &[ModuleDefinition],
     request: &str,
     peer_ip: IpAddr,
@@ -1458,32 +1599,29 @@ fn respond_with_module_request(
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         if module.permits(peer_ip) {
             if module.requires_authentication() {
-                let message = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired {
-                    module: Some(&module.name),
-                });
-                stream.write_all(message.as_bytes())?;
-                let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-                stream.write_all(exit.as_bytes())?;
-                return stream.flush();
+                match perform_module_authentication(reader, module, peer_ip)? {
+                    AuthenticationStatus::Denied => return Ok(()),
+                    AuthenticationStatus::Granted => {}
+                }
             }
 
             let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request);
+            let stream = reader.get_mut();
             stream.write_all(payload.as_bytes())?;
             stream.write_all(b"\n")?;
         } else {
-            let payload = ACCESS_DENIED_PAYLOAD
-                .replace("{module}", request)
-                .replace("{addr}", &peer_ip.to_string());
-            stream.write_all(payload.as_bytes())?;
-            stream.write_all(b"\n")?;
+            deny_module(reader.get_mut(), module, peer_ip)?;
+            return Ok(());
         }
     } else {
         let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", request);
+        let stream = reader.get_mut();
         stream.write_all(payload.as_bytes())?;
         stream.write_all(b"\n")?;
     }
 
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+    let stream = reader.get_mut();
     stream.write_all(exit.as_bytes())?;
     stream.flush()
 }
@@ -2314,7 +2452,116 @@ mod tests {
 
         line.clear();
         reader.read_line(&mut line).expect("auth request");
-        assert_eq!(line, "@RSYNCD: AUTHREQD secure\n");
+        assert!(line.starts_with("@RSYNCD: AUTHREQD "));
+        let challenge = line
+            .trim_end()
+            .strip_prefix("@RSYNCD: AUTHREQD ")
+            .expect("challenge prefix");
+        assert!(!challenge.is_empty());
+
+        stream.write_all(b"\n").expect("send empty credentials");
+        stream.flush().expect("flush empty credentials");
+
+        line.clear();
+        reader.read_line(&mut line).expect("denied message");
+        assert_eq!(
+            line.trim_end(),
+            "@ERROR: access denied to module 'secure' from 127.0.0.1"
+        );
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit message");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_accepts_valid_credentials() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!(
+                "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\n",
+                module_dir.display(),
+                secrets_path.display()
+            ),
+        )
+        .expect("write config");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--once"),
+                OsString::from("--config"),
+                config_path.as_os_str().to_os_string(),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        stream.write_all(b"secure\n").expect("send module request");
+        stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("auth request");
+        let challenge = line
+            .trim_end()
+            .strip_prefix("@RSYNCD: AUTHREQD ")
+            .expect("challenge prefix");
+
+        let mut hasher = Md5::new();
+        hasher.update(b"password");
+        hasher.update(challenge.as_bytes());
+        let digest = STANDARD_NO_PAD.encode(hasher.finalize());
+        let response_line = format!("alice {digest}\n");
+        stream
+            .write_all(response_line.as_bytes())
+            .expect("send credentials");
+        stream.flush().expect("flush credentials");
+
+        line.clear();
+        reader.read_line(&mut line).expect("unavailable message");
+        assert_eq!(
+            line.trim_end(),
+            "@ERROR: module 'secure' transfers are not yet implemented in this build"
+        );
 
         line.clear();
         reader.read_line(&mut line).expect("exit message");
