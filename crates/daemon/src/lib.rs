@@ -190,6 +190,8 @@ const HELP_TEXT: &str = concat!(
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
     "  --config FILE      Load module definitions from FILE (rsyncd.conf subset).\n",
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
+    "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
+    "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
     "negotiated protocol as 32, lists configured modules for #list requests, and\n",
@@ -235,6 +237,7 @@ struct RuntimeOptions {
     port: u16,
     max_sessions: Option<NonZeroUsize>,
     modules: Vec<ModuleDefinition>,
+    motd_lines: Vec<String>,
 }
 
 impl Default for RuntimeOptions {
@@ -244,6 +247,7 @@ impl Default for RuntimeOptions {
             port: DEFAULT_PORT,
             max_sessions: None,
             modules: Vec::new(),
+            motd_lines: Vec::new(),
         }
     }
 }
@@ -263,6 +267,12 @@ impl RuntimeOptions {
                 options.bind_address = parse_bind_address(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
                 options.load_config_modules(&value, &mut seen_modules)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
+                options.load_motd_file(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--motd")? {
+                options.load_motd_file(&value)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-line")? {
+                options.push_motd_line(value);
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -314,6 +324,31 @@ impl RuntimeOptions {
 
     fn modules(&self) -> &[ModuleDefinition] {
         &self.modules
+    }
+
+    fn motd_lines(&self) -> &[String] {
+        &self.motd_lines
+    }
+
+    fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
+        let path = PathBuf::from(value.clone());
+        let contents =
+            fs::read_to_string(&path).map_err(|error| config_io_error("read", &path, error))?;
+
+        for raw_line in contents.lines() {
+            let line = raw_line.trim_end_matches('\r').to_string();
+            self.motd_lines.push(line);
+        }
+
+        Ok(())
+    }
+
+    fn push_motd_line(&mut self, value: OsString) {
+        let line = value
+            .to_string_lossy()
+            .trim_matches(['\r', '\n'])
+            .to_string();
+        self.motd_lines.push(line);
     }
 }
 
@@ -663,9 +698,9 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             Ok((stream, peer_addr)) => {
                 configure_stream(&stream)
                     .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
-                handle_legacy_session(stream, options.modules()).map_err(|error| {
-                    stream_error(Some(peer_addr), "serve legacy handshake", error)
-                })?;
+                handle_legacy_session(stream, options.modules(), options.motd_lines()).map_err(
+                    |error| stream_error(Some(peer_addr), "serve legacy handshake", error),
+                )?;
                 served = served.saturating_add(1);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -691,7 +726,11 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
 }
 
-fn handle_legacy_session(stream: TcpStream, modules: &[ModuleDefinition]) -> io::Result<()> {
+fn handle_legacy_session(
+    stream: TcpStream,
+    modules: &[ModuleDefinition],
+    motd_lines: &[String],
+) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
 
     let greeting =
@@ -715,7 +754,7 @@ fn handle_legacy_session(stream: TcpStream, modules: &[ModuleDefinition]) -> io:
     let request = request.unwrap_or_default();
 
     if request == "#list" {
-        respond_with_module_list(reader.get_mut(), modules)?;
+        respond_with_module_list(reader.get_mut(), modules, motd_lines)?;
     } else if request.is_empty() {
         reader
             .get_mut()
@@ -749,7 +788,18 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
 fn respond_with_module_list(
     stream: &mut TcpStream,
     modules: &[ModuleDefinition],
+    motd_lines: &[String],
 ) -> io::Result<()> {
+    for line in motd_lines {
+        let payload = if line.is_empty() {
+            "MOTD".to_string()
+        } else {
+            format!("MOTD {line}")
+        };
+        let message = format_legacy_daemon_message(LegacyDaemonMessage::Other(&payload));
+        stream.write_all(message.as_bytes())?;
+    }
+
     let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
     stream.write_all(ok.as_bytes())?;
 
@@ -988,12 +1038,13 @@ pub fn exit_code_from(status: i32) -> std::process::ExitCode {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+    use std::fs;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, tempdir};
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -1068,6 +1119,29 @@ mod tests {
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
+    }
+
+    #[test]
+    fn runtime_options_parse_motd_sources() {
+        let dir = tempdir().expect("motd dir");
+        let motd_path = dir.path().join("motd.txt");
+        fs::write(&motd_path, "Welcome to oc-rsyncd\nSecond line\n").expect("write motd");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--motd-file"),
+            motd_path.as_os_str().to_os_string(),
+            OsString::from("--motd-line"),
+            OsString::from("Trailing notice"),
+        ])
+        .expect("parse motd options");
+
+        let expected = vec![
+            String::from("Welcome to oc-rsyncd"),
+            String::from("Second line"),
+            String::from("Trailing notice"),
+        ];
+
+        assert_eq!(options.motd_lines(), expected.as_slice());
     }
 
     #[test]
@@ -1249,6 +1323,78 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("second module");
         assert_eq!(line.trim_end(), "logs");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_lists_modules_with_motd_lines() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let dir = tempdir().expect("motd dir");
+        let motd_path = dir.path().join("motd.txt");
+        fs::write(
+            &motd_path,
+            "Welcome to oc-rsyncd\nRemember to sync responsibly\n",
+        )
+        .expect("write motd");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--motd-file"),
+                motd_path.as_os_str().to_os_string(),
+                OsString::from("--motd-line"),
+                OsString::from("Additional notice"),
+                OsString::from("--module"),
+                OsString::from("docs=/srv/docs"),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("motd line 1");
+        assert_eq!(line.trim_end(), "@RSYNCD: MOTD Welcome to oc-rsyncd");
+
+        line.clear();
+        reader.read_line(&mut line).expect("motd line 2");
+        assert_eq!(
+            line.trim_end(),
+            "@RSYNCD: MOTD Remember to sync responsibly"
+        );
+
+        line.clear();
+        reader.read_line(&mut line).expect("motd line 3");
+        assert_eq!(line.trim_end(), "@RSYNCD: MOTD Additional notice");
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("module line");
+        assert_eq!(line.trim_end(), "docs");
 
         line.clear();
         reader.read_line(&mut line).expect("exit line");
