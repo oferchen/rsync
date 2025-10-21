@@ -121,6 +121,7 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    checksum: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -204,6 +205,13 @@ impl ClientConfig {
         self.preserve_times
     }
 
+    /// Reports whether strong checksum comparison should be used when evaluating updates.
+    #[must_use]
+    #[doc(alias = "--checksum")]
+    pub const fn checksum(&self) -> bool {
+        self.checksum
+    }
+
     /// Reports whether numeric UID/GID values should be preserved.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
@@ -266,6 +274,7 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    checksum: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -341,6 +350,15 @@ impl ClientConfigBuilder {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    /// Enables or disables checksum-based change detection.
+    #[must_use]
+    #[doc(alias = "--checksum")]
+    #[doc(alias = "-c")]
+    pub const fn checksum(mut self, checksum: bool) -> Self {
+        self.checksum = checksum;
         self
     }
 
@@ -427,6 +445,7 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            checksum: self.checksum,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
@@ -736,6 +755,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
         .group(config.preserve_group())
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
+        .checksum(config.checksum())
         .filters(filter_set)
         .numeric_ids(config.numeric_ids())
         .sparse(config.sparse())
@@ -803,6 +823,16 @@ mod tests {
             .build();
 
         assert!(config.delete());
+    }
+
+    #[test]
+    fn builder_enables_checksum() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .checksum(true)
+            .build();
+
+        assert!(config.checksum());
     }
 
     #[test]
