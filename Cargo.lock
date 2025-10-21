@@ -511,6 +511,7 @@ name = "rsync-engine"
 version = "0.0.0"
 dependencies = [
  "filetime",
+ "rsync-checksums",
  "rsync-filters",
  "rsync-meta",
  "rustix 0.38.44",
