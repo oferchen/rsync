@@ -409,50 +409,167 @@ fn extract_operands(arguments: Vec<OsString>) -> Result<Vec<OsString>, Unsupport
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
     let text = argument.to_string_lossy();
-    if text.is_empty() {
-        return Err(rsync_error!(
+    match parse_bwlimit_bytes(&text) {
+        Ok(Some(bytes)) => Ok(Some(BandwidthLimit::from_bytes_per_second(
+            NonZeroU64::new(bytes).expect("bandwidth limit must be non-zero"),
+        ))),
+        Ok(None) => Ok(None),
+        Err(BandwidthParseError::Invalid) => {
+            Err(rsync_error!(1, "--bwlimit={} is invalid", text).with_role(Role::Client))
+        }
+        Err(BandwidthParseError::TooSmall) => Err(rsync_error!(
             1,
-            "invalid value for --bwlimit: rate must be a non-negative integer"
+            "--bwlimit={} is too small (min: 512 or 0 for unlimited)",
+            text
         )
-        .with_role(Role::Client));
+        .with_role(Role::Client)),
+        Err(BandwidthParseError::TooLarge) => {
+            Err(rsync_error!(1, "--bwlimit={} is too large", text).with_role(Role::Client))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BandwidthParseError {
+    Invalid,
+    TooSmall,
+    TooLarge,
+}
+
+fn parse_bwlimit_bytes(text: &str) -> Result<Option<u64>, BandwidthParseError> {
+    if text.is_empty() {
+        return Err(BandwidthParseError::Invalid);
     }
 
-    let (digits, multiplier) = match text.chars().last() {
-        Some('k') | Some('K') => (&text[..text.len() - 1], 1024u64),
-        Some('m') | Some('M') => (&text[..text.len() - 1], 1024u64 * 1024u64),
-        Some('g') | Some('G') => (&text[..text.len() - 1], 1024u64 * 1024u64 * 1024u64),
-        _ => (text.as_ref(), 1024u64),
+    let mut digits_seen = false;
+    let mut decimal_seen = false;
+    let mut numeric_end = text.len();
+
+    for (index, ch) in text.char_indices() {
+        if ch.is_ascii_digit() {
+            digits_seen = true;
+            continue;
+        }
+
+        if (ch == '.' || ch == ',') && !decimal_seen {
+            decimal_seen = true;
+            continue;
+        }
+
+        numeric_end = index;
+        break;
+    }
+
+    let numeric_part = &text[..numeric_end];
+    let remainder = &text[numeric_end..];
+
+    if !digits_seen || numeric_part == "." || numeric_part == "," {
+        return Err(BandwidthParseError::Invalid);
+    }
+
+    let normalized_numeric = numeric_part.replace(',', ".");
+    let numeric_value: f64 = normalized_numeric
+        .parse()
+        .map_err(|_| BandwidthParseError::Invalid)?;
+
+    let (suffix, mut remainder_after_suffix) =
+        if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
+            ('K', remainder)
+        } else {
+            let mut chars = remainder.chars();
+            let ch = chars.next().unwrap();
+            (ch, chars.as_str())
+        };
+
+    let repetitions = match suffix.to_ascii_lowercase() {
+        'b' => 0,
+        'k' => 1,
+        'm' => 2,
+        'g' => 3,
+        't' => 4,
+        'p' => 5,
+        _ => return Err(BandwidthParseError::Invalid),
     };
 
-    let digits = digits.trim();
-    if digits.is_empty() {
-        return Err(rsync_error!(
-            1,
-            "invalid value for --bwlimit: rate must be a non-negative integer"
-        )
-        .with_role(Role::Client));
+    let mut base: f64 = 1024.0;
+
+    if !remainder_after_suffix.is_empty() {
+        let bytes = remainder_after_suffix.as_bytes();
+        match bytes[0] {
+            b'b' | b'B' => {
+                base = 1000.0;
+                remainder_after_suffix = &remainder_after_suffix[1..];
+            }
+            b'i' | b'I' => {
+                if bytes.len() < 2 {
+                    return Err(BandwidthParseError::Invalid);
+                }
+                if matches!(bytes[1], b'b' | b'B') {
+                    base = 1024.0;
+                    remainder_after_suffix = &remainder_after_suffix[2..];
+                } else {
+                    return Err(BandwidthParseError::Invalid);
+                }
+            }
+            b'+' | b'-' => {}
+            _ => return Err(BandwidthParseError::Invalid),
+        }
     }
 
-    let raw = digits.parse::<u64>().map_err(|_| {
-        rsync_error!(
-            1,
-            "invalid value for --bwlimit: rate must be a non-negative integer"
-        )
-        .with_role(Role::Client)
-    })?;
+    let mut adjust = 0.0f64;
+    if !remainder_after_suffix.is_empty() {
+        if remainder_after_suffix == "+1" && numeric_end > 0 {
+            adjust = 1.0;
+            remainder_after_suffix = "";
+        } else if remainder_after_suffix == "-1" && numeric_end > 0 {
+            adjust = -1.0;
+            remainder_after_suffix = "";
+        }
+    }
 
-    let scaled = raw
-        .checked_mul(multiplier)
-        .ok_or_else(|| rsync_error!(1, "--bwlimit value is too large").with_role(Role::Client))?;
+    if !remainder_after_suffix.is_empty() {
+        return Err(BandwidthParseError::Invalid);
+    }
 
-    if scaled == 0 {
+    let scale = match repetitions {
+        0 => 1.0,
+        reps => base.powi(reps as i32),
+    };
+
+    let mut size = numeric_value * scale;
+    if !size.is_finite() {
+        return Err(BandwidthParseError::TooLarge);
+    }
+    size += adjust;
+    if !size.is_finite() {
+        return Err(BandwidthParseError::TooLarge);
+    }
+
+    let truncated = size.trunc();
+    if truncated < 0.0 || truncated > u128::MAX as f64 {
+        return Err(BandwidthParseError::TooLarge);
+    }
+
+    let bytes = truncated as u128;
+
+    if bytes == 0 {
         return Ok(None);
     }
 
-    match NonZeroU64::new(scaled) {
-        Some(bytes) => Ok(Some(BandwidthLimit::from_bytes_per_second(bytes))),
-        None => Ok(None),
+    if bytes < 512 {
+        return Err(BandwidthParseError::TooSmall);
     }
+
+    let rounded = bytes
+        .checked_add(512)
+        .ok_or(BandwidthParseError::TooLarge)?
+        / 1024;
+    let rounded_bytes = rounded
+        .checked_mul(1024)
+        .ok_or(BandwidthParseError::TooLarge)?;
+
+    let bytes_u64 = u64::try_from(rounded_bytes).map_err(|_| BandwidthParseError::TooLarge)?;
+    Ok(Some(bytes_u64))
 }
 
 fn render_module_list<W: Write>(
@@ -607,8 +724,41 @@ mod tests {
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("invalid value for --bwlimit"));
+        assert!(rendered.contains("--bwlimit=oops is invalid"));
         assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
+    fn bwlimit_rejects_small_fractional_values() {
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=0.4")]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("--bwlimit=0.4 is too small (min: 512 or 0 for unlimited)",));
+    }
+
+    #[test]
+    fn bwlimit_accepts_decimal_suffixes() {
+        let limit = parse_bandwidth_limit(OsStr::new("1.5M"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 1_572_864);
+    }
+
+    #[test]
+    fn bwlimit_accepts_decimal_base_specifier() {
+        let limit = parse_bandwidth_limit(OsStr::new("10KB"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 10_240);
+    }
+
+    #[test]
+    fn bwlimit_zero_disables_limit() {
+        let limit = parse_bandwidth_limit(OsStr::new("0")).expect("parse succeeds");
+        assert!(limit.is_none());
     }
 
     #[test]
