@@ -1334,6 +1334,9 @@ fn copy_directory_recursive(
     metadata: &fs::Metadata,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    let mode = context.mode();
+    let mut destination_missing = false;
+
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
             if !existing.file_type().is_dir() {
@@ -1343,22 +1346,7 @@ fn copy_directory_recursive(
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if !context.mode().is_dry_run() {
-                fs::create_dir_all(destination).map_err(|error| {
-                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
-                })?;
-                if let Some(rel) = relative {
-                    context.record(LocalCopyRecord::new(
-                        rel.to_path_buf(),
-                        LocalCopyAction::DirectoryCreated,
-                        0,
-                        Duration::default(),
-                    ));
-                }
-            }
-            if relative.is_some() {
-                context.summary_mut().record_directory();
-            }
+            destination_missing = true;
         }
         Err(error) => {
             return Err(LocalCopyError::io(
@@ -1370,6 +1358,27 @@ fn copy_directory_recursive(
     }
 
     let entries = read_directory_entries_sorted(source)?;
+
+    if destination_missing {
+        if relative.is_some() {
+            context.summary_mut().record_directory();
+        }
+
+        if !mode.is_dry_run() {
+            fs::create_dir_all(destination).map_err(|error| {
+                LocalCopyError::io("create directory", destination.to_path_buf(), error)
+            })?;
+
+            if let Some(rel) = relative {
+                context.record(LocalCopyRecord::new(
+                    rel.to_path_buf(),
+                    LocalCopyAction::DirectoryCreated,
+                    0,
+                    Duration::default(),
+                ));
+            }
+        }
+    }
 
     let mut keep_names = Vec::new();
 
@@ -3152,6 +3161,41 @@ mod tests {
         assert!(dest_root.join("nested").exists());
         assert!(!dest_root.join("source").exists());
         assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
+    fn execute_into_child_directory_succeeds_without_recursing() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let nested_dir = source_root.join("dir");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        fs::write(source_root.join("root.txt"), b"root").expect("write root");
+        fs::write(nested_dir.join("child.txt"), b"child").expect("write nested");
+
+        let dest_root = source_root.join("child");
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan.execute().expect("copy into child succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("root.txt")).expect("read root copy"),
+            b"root"
+        );
+        assert_eq!(
+            fs::read(dest_root.join("dir").join("child.txt"))
+                .expect("read nested copy"),
+            b"child"
+        );
+        assert!(
+            !dest_root.join("child").exists(),
+            "destination recursion detected at {}",
+            dest_root.join("child").display()
+        );
+        assert!(summary.files_copied() >= 2);
     }
 
     #[test]
