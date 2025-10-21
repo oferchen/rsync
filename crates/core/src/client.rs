@@ -91,7 +91,10 @@ use rsync_engine::local_copy::{
     LocalCopyPlan, LocalCopyRecord, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::{FilterError, FilterRule as EngineFilterRule, FilterSet};
-use rsync_protocol::ProtocolVersion;
+use rsync_protocol::{
+    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, ProtocolVersion, parse_legacy_daemon_message,
+    parse_legacy_error_message, parse_legacy_warning_message,
+};
 use rsync_transport::negotiate_legacy_daemon_session;
 
 use crate::{
@@ -1529,6 +1532,7 @@ mod tests {
                 String::from("Maintenance window at 02:00 UTC"),
             ]
         );
+        assert!(list.capabilities().is_empty());
         assert_eq!(list.entries().len(), 2);
         assert_eq!(list.entries()[0].name(), "alpha");
         assert_eq!(list.entries()[0].comment(), Some("Primary module"));
@@ -1557,6 +1561,7 @@ mod tests {
             list.motd_lines(),
             &[String::from("Post-acknowledgement notice")]
         );
+        assert!(list.capabilities().is_empty());
         assert_eq!(list.entries().len(), 1);
         assert_eq!(list.entries()[0].name(), "gamma");
         assert!(list.entries()[0].comment().is_none());
@@ -1588,6 +1593,33 @@ mod tests {
                 String::from("Maintenance scheduled"),
                 String::from("Additional notice")
             ]
+        );
+        assert!(list.capabilities().is_empty());
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_collects_capabilities() {
+        let responses = vec![
+            "@RSYNCD: CAP modules uid\n",
+            "@RSYNCD: OK\n",
+            "epsilon\n",
+            "@RSYNCD: CAP compression\n",
+            "@RSYNCD: EXIT\n",
+        ];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "epsilon");
+        assert_eq!(
+            list.capabilities(),
+            &[String::from("modules uid"), String::from("compression")]
         );
 
         handle.join().expect("server thread");
@@ -2053,20 +2085,27 @@ fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
     Ok(input)
 }
 
-/// Describes the module entries advertised by a daemon.
+/// Describes the module entries advertised by a daemon together with ancillary metadata.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModuleList {
     motd: Vec<String>,
     warnings: Vec<String>,
+    capabilities: Vec<String>,
     entries: Vec<ModuleListEntry>,
 }
 
 impl ModuleList {
-    /// Creates a new list from the supplied entries, warning lines, and optional MOTD lines.
-    fn new(motd: Vec<String>, warnings: Vec<String>, entries: Vec<ModuleListEntry>) -> Self {
+    /// Creates a new list from the supplied entries, warning lines, MOTD lines, and capability advertisements.
+    fn new(
+        motd: Vec<String>,
+        warnings: Vec<String>,
+        capabilities: Vec<String>,
+        entries: Vec<ModuleListEntry>,
+    ) -> Self {
         Self {
             motd,
             warnings,
+            capabilities,
             entries,
         }
     }
@@ -2087,6 +2126,12 @@ impl ModuleList {
     #[must_use]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    /// Returns the capability strings advertised by the daemon via `@RSYNCD: CAP` lines.
+    #[must_use]
+    pub fn capabilities(&self) -> &[String] {
+        &self.capabilities
     }
 }
 
@@ -2158,23 +2203,39 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
     let mut entries = Vec::new();
     let mut motd = Vec::new();
     let mut warnings = Vec::new();
+    let mut capabilities = Vec::new();
     let mut acknowledged = false;
 
     while let Some(line) = read_trimmed_line(&mut reader)
         .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
     {
-        if let Some(payload) = line.strip_prefix("@RSYNCD: ") {
-            match payload {
-                "OK" => {
+        if let Some(payload) = parse_legacy_error_message(&line) {
+            return Err(daemon_error(
+                payload.to_string(),
+                PARTIAL_TRANSFER_EXIT_CODE,
+            ));
+        }
+
+        if let Some(payload) = parse_legacy_warning_message(&line) {
+            warnings.push(payload.to_string());
+            continue;
+        }
+
+        if line.starts_with(LEGACY_DAEMON_PREFIX) {
+            match parse_legacy_daemon_message(&line) {
+                Ok(LegacyDaemonMessage::Ok) => {
                     acknowledged = true;
                     continue;
                 }
-                "EXIT" => break,
-                _ => {
-                    if let Some(reason) = payload.strip_prefix("AUTHREQD") {
-                        return Err(daemon_authentication_required_error(reason.trim()));
-                    }
-
+                Ok(LegacyDaemonMessage::Exit) => break,
+                Ok(LegacyDaemonMessage::Capabilities { flags }) => {
+                    capabilities.push(flags.to_string());
+                    continue;
+                }
+                Ok(LegacyDaemonMessage::AuthRequired { module }) => {
+                    return Err(daemon_authentication_required_error(module.unwrap_or("")));
+                }
+                Ok(LegacyDaemonMessage::Other(payload)) => {
                     if let Some(reason) = payload.strip_prefix("DENIED") {
                         return Err(daemon_access_denied_error(reason.trim()));
                     }
@@ -2186,19 +2247,13 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 
                     return Err(daemon_protocol_error(&line));
                 }
+                Ok(LegacyDaemonMessage::Version(_)) => {
+                    return Err(daemon_protocol_error(&line));
+                }
+                Err(_) => {
+                    return Err(daemon_protocol_error(&line));
+                }
             }
-        }
-
-        if let Some(payload) = line.strip_prefix("@ERROR: ") {
-            return Err(daemon_error(
-                payload.to_string(),
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
-        }
-
-        if let Some(payload) = line.strip_prefix("@WARNING:") {
-            warnings.push(payload.trim_start().to_string());
-            continue;
         }
 
         if !acknowledged {
@@ -2214,7 +2269,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
         ));
     }
 
-    Ok(ModuleList::new(motd, warnings, entries))
+    Ok(ModuleList::new(motd, warnings, capabilities, entries))
 }
 
 fn normalize_motd_payload(payload: &str) -> String {
