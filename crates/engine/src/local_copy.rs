@@ -343,19 +343,20 @@ impl CopyContext {
     }
 }
 
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
 struct BandwidthLimiter {
-    rate: f64,
-    allowance: f64,
-    last_check: Instant,
+    bytes_per_second: NonZeroU64,
+    debt_ns: i128,
+    last_instant: Instant,
 }
 
 impl BandwidthLimiter {
     fn new(limit: NonZeroU64) -> Self {
-        let rate = limit.get() as f64;
         Self {
-            rate,
-            allowance: rate,
-            last_check: Instant::now(),
+            bytes_per_second: limit,
+            debt_ns: 0,
+            last_instant: Instant::now(),
         }
     }
 
@@ -365,26 +366,57 @@ impl BandwidthLimiter {
         }
 
         let now = Instant::now();
-        let elapsed = now.duration_since(self.last_check).as_secs_f64();
-        self.last_check = now;
+        let elapsed_ns = now
+            .duration_since(self.last_instant)
+            .as_nanos()
+            .min(i128::MAX as u128) as i128;
+        self.debt_ns = self.debt_ns.saturating_sub(elapsed_ns);
 
-        self.allowance = (self.allowance + elapsed * self.rate).min(self.rate);
+        let required_ns = self.required_nanoseconds(bytes);
+        let required_ns = required_ns.min(i128::MAX as u128) as i128;
+        self.debt_ns = self.debt_ns.saturating_add(required_ns);
 
-        let mut remaining = bytes as f64;
-
-        if self.allowance >= remaining {
-            self.allowance -= remaining;
-            return;
+        if self.debt_ns > 0 {
+            let sleep_ns = self.debt_ns as u128;
+            let duration = duration_from_nanoseconds(sleep_ns);
+            if !duration.is_zero() {
+                sleep_for(duration);
+            }
+            self.last_instant = Instant::now();
+            self.debt_ns = 0;
+        } else {
+            const MAX_CREDIT_NS: i128 = NANOS_PER_SECOND as i128;
+            if self.debt_ns < -MAX_CREDIT_NS {
+                self.debt_ns = -MAX_CREDIT_NS;
+            }
+            self.last_instant = now;
         }
+    }
 
-        remaining -= self.allowance;
-        self.allowance = 0.0;
-
-        let wait_seconds = remaining / self.rate;
-        if wait_seconds.is_finite() && wait_seconds > 0.0 {
-            sleep_for(Duration::from_secs_f64(wait_seconds));
-            self.last_check = Instant::now();
+    fn required_nanoseconds(&self, bytes: usize) -> u128 {
+        let rate = self.bytes_per_second.get() as u128;
+        let bytes = bytes as u128;
+        let numerator = bytes.saturating_mul(NANOS_PER_SECOND);
+        let mut ns = numerator / rate;
+        if numerator % rate != 0 {
+            ns = ns.saturating_add(1);
         }
+        ns
+    }
+}
+
+fn duration_from_nanoseconds(ns: u128) -> Duration {
+    if ns == 0 {
+        return Duration::ZERO;
+    }
+
+    let seconds = ns / NANOS_PER_SECOND;
+    let nanos = (ns % NANOS_PER_SECOND) as u32;
+
+    if seconds >= u128::from(u64::MAX) {
+        Duration::MAX
+    } else {
+        Duration::new(seconds as u64, nanos)
     }
 }
 
@@ -1956,7 +1988,7 @@ mod tests {
         let total = recorded
             .into_iter()
             .fold(Duration::ZERO, |acc, duration| acc + duration);
-        let expected = Duration::from_secs(3);
+        let expected = Duration::from_secs(4);
         let diff = if total > expected {
             total - expected
         } else {
