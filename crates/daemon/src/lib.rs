@@ -138,6 +138,8 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
@@ -341,10 +343,12 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    #[cfg(test)]
     fn modules(&self) -> &[ModuleDefinition] {
         &self.modules
     }
 
+    #[cfg(test)]
     fn motd_lines(&self) -> &[String] {
         &self.motd_lines
     }
@@ -910,22 +914,46 @@ fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::
 }
 
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
-    let requested_addr = SocketAddr::new(options.bind_address, options.port);
+    let RuntimeOptions {
+        bind_address,
+        port,
+        max_sessions,
+        modules,
+        motd_lines,
+    } = options;
+
+    let modules = Arc::new(modules);
+    let motd_lines = Arc::new(motd_lines);
+    let requested_addr = SocketAddr::new(bind_address, port);
     let listener =
         TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
     let local_addr = listener.local_addr().unwrap_or(requested_addr);
 
     let mut served = 0usize;
+    let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
+    let max_sessions = max_sessions.map(NonZeroUsize::get);
 
     loop {
+        reap_finished_workers(&mut workers)?;
+
         match listener.accept() {
             Ok((stream, peer_addr)) => {
                 configure_stream(&stream)
                     .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
-                handle_legacy_session(stream, peer_addr, options.modules(), options.motd_lines())
-                    .map_err(|error| {
-                        stream_error(Some(peer_addr), "serve legacy handshake", error)
-                    })?;
+                let modules = Arc::clone(&modules);
+                let motd_lines = Arc::clone(&motd_lines);
+                let handle = thread::spawn(move || {
+                    let modules_vec = modules.as_ref();
+                    let motd_vec = motd_lines.as_ref();
+                    handle_legacy_session(
+                        stream,
+                        peer_addr,
+                        modules_vec.as_slice(),
+                        motd_vec.as_slice(),
+                    )
+                    .map_err(|error| (Some(peer_addr), error))
+                });
+                workers.push(handle);
                 served = served.saturating_add(1);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -936,14 +964,56 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             }
         }
 
-        if let Some(limit) = options.max_sessions {
-            if served >= limit.get() {
+        if let Some(limit) = max_sessions {
+            if served >= limit {
                 break;
             }
         }
     }
 
+    drain_workers(&mut workers)
+}
+
+type WorkerResult = Result<(), (Option<SocketAddr>, io::Error)>;
+
+fn reap_finished_workers(
+    workers: &mut Vec<thread::JoinHandle<WorkerResult>>,
+) -> Result<(), DaemonError> {
+    let mut index = 0;
+    while index < workers.len() {
+        if workers[index].is_finished() {
+            let handle = workers.remove(index);
+            join_worker(handle)?;
+        } else {
+            index += 1;
+        }
+    }
     Ok(())
+}
+
+fn drain_workers(workers: &mut Vec<thread::JoinHandle<WorkerResult>>) -> Result<(), DaemonError> {
+    while let Some(handle) = workers.pop() {
+        join_worker(handle)?;
+    }
+    Ok(())
+}
+
+fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonError> {
+    match handle.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err((peer, error))) => Err(stream_error(peer, "serve legacy handshake", error)),
+        Err(panic) => {
+            let description = match panic.downcast::<String>() {
+                Ok(message) => *message,
+                Err(payload) => match payload.downcast::<&str>() {
+                    Ok(message) => (*message).to_string(),
+                    Err(_) => "worker thread panicked".to_string(),
+                },
+            };
+            let error = io::Error::new(io::ErrorKind::Other, description);
+            Err(stream_error(None, "serve legacy handshake", error))
+        }
+    }
 }
 
 fn configure_stream(stream: &TcpStream) -> io::Result<()> {
@@ -1281,6 +1351,7 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
@@ -1550,6 +1621,67 @@ mod tests {
             line.clear();
             reader.read_line(&mut line).expect("exit message");
             assert_eq!(line, "@RSYNCD: EXIT\n");
+        }
+
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_handles_parallel_sessions() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--max-sessions"),
+                OsString::from("2"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let barrier = Arc::new(Barrier::new(2));
+        let mut clients = Vec::new();
+
+        for _ in 0..2 {
+            let barrier = Arc::clone(&barrier);
+            clients.push(thread::spawn(move || {
+                barrier.wait();
+                let mut stream = connect_with_retries(port);
+                let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("send handshake response");
+                stream.flush().expect("flush handshake response");
+
+                line.clear();
+                reader.read_line(&mut line).expect("handshake ack");
+                assert_eq!(line, "@RSYNCD: OK\n");
+
+                stream.write_all(b"module\n").expect("send module request");
+                stream.flush().expect("flush module request");
+
+                line.clear();
+                reader.read_line(&mut line).expect("error message");
+                assert!(line.starts_with("@ERROR:"));
+
+                line.clear();
+                reader.read_line(&mut line).expect("exit message");
+                assert_eq!(line, "@RSYNCD: EXIT\n");
+            }));
+        }
+
+        for client in clients {
+            client.join().expect("client thread");
         }
 
         let result = handle.join().expect("daemon thread");
