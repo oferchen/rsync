@@ -126,6 +126,7 @@ pub struct ClientConfig {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    relative_paths: bool,
     verbosity: u8,
     progress: bool,
     partial: bool,
@@ -238,6 +239,14 @@ impl ClientConfig {
         self.sparse
     }
 
+    /// Reports whether relative path preservation was requested.
+    #[must_use]
+    #[doc(alias = "--relative")]
+    #[doc(alias = "-R")]
+    pub const fn relative_paths(&self) -> bool {
+        self.relative_paths
+    }
+
     /// Returns the requested verbosity level.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -290,6 +299,7 @@ pub struct ClientConfigBuilder {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    relative_paths: bool,
     verbosity: u8,
     progress: bool,
     partial: bool,
@@ -393,6 +403,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables preservation of source-relative path components.
+    #[must_use]
+    #[doc(alias = "--relative")]
+    #[doc(alias = "-R")]
+    pub const fn relative_paths(mut self, relative: bool) -> Self {
+        self.relative_paths = relative;
+        self
+    }
+
     /// Sets the verbosity level requested by the caller.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -473,6 +492,7 @@ impl ClientConfigBuilder {
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
+            relative_paths: self.relative_paths,
             verbosity: self.verbosity,
             progress: self.progress,
             partial: self.partial,
@@ -817,6 +837,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
             .filters(filter_set)
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
+            .relative_paths(config.relative_paths())
             .inplace(config.inplace())
             .partial(config.partial());
         #[cfg(feature = "xattr")]
