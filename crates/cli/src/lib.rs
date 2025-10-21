@@ -868,14 +868,15 @@ fn load_file_list_operands(
         if path.as_os_str() == OsStr::new("-") {
             let stdin = stdin_handle.get_or_insert_with(io::stdin);
             let mut reader = stdin.lock();
-            read_file_list_from_reader(&mut reader, zero_terminated, &mut entries)
-                .map_err(|error| {
+            read_file_list_from_reader(&mut reader, zero_terminated, &mut entries).map_err(
+                |error| {
                     rsync_error!(
                         1,
                         format!("failed to read file list from standard input: {error}")
                     )
                     .with_role(Role::Client)
-                })?;
+                },
+            )?;
             continue;
         }
 
@@ -961,10 +962,31 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         return;
     }
 
-    let text = String::from_utf8_lossy(&bytes[..end]).into_owned();
-    if !text.is_empty() {
-        entries.push(OsString::from(text));
+    if let Some(entry) = os_string_from_bytes(&bytes[..end]) {
+        if !entry.is_empty() {
+            entries.push(entry);
+        }
     }
+}
+
+#[cfg(unix)]
+fn os_string_from_bytes(bytes: &[u8]) -> Option<OsString> {
+    use std::os::unix::ffi::OsStringExt;
+
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(OsString::from_vec(bytes.to_vec()))
+    }
+}
+
+#[cfg(not(unix))]
+fn os_string_from_bytes(bytes: &[u8]) -> Option<OsString> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    std::str::from_utf8(bytes).ok().map(OsString::from)
 }
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
@@ -1378,6 +1400,47 @@ mod tests {
         let copied_b = dest_dir.join(source_b.file_name().expect("file name b"));
         assert_eq!(std::fs::read(&copied_a).expect("read copied a"), b"from0-a");
         assert_eq!(std::fs::read(&copied_b).expect("read copied b"), b"from0-b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn files_from_accepts_non_utf8_paths() {
+        use std::io::Write;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let non_utf8_name = OsString::from_vec(b"file-\xff".to_vec());
+        let source_path = tmp.path().join(&non_utf8_name);
+        std::fs::write(&source_path, b"non-utf8").expect("write non-utf8 source");
+
+        let list_path = tmp.path().join("files-from-non-utf8.list");
+        {
+            let mut list_file = std::fs::File::create(&list_path).expect("create list");
+            list_file
+                .write_all(source_path.as_os_str().as_bytes())
+                .expect("write path bytes");
+            list_file.write_all(b"\n").expect("write newline");
+        }
+
+        let dest_dir = tmp.path().join("files-from-non-utf8-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest dir");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_path = dest_dir.join(non_utf8_name);
+        assert_eq!(
+            std::fs::read(copied_path).expect("read copied non-utf8"),
+            b"non-utf8"
+        );
     }
 
     #[test]
