@@ -674,6 +674,22 @@ impl LocalCopySummary {
     }
 }
 
+struct CopyOutcome {
+    summary: LocalCopySummary,
+    events: Option<Vec<LocalCopyRecord>>,
+}
+
+impl CopyOutcome {
+    fn into_summary(self) -> LocalCopySummary {
+        self.summary
+    }
+
+    fn into_summary_and_report(self) -> (LocalCopySummary, LocalCopyReport) {
+        let records = self.events.unwrap_or_default();
+        (self.summary, LocalCopyReport::new(records))
+    }
+}
+
 struct CopyContext {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
@@ -746,8 +762,21 @@ impl CopyContext {
         &mut self.summary
     }
 
-    fn into_summary(self) -> LocalCopySummary {
-        self.summary
+    fn record(&mut self, record: LocalCopyRecord) {
+        if let Some(events) = &mut self.events {
+            events.push(record);
+        }
+    }
+
+    fn partial_enabled(&self) -> bool {
+        self.options.partial_enabled()
+    }
+
+    fn into_outcome(self) -> CopyOutcome {
+        CopyOutcome {
+            summary: self.summary,
+            events: self.events,
+        }
     }
 
     fn into_report(self) -> LocalCopyReport {
