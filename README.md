@@ -46,8 +46,8 @@ The workspace currently contains the following published crates:
 
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync`, but delta transfer,
-remote transports, xattr/ACL handling, filters, and compression are
-still pending. Current gaps and parity status are tracked in
+remote transports, xattr/ACL handling, advanced filter grammar, and compression
+are still pending. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
