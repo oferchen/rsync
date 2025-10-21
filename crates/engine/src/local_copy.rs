@@ -210,6 +210,95 @@ impl LocalCopyExecution {
     }
 }
 
+/// Describes an action performed while executing a [`LocalCopyPlan`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LocalCopyAction {
+    /// File data was copied into place.
+    DataCopied,
+    /// An existing destination file already matched the source.
+    MetadataReused,
+    /// A hard link was created pointing at a previously copied destination.
+    HardLink,
+    /// A symbolic link was recreated.
+    SymlinkCopied,
+    /// A FIFO node was recreated.
+    FifoCopied,
+    /// A character or block device was recreated.
+    DeviceCopied,
+    /// A directory was created.
+    DirectoryCreated,
+    /// An entry was removed due to `--delete`.
+    EntryDeleted,
+}
+
+/// Record describing a single filesystem action performed during local copy execution.
+#[derive(Clone, Debug)]
+pub struct LocalCopyRecord {
+    relative_path: PathBuf,
+    action: LocalCopyAction,
+    bytes_transferred: u64,
+    elapsed: Duration,
+}
+
+impl LocalCopyRecord {
+    /// Creates a new [`LocalCopyRecord`].
+    fn new(
+        relative_path: PathBuf,
+        action: LocalCopyAction,
+        bytes_transferred: u64,
+        elapsed: Duration,
+    ) -> Self {
+        Self {
+            relative_path,
+            action,
+            bytes_transferred,
+            elapsed,
+        }
+    }
+
+    /// Returns the relative path affected by this record.
+    #[must_use]
+    pub fn relative_path(&self) -> &Path {
+        &self.relative_path
+    }
+
+    /// Returns the action performed by this record.
+    #[must_use]
+    pub fn action(&self) -> &LocalCopyAction {
+        &self.action
+    }
+
+    /// Returns the number of bytes transferred for this record.
+    #[must_use]
+    pub const fn bytes_transferred(&self) -> u64 {
+        self.bytes_transferred
+    }
+
+    /// Returns the elapsed time spent performing the action.
+    #[must_use]
+    pub const fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+}
+
+/// Report returned after executing a [`LocalCopyPlan`] with event collection enabled.
+#[derive(Clone, Debug, Default)]
+pub struct LocalCopyReport {
+    records: Vec<LocalCopyRecord>,
+}
+
+impl LocalCopyReport {
+    fn new(records: Vec<LocalCopyRecord>) -> Self {
+        Self { records }
+    }
+
+    /// Returns the list of records captured during execution.
+    #[must_use]
+    pub fn records(&self) -> &[LocalCopyRecord] {
+        &self.records
+    }
+}
+
 /// Options that influence how a [`LocalCopyPlan`] is executed.
 #[derive(Clone, Debug, Default)]
 pub struct LocalCopyOptions {
@@ -222,6 +311,8 @@ pub struct LocalCopyOptions {
     filters: Option<FilterSet>,
     numeric_ids: bool,
     sparse: bool,
+    partial: bool,
+    collect_events: bool,
 }
 
 impl LocalCopyOptions {
@@ -238,6 +329,8 @@ impl LocalCopyOptions {
             filters: None,
             numeric_ids: false,
             sparse: false,
+            partial: false,
+            collect_events: false,
         }
     }
 
@@ -312,6 +405,21 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that partial transfers write into a temporary file that is preserved on failure.
+    #[must_use]
+    #[doc(alias = "--partial")]
+    pub const fn partial(mut self, partial: bool) -> Self {
+        self.partial = partial;
+        self
+    }
+
+    /// Enables collection of transfer events that describe the work performed by the engine.
+    #[must_use]
+    pub const fn collect_events(mut self, collect: bool) -> Self {
+        self.collect_events = collect;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -364,6 +472,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn sparse_enabled(&self) -> bool {
         self.sparse
+    }
+
+    /// Reports whether partial transfer handling has been requested.
+    #[must_use]
+    pub const fn partial_enabled(&self) -> bool {
+        self.partial
+    }
+
+    /// Reports whether the execution should record transfer events.
+    #[must_use]
+    pub const fn events_enabled(&self) -> bool {
+        self.collect_events
     }
 }
 
@@ -537,6 +657,11 @@ struct CopyContext {
 impl CopyContext {
     fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
+        let events = if options.events_enabled() {
+            Some(Vec::new())
+        } else {
+            None
+        };
         Self {
             mode,
             options,
@@ -1033,7 +1158,13 @@ fn copy_sources(
             };
 
             if file_type.is_file() {
-                copy_file(&mut context, source_path, &target, &metadata)?;
+                copy_file(
+                    &mut context,
+                    source_path,
+                    &target,
+                    &metadata,
+                    Some(relative.as_path()),
+                )?;
             } else if file_type.is_symlink() {
                 copy_symlink(
                     &mut context,
@@ -1042,6 +1173,12 @@ fn copy_sources(
                     &metadata,
                     metadata_options,
                 )?;
+                context.record(LocalCopyRecord::new(
+                    relative,
+                    LocalCopyAction::SymlinkCopied,
+                    0,
+                    Duration::default(),
+                ));
             } else if is_fifo(&file_type) {
                 copy_fifo(&mut context, &target, &metadata, metadata_options)?;
             } else if is_device(&file_type) {
@@ -1095,6 +1232,14 @@ fn copy_directory_recursive(
                 fs::create_dir_all(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
+                if let Some(rel) = relative {
+                    context.record(LocalCopyRecord::new(
+                        rel.to_path_buf(),
+                        LocalCopyAction::DirectoryCreated,
+                        0,
+                        Duration::default(),
+                    ));
+                }
             }
             if relative.is_some() {
                 context.summary_mut().record_directory();
@@ -1142,7 +1287,13 @@ fn copy_directory_recursive(
                 Some(entry_relative.as_path()),
             )?;
         } else if entry_type.is_file() {
-            copy_file(context, entry_path, &target_path, entry_metadata)?;
+            copy_file(
+                context,
+                entry_path,
+                &target_path,
+                entry_metadata,
+                Some(entry_relative.as_path()),
+            )?;
         } else if entry_type.is_symlink() {
             copy_symlink(
                 context,
@@ -1187,9 +1338,20 @@ fn copy_file(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let metadata_options = context.metadata_options();
     let mode = context.mode();
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| source.file_name().map(PathBuf::from))
+        .unwrap_or_else(|| {
+            destination
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(PathBuf::new)
+        });
+    let file_size = metadata.len();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1269,6 +1431,7 @@ fn copy_file(
     }
 
     let use_sparse_writes = context.sparse_enabled();
+    let partial_enabled = context.partial_enabled();
     let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -1305,19 +1468,43 @@ fn copy_file(
             apply_file_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
             hard_links.record(metadata, destination);
+            context.record(LocalCopyRecord::new(
+                record_path.clone(),
+                LocalCopyAction::MetadataReused,
+                0,
+                Duration::default(),
+            ));
             return Ok(());
         }
     }
 
     let mut reader = fs::File::open(source)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    let write_target = if partial_enabled {
+        let partial = partial_destination_path(destination);
+        if let Err(error) = fs::remove_file(&partial) {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(LocalCopyError::io(
+                    "remove existing partial file",
+                    partial.clone(),
+                    error,
+                ));
+            }
+        }
+        partial
+    } else {
+        destination.to_path_buf()
+    };
+
     let mut writer = fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(destination)
-        .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+        .open(&write_target)
+        .map_err(|error| LocalCopyError::io("copy file", write_target.clone(), error))?;
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    let start = Instant::now();
 
     copy_file_contents(
         &mut reader,
@@ -1329,10 +1516,51 @@ fn copy_file(
         destination,
     )?;
 
+    drop(writer);
+
+    if partial_enabled {
+        if let Err(error) = fs::rename(&write_target, destination) {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                fs::remove_file(destination).map_err(|remove_error| {
+                    LocalCopyError::io(
+                        "remove existing destination",
+                        destination.to_path_buf(),
+                        remove_error,
+                    )
+                })?;
+                fs::rename(&write_target, destination).map_err(|rename_error| {
+                    LocalCopyError::io("finalise partial file", write_target.clone(), rename_error)
+                })?;
+            } else {
+                return Err(LocalCopyError::io(
+                    "finalise partial file",
+                    write_target.clone(),
+                    error,
+                ));
+            }
+        }
+    }
+
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
+    let elapsed = start.elapsed();
+    context.record(LocalCopyRecord::new(
+        record_path,
+        LocalCopyAction::DataCopied,
+        file_size,
+        elapsed,
+    ));
     Ok(())
+}
+
+fn partial_destination_path(destination: &Path) -> PathBuf {
+    let file_name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "partial".to_string());
+    let partial_name = format!(".oc-rsync-partial-{}", file_name);
+    destination.with_file_name(partial_name)
 }
 
 fn copy_file_contents(
