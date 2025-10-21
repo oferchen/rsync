@@ -7,7 +7,7 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, and `--delete`) and delegates local copy operations to
+//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, and `--bwlimit`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -20,10 +20,10 @@
 //! iterator of arguments together with handles for standard output and error,
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help`, `--version`, `--dry-run`, and `--delete` flags while treating all other
+//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
-//! deterministic local copy pipeline.
+//! deterministic local copy pipeline with optional bandwidth pacing.
 //!
 //! # Invariants
 //!
@@ -103,6 +103,10 @@ const HELP_TEXT: &str = concat!(
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
     "is limited to basic permissions and modification times.\n",
 );
+
+/// Human-readable list of the options recognised by this development build.
+const SUPPORTED_OPTIONS_LIST: &str =
+    "--help/-h, --version/-V, --dry-run/-n, --delete, and --bwlimit";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -359,18 +363,18 @@ impl UnsupportedOption {
 
     fn to_message(&self) -> Message {
         let option = self.option.to_string_lossy();
-        rsync_error!(
-            1,
-            "unsupported option '{}': this build currently supports only --help/-h, --version/-V, and --dry-run/-n",
-            option
-        )
-        .with_role(Role::Client)
+        let text = format!(
+            "unsupported option '{}': this build currently supports only {}",
+            option, SUPPORTED_OPTIONS_LIST
+        );
+        rsync_error!(1, text).with_role(Role::Client)
     }
 
     fn fallback_text(&self) -> String {
         format!(
-            "unsupported option '{}': this build currently supports only --help/-h, --version/-V, and --dry-run/-n",
-            self.option.to_string_lossy()
+            "unsupported option '{}': this build currently supports only {}",
+            self.option.to_string_lossy(),
+            SUPPORTED_OPTIONS_LIST
         )
     }
 }
