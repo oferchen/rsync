@@ -112,7 +112,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, and 'merge FILE').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', and 'merge FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
@@ -1101,34 +1101,60 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return Err(message);
     }
 
-    let mut chars = trimmed.chars();
-    let action = chars.next().expect("non-empty after trim");
-    let remainder = chars
-        .as_str()
-        .trim_start_matches(|ch: char| ch.is_ascii_whitespace());
-
-    if remainder.is_empty() {
-        let message = rsync_error!(
-            1,
-            "filter rule '{trimmed}' is missing a pattern after '{action}'"
-        )
-        .with_role(Role::Client);
-        return Err(message);
-    }
-
-    let pattern = remainder.to_string();
-    match action {
-        '+' => Ok(FilterDirective::Rule(FilterRuleSpec::include(pattern))),
-        '-' => Ok(FilterDirective::Rule(FilterRuleSpec::exclude(pattern))),
-        _ => {
-            let message = rsync_error!(
-                1,
-                "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), and 'merge FILE' directives"
-            )
-            .with_role(Role::Client);
-            Err(message)
+    if let Some(remainder) = trimmed.strip_prefix('+') {
+        let pattern = remainder.trim_start();
+        if pattern.is_empty() {
+            let message = rsync_error!(1, "filter rule '{trimmed}' is missing a pattern after '+'")
+                .with_role(Role::Client);
+            return Err(message);
         }
+        return Ok(FilterDirective::Rule(FilterRuleSpec::include(
+            pattern.to_string(),
+        )));
     }
+
+    if let Some(remainder) = trimmed.strip_prefix('-') {
+        let pattern = remainder.trim_start();
+        if pattern.is_empty() {
+            let message = rsync_error!(1, "filter rule '{trimmed}' is missing a pattern after '-'")
+                .with_role(Role::Client);
+            return Err(message);
+        }
+        return Ok(FilterDirective::Rule(FilterRuleSpec::exclude(
+            pattern.to_string(),
+        )));
+    }
+
+    let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
+    let keyword = parts.next().expect("split always yields at least one part");
+    let remainder = parts.next().unwrap_or("");
+    let pattern = remainder.trim_start();
+
+    let handle_keyword = |action_label: &str, builder: fn(String) -> FilterRuleSpec| {
+        if pattern.is_empty() {
+            let text =
+                format!("filter rule '{trimmed}' is missing a pattern after '{action_label}'");
+            let message = rsync_error!(1, text).with_role(Role::Client);
+            return Err(message);
+        }
+
+        Ok(FilterDirective::Rule(builder(pattern.to_string())))
+    };
+
+    if keyword.eq_ignore_ascii_case("include") {
+        return handle_keyword("include", FilterRuleSpec::include);
+    }
+
+    if keyword.eq_ignore_ascii_case("exclude") {
+        return handle_keyword("exclude", FilterRuleSpec::exclude);
+    }
+
+    let message = rsync_error!(
+        1,
+        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', and 'merge FILE' directives"
+    )
+    .with_role(Role::Client);
+    Err(message)
 }
 
 fn append_filter_rules_from_files(
@@ -2185,6 +2211,20 @@ mod tests {
         assert_eq!(
             exclude,
             FilterDirective::Rule(FilterRuleSpec::exclude("*.bak".to_string()))
+        );
+
+        let include_keyword =
+            parse_filter_directive(OsStr::new("include logs/**")).expect("keyword include parses");
+        assert_eq!(
+            include_keyword,
+            FilterDirective::Rule(FilterRuleSpec::include("logs/**".to_string()))
+        );
+
+        let exclude_keyword =
+            parse_filter_directive(OsStr::new("exclude *.tmp")).expect("keyword exclude parses");
+        assert_eq!(
+            exclude_keyword,
+            FilterDirective::Rule(FilterRuleSpec::exclude("*.tmp".to_string()))
         );
     }
 
