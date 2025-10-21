@@ -50,6 +50,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use libc::{EACCES, EINVAL, EOPNOTSUPP, EPERM, EXDEV};
+
 use rsync_meta::{
     MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
     create_device_node, create_fifo,
@@ -750,8 +753,11 @@ fn copy_file(
     }
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
-        match fs::hard_link(&existing_target, destination) {
-            Ok(()) => {}
+        let link_error = match fs::hard_link(&existing_target, destination) {
+            Ok(()) => {
+                hard_links.record(metadata, destination);
+                return Ok(());
+            }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 fs::remove_file(destination).map_err(|remove_error| {
                     LocalCopyError::io(
@@ -760,21 +766,25 @@ fn copy_file(
                         remove_error,
                     )
                 })?;
-                fs::hard_link(&existing_target, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
-                })?;
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create hard link",
-                    destination.to_path_buf(),
-                    error,
-                ));
-            }
-        }
 
-        hard_links.record(metadata, destination);
-        return Ok(());
+                match fs::hard_link(&existing_target, destination) {
+                    Ok(()) => {
+                        hard_links.record(metadata, destination);
+                        return Ok(());
+                    }
+                    Err(error) => error,
+                }
+            }
+            Err(error) => error,
+        };
+
+        if !should_fallback_to_regular_copy(&link_error) {
+            return Err(LocalCopyError::io(
+                "create hard link",
+                destination.to_path_buf(),
+                link_error,
+            ));
+        }
     }
 
     fs::copy(source, destination)
@@ -782,6 +792,45 @@ fn copy_file(
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
     Ok(())
+}
+
+fn should_fallback_to_regular_copy(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+    ) {
+        return true;
+    }
+
+    #[cfg(unix)]
+    {
+        if matches!(
+            error.raw_os_error(),
+            Some(EXDEV) | Some(EPERM) | Some(EACCES) | Some(EOPNOTSUPP) | Some(EINVAL)
+        ) {
+            return true;
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        const ERROR_NOT_SAME_DEVICE: i32 = 17;
+        const ERROR_INVALID_FUNCTION: i32 = 1;
+        const ERROR_INVALID_PARAMETER: i32 = 87;
+        const ERROR_ACCESS_DENIED: i32 = 5;
+
+        if matches!(
+            error.raw_os_error(),
+            Some(ERROR_NOT_SAME_DEVICE)
+                | Some(ERROR_INVALID_FUNCTION)
+                | Some(ERROR_INVALID_PARAMETER)
+                | Some(ERROR_ACCESS_DENIED)
+        ) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn copy_fifo(
@@ -1563,6 +1612,23 @@ mod tests {
                 assert_eq!(reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
             }
             other => panic!("unexpected error kind: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fallback_to_regular_copy_handles_permission_denied() {
+        let error = io::Error::new(io::ErrorKind::PermissionDenied, "simulated");
+        assert!(should_fallback_to_regular_copy(&error));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_to_regular_copy_accepts_common_unix_errors() {
+        let codes = [EXDEV, EPERM, EACCES, EOPNOTSUPP, EINVAL];
+
+        for code in codes {
+            let error = io::Error::from_raw_os_error(code);
+            assert!(should_fallback_to_regular_copy(&error));
         }
     }
 

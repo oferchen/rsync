@@ -453,6 +453,7 @@ name = "rsync-engine"
 version = "0.0.0"
 dependencies = [
  "filetime",
+ "libc",
  "rsync-meta",
  "rustix 0.38.44",
  "tempfile",
