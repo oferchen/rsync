@@ -504,6 +504,7 @@ pub struct FilterRuleSpec {
 impl FilterRuleSpec {
     /// Creates an include rule for the given pattern text.
     #[must_use]
+    #[doc(alias = "show")]
     pub fn include(pattern: impl Into<String>) -> Self {
         Self {
             kind: FilterRuleKind::Include,
@@ -513,6 +514,7 @@ impl FilterRuleSpec {
 
     /// Creates an exclude rule for the given pattern text.
     #[must_use]
+    #[doc(alias = "hide")]
     pub fn exclude(pattern: impl Into<String>) -> Self {
         Self {
             kind: FilterRuleKind::Exclude,
