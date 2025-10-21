@@ -7,7 +7,8 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter`, `--files-from`,
+//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter` (supporting
+//! `+`/`-` actions and `merge FILE` directives), `--files-from`,
 //! `--from0`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
@@ -67,7 +68,7 @@
 //! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
 use std::ffi::{OsStr, OsString};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -108,7 +109,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include and '-' exclude).\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, and 'merge FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
@@ -326,7 +327,7 @@ fn clap_command() -> Command {
             Arg::new("filter")
                 .long("filter")
                 .value_name("RULE")
-                .help("Apply filter RULE (supports '+' include and '-' exclude).")
+                .help("Apply filter RULE (supports '+' include, '-' exclude, and 'merge FILE').")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -799,9 +800,20 @@ where
             .into_iter()
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
-    for rule in filters {
-        match parse_filter_rule(&rule) {
-            Ok(spec) => filter_rules.push(spec),
+    let mut merge_stack = Vec::new();
+    for filter in filters {
+        match parse_filter_directive(filter.as_os_str()) {
+            Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
+            Ok(FilterDirective::Merge(source)) => {
+                if let Err(message) =
+                    apply_merge_directive(source, &mut filter_rules, &mut merge_stack)
+                {
+                    if write_message(&message, stderr).is_err() {
+                        let _ = writeln!(stderr.writer_mut(), "{}", message);
+                    }
+                    return 1;
+                }
+            }
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
                     let _ = writeln!(stderr.writer_mut(), "{}", message);
@@ -1041,16 +1053,48 @@ fn os_string_to_pattern(value: OsString) -> String {
     }
 }
 
-fn parse_filter_rule(argument: &OsStr) -> Result<FilterRuleSpec, Message> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FilterDirective {
+    Rule(FilterRuleSpec),
+    Merge(OsString),
+}
+
+fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
-    let trimmed = text.trim();
+    let trimmed_leading = text.trim_start();
+
+    if let Some(rest) = trimmed_leading.strip_prefix("merge") {
+        let remainder = rest.trim_start();
+
+        if remainder.starts_with(',') {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "filter merge directive '{trimmed_leading}' uses unsupported modifiers; this build accepts only 'merge FILE'"
+                )
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+
+        let path_text = remainder.trim();
+        if path_text.is_empty() {
+            let message = rsync_error!(
+                1,
+                format!("filter merge directive '{trimmed_leading}' is missing a file path")
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+
+        return Ok(FilterDirective::Merge(OsString::from(path_text)));
+    }
+
+    let trimmed = trimmed_leading.trim_end();
 
     if trimmed.is_empty() {
-        let message = rsync_error!(
-            1,
-            "filter rule is empty: supply '+' or '-' followed by a pattern"
-        )
-        .with_role(Role::Client);
+        let message = rsync_error!(1, "filter rule is empty: supply '+', '-', or 'merge FILE'")
+            .with_role(Role::Client);
         return Err(message);
     }
 
@@ -1071,12 +1115,12 @@ fn parse_filter_rule(argument: &OsStr) -> Result<FilterRuleSpec, Message> {
 
     let pattern = remainder.to_string();
     match action {
-        '+' => Ok(FilterRuleSpec::include(pattern)),
-        '-' => Ok(FilterRuleSpec::exclude(pattern)),
+        '+' => Ok(FilterDirective::Rule(FilterRuleSpec::include(pattern))),
+        '-' => Ok(FilterDirective::Rule(FilterRuleSpec::exclude(pattern))),
         _ => {
             let message = rsync_error!(
                 1,
-                "unsupported filter rule '{trimmed}': this build currently supports only '+' (include) and '-' (exclude) actions"
+                "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), and 'merge FILE' directives"
             )
             .with_role(Role::Client);
             Err(message)
@@ -1116,6 +1160,61 @@ fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
         let text = format!("failed to read filter file '{}': {}", path_display, error);
         rsync_error!(1, text).with_role(Role::Client)
     })
+}
+
+fn apply_merge_directive(
+    source: OsString,
+    destination: &mut Vec<FilterRuleSpec>,
+    visited: &mut Vec<PathBuf>,
+) -> Result<(), Message> {
+    let (guard_key, display) = if source.as_os_str() == OsStr::new("-") {
+        (PathBuf::from("-"), String::from("-"))
+    } else {
+        let path_buf = PathBuf::from(&source);
+        let display = path_buf.display().to_string();
+        let canonical = fs::canonicalize(&path_buf).unwrap_or(path_buf);
+        (canonical, display)
+    };
+
+    if visited.contains(&guard_key) {
+        let text = format!("recursive filter merge detected for '{display}'");
+        return Err(rsync_error!(1, text).with_role(Role::Client));
+    }
+
+    visited.push(guard_key);
+    let result = (|| -> Result<(), Message> {
+        let entries = load_filter_file_patterns(source.as_os_str())?;
+        for entry in entries {
+            match parse_filter_directive(OsStr::new(entry.as_str())) {
+                Ok(FilterDirective::Rule(rule)) => destination.push(rule),
+                Ok(FilterDirective::Merge(nested)) => {
+                    apply_merge_directive(nested, destination, visited).map_err(|error| {
+                        let detail = error.to_string();
+                        rsync_error!(
+                            1,
+                            format!("failed to process merge file '{display}': {detail}")
+                        )
+                        .with_role(Role::Client)
+                    })?;
+                }
+                Err(error) => {
+                    let detail = error.to_string();
+                    return Err(
+                        rsync_error!(
+                            1,
+                            format!(
+                                "failed to parse filter rule '{entry}' from merge file '{display}': {detail}"
+                            )
+                        )
+                        .with_role(Role::Client),
+                    );
+                }
+            }
+        }
+        Ok(())
+    })();
+    visited.pop();
+    result
 }
 
 fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, Message> {
@@ -2184,22 +2283,53 @@ mod tests {
     }
 
     #[test]
-    fn parse_filter_rule_accepts_include_and_exclude() {
-        let include = parse_filter_rule(OsStr::new("+ assets/**")).expect("include rule parses");
-        assert_eq!(include.kind(), FilterRuleKind::Include);
-        assert_eq!(include.pattern(), "assets/**");
+    fn parse_filter_directive_accepts_include_and_exclude() {
+        let include =
+            parse_filter_directive(OsStr::new("+ assets/**")).expect("include rule parses");
+        assert_eq!(
+            include,
+            FilterDirective::Rule(FilterRuleSpec::include("assets/**".to_string()))
+        );
 
-        let exclude = parse_filter_rule(OsStr::new("- *.bak")).expect("exclude rule parses");
-        assert_eq!(exclude.kind(), FilterRuleKind::Exclude);
-        assert_eq!(exclude.pattern(), "*.bak");
+        let exclude = parse_filter_directive(OsStr::new("- *.bak")).expect("exclude rule parses");
+        assert_eq!(
+            exclude,
+            FilterDirective::Rule(FilterRuleSpec::exclude("*.bak".to_string()))
+        );
     }
 
     #[test]
-    fn parse_filter_rule_rejects_missing_pattern() {
+    fn parse_filter_directive_rejects_missing_pattern() {
         let error =
-            parse_filter_rule(OsStr::new("+   ")).expect_err("missing pattern should error");
+            parse_filter_directive(OsStr::new("+   ")).expect_err("missing pattern should error");
         let rendered = error.to_string();
         assert!(rendered.contains("missing a pattern"));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge() {
+        let directive =
+            parse_filter_directive(OsStr::new("merge filters.txt")).expect("merge directive");
+        assert_eq!(
+            directive,
+            FilterDirective::Merge(OsString::from("filters.txt"))
+        );
+    }
+
+    #[test]
+    fn parse_filter_directive_rejects_merge_without_path() {
+        let error = parse_filter_directive(OsStr::new("merge "))
+            .expect_err("missing merge path should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("missing a file path"));
+    }
+
+    #[test]
+    fn parse_filter_directive_rejects_merge_with_modifiers() {
+        let error = parse_filter_directive(OsStr::new("merge,- filters"))
+            .expect_err("unsupported modifiers should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("unsupported modifiers"));
     }
 
     #[test]
@@ -2257,6 +2387,73 @@ mod tests {
         let copied_root = dest_root.join("source");
         assert!(copied_root.join("keep.txt").exists());
         assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_filter_merge_applies_rules() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let filter_file = tmp.path().join("filters.txt");
+        std::fs::write(&filter_file, "- *.tmp\n").expect("write filter file");
+
+        let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--filter"),
+            filter_arg,
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_filter_merge_detects_recursion() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+
+        let filter_file = tmp.path().join("filters.txt");
+        std::fs::write(
+            &filter_file,
+            format!("merge {}\n", filter_file.display()),
+        )
+        .expect("write recursive filter");
+
+        let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--filter"),
+            filter_arg,
+            source_root.into_os_string(),
+            dest_root.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8_lossy(&stderr);
+        assert!(rendered.contains("recursive filter merge"));
     }
 
     #[test]
