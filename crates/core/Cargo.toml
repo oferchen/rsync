@@ -10,8 +10,8 @@ build = "build.rs"
 
 [dependencies]
 rsync-protocol = { path = "../protocol" }
-rsync-meta = { path = "../meta" }
-rsync-engine = { path = "../engine" }
+rsync-meta = { path = "../meta", default-features = false }
+rsync-engine = { path = "../engine", default-features = false }
 rsync-transport = { path = "../transport" }
 rsync-filters = { path = "../filters" }
 libc = "0.2"
@@ -19,7 +19,7 @@ libc = "0.2"
 [features]
 default = []
 acl = []
-xattr = []
+xattr = ["rsync-meta/xattr", "rsync-engine/xattr"]
 zstd = []
 iconv = []
 sd-notify = []

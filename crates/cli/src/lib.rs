@@ -134,6 +134,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
     "      --no-times   Disable modification time preservation.\n",
+    "  -X, --xattrs     Preserve extended attributes when supported.\n",
+    "      --no-xattrs  Disable extended attribute preservation.\n",
     "      --numeric-ids      Preserve numeric UID/GID values.\n",
     "      --no-numeric-ids   Map UID/GID values to names when possible.\n",
     "\n",
@@ -143,7 +145,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -173,6 +175,7 @@ struct ParsedArgs {
     filters: Vec<OsString>,
     files_from: Vec<OsString>,
     from0: bool,
+    xattrs: Option<bool>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -409,6 +412,21 @@ fn clap_command() -> Command {
                 .overrides_with("times"),
         )
         .arg(
+            Arg::new("xattrs")
+                .long("xattrs")
+                .short('X')
+                .help("Preserve extended attributes when supported.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-xattrs"),
+        )
+        .arg(
+            Arg::new("no-xattrs")
+                .long("no-xattrs")
+                .help("Disable extended attribute preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("xattrs"),
+        )
+        .arg(
             Arg::new("numeric-ids")
                 .long("numeric-ids")
                 .help("Preserve numeric UID/GID values.")
@@ -484,6 +502,13 @@ where
     let times = if matches.get_flag("times") {
         Some(true)
     } else if matches.get_flag("no-times") {
+        Some(false)
+    } else {
+        None
+    };
+    let xattrs = if matches.get_flag("xattrs") {
+        Some(true)
+    } else if matches.get_flag("no-xattrs") {
         Some(false)
     } else {
         None
@@ -585,6 +610,7 @@ where
         filters,
         files_from,
         from0,
+        xattrs,
     })
 }
 
@@ -656,6 +682,7 @@ where
         progress,
         partial,
         inplace,
+        xattrs,
     } = parsed;
 
     if show_help {
@@ -702,6 +729,19 @@ where
     };
 
     let numeric_ids = numeric_ids.unwrap_or(false);
+
+    #[cfg(not(feature = "xattr"))]
+    if xattrs.unwrap_or(false) {
+        let message = rsync_error!(1, "extended attributes are not supported on this client")
+            .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(
+                stderr.writer_mut(),
+                "extended attributes are not supported on this client"
+            );
+        }
+        return 1;
+    }
 
     let mut file_list_operands = match load_file_list_operands(&files_from, from0) {
         Ok(operands) => operands,
@@ -773,6 +813,10 @@ where
         .progress(progress)
         .partial(partial)
         .inplace(inplace.unwrap_or(false));
+    #[cfg(feature = "xattr")]
+    {
+        builder = builder.xattrs(xattrs.unwrap_or(false));
+    }
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -1476,6 +1520,9 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+
+    #[cfg(feature = "xattr")]
+    use xattr;
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -2990,5 +3037,57 @@ mod tests {
                 .expect("write response");
         }
         reader.get_mut().flush().expect("flush response");
+    }
+
+    #[cfg(not(feature = "xattr"))]
+    #[test]
+    fn xattrs_option_reports_unsupported_when_feature_disabled() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--xattrs"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("UTF-8 error");
+        assert!(rendered.contains("extended attributes are not supported on this client"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn xattrs_option_preserves_attributes() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"attr data").expect("write source");
+        xattr::set(&source, "user.test", b"value").expect("set xattr");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--xattrs"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied = xattr::get(&destination, "user.test")
+            .expect("read dest xattr")
+            .expect("xattr present");
+        assert_eq!(copied, b"value");
     }
 }
