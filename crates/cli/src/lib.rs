@@ -101,6 +101,10 @@ const HELP_TEXT: &str = concat!(
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
+    "  -p, --perms      Preserve file permissions.\n",
+    "      --no-perms   Disable permission preservation.\n",
+    "  -t, --times      Preserve modification times.\n",
+    "      --no-times   Disable modification time preservation.\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -108,7 +112,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, and --group";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, --group, --perms/-p, --no-perms, --times/-t, and --no-times";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -122,6 +126,8 @@ struct ParsedArgs {
     bwlimit: Option<OsString>,
     owner: bool,
     group: bool,
+    perms: Option<bool>,
+    times: Option<bool>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -179,6 +185,36 @@ fn clap_command() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("perms")
+                .long("perms")
+                .short('p')
+                .help("Preserve file permissions.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-perms"),
+        )
+        .arg(
+            Arg::new("no-perms")
+                .long("no-perms")
+                .help("Disable permission preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("perms"),
+        )
+        .arg(
+            Arg::new("times")
+                .long("times")
+                .short('t')
+                .help("Preserve modification times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-times"),
+        )
+        .arg(
+            Arg::new("no-times")
+                .long("no-times")
+                .help("Disable modification time preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("times"),
+        )
+        .arg(
             Arg::new("bwlimit")
                 .long("bwlimit")
                 .value_name("RATE")
@@ -218,6 +254,20 @@ where
     let delete = matches.get_flag("delete");
     let owner = matches.get_flag("owner");
     let group = matches.get_flag("group");
+    let perms = if matches.get_flag("perms") {
+        Some(true)
+    } else if matches.get_flag("no-perms") {
+        Some(false)
+    } else {
+        None
+    };
+    let times = if matches.get_flag("times") {
+        Some(true)
+    } else if matches.get_flag("no-times") {
+        Some(false)
+    } else {
+        None
+    };
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -236,6 +286,8 @@ where
         bwlimit,
         owner,
         group,
+        perms,
+        times,
     })
 }
 
@@ -355,6 +407,9 @@ where
         }
     }
 
+    let preserve_permissions = parsed.perms.unwrap_or(parsed.archive);
+    let preserve_times = parsed.times.unwrap_or(parsed.archive);
+
     let config = ClientConfig::builder()
         .transfer_args(remainder)
         .dry_run(parsed.dry_run)
@@ -362,6 +417,8 @@ where
         .bandwidth_limit(bandwidth_limit)
         .owner(parsed.owner || parsed.archive)
         .group(parsed.group || parsed.archive)
+        .permissions(preserve_permissions)
+        .times(preserve_times)
         .build();
 
     match run_core_client(config) {
@@ -800,6 +857,153 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"metadata"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_request_with_perms_preserves_mode() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-perms.txt");
+        let destination = tmp.path().join("dest-perms.txt");
+        std::fs::write(&source, b"data").expect("write source");
+        let atime = FileTime::from_unix_time(1_700_070_000, 0);
+        let mtime = FileTime::from_unix_time(1_700_080_000, 0);
+        set_file_times(&source, atime, mtime).expect("set times");
+        std::fs::set_permissions(&source, PermissionsExt::from_mode(0o640)).expect("set perms");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--perms"),
+            OsString::from("--times"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let metadata = std::fs::metadata(&destination).expect("dest metadata");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
+        let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(dest_mtime, mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_request_with_no_perms_overrides_archive() {
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-no-perms.txt");
+        let destination = tmp.path().join("dest-no-perms.txt");
+        std::fs::write(&source, b"data").expect("write source");
+        std::fs::set_permissions(&source, PermissionsExt::from_mode(0o600)).expect("set perms");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--no-perms"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let metadata = std::fs::metadata(&destination).expect("dest metadata");
+        assert_ne!(metadata.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn parse_args_recognises_perms_and_times_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--perms"),
+            OsString::from("--times"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.perms, Some(true));
+        assert_eq!(parsed.times, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--no-perms"),
+            OsString::from("--no-times"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.perms, Some(false));
+        assert_eq!(parsed.times, Some(false));
+    }
+
+    #[test]
+    fn transfer_request_with_times_preserves_timestamp() {
+        use filetime::{FileTime, set_file_times};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-times.txt");
+        let destination = tmp.path().join("dest-times.txt");
+        std::fs::write(&source, b"data").expect("write source");
+        let mtime = FileTime::from_unix_time(1_700_090_000, 500_000_000);
+        set_file_times(&source, mtime, mtime).expect("set times");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--times"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let metadata = std::fs::metadata(&destination).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(dest_mtime, mtime);
+    }
+
+    #[test]
+    fn transfer_request_with_no_times_overrides_archive() {
+        use filetime::{FileTime, set_file_times};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-no-times.txt");
+        let destination = tmp.path().join("dest-no-times.txt");
+        std::fs::write(&source, b"data").expect("write source");
+        let mtime = FileTime::from_unix_time(1_700_100_000, 0);
+        set_file_times(&source, mtime, mtime).expect("set times");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--no-times"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let metadata = std::fs::metadata(&destination).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_ne!(dest_mtime, mtime);
     }
 
     #[test]

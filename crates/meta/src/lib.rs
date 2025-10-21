@@ -203,8 +203,12 @@ pub fn apply_directory_metadata_with_options(
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
     set_owner_like(metadata, destination, true, options)?;
-    set_permissions_like(metadata, destination)?;
-    set_timestamp_like(metadata, destination, true)?;
+    if options.permissions() {
+        set_permissions_like(metadata, destination)?;
+    }
+    if options.times() {
+        set_timestamp_like(metadata, destination, true)?;
+    }
     Ok(())
 }
 
@@ -226,8 +230,12 @@ pub fn apply_file_metadata_with_options(
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
     set_owner_like(metadata, destination, true, options)?;
-    set_permissions_like(metadata, destination)?;
-    set_timestamp_like(metadata, destination, true)?;
+    if options.permissions() {
+        set_permissions_like(metadata, destination)?;
+    }
+    if options.times() {
+        set_timestamp_like(metadata, destination, true)?;
+    }
     Ok(())
 }
 
@@ -247,7 +255,9 @@ pub fn apply_symlink_metadata_with_options(
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
     set_owner_like(metadata, destination, false, options)?;
-    set_timestamp_like(metadata, destination, false)?;
+    if options.times() {
+        set_timestamp_like(metadata, destination, false)?;
+    }
     Ok(())
 }
 
@@ -388,20 +398,27 @@ fn create_device_node_inner(
     ))
 }
 
-/// Options that control ownership preservation when applying metadata.
+/// Options that control metadata preservation during copy operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetadataOptions {
     preserve_owner: bool,
     preserve_group: bool,
+    preserve_permissions: bool,
+    preserve_times: bool,
 }
 
 impl MetadataOptions {
     /// Creates a new [`MetadataOptions`] value with defaults applied.
+    ///
+    /// By default the options preserve permissions and timestamps while leaving
+    /// ownership disabled so callers can opt-in as needed.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             preserve_owner: false,
             preserve_group: false,
+            preserve_permissions: true,
+            preserve_times: true,
         }
     }
 
@@ -419,6 +436,22 @@ impl MetadataOptions {
         self
     }
 
+    /// Requests that permissions be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--perms")]
+    pub const fn preserve_permissions(mut self, preserve: bool) -> Self {
+        self.preserve_permissions = preserve;
+        self
+    }
+
+    /// Requests that timestamps be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--times")]
+    pub const fn preserve_times(mut self, preserve: bool) -> Self {
+        self.preserve_times = preserve;
+        self
+    }
+
     /// Reports whether ownership should be preserved.
     #[must_use]
     pub const fn owner(&self) -> bool {
@@ -429,6 +462,18 @@ impl MetadataOptions {
     #[must_use]
     pub const fn group(&self) -> bool {
         self.preserve_group
+    }
+
+    /// Reports whether permissions should be preserved.
+    #[must_use]
+    pub const fn permissions(&self) -> bool {
+        self.preserve_permissions
+    }
+
+    /// Reports whether timestamps should be preserved.
+    #[must_use]
+    pub const fn times(&self) -> bool {
+        self.preserve_times
     }
 }
 
@@ -620,6 +665,56 @@ mod tests {
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         assert_eq!(dest_meta.uid(), owner);
         assert_eq!(dest_meta.gid(), group);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_permissions_respect_toggle() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-perms.txt");
+        let dest = temp.path().join("dest-perms.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o750)).expect("set source perms");
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new().preserve_permissions(false),
+        )
+        .expect("apply metadata");
+
+        let mode = current_mode(&dest) & 0o777;
+        assert_ne!(mode, 0o750);
+    }
+
+    #[test]
+    fn file_times_respect_toggle() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-times.txt");
+        let dest = temp.path().join("dest-times.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let atime = FileTime::from_unix_time(1_700_050_000, 100_000_000);
+        let mtime = FileTime::from_unix_time(1_700_060_000, 200_000_000);
+        set_file_times(&source, atime, mtime).expect("set source times");
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new().preserve_times(false),
+        )
+        .expect("apply metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_ne!(dest_mtime, mtime);
     }
 
     #[test]

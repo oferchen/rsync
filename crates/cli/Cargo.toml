@@ -12,4 +12,5 @@ rsync-core = { path = "../core" }
 rsync-logging = { path = "../logging" }
 
 [dev-dependencies]
+filetime = "0.2"
 tempfile = "3.10"
