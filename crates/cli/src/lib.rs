@@ -71,8 +71,8 @@ use std::num::NonZeroU64;
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     client::{
-        BandwidthLimit, ClientConfig, ModuleListRequest, run_client as run_core_client,
-        run_module_list,
+        BandwidthLimit, ClientConfig, FilterRuleSpec, ModuleListRequest,
+        run_client as run_core_client, run_module_list,
     },
     message::{Message, Role},
     rsync_error,
@@ -98,6 +98,8 @@ const HELP_TEXT: &str = concat!(
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "  -a, --archive    Enable archive mode (implies --owner and --group).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "      --exclude=PATTERN  Skip files matching PATTERN.\n",
+    "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
@@ -114,7 +116,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, and --no-times";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, and --no-times";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -130,6 +132,8 @@ struct ParsedArgs {
     group: Option<bool>,
     perms: Option<bool>,
     times: Option<bool>,
+    excludes: Vec<OsString>,
+    includes: Vec<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -171,6 +175,22 @@ fn clap_command() -> Command {
                 .long("delete")
                 .help("Remove destination files that are absent from the source.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("exclude")
+                .long("exclude")
+                .value_name("PATTERN")
+                .help("Skip files matching PATTERN.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("include")
+                .long("include")
+                .value_name("PATTERN")
+                .help("Re-include files matching PATTERN after exclusions.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
         )
         .arg(
             Arg::new("owner")
@@ -305,6 +325,14 @@ where
     let bwlimit = matches
         .remove_one::<OsString>("bwlimit")
         .map(|value| value.into());
+    let excludes = matches
+        .remove_many::<OsString>("exclude")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let includes = matches
+        .remove_many::<OsString>("include")
+        .map(|values| values.collect())
+        .unwrap_or_default();
 
     Ok(ParsedArgs {
         show_help,
@@ -318,6 +346,8 @@ where
         group,
         perms,
         times,
+        excludes,
+        includes,
     })
 }
 
@@ -363,7 +393,23 @@ where
     Out: Write,
     Err: Write,
 {
-    if parsed.show_help {
+    let ParsedArgs {
+        show_help,
+        show_version,
+        dry_run,
+        archive,
+        delete,
+        remainder: raw_remainder,
+        bwlimit,
+        owner,
+        group,
+        perms,
+        times,
+        excludes,
+        includes,
+    } = parsed;
+
+    if show_help {
         let help = render_help();
         if stdout.write_all(help.as_bytes()).is_err() {
             let _ = writeln!(stdout, "{help}");
@@ -372,7 +418,7 @@ where
         return 0;
     }
 
-    if parsed.show_version && parsed.remainder.is_empty() {
+    if show_version && raw_remainder.is_empty() {
         let report = VersionInfoReport::default();
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
@@ -381,7 +427,7 @@ where
         return 0;
     }
 
-    let remainder = match extract_operands(parsed.remainder) {
+    let remainder = match extract_operands(raw_remainder) {
         Ok(operands) => operands,
         Err(unsupported) => {
             let message = unsupported.to_message();
@@ -393,7 +439,7 @@ where
         }
     };
 
-    let bandwidth_limit = match parsed.bwlimit {
+    let bandwidth_limit = match bwlimit {
         Some(ref value) => match parse_bandwidth_limit(value) {
             Ok(limit) => limit,
             Err(message) => {
@@ -437,21 +483,37 @@ where
         }
     }
 
-    let preserve_owner = parsed.owner.unwrap_or(parsed.archive);
-    let preserve_group = parsed.group.unwrap_or(parsed.archive);
-    let preserve_permissions = parsed.perms.unwrap_or(parsed.archive);
-    let preserve_times = parsed.times.unwrap_or(parsed.archive);
+    let preserve_owner = owner.unwrap_or(archive);
+    let preserve_group = group.unwrap_or(archive);
+    let preserve_permissions = perms.unwrap_or(archive);
+    let preserve_times = times.unwrap_or(archive);
 
-    let config = ClientConfig::builder()
+    let mut builder = ClientConfig::builder()
         .transfer_args(remainder)
-        .dry_run(parsed.dry_run)
-        .delete(parsed.delete)
+        .dry_run(dry_run)
+        .delete(delete)
         .bandwidth_limit(bandwidth_limit)
         .owner(preserve_owner)
         .group(preserve_group)
         .permissions(preserve_permissions)
-        .times(preserve_times)
-        .build();
+        .times(preserve_times);
+
+    let mut filter_rules = Vec::new();
+    filter_rules.extend(
+        excludes
+            .into_iter()
+            .map(|pattern| FilterRuleSpec::exclude(os_string_to_pattern(pattern))),
+    );
+    filter_rules.extend(
+        includes
+            .into_iter()
+            .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
+    );
+    if !filter_rules.is_empty() {
+        builder = builder.extend_filter_rules(filter_rules);
+    }
+
+    let config = builder.build();
 
     match run_core_client(config) {
         Ok(()) => 0,
@@ -528,6 +590,13 @@ fn extract_operands(arguments: Vec<OsString>) -> Result<Vec<OsString>, Unsupport
     }
 
     Ok(operands)
+}
+
+fn os_string_to_pattern(value: OsString) -> String {
+    match value.into_string() {
+        Ok(text) => text,
+        Err(value) => value.to_string_lossy().into_owned(),
+    }
 }
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
@@ -1031,6 +1100,23 @@ mod tests {
 
         assert_eq!(parsed.group, Some(false));
         assert!(parsed.archive);
+    }
+
+    #[test]
+    fn parse_args_collects_filter_patterns() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude"),
+            OsString::from("*.tmp"),
+            OsString::from("--include"),
+            OsString::from("important/**"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.excludes, vec![OsString::from("*.tmp")]);
+        assert_eq!(parsed.includes, vec![OsString::from("important/**")]);
     }
 
     #[test]

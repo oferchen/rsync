@@ -57,6 +57,7 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use rsync_filters::FilterSet;
 use rsync_meta::{
     MetadataError, MetadataOptions, apply_directory_metadata_with_options,
     apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
@@ -204,7 +205,7 @@ impl LocalCopyExecution {
 }
 
 /// Options that influence how a [`LocalCopyPlan`] is executed.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct LocalCopyOptions {
     delete: bool,
     bandwidth_limit: Option<NonZeroU64>,
@@ -212,6 +213,7 @@ pub struct LocalCopyOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    filters: Option<FilterSet>,
 }
 
 impl LocalCopyOptions {
@@ -225,6 +227,7 @@ impl LocalCopyOptions {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            filters: None,
         }
     }
 
@@ -276,6 +279,13 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Applies the supplied filter set to the copy plan.
+    #[must_use]
+    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
+        self.filters = filters;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -310,6 +320,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Returns the configured filter set, if any.
+    #[must_use]
+    pub fn filter_set(&self) -> Option<&FilterSet> {
+        self.filters.as_ref()
     }
 }
 
@@ -397,8 +413,8 @@ impl CopyContext {
         self.mode
     }
 
-    fn options(&self) -> LocalCopyOptions {
-        self.options
+    fn options(&self) -> &LocalCopyOptions {
+        &self.options
     }
 
     fn metadata_options(&self) -> MetadataOptions {
@@ -416,6 +432,13 @@ impl CopyContext {
             ..
         } = self;
         (hard_links, limiter.as_mut())
+    }
+
+    fn allows(&self, relative: &Path, is_dir: bool) -> bool {
+        match self.options.filter_set() {
+            Some(filters) => filters.allows(relative, is_dir),
+            None => true,
+        }
     }
 }
 
@@ -812,74 +835,72 @@ fn copy_sources(
         let metadata_options = context.metadata_options();
 
         if file_type.is_dir() {
-            let target = if source.copy_contents() {
-                destination_path.to_path_buf()
-            } else if destination_behaves_like_directory || multiple_sources {
-                let name = source_path.file_name().ok_or_else(|| {
-                    LocalCopyError::invalid_argument(
-                        LocalCopyArgumentError::DirectoryNameUnavailable,
-                    )
-                })?;
+            if source.copy_contents() {
+                copy_directory_recursive(
+                    &mut context,
+                    source_path,
+                    destination_path,
+                    &metadata,
+                    None,
+                )?;
+                continue;
+            }
+
+            let name = source_path.file_name().ok_or_else(|| {
+                LocalCopyError::invalid_argument(LocalCopyArgumentError::DirectoryNameUnavailable)
+            })?;
+            let relative = PathBuf::from(Path::new(name));
+            if !context.allows(&relative, true) {
+                continue;
+            }
+
+            let target = if destination_behaves_like_directory || multiple_sources {
                 destination_path.join(name)
             } else {
                 destination_path.to_path_buf()
             };
 
-            copy_directory_recursive(&mut context, source_path, &target, &metadata)?;
-        } else if file_type.is_file() {
-            let target = if destination_behaves_like_directory {
-                let name = source_path.file_name().ok_or_else(|| {
-                    LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
-                })?;
-                destination_path.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            copy_file(&mut context, source_path, &target, &metadata)?;
-        } else if file_type.is_symlink() {
-            let target = if destination_behaves_like_directory {
-                let name = source_path.file_name().ok_or_else(|| {
-                    LocalCopyError::invalid_argument(LocalCopyArgumentError::LinkNameUnavailable)
-                })?;
-                destination_path.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            copy_symlink(
+            copy_directory_recursive(
+                &mut context,
                 source_path,
                 &target,
                 &metadata,
-                context.mode(),
-                metadata_options,
+                Some(relative.as_path()),
             )?;
-        } else if is_fifo(&file_type) {
-            let target = if destination_behaves_like_directory {
-                let name = source_path.file_name().ok_or_else(|| {
-                    LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
-                })?;
-                destination_path.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            copy_fifo(&target, &metadata, context.mode(), metadata_options)?;
-        } else if is_device(&file_type) {
-            let target = if destination_behaves_like_directory {
-                let name = source_path.file_name().ok_or_else(|| {
-                    LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
-                })?;
-                destination_path.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            copy_device(&target, &metadata, context.mode(), metadata_options)?;
         } else {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::UnsupportedFileType,
-            ));
+            let name = source_path.file_name().ok_or_else(|| {
+                LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
+            })?;
+            let relative = PathBuf::from(Path::new(name));
+            if !context.allows(&relative, file_type.is_dir()) {
+                continue;
+            }
+
+            let target = if destination_behaves_like_directory {
+                destination_path.join(name)
+            } else {
+                destination_path.to_path_buf()
+            };
+
+            if file_type.is_file() {
+                copy_file(&mut context, source_path, &target, &metadata)?;
+            } else if file_type.is_symlink() {
+                copy_symlink(
+                    source_path,
+                    &target,
+                    &metadata,
+                    context.mode(),
+                    metadata_options,
+                )?;
+            } else if is_fifo(&file_type) {
+                copy_fifo(&target, &metadata, context.mode(), metadata_options)?;
+            } else if is_device(&file_type) {
+                copy_device(&target, &metadata, context.mode(), metadata_options)?;
+            } else {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::UnsupportedFileType,
+                ));
+            }
         }
     }
 
@@ -909,6 +930,7 @@ fn copy_directory_recursive(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -936,6 +958,8 @@ fn copy_directory_recursive(
 
     let entries = read_directory_entries_sorted(source)?;
 
+    let mut keep_names = Vec::new();
+
     for entry in entries.iter() {
         let file_name = &entry.file_name;
         let entry_path = &entry.path;
@@ -944,8 +968,25 @@ fn copy_directory_recursive(
         let target_path = destination.join(Path::new(file_name));
         let metadata_options = context.metadata_options();
 
+        let entry_relative = match relative {
+            Some(base) => base.join(Path::new(file_name)),
+            None => PathBuf::from(Path::new(file_name)),
+        };
+
+        if !context.allows(&entry_relative, entry_type.is_dir()) {
+            continue;
+        }
+
+        keep_names.push(file_name.clone());
+
         if entry_type.is_dir() {
-            copy_directory_recursive(context, entry_path, &target_path, entry_metadata)?;
+            copy_directory_recursive(
+                context,
+                entry_path,
+                &target_path,
+                entry_metadata,
+                Some(entry_relative.as_path()),
+            )?;
         } else if entry_type.is_file() {
             copy_file(context, entry_path, &target_path, entry_metadata)?;
         } else if entry_type.is_symlink() {
@@ -978,7 +1019,7 @@ fn copy_directory_recursive(
     }
 
     if context.options().delete_extraneous() {
-        delete_extraneous_entries(destination, &entries, context.mode())?;
+        delete_extraneous_entries(destination, &keep_names, context.mode())?;
     }
 
     if !context.mode().is_dry_run() {
@@ -1294,12 +1335,12 @@ fn copy_device(
 
 fn delete_extraneous_entries(
     destination: &Path,
-    source_entries: &[DirectoryEntry],
+    source_entries: &[OsString],
     mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
     let mut keep = HashSet::with_capacity(source_entries.len());
-    for entry in source_entries {
-        keep.insert(entry.file_name.clone());
+    for name in source_entries {
+        keep.insert(name.clone());
     }
 
     let read_dir = match fs::read_dir(destination) {
@@ -2245,5 +2286,62 @@ mod tests {
         assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
         let recorded = super::take_recorded_sleeps();
         assert!(recorded.is_empty(), "unexpected sleep durations recorded");
+    }
+
+    #[test]
+    fn execute_respects_exclude_filter() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default().filters(Some(filters));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn execute_respects_include_filter_override() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.tmp"), b"keep").expect("write keep");
+        fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([
+            rsync_filters::FilterRule::exclude("*.tmp"),
+            rsync_filters::FilterRule::include("keep.tmp"),
+        ])
+        .expect("compile filters");
+        let options = LocalCopyOptions::default().filters(Some(filters));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.tmp").exists());
+        assert!(!target_root.join("skip.tmp").exists());
     }
 }
