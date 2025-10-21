@@ -812,6 +812,10 @@ fn append_filter_rules_from_files(
 }
 
 fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
+    if path == OsStr::new("-") {
+        return read_filter_patterns_from_standard_input();
+    }
+
     let path_buf = PathBuf::from(path);
     let path_display = path_buf.display().to_string();
     let file = File::open(&path_buf).map_err(|error| {
@@ -820,15 +824,43 @@ fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
     })?;
 
     let mut reader = BufReader::new(file);
+    read_filter_patterns(&mut reader).map_err(|error| {
+        let text = format!("failed to read filter file '{}': {}", path_display, error);
+        rsync_error!(1, text).with_role(Role::Client)
+    })
+}
+
+fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, Message> {
+    #[cfg(test)]
+    if let Some(data) = take_filter_stdin_input() {
+        let mut cursor = io::Cursor::new(data);
+        return read_filter_patterns(&mut cursor).map_err(|error| {
+            let text = format!(
+                "failed to read filter patterns from standard input: {}",
+                error
+            );
+            rsync_error!(1, text).with_role(Role::Client)
+        });
+    }
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    read_filter_patterns(&mut reader).map_err(|error| {
+        let text = format!(
+            "failed to read filter patterns from standard input: {}",
+            error
+        );
+        rsync_error!(1, text).with_role(Role::Client)
+    })
+}
+
+fn read_filter_patterns<R: BufRead>(reader: &mut R) -> io::Result<Vec<String>> {
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
 
     loop {
         buffer.clear();
-        let bytes_read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
-            let text = format!("failed to read filter file '{}': {}", path_display, error);
-            rsync_error!(1, text).with_role(Role::Client)
-        })?;
+        let bytes_read = reader.read_until(b'\n', &mut buffer)?;
 
         if bytes_read == 0 {
             break;
@@ -853,6 +885,23 @@ fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
     Ok(patterns)
 }
 
+#[cfg(test)]
+thread_local! {
+    static FILTER_STDIN_INPUT: std::cell::RefCell<Option<Vec<u8>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn take_filter_stdin_input() -> Option<Vec<u8>> {
+    FILTER_STDIN_INPUT.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(test)]
+fn set_filter_stdin_input(data: Vec<u8>) {
+    FILTER_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
+}
+
 fn load_file_list_operands(
     files: &[OsString],
     zero_terminated: bool,
@@ -868,14 +917,15 @@ fn load_file_list_operands(
         if path.as_os_str() == OsStr::new("-") {
             let stdin = stdin_handle.get_or_insert_with(io::stdin);
             let mut reader = stdin.lock();
-            read_file_list_from_reader(&mut reader, zero_terminated, &mut entries)
-                .map_err(|error| {
+            read_file_list_from_reader(&mut reader, zero_terminated, &mut entries).map_err(
+                |error| {
                     rsync_error!(
                         1,
                         format!("failed to read file list from standard input: {error}")
                     )
                     .with_role(Role::Client)
-                })?;
+                },
+            )?;
             continue;
         }
 
@@ -1875,6 +1925,15 @@ mod tests {
     }
 
     #[test]
+    fn load_filter_file_patterns_reads_from_stdin() {
+        super::set_filter_stdin_input(b"keep\n# comment\n\ninclude\n".to_vec());
+        let patterns =
+            super::load_filter_file_patterns(OsStr::new("-")).expect("load stdin patterns");
+
+        assert_eq!(patterns, vec!["keep".to_string(), "include".to_string()]);
+    }
+
+    #[test]
     fn transfer_request_with_no_times_overrides_archive() {
         use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
@@ -1901,6 +1960,36 @@ mod tests {
         let metadata = std::fs::metadata(&destination).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_ne!(dest_mtime, mtime);
+    }
+
+    #[test]
+    fn transfer_request_with_exclude_from_stdin_skips_patterns() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        super::set_filter_stdin_input(b"*.tmp\n".to_vec());
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude-from"),
+            OsString::from("-"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.tmp").exists());
     }
 
     #[test]
