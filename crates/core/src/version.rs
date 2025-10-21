@@ -1265,7 +1265,7 @@ impl VersionInfoConfig {
             supports_ipv6: false,
             supports_atimes: true,
             supports_batchfiles: false,
-            supports_inplace: false,
+            supports_inplace: true,
             supports_append: false,
             supports_acls: cfg!(feature = "acl"),
             supports_xattrs: cfg!(feature = "xattr"),
