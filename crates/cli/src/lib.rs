@@ -112,7 +112,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', and 'merge FILE').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', 'protect PATTERN', and 'merge FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
@@ -333,7 +333,7 @@ fn clap_command() -> Command {
             Arg::new("filter")
                 .long("filter")
                 .value_name("RULE")
-                .help("Apply filter RULE (supports '+' include, '-' exclude, and 'merge FILE').")
+                .help("Apply filter RULE (supports '+' include, '-' exclude, 'protect PATTERN', and 'merge FILE').")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -1193,9 +1193,13 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return handle_keyword("exclude", FilterRuleSpec::exclude);
     }
 
+    if keyword.eq_ignore_ascii_case("protect") {
+        return handle_keyword("protect", FilterRuleSpec::protect);
+    }
+
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', and 'merge FILE' directives"
+        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'protect PATTERN', and 'merge FILE' directives"
     )
     .with_role(Role::Client);
     Err(message)
@@ -1211,6 +1215,7 @@ fn append_filter_rules_from_files(
         destination.extend(patterns.into_iter().map(|pattern| match kind {
             FilterRuleKind::Include => FilterRuleSpec::include(pattern),
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
+            FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
         }));
     }
     Ok(())
@@ -2273,6 +2278,13 @@ mod tests {
             exclude_keyword,
             FilterDirective::Rule(FilterRuleSpec::exclude("*.tmp".to_string()))
         );
+
+        let protect_keyword = parse_filter_directive(OsStr::new("protect backups/**"))
+            .expect("keyword protect parses");
+        assert_eq!(
+            protect_keyword,
+            FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        );
     }
 
     #[test]
@@ -2401,6 +2413,37 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_filter_protect_preserves_destination_entry() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+
+        let dest_subdir = dest_root.join("source");
+        std::fs::create_dir_all(&dest_subdir).expect("create destination contents");
+        std::fs::write(dest_subdir.join("keep.txt"), b"keep").expect("write dest keep");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete"),
+            OsString::from("--filter"),
+            OsString::from("protect keep.txt"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+    }
+
+    #[test]
     fn transfer_request_with_filter_merge_detects_recursion() {
         use tempfile::tempdir;
 
@@ -2490,6 +2533,7 @@ mod tests {
         let engine_rules = expected_rules.iter().map(|rule| match rule.kind() {
             FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
             FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
+            FilterRuleKind::Protect => EngineFilterRule::protect(rule.pattern()),
         });
         let filter_set = FilterSet::from_rules(engine_rules).expect("filters");
         assert!(filter_set.allows(std::path::Path::new("keep"), true));
