@@ -67,6 +67,8 @@
 //! - [`rsync_transport`] for replaying transport wrappers that emit these
 //!   messages when negotiation fails.
 
+/// Bandwidth parsing utilities shared by CLI and daemon entry points.
+pub mod bandwidth;
 /// Client orchestration helpers consumed by the CLI binary.
 pub mod client;
 /// Message formatting utilities shared across workspace binaries.

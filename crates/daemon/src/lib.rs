@@ -136,7 +136,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -147,6 +147,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
+    bandwidth::{BandwidthParseError, parse_bandwidth_argument},
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
@@ -198,6 +199,7 @@ const HELP_TEXT: &str = concat!(
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
+    "  --bwlimit=RATE     Limit per-connection bandwidth in KiB/s (0 = unlimited).\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
     "negotiated protocol as 32, lists configured modules for #list requests, and\n",
@@ -213,6 +215,7 @@ struct ModuleDefinition {
     hosts_deny: Vec<HostPattern>,
     auth_users: Vec<String>,
     secrets_file: Option<PathBuf>,
+    bandwidth_limit: Option<NonZeroU64>,
 }
 
 impl ModuleDefinition {
@@ -242,6 +245,11 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn secrets_file(&self) -> Option<&Path> {
         self.secrets_file.as_deref()
+    }
+
+    #[cfg(test)]
+    fn bandwidth_limit(&self) -> Option<NonZeroU64> {
+        self.bandwidth_limit
     }
 }
 
@@ -278,6 +286,8 @@ struct RuntimeOptions {
     max_sessions: Option<NonZeroUsize>,
     modules: Vec<ModuleDefinition>,
     motd_lines: Vec<String>,
+    bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_limit_configured: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -288,6 +298,8 @@ impl Default for RuntimeOptions {
             max_sessions: None,
             modules: Vec::new(),
             motd_lines: Vec::new(),
+            bandwidth_limit: None,
+            bandwidth_limit_configured: false,
         }
     }
 }
@@ -313,6 +325,9 @@ impl RuntimeOptions {
                 options.load_motd_file(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-line")? {
                 options.push_motd_line(value);
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
+                let limit = parse_runtime_bwlimit(&value)?;
+                options.set_bandwidth_limit(limit)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -344,6 +359,16 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_bandwidth_limit(&mut self, limit: Option<NonZeroU64>) -> Result<(), DaemonError> {
+        if self.bandwidth_limit_configured {
+            return Err(duplicate_argument("--bwlimit"));
+        }
+
+        self.bandwidth_limit = limit;
+        self.bandwidth_limit_configured = true;
+        Ok(())
+    }
+
     fn load_config_modules(
         &mut self,
         value: &OsString,
@@ -365,6 +390,16 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn modules(&self) -> &[ModuleDefinition] {
         &self.modules
+    }
+
+    #[cfg(test)]
+    fn bandwidth_limit(&self) -> Option<NonZeroU64> {
+        self.bandwidth_limit
+    }
+
+    #[cfg(test)]
+    fn bandwidth_limit_configured(&self) -> bool {
+        self.bandwidth_limit_configured
     }
 
     #[cfg(test)]
@@ -525,6 +560,17 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 }
                 builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
             }
+            "bwlimit" => {
+                if value.is_empty() {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        "'bwlimit' directive must not be empty",
+                    ));
+                }
+                let limit = parse_config_bwlimit(value, path, line_number)?;
+                builder.set_bandwidth_limit(limit, path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -547,6 +593,8 @@ struct ModuleDefinitionBuilder {
     auth_users: Option<Vec<String>>,
     secrets_file: Option<PathBuf>,
     declaration_line: usize,
+    bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_limit_set: bool,
 }
 
 impl ModuleDefinitionBuilder {
@@ -560,6 +608,8 @@ impl ModuleDefinitionBuilder {
             auth_users: None,
             secrets_file: None,
             declaration_line: line,
+            bandwidth_limit: None,
+            bandwidth_limit_set: false,
         }
     }
 
@@ -689,6 +739,25 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_bandwidth_limit(
+        &mut self,
+        limit: Option<NonZeroU64>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.bandwidth_limit_set {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'bwlimit' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.bandwidth_limit = limit;
+        self.bandwidth_limit_set = true;
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -731,6 +800,7 @@ impl ModuleDefinitionBuilder {
             hosts_deny: self.hosts_deny.unwrap_or_default(),
             auth_users: self.auth_users.unwrap_or_default(),
             secrets_file: self.secrets_file,
+            bandwidth_limit: self.bandwidth_limit,
         })
     }
 }
@@ -1105,6 +1175,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         max_sessions,
         modules,
         motd_lines,
+        ..
     } = options;
 
     let modules = Arc::new(modules);
@@ -1397,7 +1468,55 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         hosts_deny: Vec::new(),
         auth_users: Vec::new(),
         secrets_file: None,
+        bandwidth_limit: None,
     })
+}
+
+fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
+    let text = value.to_string_lossy();
+    match parse_bandwidth_argument(&text) {
+        Ok(limit) => Ok(limit),
+        Err(error) => Err(runtime_bwlimit_error(&text, error)),
+    }
+}
+
+fn parse_config_bwlimit(
+    value: &str,
+    path: &Path,
+    line: usize,
+) -> Result<Option<NonZeroU64>, DaemonError> {
+    match parse_bandwidth_argument(value) {
+        Ok(limit) => Ok(limit),
+        Err(error) => Err(config_bwlimit_error(path, line, value, error)),
+    }
+}
+
+fn runtime_bwlimit_error(value: &str, error: BandwidthParseError) -> DaemonError {
+    let text = match error {
+        BandwidthParseError::Invalid => format!("--bwlimit={} is invalid", value),
+        BandwidthParseError::TooSmall => format!(
+            "--bwlimit={} is too small (min: 512 or 0 for unlimited)",
+            value
+        ),
+        BandwidthParseError::TooLarge => format!("--bwlimit={} is too large", value),
+    };
+    config_error(text)
+}
+
+fn config_bwlimit_error(
+    path: &Path,
+    line: usize,
+    value: &str,
+    error: BandwidthParseError,
+) -> DaemonError {
+    let detail = match error {
+        BandwidthParseError::Invalid => format!("invalid 'bwlimit' value '{value}'"),
+        BandwidthParseError::TooSmall => {
+            format!("'bwlimit' value '{value}' is too small (min: 512 or 0 for unlimited)")
+        }
+        BandwidthParseError::TooLarge => format!("'bwlimit' value '{value}' is too large"),
+    };
+    config_parse_error(path, line, detail)
 }
 
 fn unsupported_option(option: OsString) -> DaemonError {
@@ -1548,6 +1667,7 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::num::NonZeroU64;
     use std::path::PathBuf;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -1599,9 +1719,11 @@ mod tests {
         assert_eq!(modules[0].name, "docs");
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
+        assert!(modules[0].bandwidth_limit().is_none());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
+        assert!(modules[1].bandwidth_limit().is_none());
     }
 
     #[test]
@@ -1624,9 +1746,126 @@ mod tests {
         assert_eq!(modules[0].name, "docs");
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
+        assert!(modules[0].bandwidth_limit().is_none());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
+        assert!(modules[1].bandwidth_limit().is_none());
+    }
+
+    #[test]
+    fn runtime_options_loads_bwlimit_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = 4M\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name, "docs");
+        assert_eq!(
+            module.bandwidth_limit(),
+            Some(NonZeroU64::new(4 * 1024 * 1024).unwrap())
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_bwlimit_in_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = nope\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid bwlimit should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid 'bwlimit' value 'nope'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_bwlimit_in_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nbwlimit = 1M\nbwlimit = 2M\n"
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("duplicate bwlimit should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate 'bwlimit' directive")
+        );
+    }
+
+    #[test]
+    fn runtime_options_parse_bwlimit_argument() {
+        let options = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("8M")])
+            .expect("parse bwlimit");
+
+        assert_eq!(
+            options.bandwidth_limit(),
+            Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
+        );
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_parse_bwlimit_unlimited() {
+        let options = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("0")])
+            .expect("parse unlimited");
+
+        assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_reject_invalid_bwlimit() {
+        let error = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("foo")])
+            .expect_err("invalid bwlimit should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("--bwlimit=foo is invalid")
+        );
+    }
+
+    #[test]
+    fn runtime_options_reject_duplicate_bwlimit() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--bwlimit"),
+            OsString::from("8M"),
+            OsString::from("--bwlimit"),
+            OsString::from("16M"),
+        ])
+        .expect_err("duplicate bwlimit should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate daemon argument '--bwlimit'")
+        );
     }
 
     #[test]
