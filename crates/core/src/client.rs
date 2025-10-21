@@ -19,8 +19,9 @@
 //! - [`run_client`] executes the client flow. The helper delegates to
 //!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
-//!   filesystem while preserving permissions, timestamps, and optional
-//!   ownership/group metadata. Delta compression and advanced metadata such as
+//!   filesystem while preserving permissions, timestamps, optional
+//!   ownership/group metadata, and sparse regions when requested. Delta
+//!   compression and advanced metadata such as
 //!   ACLs or extended attributes remain out of scope for this snapshot. When
 //!   deletion is requested, the helper removes
 //!   destination entries that are absent from the source tree before applying
@@ -122,6 +123,7 @@ pub struct ClientConfig {
     preserve_times: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    sparse: bool,
 }
 
 impl ClientConfig {
@@ -204,6 +206,13 @@ impl ClientConfig {
     pub const fn numeric_ids(&self) -> bool {
         self.numeric_ids
     }
+
+    /// Reports whether sparse file handling has been requested.
+    #[must_use]
+    #[doc(alias = "--sparse")]
+    pub const fn sparse(&self) -> bool {
+        self.sparse
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -219,6 +228,7 @@ pub struct ClientConfigBuilder {
     preserve_times: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    sparse: bool,
 }
 
 impl ClientConfigBuilder {
@@ -298,6 +308,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables sparse file handling for the transfer.
+    #[must_use]
+    #[doc(alias = "--sparse")]
+    #[doc(alias = "-S")]
+    pub const fn sparse(mut self, sparse: bool) -> Self {
+        self.sparse = sparse;
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -329,6 +348,7 @@ impl ClientConfigBuilder {
             preserve_times: self.preserve_times,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
+            sparse: self.sparse,
         }
     }
 }
@@ -471,7 +491,8 @@ pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError>
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
         .filters(filter_set)
-        .numeric_ids(config.numeric_ids());
+        .numeric_ids(config.numeric_ids())
+        .sparse(config.sparse());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -486,7 +507,7 @@ pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError>
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::num::NonZeroU64;
     use std::thread;
@@ -596,6 +617,16 @@ mod tests {
 
         assert!(config.preserve_times());
         assert!(!config.preserve_permissions());
+    }
+
+    #[test]
+    fn builder_enables_sparse() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .sparse(true)
+            .build();
+
+        assert!(config.sparse());
     }
 
     #[test]
@@ -942,6 +973,56 @@ mod tests {
         let copied_mtime = FileTime::from_last_modification_time(&copied_metadata);
         assert_eq!(copied_atime, source_atime);
         assert_eq!(copied_mtime, source_mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_sparse_copy_creates_holes() {
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("sparse-source.bin");
+        let mut source_file = fs::File::create(&source).expect("create source");
+        source_file.write_all(&[0x11]).expect("write leading");
+        source_file
+            .seek(SeekFrom::Start(1 * 1024 * 1024))
+            .expect("seek to hole");
+        source_file.write_all(&[0x22]).expect("write middle");
+        source_file
+            .seek(SeekFrom::Start(4 * 1024 * 1024))
+            .expect("seek to tail");
+        source_file.write_all(&[0x33]).expect("write tail");
+        source_file.set_len(6 * 1024 * 1024).expect("extend source");
+
+        let dense_dest = tmp.path().join("dense.bin");
+        let sparse_dest = tmp.path().join("sparse.bin");
+
+        let dense_config = ClientConfig::builder()
+            .transfer_args([
+                source.clone().into_os_string(),
+                dense_dest.clone().into_os_string(),
+            ])
+            .permissions(true)
+            .times(true)
+            .build();
+        run_client(dense_config).expect("dense copy succeeds");
+
+        let sparse_config = ClientConfig::builder()
+            .transfer_args([
+                source.into_os_string(),
+                sparse_dest.clone().into_os_string(),
+            ])
+            .permissions(true)
+            .times(true)
+            .sparse(true)
+            .build();
+        run_client(sparse_config).expect("sparse copy succeeds");
+
+        let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+        let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+        assert_eq!(dense_meta.len(), sparse_meta.len());
+        assert!(sparse_meta.blocks() < dense_meta.blocks());
     }
 
     #[test]
