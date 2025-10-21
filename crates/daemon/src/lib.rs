@@ -135,7 +135,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -171,6 +171,7 @@ const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailab
 /// Error payload returned when a configured module is requested but file serving is unavailable.
 const MODULE_UNAVAILABLE_PAYLOAD: &str =
     "@ERROR: module '{module}' transfers are not yet implemented in this build";
+const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 
@@ -203,6 +204,24 @@ struct ModuleDefinition {
     name: String,
     path: PathBuf,
     comment: Option<String>,
+    hosts_allow: Vec<HostPattern>,
+    hosts_deny: Vec<HostPattern>,
+}
+
+impl ModuleDefinition {
+    fn permits(&self, addr: IpAddr) -> bool {
+        if !self.hosts_allow.is_empty()
+            && !self.hosts_allow.iter().any(|pattern| pattern.matches(addr))
+        {
+            return false;
+        }
+
+        if self.hosts_deny.iter().any(|pattern| pattern.matches(addr)) {
+            return false;
+        }
+
+        true
+    }
 }
 
 /// Configuration describing the requested daemon operation.
@@ -455,6 +474,14 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 };
                 builder.set_comment(comment, path, line_number)?;
             }
+            "hosts allow" => {
+                let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
+                builder.set_hosts_allow(patterns, path, line_number)?;
+            }
+            "hosts deny" => {
+                let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
+                builder.set_hosts_deny(patterns, path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -472,6 +499,8 @@ struct ModuleDefinitionBuilder {
     name: String,
     path: Option<PathBuf>,
     comment: Option<String>,
+    hosts_allow: Option<Vec<HostPattern>>,
+    hosts_deny: Option<Vec<HostPattern>>,
     declaration_line: usize,
 }
 
@@ -481,6 +510,8 @@ impl ModuleDefinitionBuilder {
             name,
             path: None,
             comment: None,
+            hosts_allow: None,
+            hosts_deny: None,
             declaration_line: line,
         }
     }
@@ -521,6 +552,45 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_hosts_allow(
+        &mut self,
+        patterns: Vec<HostPattern>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.hosts_allow.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'hosts allow' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.hosts_allow = Some(patterns);
+        Ok(())
+    }
+
+    fn set_hosts_deny(
+        &mut self,
+        patterns: Vec<HostPattern>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.hosts_deny.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'hosts deny' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.hosts_deny = Some(patterns);
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -537,8 +607,162 @@ impl ModuleDefinitionBuilder {
             name: self.name,
             path,
             comment: self.comment,
+            hosts_allow: self.hosts_allow.unwrap_or_default(),
+            hosts_deny: self.hosts_deny.unwrap_or_default(),
         })
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum HostPattern {
+    Any,
+    Ipv4 { network: Ipv4Addr, prefix: u8 },
+    Ipv6 { network: Ipv6Addr, prefix: u8 },
+}
+
+impl HostPattern {
+    fn parse(token: &str) -> Result<Self, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("host pattern must be non-empty".to_string());
+        }
+
+        if token == "*" || token.eq_ignore_ascii_case("all") {
+            return Ok(Self::Any);
+        }
+
+        let (address_str, prefix_text) = if let Some((addr, mask)) = token.split_once('/') {
+            (addr, Some(mask))
+        } else {
+            (token, None)
+        };
+
+        if let Ok(ipv4) = address_str.parse::<Ipv4Addr>() {
+            let prefix = prefix_text
+                .map(|value| {
+                    value
+                        .parse::<u8>()
+                        .map_err(|_| "invalid IPv4 prefix length".to_string())
+                })
+                .transpose()?;
+            return Self::from_ipv4(ipv4, prefix.unwrap_or(32));
+        }
+
+        if let Ok(ipv6) = address_str.parse::<Ipv6Addr>() {
+            let prefix = prefix_text
+                .map(|value| {
+                    value
+                        .parse::<u8>()
+                        .map_err(|_| "invalid IPv6 prefix length".to_string())
+                })
+                .transpose()?;
+            return Self::from_ipv6(ipv6, prefix.unwrap_or(128));
+        }
+
+        Err("invalid host pattern; expected IPv4/IPv6 address".to_string())
+    }
+
+    fn from_ipv4(addr: Ipv4Addr, prefix: u8) -> Result<Self, String> {
+        if prefix > 32 {
+            return Err("IPv4 prefix length must be between 0 and 32".to_string());
+        }
+
+        if prefix == 0 {
+            return Ok(Self::Ipv4 {
+                network: Ipv4Addr::UNSPECIFIED,
+                prefix,
+            });
+        }
+
+        let shift = 32 - u32::from(prefix);
+        let mask = u32::MAX.checked_shl(shift).unwrap_or(0);
+        let network = u32::from(addr) & mask;
+        Ok(Self::Ipv4 {
+            network: Ipv4Addr::from(network),
+            prefix,
+        })
+    }
+
+    fn from_ipv6(addr: Ipv6Addr, prefix: u8) -> Result<Self, String> {
+        if prefix > 128 {
+            return Err("IPv6 prefix length must be between 0 and 128".to_string());
+        }
+
+        if prefix == 0 {
+            return Ok(Self::Ipv6 {
+                network: Ipv6Addr::UNSPECIFIED,
+                prefix,
+            });
+        }
+
+        let shift = 128 - u32::from(prefix);
+        let mask = u128::MAX.checked_shl(shift).unwrap_or(0);
+        let network = u128::from(addr) & mask;
+        Ok(Self::Ipv6 {
+            network: Ipv6Addr::from(network),
+            prefix,
+        })
+    }
+
+    fn matches(&self, addr: IpAddr) -> bool {
+        match (self, addr) {
+            (Self::Any, _) => true,
+            (Self::Ipv4 { network, prefix }, IpAddr::V4(candidate)) => {
+                if *prefix == 0 {
+                    true
+                } else {
+                    let shift = 32 - u32::from(*prefix);
+                    let mask = u32::MAX.checked_shl(shift).unwrap_or(0);
+                    (u32::from(candidate) & mask) == u32::from(*network)
+                }
+            }
+            (Self::Ipv6 { network, prefix }, IpAddr::V6(candidate)) => {
+                if *prefix == 0 {
+                    true
+                } else {
+                    let shift = 128 - u32::from(*prefix);
+                    let mask = u128::MAX.checked_shl(shift).unwrap_or(0);
+                    (u128::from(candidate) & mask) == u128::from(*network)
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+fn parse_host_list(
+    value: &str,
+    config_path: &Path,
+    line: usize,
+    directive: &str,
+) -> Result<Vec<HostPattern>, DaemonError> {
+    let mut patterns = Vec::new();
+
+    for token in value.split(|ch: char| ch.is_ascii_whitespace() || ch == ',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+
+        let pattern = HostPattern::parse(token).map_err(|message| {
+            config_parse_error(
+                config_path,
+                line,
+                format!("{directive} directive contains invalid pattern '{token}': {message}"),
+            )
+        })?;
+        patterns.push(pattern);
+    }
+
+    if patterns.is_empty() {
+        return Err(config_parse_error(
+            config_path,
+            line,
+            format!("{directive} directive must specify at least one pattern"),
+        ));
+    }
+
+    Ok(patterns)
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
@@ -698,9 +922,10 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             Ok((stream, peer_addr)) => {
                 configure_stream(&stream)
                     .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
-                handle_legacy_session(stream, options.modules(), options.motd_lines()).map_err(
-                    |error| stream_error(Some(peer_addr), "serve legacy handshake", error),
-                )?;
+                handle_legacy_session(stream, peer_addr, options.modules(), options.motd_lines())
+                    .map_err(|error| {
+                        stream_error(Some(peer_addr), "serve legacy handshake", error)
+                    })?;
                 served = served.saturating_add(1);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -728,6 +953,7 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
 
 fn handle_legacy_session(
     stream: TcpStream,
+    peer_addr: SocketAddr,
     modules: &[ModuleDefinition],
     motd_lines: &[String],
 ) -> io::Result<()> {
@@ -754,7 +980,7 @@ fn handle_legacy_session(
     let request = request.unwrap_or_default();
 
     if request == "#list" {
-        respond_with_module_list(reader.get_mut(), modules, motd_lines)?;
+        respond_with_module_list(reader.get_mut(), modules, motd_lines, peer_addr.ip())?;
     } else if request.is_empty() {
         reader
             .get_mut()
@@ -764,7 +990,7 @@ fn handle_legacy_session(
         reader.get_mut().write_all(exit.as_bytes())?;
         reader.get_mut().flush()?;
     } else {
-        respond_with_module_request(reader.get_mut(), modules, &request)?;
+        respond_with_module_request(reader.get_mut(), modules, &request, peer_addr.ip())?;
     }
 
     Ok(())
@@ -789,6 +1015,7 @@ fn respond_with_module_list(
     stream: &mut TcpStream,
     modules: &[ModuleDefinition],
     motd_lines: &[String],
+    peer_ip: IpAddr,
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
@@ -804,6 +1031,9 @@ fn respond_with_module_list(
     stream.write_all(ok.as_bytes())?;
 
     for module in modules {
+        if !module.permits(peer_ip) {
+            continue;
+        }
         let mut line = module.name.clone();
         if let Some(comment) = &module.comment {
             if !comment.is_empty() {
@@ -824,9 +1054,16 @@ fn respond_with_module_request(
     stream: &mut TcpStream,
     modules: &[ModuleDefinition],
     request: &str,
+    peer_ip: IpAddr,
 ) -> io::Result<()> {
-    let payload = if modules.iter().any(|module| module.name == request) {
-        MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request)
+    let payload = if let Some(module) = modules.iter().find(|module| module.name == request) {
+        if module.permits(peer_ip) {
+            MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request)
+        } else {
+            ACCESS_DENIED_PAYLOAD
+                .replace("{module}", request)
+                .replace("{addr}", &peer_ip.to_string())
+        }
     } else {
         UNKNOWN_MODULE_PAYLOAD.replace("{module}", request)
     };
@@ -890,6 +1127,8 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         name: name.to_string(),
         path: PathBuf::from(path_text),
         comment,
+        hosts_allow: Vec::new(),
+        hosts_deny: Vec::new(),
     })
 }
 
@@ -1145,6 +1384,41 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_parse_hosts_allow_and_deny() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nhosts allow = 127.0.0.1,192.168.0.0/24\nhosts deny = 192.168.0.5\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse hosts directives");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+
+        let module = &modules[0];
+        assert_eq!(module.hosts_allow.len(), 2);
+        assert!(matches!(
+            module.hosts_allow[0],
+            HostPattern::Ipv4 { prefix: 32, .. }
+        ));
+        assert!(matches!(
+            module.hosts_allow[1],
+            HostPattern::Ipv4 { prefix: 24, .. }
+        ));
+        assert_eq!(module.hosts_deny.len(), 1);
+        assert!(matches!(
+            module.hosts_deny[0],
+            HostPattern::Ipv4 { prefix: 32, .. }
+        ));
+    }
+
+    #[test]
     fn runtime_options_rejects_config_missing_path() {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(file, "[docs]\ncomment = sample\n").expect("write config");
@@ -1323,6 +1597,115 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("second module");
         assert_eq!(line.trim_end(), "logs");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_denies_module_when_host_not_allowed() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nhosts allow = 10.0.0.0/8\n",)
+            .expect("write config");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--config"),
+                file.path().as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        stream.write_all(b"docs\n").expect("send module request");
+        stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("error message");
+        assert_eq!(
+            line.trim_end(),
+            "@ERROR: access denied to module 'docs' from 127.0.0.1"
+        );
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit message");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_filters_module_list_by_host() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[public]\npath = /srv/public\n\n[private]\npath = /srv/private\nhosts allow = 10.0.0.0/8\n",
+        )
+        .expect("write config");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--config"),
+                file.path().as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("public module");
+        assert_eq!(line.trim_end(), "public");
 
         line.clear();
         reader.read_line(&mut line).expect("exit line");
