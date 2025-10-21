@@ -88,7 +88,7 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] [-a] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -96,6 +96,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
+    "  -a, --archive    Enable archive mode (implies --owner and --group).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
@@ -107,8 +108,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str =
-    "--help/-h, --version/-V, --dry-run/-n, --delete, --bwlimit, --owner, and --group";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, and --group";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -116,6 +116,7 @@ struct ParsedArgs {
     show_help: bool,
     show_version: bool,
     dry_run: bool,
+    archive: bool,
     delete: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
@@ -148,6 +149,13 @@ fn clap_command() -> Command {
                 .long("dry-run")
                 .short('n')
                 .help("Validate transfers without modifying the destination.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("archive")
+                .long("archive")
+                .short('a')
+                .help("Enable archive mode (implies --owner and --group).")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -206,6 +214,7 @@ where
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
     let dry_run = matches.get_flag("dry-run");
+    let archive = matches.get_flag("archive");
     let delete = matches.get_flag("delete");
     let owner = matches.get_flag("owner");
     let group = matches.get_flag("group");
@@ -221,6 +230,7 @@ where
         show_help,
         show_version,
         dry_run,
+        archive,
         delete,
         remainder,
         bwlimit,
@@ -350,8 +360,8 @@ where
         .dry_run(parsed.dry_run)
         .delete(parsed.delete)
         .bandwidth_limit(bandwidth_limit)
-        .owner(parsed.owner)
-        .group(parsed.group)
+        .owner(parsed.owner || parsed.archive)
+        .group(parsed.group || parsed.archive)
         .build();
 
     match run_core_client(config) {
@@ -716,6 +726,31 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_archive_copies_file() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"archive").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"archive"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_bwlimit_copies_file() {
         use tempfile::tempdir;
 
@@ -934,6 +969,34 @@ mod tests {
         .expect("parse succeeds");
 
         assert!(parsed.delete);
+    }
+
+    #[test]
+    fn archive_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.archive);
+        assert!(!parsed.owner);
+        assert!(!parsed.group);
+    }
+
+    #[test]
+    fn long_archive_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--archive"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.archive);
     }
 
     #[test]
