@@ -109,6 +109,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
     "      --no-times   Disable modification time preservation.\n",
+    "      --numeric-ids      Preserve numeric UID/GID values.\n",
+    "      --no-numeric-ids   Map UID/GID values to names when possible.\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
@@ -116,7 +118,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, and --no-times";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -132,6 +134,7 @@ struct ParsedArgs {
     group: Option<bool>,
     perms: Option<bool>,
     times: Option<bool>,
+    numeric_ids: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
 }
@@ -253,6 +256,20 @@ fn clap_command() -> Command {
                 .overrides_with("times"),
         )
         .arg(
+            Arg::new("numeric-ids")
+                .long("numeric-ids")
+                .help("Preserve numeric UID/GID values.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-numeric-ids"),
+        )
+        .arg(
+            Arg::new("no-numeric-ids")
+                .long("no-numeric-ids")
+                .help("Map UID/GID values to names when possible.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("numeric-ids"),
+        )
+        .arg(
             Arg::new("bwlimit")
                 .long("bwlimit")
                 .value_name("RATE")
@@ -318,6 +335,13 @@ where
     } else {
         None
     };
+    let numeric_ids = if matches.get_flag("numeric-ids") {
+        Some(true)
+    } else if matches.get_flag("no-numeric-ids") {
+        Some(false)
+    } else {
+        None
+    };
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -348,6 +372,7 @@ where
         times,
         excludes,
         includes,
+        numeric_ids,
     })
 }
 
@@ -407,6 +432,7 @@ where
         times,
         excludes,
         includes,
+        numeric_ids,
     } = parsed;
 
     if show_help {
@@ -440,7 +466,7 @@ where
     };
 
     let bandwidth_limit = match bwlimit {
-        Some(ref value) => match parse_bandwidth_limit(value) {
+        Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
             Ok(limit) => limit,
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -451,6 +477,8 @@ where
         },
         None => None,
     };
+
+    let numeric_ids = numeric_ids.unwrap_or(false);
 
     match ModuleListRequest::from_operands(&remainder) {
         Ok(Some(request)) => {
@@ -496,7 +524,8 @@ where
         .owner(preserve_owner)
         .group(preserve_group)
         .permissions(preserve_permissions)
-        .times(preserve_times);
+        .times(preserve_times)
+        .numeric_ids(numeric_ids);
 
     let mut filter_rules = Vec::new();
     filter_rules.extend(
@@ -1100,6 +1129,30 @@ mod tests {
 
         assert_eq!(parsed.group, Some(false));
         assert!(parsed.archive);
+    }
+
+    #[test]
+    fn parse_args_recognises_numeric_ids_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--numeric-ids"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.numeric_ids, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--numeric-ids"),
+            OsString::from("--no-numeric-ids"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.numeric_ids, Some(false));
     }
 
     #[test]

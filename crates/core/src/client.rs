@@ -118,6 +118,7 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
 }
 
@@ -194,6 +195,13 @@ impl ClientConfig {
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
     }
+
+    /// Reports whether numeric UID/GID values should be preserved.
+    #[must_use]
+    #[doc(alias = "--numeric-ids")]
+    pub const fn numeric_ids(&self) -> bool {
+        self.numeric_ids
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -207,6 +215,7 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
 }
 
@@ -279,6 +288,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that numeric UID/GID values be preserved instead of names.
+    #[must_use]
+    #[doc(alias = "--numeric-ids")]
+    pub const fn numeric_ids(mut self, numeric_ids: bool) -> Self {
+        self.numeric_ids = numeric_ids;
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -308,6 +325,7 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
         }
     }
@@ -515,6 +533,22 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_sets_numeric_ids() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .numeric_ids(true)
+            .build();
+
+        assert!(config.numeric_ids());
+
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!config.numeric_ids());
     }
 
     #[test]
