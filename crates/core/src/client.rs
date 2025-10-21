@@ -130,6 +130,8 @@ pub struct ClientConfig {
     progress: bool,
     partial: bool,
     inplace: bool,
+    #[cfg(feature = "xattr")]
+    preserve_xattrs: bool,
 }
 
 impl ClientConfig {
@@ -204,6 +206,15 @@ impl ClientConfig {
     #[doc(alias = "--times")]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether extended attributes should be preserved.
+    #[cfg(feature = "xattr")]
+    #[must_use]
+    #[doc(alias = "--xattrs")]
+    #[doc(alias = "-X")]
+    pub const fn preserve_xattrs(&self) -> bool {
+        self.preserve_xattrs
     }
 
     /// Reports whether strong checksum comparison should be used when evaluating updates.
@@ -283,6 +294,8 @@ pub struct ClientConfigBuilder {
     progress: bool,
     partial: bool,
     inplace: bool,
+    #[cfg(feature = "xattr")]
+    preserve_xattrs: bool,
 }
 
 impl ClientConfigBuilder {
@@ -417,6 +430,16 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables extended attribute preservation for the transfer.
+    #[cfg(feature = "xattr")]
+    #[must_use]
+    #[doc(alias = "--xattrs")]
+    #[doc(alias = "-X")]
+    pub const fn xattrs(mut self, preserve: bool) -> Self {
+        self.preserve_xattrs = preserve;
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -454,6 +477,8 @@ impl ClientConfigBuilder {
             progress: self.progress,
             partial: self.partial,
             inplace: self.inplace,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs: self.preserve_xattrs,
         }
     }
 }
@@ -751,23 +776,28 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 
     let filter_set = compile_filter_set(config.filter_rules())?;
 
-    let options = LocalCopyOptions::default()
-        .delete(config.delete())
-        .bandwidth_limit(
-            config
-                .bandwidth_limit()
-                .map(|limit| limit.bytes_per_second()),
-        )
-        .owner(config.preserve_owner())
-        .group(config.preserve_group())
-        .permissions(config.preserve_permissions())
-        .times(config.preserve_times())
-        .checksum(config.checksum())
-        .filters(filter_set)
-        .numeric_ids(config.numeric_ids())
-        .sparse(config.sparse())
-        .inplace(config.inplace())
-        .partial(config.partial());
+    let options = {
+        let options = LocalCopyOptions::default()
+            .delete(config.delete())
+            .bandwidth_limit(
+                config
+                    .bandwidth_limit()
+                    .map(|limit| limit.bytes_per_second()),
+            )
+            .owner(config.preserve_owner())
+            .group(config.preserve_group())
+            .permissions(config.preserve_permissions())
+            .times(config.preserve_times())
+            .checksum(config.checksum())
+            .filters(filter_set)
+            .numeric_ids(config.numeric_ids())
+            .sparse(config.sparse())
+            .inplace(config.inplace())
+            .partial(config.partial());
+        #[cfg(feature = "xattr")]
+        let options = options.xattrs(config.preserve_xattrs());
+        options
+    };
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -911,6 +941,18 @@ mod tests {
 
         assert!(config.preserve_times());
         assert!(!config.preserve_permissions());
+    }
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn builder_preserves_xattrs_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .xattrs(true)
+            .build();
+
+        assert!(config.preserve_xattrs());
+        assert!(!ClientConfig::default().preserve_xattrs());
     }
 
     #[test]

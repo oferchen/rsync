@@ -64,6 +64,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use rsync_checksums::strong::Md5;
 use rsync_filters::FilterSet;
+#[cfg(feature = "xattr")]
+use rsync_meta::sync_xattrs;
 use rsync_meta::{
     MetadataError, MetadataOptions, apply_directory_metadata_with_options,
     apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
@@ -350,6 +352,8 @@ pub struct LocalCopyOptions {
     partial: bool,
     inplace: bool,
     collect_events: bool,
+    #[cfg(feature = "xattr")]
+    preserve_xattrs: bool,
 }
 
 impl LocalCopyOptions {
@@ -370,6 +374,8 @@ impl LocalCopyOptions {
             partial: false,
             inplace: false,
             collect_events: false,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs: false,
         }
     }
 
@@ -469,6 +475,16 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that extended attributes be preserved when copying entries.
+    #[cfg(feature = "xattr")]
+    #[must_use]
+    #[doc(alias = "--xattrs")]
+    #[doc(alias = "-X")]
+    pub const fn xattrs(mut self, preserve: bool) -> Self {
+        self.preserve_xattrs = preserve;
+        self
+    }
+
     /// Enables collection of transfer events that describe the work performed by the engine.
     #[must_use]
     pub const fn collect_events(mut self, collect: bool) -> Self {
@@ -516,6 +532,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn filter_set(&self) -> Option<&FilterSet> {
         self.filters.as_ref()
+    }
+
+    /// Reports whether extended attribute preservation has been requested.
+    #[cfg(feature = "xattr")]
+    #[must_use]
+    pub const fn preserve_xattrs(&self) -> bool {
+        self.preserve_xattrs
     }
 
     /// Reports whether numeric UID/GID preservation should be used.
@@ -800,6 +823,11 @@ impl CopyContext {
         self.options.inplace_enabled()
     }
 
+    #[cfg(feature = "xattr")]
+    fn xattrs_enabled(&self) -> bool {
+        self.options.preserve_xattrs()
+    }
+
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
         match self.options.filter_set() {
             Some(filters) => filters.allows(relative, is_dir),
@@ -823,6 +851,20 @@ impl CopyContext {
             events: self.events,
         }
     }
+}
+
+#[cfg(feature = "xattr")]
+fn sync_xattrs_if_requested(
+    preserve_xattrs: bool,
+    mode: LocalCopyExecution,
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), LocalCopyError> {
+    if preserve_xattrs && !mode.is_dry_run() {
+        sync_xattrs(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+    }
+    Ok(())
 }
 
 const MICROS_PER_SECOND: u128 = 1_000_000;
@@ -1320,6 +1362,7 @@ fn copy_sources(
             } else if is_fifo(&file_type) {
                 copy_fifo(
                     &mut context,
+                    source_path,
                     &target,
                     &metadata,
                     metadata_options,
@@ -1328,6 +1371,7 @@ fn copy_sources(
             } else if is_device(&file_type) {
                 copy_device(
                     &mut context,
+                    source_path,
                     &target,
                     &metadata,
                     metadata_options,
@@ -1370,6 +1414,8 @@ fn copy_directory_recursive(
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    #[cfg(feature = "xattr")]
+    let preserve_xattrs = context.xattrs_enabled();
     let mut destination_missing = false;
 
     match fs::symlink_metadata(destination) {
@@ -1465,6 +1511,7 @@ fn copy_directory_recursive(
         } else if is_fifo(&entry_type) {
             copy_fifo(
                 context,
+                entry_path,
                 &target_path,
                 entry_metadata,
                 metadata_options,
@@ -1473,6 +1520,7 @@ fn copy_directory_recursive(
         } else if is_device(&entry_type) {
             copy_device(
                 context,
+                entry_path,
                 &target_path,
                 entry_metadata,
                 metadata_options,
@@ -1500,6 +1548,8 @@ fn copy_directory_recursive(
         let metadata_options = context.metadata_options();
         apply_directory_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
+        #[cfg(feature = "xattr")]
+        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     }
 
     Ok(())
@@ -1514,6 +1564,8 @@ fn copy_file(
 ) -> Result<(), LocalCopyError> {
     let metadata_options = context.metadata_options();
     let mode = context.mode();
+    #[cfg(feature = "xattr")]
+    let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| source.file_name().map(PathBuf::from))
@@ -1660,6 +1712,8 @@ fn copy_file(
         ) {
             apply_file_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
+            #[cfg(feature = "xattr")]
+            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
             hard_links.record(metadata, destination);
             context.record(LocalCopyRecord::new(
                 record_path.clone(),
@@ -1709,6 +1763,8 @@ fn copy_file(
 
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    #[cfg(feature = "xattr")]
+    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     hard_links.record(metadata, destination);
     context.summary_mut().record_file(file_size);
     let elapsed = start.elapsed();
@@ -2041,12 +2097,15 @@ fn files_checksum_match(source: &Path, destination: &Path) -> io::Result<bool> {
 
 fn copy_fifo(
     context: &mut CopyContext,
+    _source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    #[cfg(feature = "xattr")]
+    let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
@@ -2137,6 +2196,8 @@ fn copy_fifo(
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    #[cfg(feature = "xattr")]
+    sync_xattrs_if_requested(preserve_xattrs, mode, _source, destination, true)?;
     context.summary_mut().record_fifo();
     if let Some(path) = record_path {
         context.record(LocalCopyRecord::new(
@@ -2151,12 +2212,15 @@ fn copy_fifo(
 
 fn copy_device(
     context: &mut CopyContext,
+    _source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    #[cfg(feature = "xattr")]
+    let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
@@ -2247,6 +2311,8 @@ fn copy_device(
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    #[cfg(feature = "xattr")]
+    sync_xattrs_if_requested(preserve_xattrs, mode, _source, destination, true)?;
     context.summary_mut().record_device();
     if let Some(path) = record_path {
         context.record(LocalCopyRecord::new(
@@ -2363,6 +2429,8 @@ fn copy_symlink(
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    #[cfg(feature = "xattr")]
+    let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
@@ -2444,6 +2512,8 @@ fn copy_symlink(
 
     apply_symlink_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    #[cfg(feature = "xattr")]
+    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
 
     context.summary_mut().record_symlink();
     if let Some(path) = record_path {
@@ -2656,6 +2726,9 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    #[cfg(feature = "xattr")]
+    use xattr;
+
     #[test]
     fn local_copy_options_numeric_ids_round_trip() {
         let options = LocalCopyOptions::default().numeric_ids(true);
@@ -2681,6 +2754,19 @@ mod tests {
     fn local_copy_options_sparse_round_trip() {
         let options = LocalCopyOptions::default().sparse(true);
         assert!(options.sparse_enabled());
+    }
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn local_copy_options_xattrs_round_trip() {
+        let options = LocalCopyOptions::default().xattrs(true);
+        assert!(options.preserve_xattrs());
+        assert!(
+            !LocalCopyOptions::default()
+                .xattrs(true)
+                .xattrs(false)
+                .preserve_xattrs()
+        );
     }
 
     #[cfg(unix)]
@@ -2807,6 +2893,35 @@ mod tests {
 
         assert_eq!(fs::read(destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn execute_copies_file_with_xattrs() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"attr").expect("write source");
+        xattr::set(&source, "user.demo", b"value").expect("set xattr");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().xattrs(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 1);
+        let copied = xattr::get(&destination, "user.demo")
+            .expect("read dest xattr")
+            .expect("xattr present");
+        assert_eq!(copied, b"value");
     }
 
     #[test]
