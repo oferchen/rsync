@@ -70,4 +70,5 @@ pub mod local_copy;
 
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
+    LocalCopySummary,
 };
