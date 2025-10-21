@@ -777,18 +777,7 @@ where
 
     match run_core_client(config) {
         Ok(summary) => {
-            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stdout) {
-                let message = rsync_error!(1, "failed to write transfer summary: {}", error)
-                    .with_role(Role::Client);
-                if write_message(&message, stderr).is_err() {
-                    let _ = writeln!(
-                        stderr.writer_mut(),
-                        "failed to write transfer summary: {}",
-                        error
-                    );
-                }
-                return 1;
-            }
+            let _ = summary;
             0
         }
         Err(error) => {

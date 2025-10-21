@@ -65,7 +65,8 @@
 //!     .transfer_args([source.clone(), destination.clone()])
 //!     .build();
 //!
-//! run_client(config).expect("local copy succeeds");
+//! let summary = run_client(config).expect("local copy succeeds");
+//! assert_eq!(summary.files_copied(), 1);
 //! assert_eq!(fs::read(&destination).unwrap(), b"example");
 //! ```
 //!
@@ -86,8 +87,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rsync_engine::local_copy::{
-    LocalCopyAction, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions,
-    LocalCopyPlan, LocalCopyRecord, LocalCopyReport,
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
+    LocalCopySummary,
 };
 use rsync_filters::{FilterError, FilterRule as EngineFilterRule, FilterSet};
 use rsync_protocol::ProtocolVersion;
@@ -637,10 +638,8 @@ impl ClientEvent {
 ///
 /// The current implementation offers best-effort local copies covering
 /// directories, regular files, and symbolic links. Metadata preservation, delta
-/// compression, and remote transports remain unimplemented. A [`ClientSummary`]
-/// describing the operations performed is returned so callers can surface
-/// verbose and progress-aware output.
-pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
+/// compression, and remote transports remain unimplemented.
+pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
@@ -838,9 +837,10 @@ mod tests {
         assert!(config.preserve_times());
 
         let summary = run_client(config).expect("copy succeeds");
-        assert!(summary.events().is_empty());
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.bytes_copied(), b"example".len() as u64);
     }
 
     #[test]
@@ -856,9 +856,9 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("dry-run succeeds");
-        assert!(summary.events().is_empty());
 
         assert!(!destination.exists());
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[test]
@@ -882,13 +882,14 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("copy succeeds");
-        assert!(summary.events().is_empty());
 
         assert_eq!(
             fs::read(dest_root.join("keep.txt")).expect("read keep"),
             b"fresh"
         );
         assert!(!dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]
@@ -913,13 +914,14 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("dry-run succeeds");
-        assert!(summary.events().is_empty());
 
         assert_eq!(
             fs::read(dest_root.join("keep.txt")).expect("read keep"),
             b"stale"
         );
         assert!(dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]
@@ -938,10 +940,10 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("copy succeeds");
-        assert!(summary.events().is_empty());
 
         assert!(dest_root.join("source").join("keep.txt").exists());
         assert!(!dest_root.join("source").join("skip.tmp").exists());
+        assert!(summary.files_copied() >= 1);
     }
 
     #[test]
@@ -960,10 +962,11 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("directory copy succeeds");
-        assert!(summary.events().is_empty());
 
         let copied_file = dest_root.join("nested").join("file.txt");
         assert_eq!(fs::read(copied_file).expect("read copied"), b"tree");
+        assert!(summary.files_copied() >= 1);
+        assert!(summary.directories_created() >= 1);
     }
 
     #[cfg(unix)]
@@ -984,10 +987,10 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("link copy succeeds");
-        assert!(summary.events().is_empty());
 
         let copied = fs::read_link(destination_link).expect("read copied link");
         assert_eq!(copied, target_file);
+        assert_eq!(summary.symlinks_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -1011,11 +1014,11 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("directory copy succeeds");
-        assert!(summary.events().is_empty());
 
         let copied_link = dest_root.join("nested").join("link");
         let copied_target = fs::read_link(copied_link).expect("read copied link");
         assert_eq!(copied_target, target_file);
+        assert_eq!(summary.symlinks_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -1050,7 +1053,6 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("copy succeeds");
-        assert!(summary.events().is_empty());
 
         let dest_metadata = fs::metadata(&destination).expect("dest metadata");
         assert_eq!(dest_metadata.permissions().mode() & 0o777, mode);
@@ -1058,6 +1060,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -1088,7 +1091,6 @@ mod tests {
         assert!(config.preserve_times());
 
         let summary = run_client(config).expect("directory copy succeeds");
-        assert!(summary.events().is_empty());
 
         let dest_metadata = fs::metadata(&destination_dir).expect("dest metadata");
         assert!(dest_metadata.is_dir());
@@ -1097,6 +1099,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert!(summary.directories_created() >= 1);
     }
 
     #[cfg(unix)]
@@ -1140,8 +1143,7 @@ mod tests {
         assert!(config.preserve_permissions());
         assert!(config.preserve_times());
 
-        let summary = run_client(config).expect("directory copy succeeds");
-        assert!(summary.events().is_empty());
+        let _summary = run_client(config).expect("directory copy succeeds");
 
         let copied_nested = dest_root.join("source-tree").join("nested");
         let copied_metadata = fs::metadata(&copied_nested).expect("dest metadata");
@@ -1223,7 +1225,6 @@ mod tests {
             .build();
 
         let summary = run_client(config).expect("directory contents copy succeeds");
-        assert!(summary.events().is_empty());
 
         assert!(dest_root.is_dir());
         assert!(dest_root.join("nested").is_dir());
@@ -1232,6 +1233,7 @@ mod tests {
             b"contents"
         );
         assert!(!dest_root.join("source").exists());
+        assert!(summary.files_copied() >= 1);
     }
 
     #[test]

@@ -43,7 +43,8 @@
 //! let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 //! # let operands = vec![source.into_os_string(), dest.into_os_string()];
 //! # let plan = LocalCopyPlan::from_operands(&operands).unwrap();
-//! plan.execute().expect("copy succeeds");
+//! let summary = plan.execute().expect("copy succeeds");
+//! assert_eq!(summary.files_copied(), 1);
 //! ```
 
 use std::cmp::Ordering;
@@ -169,7 +170,7 @@ impl LocalCopyPlan {
     ///
     /// Reports [`LocalCopyError`] variants when operand validation fails or I/O
     /// operations encounter errors.
-    pub fn execute(&self) -> Result<(), LocalCopyError> {
+    pub fn execute(&self) -> Result<LocalCopySummary, LocalCopyError> {
         self.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
     }
 
@@ -177,7 +178,10 @@ impl LocalCopyPlan {
     ///
     /// When [`LocalCopyExecution::DryRun`] is selected the filesystem is left
     /// untouched while operand validation and readability checks still occur.
-    pub fn execute_with(&self, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
+    pub fn execute_with(
+        &self,
+        mode: LocalCopyExecution,
+    ) -> Result<LocalCopySummary, LocalCopyError> {
         self.execute_with_options(mode, LocalCopyOptions::default())
     }
 
@@ -186,18 +190,8 @@ impl LocalCopyPlan {
         &self,
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
-    ) -> Result<(), LocalCopyError> {
-        copy_sources(self, mode, options).map(|_| ())
-    }
-
-    /// Executes the plan while collecting a detailed report of the operations performed.
-    pub fn execute_with_report(
-        &self,
-        mode: LocalCopyExecution,
-        options: LocalCopyOptions,
-    ) -> Result<LocalCopyReport, LocalCopyError> {
-        copy_sources(self, mode, options.collect_events(true))
-            .map(|report| report.unwrap_or_default())
+    ) -> Result<LocalCopySummary, LocalCopyError> {
+        copy_sources(self, mode, options)
     }
 }
 
@@ -555,12 +549,109 @@ impl HardLinkTracker {
     fn record(&mut self, _metadata: &fs::Metadata, _destination: &Path) {}
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// Statistics describing the outcome of a [`LocalCopyPlan`] execution.
+///
+/// The summary mirrors the high-level counters printed by upstream rsync's
+/// `--stats` output: file/metadata operations and the aggregate payload size
+/// transferred. Counts increase even in dry-run mode to reflect the actions
+/// that would have been taken.
+pub struct LocalCopySummary {
+    files_copied: u64,
+    directories_created: u64,
+    symlinks_copied: u64,
+    hard_links_created: u64,
+    devices_created: u64,
+    fifos_created: u64,
+    items_deleted: u64,
+    bytes_copied: u64,
+}
+
+impl LocalCopySummary {
+    /// Returns the number of regular files copied or updated.
+    #[must_use]
+    pub const fn files_copied(&self) -> u64 {
+        self.files_copied
+    }
+
+    /// Returns the number of directories created during the transfer.
+    #[must_use]
+    pub const fn directories_created(&self) -> u64 {
+        self.directories_created
+    }
+
+    /// Returns the number of symbolic links copied.
+    #[must_use]
+    pub const fn symlinks_copied(&self) -> u64 {
+        self.symlinks_copied
+    }
+
+    /// Returns the number of hard links materialised.
+    #[must_use]
+    pub const fn hard_links_created(&self) -> u64 {
+        self.hard_links_created
+    }
+
+    /// Returns the number of device nodes created.
+    #[must_use]
+    pub const fn devices_created(&self) -> u64 {
+        self.devices_created
+    }
+
+    /// Returns the number of FIFOs created.
+    #[must_use]
+    pub const fn fifos_created(&self) -> u64 {
+        self.fifos_created
+    }
+
+    /// Returns the number of entries removed because of `--delete`.
+    #[must_use]
+    pub const fn items_deleted(&self) -> u64 {
+        self.items_deleted
+    }
+
+    /// Returns the aggregate number of bytes written for copied files.
+    #[must_use]
+    pub const fn bytes_copied(&self) -> u64 {
+        self.bytes_copied
+    }
+
+    fn record_file(&mut self, bytes: u64) {
+        self.files_copied = self.files_copied.saturating_add(1);
+        self.bytes_copied = self.bytes_copied.saturating_add(bytes);
+    }
+
+    fn record_directory(&mut self) {
+        self.directories_created = self.directories_created.saturating_add(1);
+    }
+
+    fn record_symlink(&mut self) {
+        self.symlinks_copied = self.symlinks_copied.saturating_add(1);
+    }
+
+    fn record_hard_link(&mut self) {
+        self.hard_links_created = self.hard_links_created.saturating_add(1);
+    }
+
+    fn record_device(&mut self) {
+        self.devices_created = self.devices_created.saturating_add(1);
+    }
+
+    fn record_fifo(&mut self) {
+        self.fifos_created = self.fifos_created.saturating_add(1);
+    }
+
+    fn record_deletion(&mut self) {
+        self.items_deleted = self.items_deleted.saturating_add(1);
+    }
+}
+
 struct CopyContext {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
     hard_links: HardLinkTracker,
     limiter: Option<BandwidthLimiter>,
-    events: Option<Vec<LocalCopyRecord>>,
+    summary: LocalCopySummary,
 }
 
 impl CopyContext {
@@ -576,7 +667,7 @@ impl CopyContext {
             options,
             hard_links: HardLinkTracker::new(),
             limiter,
-            events,
+            summary: LocalCopySummary::default(),
         }
     }
 
@@ -617,18 +708,12 @@ impl CopyContext {
         }
     }
 
-    fn partial_enabled(&self) -> bool {
-        self.options.partial_enabled()
+    fn summary_mut(&mut self) -> &mut LocalCopySummary {
+        &mut self.summary
     }
 
-    fn record(&mut self, record: LocalCopyRecord) {
-        if let Some(events) = &mut self.events {
-            events.push(record);
-        }
-    }
-
-    fn into_events(self) -> Option<Vec<LocalCopyRecord>> {
-        self.events
+    fn into_summary(self) -> LocalCopySummary {
+        self.summary
     }
 }
 
@@ -998,8 +1083,7 @@ fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
-) -> Result<Option<LocalCopyReport>, LocalCopyError> {
-    let collect_events = options.events_enabled();
+) -> Result<LocalCopySummary, LocalCopyError> {
     let mut context = CopyContext::new(mode, options);
 
     let multiple_sources = plan.sources.len() > 1;
@@ -1083,10 +1167,10 @@ fn copy_sources(
                 )?;
             } else if file_type.is_symlink() {
                 copy_symlink(
+                    &mut context,
                     source_path,
                     &target,
                     &metadata,
-                    context.mode(),
                     metadata_options,
                 )?;
                 context.record(LocalCopyRecord::new(
@@ -1096,21 +1180,9 @@ fn copy_sources(
                     Duration::default(),
                 ));
             } else if is_fifo(&file_type) {
-                copy_fifo(&target, &metadata, context.mode(), metadata_options)?;
-                context.record(LocalCopyRecord::new(
-                    relative,
-                    LocalCopyAction::FifoCopied,
-                    0,
-                    Duration::default(),
-                ));
+                copy_fifo(&mut context, &target, &metadata, metadata_options)?;
             } else if is_device(&file_type) {
-                copy_device(&target, &metadata, context.mode(), metadata_options)?;
-                context.record(LocalCopyRecord::new(
-                    relative,
-                    LocalCopyAction::DeviceCopied,
-                    0,
-                    Duration::default(),
-                ));
+                copy_device(&mut context, &target, &metadata, metadata_options)?;
             } else {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::UnsupportedFileType,
@@ -1119,11 +1191,7 @@ fn copy_sources(
         }
     }
 
-    if collect_events {
-        Ok(context.into_events().map(LocalCopyReport::new))
-    } else {
-        Ok(None)
-    }
+    Ok(context.into_summary())
 }
 
 fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {
@@ -1172,6 +1240,9 @@ fn copy_directory_recursive(
                         Duration::default(),
                     ));
                 }
+            }
+            if relative.is_some() {
+                context.summary_mut().record_directory();
             }
         }
         Err(error) => {
@@ -1225,26 +1296,16 @@ fn copy_directory_recursive(
             )?;
         } else if entry_type.is_symlink() {
             copy_symlink(
+                context,
                 entry_path,
                 &target_path,
                 entry_metadata,
-                context.mode(),
                 metadata_options,
             )?;
         } else if is_fifo(&entry_type) {
-            copy_fifo(
-                &target_path,
-                entry_metadata,
-                context.mode(),
-                metadata_options,
-            )?;
+            copy_fifo(context, &target_path, entry_metadata, metadata_options)?;
         } else if is_device(&entry_type) {
-            copy_device(
-                &target_path,
-                entry_metadata,
-                context.mode(),
-                metadata_options,
-            )?;
+            copy_device(context, &target_path, entry_metadata, metadata_options)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -1345,12 +1406,7 @@ fn copy_file(
             ));
         }
 
-        context.record(LocalCopyRecord::new(
-            record_path.clone(),
-            LocalCopyAction::DataCopied,
-            file_size,
-            Duration::default(),
-        ));
+        context.summary_mut().record_file(metadata.len());
         return Ok(());
     }
 
@@ -1403,12 +1459,7 @@ fn copy_file(
         }
 
         hard_links.record(metadata, destination);
-        context.record(LocalCopyRecord::new(
-            record_path.clone(),
-            LocalCopyAction::HardLink,
-            file_size,
-            Duration::default(),
-        ));
+        context.summary_mut().record_hard_link();
         return Ok(());
     }
 
@@ -1595,6 +1646,10 @@ fn write_sparse_chunk(
         }
     }
 
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
+    hard_links.record(metadata, destination);
+    context.summary_mut().record_file(metadata.len());
     Ok(())
 }
 
@@ -1661,11 +1716,12 @@ fn files_match(source: &Path, destination: &Path) -> bool {
 }
 
 fn copy_fifo(
+    context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    mode: LocalCopyExecution,
     metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
+    let mode = context.mode();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1712,6 +1768,7 @@ fn copy_fifo(
             }
         }
 
+        context.summary_mut().record_fifo();
         return Ok(());
     }
 
@@ -1744,15 +1801,17 @@ fn copy_fifo(
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    context.summary_mut().record_fifo();
     Ok(())
 }
 
 fn copy_device(
+    context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    mode: LocalCopyExecution,
     metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
+    let mode = context.mode();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1799,6 +1858,7 @@ fn copy_device(
             }
         }
 
+        context.summary_mut().record_device();
         return Ok(());
     }
 
@@ -1831,6 +1891,7 @@ fn copy_device(
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
+    context.summary_mut().record_device();
     Ok(())
 }
 
@@ -1887,21 +1948,12 @@ fn delete_extraneous_entries(
         }
 
         if context.mode().is_dry_run() {
+            context.summary_mut().record_deletion();
             continue;
         }
 
         remove_extraneous_path(path, file_type)?;
-
-        let entry_relative = match relative {
-            Some(base) => base.join(&name_path),
-            None => name_path.clone(),
-        };
-        context.record(LocalCopyRecord::new(
-            entry_relative,
-            LocalCopyAction::EntryDeleted,
-            0,
-            Duration::default(),
-        ));
+        context.summary_mut().record_deletion();
     }
 
     Ok(())
@@ -1928,12 +1980,13 @@ fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), 
 }
 
 fn copy_symlink(
+    context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    mode: LocalCopyExecution,
     metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
+    let mode = context.mode();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1994,6 +2047,7 @@ fn copy_symlink(
         .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
 
     if mode.is_dry_run() {
+        context.summary_mut().record_symlink();
         return Ok(());
     }
 
@@ -2004,6 +2058,7 @@ fn copy_symlink(
     apply_symlink_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
 
+    context.summary_mut().record_symlink();
     Ok(())
 }
 
@@ -2325,10 +2380,11 @@ mod tests {
         let operands = vec![source.clone().into_os_string(), destination_operand];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
 
         let copied = dest_dir.join(source.file_name().expect("source name"));
         assert_eq!(fs::read(copied).expect("read copied"), b"payload");
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[test]
@@ -2344,9 +2400,10 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"example");
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[test]
@@ -2364,11 +2421,13 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
         assert_eq!(
             fs::read(dest_root.join("nested").join("file.txt")).expect("read"),
             b"tree"
         );
+        assert_eq!(summary.files_copied(), 1);
+        assert!(summary.directories_created() >= 1);
     }
 
     #[test]
@@ -2396,11 +2455,12 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().permissions(true).times(true),
-        )
-        .expect("copy succeeds without rewriting");
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().permissions(true).times(true),
+            )
+            .expect("copy succeeds without rewriting");
 
         let final_perms = fs::metadata(&destination)
             .expect("destination metadata")
@@ -2413,6 +2473,7 @@ mod tests {
             fs::read(&destination).expect("destination contents"),
             b"identical"
         );
+        assert_eq!(summary.files_copied(), 0);
     }
 
     #[cfg(unix)]
@@ -2431,9 +2492,10 @@ mod tests {
         let operands = vec![link.into_os_string(), dest_link.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
         let copied = fs::read_link(dest_link).expect("read copied link");
         assert_eq!(copied, target);
+        assert_eq!(summary.symlinks_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -2458,7 +2520,7 @@ mod tests {
             destination.clone().into_os_string(),
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
 
         let metadata = fs::metadata(&destination).expect("dest metadata");
         assert_ne!(metadata.permissions().mode() & 0o777, 0o640);
@@ -2466,6 +2528,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_ne!(dest_atime, atime);
         assert_ne!(dest_mtime, mtime);
+        assert_eq!(summary.files_copied(), 0);
     }
 
     #[cfg(unix)]
@@ -2491,7 +2554,8 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let options = LocalCopyOptions::default().permissions(true).times(true);
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         let metadata = fs::metadata(&destination).expect("dest metadata");
@@ -2500,6 +2564,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -2534,15 +2599,17 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().owner(true).group(true),
-        )
-        .expect("copy succeeds");
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().owner(true).group(true),
+            )
+            .expect("copy succeeds");
 
         let metadata = fs::metadata(&destination).expect("dest metadata");
         assert_eq!(metadata.uid(), owner);
         assert_eq!(metadata.gid(), group);
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[cfg(unix)]
@@ -2584,11 +2651,12 @@ mod tests {
         assert_eq!(src_atime, atime);
         assert_eq!(src_mtime, mtime);
 
-        plan.execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().permissions(true).times(true),
-        )
-        .expect("fifo copy succeeds");
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().permissions(true).times(true),
+            )
+            .expect("fifo copy succeeds");
 
         let dest_metadata = fs::symlink_metadata(&destination_fifo).expect("dest metadata");
         assert!(dest_metadata.file_type().is_fifo());
@@ -2597,6 +2665,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.fifos_created(), 1);
     }
 
     #[cfg(unix)]
@@ -2641,11 +2710,12 @@ mod tests {
         assert_eq!(src_atime, atime);
         assert_eq!(src_mtime, mtime);
 
-        plan.execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().permissions(true).times(true),
-        )
-        .expect("fifo copy succeeds");
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().permissions(true).times(true),
+            )
+            .expect("fifo copy succeeds");
 
         let dest_fifo = dest_root.join("dir").join("pipe");
         let metadata = fs::symlink_metadata(&dest_fifo).expect("dest fifo metadata");
@@ -2655,6 +2725,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.fifos_created(), 1);
     }
 
     #[test]
@@ -2671,9 +2742,10 @@ mod tests {
         let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
         assert!(dest_root.join("nested").exists());
         assert!(!dest_root.join("source").exists());
+        assert!(summary.files_copied() >= 1);
     }
 
     #[test]
@@ -2694,7 +2766,8 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let options = LocalCopyOptions::default().delete(true);
 
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         assert_eq!(
@@ -2702,6 +2775,8 @@ mod tests {
             b"fresh"
         );
         assert!(!dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]
@@ -2716,14 +2791,14 @@ mod tests {
         fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
         fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
 
-        let operands = vec![
-            source_root.into_os_string(),
-            dest_root.clone().into_os_string(),
-        ];
+        let mut source_operand = source_root.into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let options = LocalCopyOptions::default().delete(true);
 
-        plan.execute_with_options(LocalCopyExecution::DryRun, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::DryRun, options)
             .expect("dry-run succeeds");
 
         assert_eq!(
@@ -2731,6 +2806,8 @@ mod tests {
             b"stale"
         );
         assert!(dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]
@@ -2798,7 +2875,7 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
 
         let dest_a = dest_root.join("file-a");
         let dest_b = dest_root.join("file-b");
@@ -2810,6 +2887,7 @@ mod tests {
         assert_eq!(metadata_b.nlink(), 2);
         assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
         assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
+        assert!(summary.hard_links_created() >= 1);
     }
 
     #[cfg(unix)]
@@ -2875,7 +2953,8 @@ mod tests {
 
         let options =
             LocalCopyOptions::default().bandwidth_limit(Some(NonZeroU64::new(1024).unwrap()));
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         assert_eq!(fs::read(&destination).expect("read dest").len(), 4 * 1024);
@@ -2900,6 +2979,7 @@ mod tests {
             expected,
             total
         );
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[test]
@@ -2916,11 +2996,12 @@ mod tests {
             destination.clone().into_os_string(),
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-        plan.execute().expect("copy succeeds");
+        let summary = plan.execute().expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
         let recorded = super::take_recorded_sleeps();
         assert!(recorded.is_empty(), "unexpected sleep durations recorded");
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[test]
@@ -2942,12 +3023,14 @@ mod tests {
             .expect("compile filters");
         let options = LocalCopyOptions::default().filters(Some(filters));
 
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         let target_root = dest.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert!(!target_root.join("skip.tmp").exists());
+        assert!(summary.files_copied() >= 1);
     }
 
     #[test]
@@ -2972,12 +3055,14 @@ mod tests {
         .expect("compile filters");
         let options = LocalCopyOptions::default().filters(Some(filters));
 
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         let target_root = dest.join("source");
         assert!(target_root.join("keep.tmp").exists());
         assert!(!target_root.join("skip.tmp").exists());
+        assert!(summary.files_copied() >= 1);
     }
 
     #[test]
@@ -3005,7 +3090,8 @@ mod tests {
             .delete(true)
             .filters(Some(filters));
 
-        plan.execute_with_options(LocalCopyExecution::Apply, options)
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
             .expect("copy succeeds");
 
         let target_root = dest.join("source");
@@ -3014,5 +3100,7 @@ mod tests {
         let skip_path = target_root.join("skip.tmp");
         assert!(skip_path.exists());
         assert_eq!(fs::read(skip_path).expect("read skip"), b"dest skip");
+        assert!(summary.files_copied() >= 1);
+        assert_eq!(summary.items_deleted(), 1);
     }
 }
