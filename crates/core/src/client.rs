@@ -132,6 +132,7 @@ pub struct ClientConfig {
     relative_paths: bool,
     verbosity: u8,
     progress: bool,
+    stats: bool,
     partial: bool,
     inplace: bool,
     #[cfg(feature = "xattr")]
@@ -265,6 +266,13 @@ impl ClientConfig {
         self.progress
     }
 
+    /// Reports whether a statistics summary should be emitted after the transfer.
+    #[must_use]
+    #[doc(alias = "--stats")]
+    pub const fn stats(&self) -> bool {
+        self.stats
+    }
+
     /// Reports whether partial transfers were requested.
     #[must_use]
     #[doc(alias = "--partial")]
@@ -305,6 +313,7 @@ pub struct ClientConfigBuilder {
     relative_paths: bool,
     verbosity: u8,
     progress: bool,
+    stats: bool,
     partial: bool,
     inplace: bool,
     #[cfg(feature = "xattr")]
@@ -433,6 +442,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables statistics reporting for the transfer.
+    #[must_use]
+    #[doc(alias = "--stats")]
+    pub const fn stats(mut self, stats: bool) -> Self {
+        self.stats = stats;
+        self
+    }
+
     /// Enables or disables retention of partial files on failure.
     #[must_use]
     #[doc(alias = "--partial")]
@@ -498,6 +515,7 @@ impl ClientConfigBuilder {
             relative_paths: self.relative_paths,
             verbosity: self.verbosity,
             progress: self.progress,
+            stats: self.stats,
             partial: self.partial,
             inplace: self.inplace,
             #[cfg(feature = "xattr")]
@@ -1028,6 +1046,22 @@ mod tests {
             .build();
 
         assert!(!config.inplace());
+    }
+
+    #[test]
+    fn builder_enables_stats() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .stats(true)
+            .build();
+
+        assert!(enabled.stats());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!disabled.stats());
     }
 
     #[test]

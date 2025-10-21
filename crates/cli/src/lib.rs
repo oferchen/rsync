@@ -121,6 +121,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-relative  Disable preservation of source path components.\n",
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
+    "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
     "      --inplace    Write updated data directly to destination files.\n",
@@ -147,7 +148,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -169,6 +170,7 @@ struct ParsedArgs {
     relative: Option<bool>,
     verbosity: u8,
     progress: bool,
+    stats: bool,
     partial: bool,
     inplace: Option<bool>,
     excludes: Vec<OsString>,
@@ -272,6 +274,12 @@ fn clap_command() -> Command {
                 .help("Disable progress reporting.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("progress"),
+        )
+        .arg(
+            Arg::new("stats")
+                .long("stats")
+                .help("Output transfer statistics after completion.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("partial")
@@ -554,6 +562,7 @@ where
     };
     let verbosity = matches.get_count("verbose") as u8;
     let mut progress = matches.get_flag("progress");
+    let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
     if matches.get_flag("no-progress") {
         progress = false;
@@ -627,6 +636,7 @@ where
         relative,
         verbosity,
         progress,
+        stats,
         partial,
         inplace,
         excludes,
@@ -707,6 +717,7 @@ where
         relative,
         verbosity,
         progress,
+        stats,
         partial,
         inplace,
         xattrs,
@@ -840,6 +851,7 @@ where
         .relative_paths(relative)
         .verbosity(verbosity)
         .progress(progress)
+        .stats(stats)
         .partial(partial)
         .inplace(inplace.unwrap_or(false));
     #[cfg(feature = "xattr")]
@@ -906,7 +918,8 @@ where
 
     match run_core_client(config) {
         Ok(summary) => {
-            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stdout) {
+            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stats, stdout)
+            {
                 let _ = writeln!(
                     stdout,
                     "warning: failed to render transfer summary: {error}"
@@ -926,11 +939,12 @@ where
     }
 }
 
-/// Emits verbose and progress-oriented output derived from a [`ClientSummary`].
+/// Emits verbose, statistics, and progress-oriented output derived from a [`ClientSummary`].
 fn emit_transfer_summary<W: Write>(
     summary: &ClientSummary,
     verbosity: u8,
     progress: bool,
+    stats: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -941,18 +955,23 @@ fn emit_transfer_summary<W: Write>(
         false
     };
 
-    if progress_rendered && verbosity > 0 {
-        writeln!(stdout)?;
-    }
-
     let emit_verbose_listing =
         verbosity > 0 && !events.is_empty() && (!progress_rendered || verbosity > 1);
 
-    if emit_verbose_listing {
-        emit_verbose(events, verbosity, stdout)?;
+    if progress_rendered && (emit_verbose_listing || stats || verbosity > 0) {
+        writeln!(stdout)?;
     }
 
-    if verbosity > 0 {
+    if emit_verbose_listing {
+        emit_verbose(events, verbosity, stdout)?;
+        if stats {
+            writeln!(stdout)?;
+        }
+    }
+
+    if stats {
+        emit_stats(summary, stdout)?;
+    } else if verbosity > 0 {
         emit_totals(summary, stdout)?;
     }
 
@@ -1059,6 +1078,36 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
     }
 
     Ok(true)
+}
+
+/// Emits a statistics summary mirroring the subset of counters supported by the local engine.
+fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+    let files = summary.files_copied();
+    let directories = summary.directories_created();
+    let symlinks = summary.symlinks_copied();
+    let hard_links = summary.hard_links_created();
+    let devices = summary.devices_created();
+    let fifos = summary.fifos_created();
+    let deleted = summary.items_deleted();
+    let transferred = summary.bytes_copied();
+    let total_size = summary.total_source_bytes();
+
+    writeln!(stdout, "Number of regular files transferred: {files}")?;
+    writeln!(stdout, "Number of created directories: {directories}")?;
+    writeln!(stdout, "Number of created symbolic links: {symlinks}")?;
+    writeln!(stdout, "Number of created hard links: {hard_links}")?;
+    writeln!(stdout, "Number of created device nodes: {devices}")?;
+    writeln!(stdout, "Number of created FIFOs: {fifos}")?;
+    writeln!(stdout, "Number of deleted entries: {deleted}")?;
+    writeln!(stdout, "Total file size: {total_size} bytes")?;
+    writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
+    writeln!(stdout, "Literal data: {transferred} bytes")?;
+    writeln!(stdout, "Matched data: 0 bytes")?;
+    writeln!(stdout, "Total bytes sent: {transferred}")?;
+    writeln!(stdout, "Total bytes received: 0")?;
+    writeln!(stdout)?;
+
+    emit_totals(summary, stdout)
 }
 
 /// Emits the summary lines reported by verbose transfers.
@@ -1894,6 +1943,40 @@ mod tests {
     }
 
     #[test]
+    fn stats_transfer_renders_summary_block() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("stats.txt");
+        let destination = tmp.path().join("stats.out");
+        let payload = b"statistics";
+        std::fs::write(&source, payload).expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--stats"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("stats output is UTF-8");
+        let expected_size = payload.len();
+        assert!(rendered.contains("Number of regular files transferred: 1"));
+        assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
+        assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
+        assert!(rendered.contains("Total bytes received: 0"));
+        assert!(rendered.contains("\n\nsent"));
+        assert!(rendered.contains("total size is"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            payload
+        );
+    }
+
+    #[test]
     fn transfer_request_with_archive_copies_file() {
         use tempfile::tempdir;
 
@@ -2417,6 +2500,19 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.inplace, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_stats_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--stats"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.stats);
     }
 
     #[test]
