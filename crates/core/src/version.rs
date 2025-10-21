@@ -1951,12 +1951,31 @@ mod tests {
         assert!(actual.contains(&format!(
             "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
         )));
-        assert!(actual.contains(", symlinks,"));
-        assert!(actual.contains(", symtimes,"));
-        assert!(actual.contains(", hardlinks"));
-        assert!(!actual.contains("no symlinks"));
-        assert!(!actual.contains("no symtimes"));
-        assert!(!actual.contains("no hardlinks"));
+        let assert_capability = |label: &str, supported: bool| {
+            let positive = format!(", {label}");
+            let negative = format!(", no {label}");
+
+            if supported {
+                assert!(actual.contains(&positive), "expected banner to include `{label}`");
+                assert!(
+                    !actual.contains(&negative),
+                    "banner should not include `no {label}` when supported"
+                );
+            } else {
+                assert!(
+                    actual.contains(&negative),
+                    "expected banner to include `no {label}`"
+                );
+                assert!(
+                    !actual.contains(&positive),
+                    "banner should not include `{label}` when unsupported"
+                );
+            }
+        };
+
+        assert_capability("symlinks", config.supports_symlinks);
+        assert_capability("symtimes", config.supports_symtimes);
+        assert_capability("hardlinks", config.supports_hardlinks);
         assert!(actual.contains("no IPv6, atimes"));
         assert!(actual.contains("optional secluded-args"));
         let compiled_line = format!("Compiled features:\n    {}\n", compiled_features_text);
