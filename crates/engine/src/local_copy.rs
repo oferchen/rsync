@@ -1019,7 +1019,8 @@ fn copy_directory_recursive(
     }
 
     if context.options().delete_extraneous() {
-        delete_extraneous_entries(destination, &keep_names, context.mode())?;
+        let filters = context.options().filter_set();
+        delete_extraneous_entries(destination, &keep_names, context.mode(), filters, relative)?;
     }
 
     if !context.mode().is_dry_run() {
@@ -1337,6 +1338,8 @@ fn delete_extraneous_entries(
     destination: &Path,
     source_entries: &[OsString],
     mode: LocalCopyExecution,
+    filters: Option<&FilterSet>,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mut keep = HashSet::with_capacity(source_entries.len());
     for name in source_entries {
@@ -1365,18 +1368,27 @@ fn delete_extraneous_entries(
             continue;
         }
 
-        let path = destination.join(&name);
-
-        if mode.is_dry_run() {
-            entry.file_type().map_err(|error| {
-                LocalCopyError::io("inspect extraneous destination entry", path, error)
-            })?;
-            continue;
-        }
-
+        let name_path = Path::new(&name);
+        let path = destination.join(name_path);
         let file_type = entry.file_type().map_err(|error| {
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
+
+        if let Some(filters) = filters {
+            let entry_relative = match relative {
+                Some(base) => base.join(name_path),
+                None => PathBuf::from(name_path),
+            };
+
+            if !filters.allows(&entry_relative, file_type.is_dir()) {
+                continue;
+            }
+        }
+
+        if mode.is_dry_run() {
+            continue;
+        }
+
         remove_extraneous_path(path, file_type)?;
     }
 
