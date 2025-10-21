@@ -350,7 +350,8 @@ impl<'a> MessageSegments<'a> {
     /// let mut segments = message.as_segments(&mut scratch, false);
     ///
     /// for slice in &mut segments {
-    ///     assert!(!slice.as_ref().is_empty());
+    ///     let bytes: &[u8] = slice.as_ref();
+    ///     assert!(!bytes.is_empty());
     /// }
     /// ```
     #[inline]
@@ -396,7 +397,7 @@ impl<'a> MessageSegments<'a> {
         }
 
         if self.count == 1 {
-            let bytes = self.segments[0].as_ref();
+            let bytes: &[u8] = self.segments[0].as_ref();
 
             if bytes.is_empty() {
                 return Ok(());
@@ -490,7 +491,7 @@ impl<'a> MessageSegments<'a> {
         let view = Self::trim_leading_empty_slices(slices);
 
         for slice in view.iter() {
-            let bytes = slice.as_ref();
+            let bytes: &[u8] = slice.as_ref();
 
             if bytes.is_empty() {
                 continue;
@@ -520,7 +521,10 @@ impl<'a> MessageSegments<'a> {
         mut slices: &'b mut [IoSlice<'a>],
     ) -> &'b mut [IoSlice<'a>] {
         loop {
-            let Some(is_empty) = slices.first().map(|slice| slice.as_ref().is_empty()) else {
+            let Some(is_empty) = slices.first().map(|slice| {
+                let bytes: &[u8] = slice.as_ref();
+                bytes.is_empty()
+            }) else {
                 return slices;
             };
 
@@ -538,7 +542,8 @@ impl<'a> MessageSegments<'a> {
     #[inline]
     fn trim_leading_empty_slices<'b>(mut slices: &'b [IoSlice<'a>]) -> &'b [IoSlice<'a>] {
         while let Some((first, rest)) = slices.split_first() {
-            if !first.as_ref().is_empty() {
+            let first_bytes: &[u8] = first.as_ref();
+            if !first_bytes.is_empty() {
                 break;
             }
 
@@ -608,7 +613,7 @@ impl<'a> MessageSegments<'a> {
 
         let start = buffer.len();
         for slice in self.iter() {
-            let bytes = slice.as_ref();
+            let bytes: &[u8] = slice.as_ref();
             if bytes.is_empty() {
                 continue;
             }
@@ -670,7 +675,7 @@ impl<'a> MessageSegments<'a> {
 
         let mut offset = 0usize;
         for slice in self.iter() {
-            let bytes = slice.as_ref();
+            let bytes: &[u8] = slice.as_ref();
             let end = offset + bytes.len();
             dest[offset..end].copy_from_slice(bytes);
             offset = end;
@@ -3469,7 +3474,10 @@ mod tests {
             let segments = message.as_segments(&mut scratch, true);
             segments
                 .iter()
-                .flat_map(|slice| slice.as_ref().iter().copied())
+                .flat_map(|slice| {
+                    let bytes: &[u8] = slice.as_ref();
+                    bytes.iter().copied()
+                })
                 .collect()
         };
 
@@ -3528,7 +3536,8 @@ mod tests {
         let mut total_len = 0;
 
         for slice in &mut segments {
-            total_len += slice.as_ref().len();
+            let bytes: &[u8] = slice.as_ref();
+            total_len += bytes.len();
         }
 
         assert_eq!(total_len, message.to_bytes().unwrap().len());
@@ -4158,8 +4167,10 @@ mod tests {
 
         let flattened: Vec<u8> = slices
             .iter()
-            .flat_map(|slice| slice.as_ref())
-            .copied()
+            .flat_map(|slice| {
+                let bytes: &[u8] = slice.as_ref();
+                bytes.iter().copied()
+            })
             .collect();
 
         assert_eq!(flattened, message.to_bytes().unwrap());
@@ -4176,7 +4187,8 @@ mod tests {
         let mut flattened = Vec::new();
 
         for slice in segments.clone() {
-            flattened.extend_from_slice(slice.as_ref());
+            let bytes: &[u8] = slice.as_ref();
+            flattened.extend_from_slice(bytes);
         }
 
         assert_eq!(flattened, message.to_line_bytes().unwrap());
@@ -4266,7 +4278,7 @@ mod tests {
                     break;
                 }
 
-                let data = slice.as_ref();
+                let data: &[u8] = slice.as_ref();
                 let portion = data.len().min(remaining);
                 self.buffer.extend_from_slice(&data[..portion]);
                 remaining -= portion;
@@ -4602,7 +4614,7 @@ mod tests {
                     break;
                 }
 
-                let slice = buf.as_ref();
+                let slice: &[u8] = buf.as_ref();
                 let take = slice.len().min(limit);
                 self.written.extend_from_slice(&slice[..take]);
                 total += take;
@@ -4657,7 +4669,7 @@ mod tests {
                         break;
                     }
 
-                    let slice = buf.as_ref();
+                    let slice: &[u8] = buf.as_ref();
                     let take = slice.len().min(limit);
                     self.written.extend_from_slice(&slice[..take]);
                     total += take;
@@ -4697,7 +4709,7 @@ mod tests {
             let mut total = 0usize;
 
             for buf in bufs {
-                let slice = buf.as_ref();
+                let slice: &[u8] = buf.as_ref();
                 self.buffer.extend_from_slice(slice);
                 total += slice.len();
             }
@@ -4747,14 +4759,18 @@ mod tests {
         fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
             self.vectored_calls += 1;
 
-            if bufs.first().is_some_and(|slice| slice.as_ref().is_empty()) {
+            if bufs.first().is_some_and(|slice| {
+                let bytes: &[u8] = slice.as_ref();
+                bytes.is_empty()
+            }) {
                 return Ok(0);
             }
 
             let mut total = 0;
             for slice in bufs {
-                self.buffer.extend_from_slice(slice.as_ref());
-                total += slice.len();
+                let bytes: &[u8] = slice.as_ref();
+                self.buffer.extend_from_slice(bytes);
+                total += bytes.len();
             }
             Ok(total)
         }

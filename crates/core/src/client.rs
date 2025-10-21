@@ -87,6 +87,7 @@ use std::time::Duration;
 use rsync_engine::local_copy::{
     LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
 };
+use rsync_filters::{FilterError, FilterRule as EngineFilterRule, FilterSet};
 use rsync_protocol::ProtocolVersion;
 use rsync_transport::negotiate_legacy_daemon_session;
 
@@ -117,6 +118,7 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    filter_rules: Vec<FilterRuleSpec>,
 }
 
 impl ClientConfig {
@@ -136,6 +138,12 @@ impl ClientConfig {
     #[must_use]
     pub fn has_transfer_request(&self) -> bool {
         !self.transfer_args.is_empty()
+    }
+
+    /// Returns the ordered list of filter rules supplied by the caller.
+    #[must_use]
+    pub fn filter_rules(&self) -> &[FilterRuleSpec] {
+        &self.filter_rules
     }
 
     /// Returns whether the run should avoid mutating the destination filesystem.
@@ -199,6 +207,7 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    filter_rules: Vec<FilterRuleSpec>,
 }
 
 impl ClientConfigBuilder {
@@ -270,6 +279,23 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Appends a filter rule to the configuration being constructed.
+    #[must_use]
+    pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
+        self.filter_rules.push(rule);
+        self
+    }
+
+    /// Extends the builder with a collection of filter rules.
+    #[must_use]
+    pub fn extend_filter_rules<I>(mut self, rules: I) -> Self
+    where
+        I: IntoIterator<Item = FilterRuleSpec>,
+    {
+        self.filter_rules.extend(rules);
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -282,7 +308,56 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            filter_rules: self.filter_rules,
         }
+    }
+}
+
+/// Classifies a filter rule as inclusive or exclusive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilterRuleKind {
+    /// Include matching paths.
+    Include,
+    /// Exclude matching paths.
+    Exclude,
+}
+
+/// Filter rule supplied by the caller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilterRuleSpec {
+    kind: FilterRuleKind,
+    pattern: String,
+}
+
+impl FilterRuleSpec {
+    /// Creates an include rule for the given pattern text.
+    #[must_use]
+    pub fn include(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Include,
+            pattern: pattern.into(),
+        }
+    }
+
+    /// Creates an exclude rule for the given pattern text.
+    #[must_use]
+    pub fn exclude(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Exclude,
+            pattern: pattern.into(),
+        }
+    }
+
+    /// Returns the rule kind.
+    #[must_use]
+    pub const fn kind(&self) -> FilterRuleKind {
+        self.kind
+    }
+
+    /// Returns the pattern associated with this rule.
+    #[must_use]
+    pub fn pattern(&self) -> &str {
+        &self.pattern
     }
 }
 
@@ -362,6 +437,8 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
 
+    let filter_set = compile_filter_set(config.filter_rules())?;
+
     let options = LocalCopyOptions::default()
         .delete(config.delete())
         .bandwidth_limit(
@@ -372,7 +449,8 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
         .owner(config.preserve_owner())
         .group(config.preserve_group())
         .permissions(config.preserve_permissions())
-        .times(config.preserve_times());
+        .times(config.preserve_times())
+        .filters(filter_set);
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -589,6 +667,27 @@ mod tests {
             b"stale"
         );
         assert!(dest_root.join("extra.txt").exists());
+    }
+
+    #[test]
+    fn run_client_respects_filter_rules() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), dest_root.clone()])
+            .extend_filter_rules([FilterRuleSpec::exclude("*.tmp".to_string())])
+            .build();
+
+        run_client(config).expect("copy succeeds");
+
+        assert!(dest_root.join("source").join("keep.txt").exists());
+        assert!(!dest_root.join("source").join("skip.tmp").exists());
     }
 
     #[test]
@@ -1053,6 +1152,30 @@ fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             source,
         } => io_error(action, &path, source),
     }
+}
+
+fn compile_filter_set(rules: &[FilterRuleSpec]) -> Result<Option<FilterSet>, ClientError> {
+    if rules.is_empty() {
+        return Ok(None);
+    }
+
+    let compiled_rules = rules.iter().map(|rule| match rule.kind() {
+        FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
+        FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
+    });
+
+    let set = FilterSet::from_rules(compiled_rules).map_err(filter_compile_error)?;
+    Ok(Some(set))
+}
+
+fn filter_compile_error(error: FilterError) -> ClientError {
+    let text = format!(
+        "failed to compile filter pattern '{}': {}",
+        error.pattern(),
+        error
+    );
+    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
+    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {

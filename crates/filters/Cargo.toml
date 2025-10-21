@@ -1,0 +1,10 @@
+[package]
+name = "rsync-filters"
+version = "0.0.0"
+edition = "2024"
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
+license = "GPL-3.0-or-later"
+description = "Pattern filtering helpers for the Rust rsync workspace"
+
+[dependencies]
+globset = "0.4"

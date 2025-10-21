@@ -13,6 +13,7 @@ rsync-protocol = { path = "../protocol" }
 rsync-meta = { path = "../meta" }
 rsync-engine = { path = "../engine" }
 rsync-transport = { path = "../transport" }
+rsync-filters = { path = "../filters" }
 libc = "0.2"
 
 [features]
