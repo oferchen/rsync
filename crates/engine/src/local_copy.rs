@@ -825,21 +825,43 @@ impl CopyContext {
     }
 }
 
-const NANOS_PER_SECOND: u128 = 1_000_000_000;
+const MICROS_PER_SECOND: u128 = 1_000_000;
+const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
+const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
 struct BandwidthLimiter {
-    bytes_per_second: NonZeroU64,
-    debt_ns: i128,
-    last_instant: Instant,
+    kib_per_second: NonZeroU64,
+    write_max: usize,
+    total_written: u128,
+    last_instant: Option<Instant>,
+    simulated_elapsed_us: u128,
 }
 
 impl BandwidthLimiter {
     fn new(limit: NonZeroU64) -> Self {
-        Self {
-            bytes_per_second: limit,
-            debt_ns: 0,
-            last_instant: Instant::now(),
+        let kib = limit
+            .get()
+            .checked_div(1024)
+            .and_then(NonZeroU64::new)
+            .expect("bandwidth limit must be at least 1024 bytes per second");
+        let mut write_max = u128::from(kib.get()).saturating_mul(128);
+        if write_max < 512 {
+            write_max = 512;
         }
+        let write_max = write_max.min(usize::MAX as u128) as usize;
+
+        Self {
+            kib_per_second: kib,
+            write_max,
+            total_written: 0,
+            last_instant: None,
+            simulated_elapsed_us: 0,
+        }
+    }
+
+    fn recommended_read_size(&self, buffer_len: usize) -> usize {
+        let limit = self.write_max.max(1);
+        buffer_len.min(limit)
     }
 
     fn register(&mut self, bytes: usize) {
@@ -847,58 +869,71 @@ impl BandwidthLimiter {
             return;
         }
 
-        let now = Instant::now();
-        let elapsed_ns = now
-            .duration_since(self.last_instant)
-            .as_nanos()
-            .min(i128::MAX as u128) as i128;
-        self.debt_ns = self.debt_ns.saturating_sub(elapsed_ns);
+        self.total_written = self.total_written.saturating_add(bytes as u128);
 
-        let required_ns = self.required_nanoseconds(bytes);
-        let required_ns = required_ns.min(i128::MAX as u128) as i128;
-        self.debt_ns = self.debt_ns.saturating_add(required_ns);
+        let start = Instant::now();
 
-        if self.debt_ns > 0 {
-            let sleep_ns = self.debt_ns as u128;
-            let duration = duration_from_nanoseconds(sleep_ns);
-            if !duration.is_zero() {
-                sleep_for(duration);
-            }
-            self.last_instant = Instant::now();
-            self.debt_ns = 0;
-        } else {
-            const MAX_CREDIT_NS: i128 = NANOS_PER_SECOND as i128;
-            if self.debt_ns < -MAX_CREDIT_NS {
-                self.debt_ns = -MAX_CREDIT_NS;
-            }
-            self.last_instant = now;
+        let mut elapsed_us = self.simulated_elapsed_us;
+        if let Some(previous) = self.last_instant {
+            let elapsed = start.duration_since(previous);
+            let measured = elapsed.as_micros().min(u128::from(u64::MAX));
+            elapsed_us = elapsed_us.saturating_add(measured);
         }
-    }
-
-    fn required_nanoseconds(&self, bytes: usize) -> u128 {
-        let rate = self.bytes_per_second.get() as u128;
-        let bytes = bytes as u128;
-        let numerator = bytes.saturating_mul(NANOS_PER_SECOND);
-        let mut ns = numerator / rate;
-        if numerator % rate != 0 {
-            ns = ns.saturating_add(1);
+        self.simulated_elapsed_us = 0;
+        if elapsed_us > 0 {
+            let allowed = elapsed_us.saturating_mul(u128::from(self.kib_per_second.get()))
+                / MICROS_PER_SECOND_DIV_1024;
+            if allowed >= self.total_written {
+                self.total_written = 0;
+            } else {
+                self.total_written -= allowed;
+            }
         }
-        ns
+
+        let sleep_us = self
+            .total_written
+            .saturating_mul(MICROS_PER_SECOND_DIV_1024)
+            / u128::from(self.kib_per_second.get());
+
+        if sleep_us < MINIMUM_SLEEP_MICROS {
+            self.last_instant = Some(start);
+            return;
+        }
+
+        let requested = duration_from_microseconds(sleep_us);
+        if !requested.is_zero() {
+            sleep_for(requested);
+        }
+
+        let end = Instant::now();
+        let elapsed_us = end
+            .checked_duration_since(start)
+            .map(|duration| duration.as_micros().min(u128::from(u64::MAX)))
+            .unwrap_or(0);
+        if sleep_us > elapsed_us {
+            self.simulated_elapsed_us = sleep_us - elapsed_us;
+        }
+        let remaining_us = sleep_us.saturating_sub(elapsed_us);
+        let leftover = remaining_us.saturating_mul(u128::from(self.kib_per_second.get()))
+            / MICROS_PER_SECOND_DIV_1024;
+
+        self.total_written = leftover;
+        self.last_instant = Some(end);
     }
 }
 
-fn duration_from_nanoseconds(ns: u128) -> Duration {
-    if ns == 0 {
+fn duration_from_microseconds(us: u128) -> Duration {
+    if us == 0 {
         return Duration::ZERO;
     }
 
-    let seconds = ns / NANOS_PER_SECOND;
-    let nanos = (ns % NANOS_PER_SECOND) as u32;
+    let seconds = us / MICROS_PER_SECOND;
+    let micros = (us % MICROS_PER_SECOND) as u32;
 
     if seconds >= u128::from(u64::MAX) {
         Duration::MAX
     } else {
-        Duration::new(seconds as u64, nanos)
+        Duration::new(seconds as u64, micros.saturating_mul(1_000))
     }
 }
 
@@ -1826,8 +1861,14 @@ fn copy_file_contents(
     let mut total_bytes: u64 = 0;
 
     loop {
+        let chunk_len = if let Some(limiter) = limiter.as_ref() {
+            limiter.recommended_read_size(buffer.len())
+        } else {
+            buffer.len()
+        };
+
         let read = reader
-            .read(buffer)
+            .read(&mut buffer[..chunk_len])
             .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
         if read == 0 {
             break;
@@ -3580,6 +3621,22 @@ mod tests {
             total
         );
         assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[test]
+    fn bandwidth_limiter_limits_chunk_size_for_slow_rates() {
+        let limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        assert_eq!(limiter.recommended_read_size(COPY_BUFFER_SIZE), 512);
+        assert_eq!(limiter.recommended_read_size(256), 256);
+    }
+
+    #[test]
+    fn bandwidth_limiter_preserves_buffer_for_fast_rates() {
+        let limiter = BandwidthLimiter::new(NonZeroU64::new(8 * 1024 * 1024).unwrap());
+        assert_eq!(
+            limiter.recommended_read_size(COPY_BUFFER_SIZE),
+            COPY_BUFFER_SIZE
+        );
     }
 
     #[test]
