@@ -1476,23 +1476,25 @@ mod tests {
     }
 
     #[test]
-    fn module_list_request_rejects_username_in_rsync_url() {
+    fn module_list_request_accepts_username_in_rsync_url() {
         let operands = vec![OsString::from("rsync://user@example.com/")];
-        let error = ModuleListRequest::from_operands(&operands)
-            .expect_err("username prefixes should be rejected");
-        let rendered = error.message().to_string();
-        assert!(rendered.contains("daemon usernames are not supported"));
-        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "example.com");
+        assert_eq!(request.address().port(), 873);
+        assert_eq!(request.username(), Some("user"));
     }
 
     #[test]
-    fn module_list_request_rejects_username_in_legacy_syntax() {
+    fn module_list_request_accepts_username_in_legacy_syntax() {
         let operands = vec![OsString::from("user@example.com::")];
-        let error = ModuleListRequest::from_operands(&operands)
-            .expect_err("username prefixes should be rejected");
-        let rendered = error.message().to_string();
-        assert!(rendered.contains("daemon usernames are not supported"));
-        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "example.com");
+        assert_eq!(request.address().port(), 873);
+        assert_eq!(request.username(), Some("user"));
     }
 
     #[test]
@@ -1513,6 +1515,16 @@ mod tests {
             .expect("request detected");
         assert_eq!(request.address().host(), "fe80::1");
         assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_rejects_empty_username() {
+        let operands = vec![OsString::from("@example.com::")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("empty username should be rejected");
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("daemon username must be non-empty"));
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
     }
 
     #[test]
@@ -1543,6 +1555,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -1575,6 +1588,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -1603,6 +1617,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -1633,6 +1648,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -1653,6 +1669,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let error = run_module_list(request).expect_err("daemon error should surface");
@@ -1669,6 +1686,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let error = run_module_list(request).expect_err("auth requirement should surface");
@@ -1687,6 +1705,7 @@ mod tests {
 
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
         };
 
         let error = run_module_list(request).expect_err("denied response should surface");
@@ -1855,13 +1874,6 @@ fn remote_operands_unsupported() -> ClientError {
     )
 }
 
-fn daemon_usernames_unsupported() -> ClientError {
-    daemon_error(
-        "daemon usernames are not supported: this build handles anonymous module listings only",
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-    )
-}
-
 fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
     let bytes = reader.read_line(&mut line)?;
@@ -1932,9 +1944,14 @@ impl fmt::Display for SocketAddrDisplay<'_> {
 }
 
 /// Specification describing a daemon module listing request parsed from CLI operands.
+///
+/// The request retains the optional username embedded in the operand so future
+/// authentication flows can reuse the caller-supplied identity even though the
+/// current module listing implementation performs anonymous queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleListRequest {
     address: DaemonAddress,
+    username: Option<String>,
 }
 
 impl ModuleListRequest {
@@ -1956,8 +1973,8 @@ impl ModuleListRequest {
 
         if let Some((host_part, module_part)) = split_daemon_host_module(&text) {
             if module_part.is_empty() {
-                let address = parse_host_port(host_part)?;
-                return Ok(Some(Self { address }));
+                let target = parse_host_port(host_part)?;
+                return Ok(Some(Self::new(target.address, target.username)));
             }
             return Err(remote_operands_unsupported());
         }
@@ -1965,17 +1982,26 @@ impl ModuleListRequest {
         Ok(None)
     }
 
+    fn new(address: DaemonAddress, username: Option<String>) -> Self {
+        Self { address, username }
+    }
+
     /// Returns the parsed daemon address.
     #[must_use]
     pub fn address(&self) -> &DaemonAddress {
         &self.address
+    }
+
+    /// Returns the optional username supplied in the daemon URL or legacy syntax.
+    #[must_use]
+    pub fn username(&self) -> Option<&str> {
+        self.username.as_deref()
     }
 }
 
 fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
     let mut parts = rest.splitn(2, '/');
     let host_port = parts.next().unwrap_or("");
-    let host_port = strip_daemon_username(host_port)?;
     let remainder = parts.next();
 
     if let Some(path) = remainder {
@@ -1984,11 +2010,16 @@ fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
         }
     }
 
-    let address = parse_host_port(host_port)?;
-    Ok(ModuleListRequest { address })
+    let target = parse_host_port(host_port)?;
+    Ok(ModuleListRequest::new(target.address, target.username))
 }
 
-fn parse_host_port(input: &str) -> Result<DaemonAddress, ClientError> {
+struct ParsedDaemonTarget {
+    address: DaemonAddress,
+    username: Option<String>,
+}
+
+fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
     const DEFAULT_PORT: u16 = 873;
 
     if input.is_empty() {
@@ -1998,21 +2029,33 @@ fn parse_host_port(input: &str) -> Result<DaemonAddress, ClientError> {
         ));
     }
 
-    let input = strip_daemon_username(input)?;
+    let (username, input) = split_daemon_username(input)?;
 
     if let Some(host) = input.strip_prefix('[') {
         let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
-        return DaemonAddress::new(address, port);
+        let address = DaemonAddress::new(address, port)?;
+        return Ok(ParsedDaemonTarget {
+            address,
+            username: username.map(|value| value.to_owned()),
+        });
     }
 
     if let Some((host, port)) = split_host_port(input) {
         let port = port
             .parse::<u16>()
             .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
-        return DaemonAddress::new(host.to_string(), port);
+        let address = DaemonAddress::new(host.to_string(), port)?;
+        return Ok(ParsedDaemonTarget {
+            address,
+            username: username.map(|value| value.to_owned()),
+        });
     }
 
-    DaemonAddress::new(input.to_string(), DEFAULT_PORT)
+    let address = DaemonAddress::new(input.to_string(), DEFAULT_PORT)?;
+    Ok(ParsedDaemonTarget {
+        address,
+        username: username.map(|value| value.to_owned()),
+    })
 }
 
 fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
@@ -2083,7 +2126,7 @@ fn split_host_port(input: &str) -> Option<(&str, &str)> {
     Some((&host[..], &port[1..]))
 }
 
-fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
+fn split_daemon_username(input: &str) -> Result<(Option<&str>, &str), ClientError> {
     if let Some(idx) = input.rfind('@') {
         let (user, host) = input.split_at(idx);
         if user.is_empty() {
@@ -2100,10 +2143,10 @@ fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
             ));
         }
 
-        return Err(daemon_usernames_unsupported());
+        return Ok((Some(user), &host[1..]));
     }
 
-    Ok(input)
+    Ok((None, input))
 }
 
 /// Describes the module entries advertised by a daemon together with ancillary metadata.

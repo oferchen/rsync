@@ -3107,31 +3107,42 @@ mod tests {
     }
 
     #[test]
-    fn module_list_username_prefix_is_rejected() {
-        let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
-            OsString::from("rsync://user@localhost/"),
+    fn module_list_username_prefix_is_accepted() {
+        let (addr, handle) = spawn_stub_daemon(vec![
+            "@RSYNCD: OK\n",
+            "module\tWith comment\n",
+            "@RSYNCD: EXIT\n",
         ]);
 
-        assert_eq!(code, 1);
-        assert!(stdout.is_empty());
+        let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
 
-        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("daemon usernames are not supported"));
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("module\tWith comment"));
+
+        handle.join().expect("server thread");
     }
 
     #[test]
-    fn module_list_username_prefix_legacy_syntax_is_rejected() {
-        let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
-            OsString::from("user@localhost::"),
-        ]);
+    fn module_list_username_prefix_legacy_syntax_is_accepted() {
+        let (addr, handle) =
+            spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
 
-        assert_eq!(code, 1);
-        assert!(stdout.is_empty());
+        let url = format!("user@[{}]:{}::", addr.ip(), addr.port());
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
 
-        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("daemon usernames are not supported"));
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("module"));
+
+        handle.join().expect("server thread");
     }
 
     #[test]
