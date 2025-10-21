@@ -117,6 +117,8 @@ const HELP_TEXT: &str = concat!(
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
+    "  -R, --relative   Preserve source path components relative to the current directory.\n",
+    "      --no-relative  Disable preservation of source path components.\n",
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
     "      --partial    Keep partially transferred files on errors.\n",
@@ -164,6 +166,7 @@ struct ParsedArgs {
     times: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
+    relative: Option<bool>,
     verbosity: u8,
     progress: bool,
     partial: bool,
@@ -240,6 +243,21 @@ fn clap_command() -> Command {
                 .short('v')
                 .help("Increase verbosity; may be supplied multiple times.")
                 .action(ArgAction::Count),
+        )
+        .arg(
+            Arg::new("relative")
+                .long("relative")
+                .short('R')
+                .help("Preserve source path components relative to the current directory.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-relative"),
+        )
+        .arg(
+            Arg::new("no-relative")
+                .long("no-relative")
+                .help("Disable preservation of source path components.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("relative"),
         )
         .arg(
             Arg::new("progress")
@@ -527,6 +545,13 @@ where
     } else {
         None
     };
+    let relative = if matches.get_flag("relative") {
+        Some(true)
+    } else if matches.get_flag("no-relative") {
+        Some(false)
+    } else {
+        None
+    };
     let verbosity = matches.get_count("verbose") as u8;
     let mut progress = matches.get_flag("progress");
     let mut partial = matches.get_flag("partial");
@@ -599,6 +624,7 @@ where
         times,
         numeric_ids,
         sparse,
+        relative,
         verbosity,
         progress,
         partial,
@@ -678,6 +704,7 @@ where
         from0,
         numeric_ids,
         sparse,
+        relative,
         verbosity,
         progress,
         partial,
@@ -796,6 +823,7 @@ where
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
     let sparse = sparse.unwrap_or(false);
+    let relative = relative.unwrap_or(false);
 
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
@@ -809,6 +837,7 @@ where
         .checksum(checksum)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
+        .relative_paths(relative)
         .verbosity(verbosity)
         .progress(progress)
         .partial(partial)
@@ -1825,6 +1854,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn transfer_request_with_relative_preserves_parent_directories() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("src");
+        let destination_root = tmp.path().join("dest");
+        std::fs::create_dir_all(source_root.join("foo/bar")).expect("create source tree");
+        std::fs::create_dir_all(&destination_root).expect("create destination");
+        let source_file = source_root.join("foo").join("bar").join("relative.txt");
+        std::fs::write(&source_file, b"relative").expect("write source");
+
+        let operand = source_root
+            .join(".")
+            .join("foo")
+            .join("bar")
+            .join("relative.txt");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--relative"),
+            operand.into_os_string(),
+            destination_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let copied = destination_root
+            .join("foo")
+            .join("bar")
+            .join("relative.txt");
+        assert_eq!(
+            std::fs::read(copied).expect("read copied file"),
+            b"relative"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn transfer_request_with_sparse_preserves_holes() {
@@ -2215,6 +2282,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.sparse, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_relative_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--relative"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.relative, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-relative"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.relative, Some(false));
     }
 
     #[test]
