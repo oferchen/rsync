@@ -142,6 +142,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     message::{Message, Role},
@@ -208,6 +211,8 @@ struct ModuleDefinition {
     comment: Option<String>,
     hosts_allow: Vec<HostPattern>,
     hosts_deny: Vec<HostPattern>,
+    auth_users: Vec<String>,
+    secrets_file: Option<PathBuf>,
 }
 
 impl ModuleDefinition {
@@ -223,6 +228,20 @@ impl ModuleDefinition {
         }
 
         true
+    }
+
+    fn requires_authentication(&self) -> bool {
+        !self.auth_users.is_empty()
+    }
+
+    #[cfg(test)]
+    fn auth_users(&self) -> &[String] {
+        &self.auth_users
+    }
+
+    #[cfg(test)]
+    fn secrets_file(&self) -> Option<&Path> {
+        self.secrets_file.as_deref()
     }
 }
 
@@ -486,6 +505,26 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
                 builder.set_hosts_deny(patterns, path, line_number)?;
             }
+            "auth users" => {
+                let users = parse_auth_user_list(value).map_err(|error| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid 'auth users' directive: {error}"),
+                    )
+                })?;
+                builder.set_auth_users(users, path, line_number)?;
+            }
+            "secrets file" => {
+                if value.is_empty() {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        "'secrets file' directive must not be empty",
+                    ));
+                }
+                builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -505,6 +544,8 @@ struct ModuleDefinitionBuilder {
     comment: Option<String>,
     hosts_allow: Option<Vec<HostPattern>>,
     hosts_deny: Option<Vec<HostPattern>>,
+    auth_users: Option<Vec<String>>,
+    secrets_file: Option<PathBuf>,
     declaration_line: usize,
 }
 
@@ -516,6 +557,8 @@ impl ModuleDefinitionBuilder {
             comment: None,
             hosts_allow: None,
             hosts_deny: None,
+            auth_users: None,
+            secrets_file: None,
             declaration_line: line,
         }
     }
@@ -595,6 +638,57 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_auth_users(
+        &mut self,
+        users: Vec<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.auth_users.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'auth users' directive in module '{}'", self.name),
+            ));
+        }
+
+        if users.is_empty() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "'auth users' directive in module '{}' must list at least one user",
+                    self.name
+                ),
+            ));
+        }
+
+        self.auth_users = Some(users);
+        Ok(())
+    }
+
+    fn set_secrets_file(
+        &mut self,
+        path: PathBuf,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.secrets_file.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'secrets file' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        let validated = validate_secrets_file(&path, config_path, line)?;
+        self.secrets_file = Some(validated);
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -607,14 +701,105 @@ impl ModuleDefinitionBuilder {
             )
         })?;
 
+        if self.auth_users.as_ref().map_or(false, Vec::is_empty) {
+            return Err(config_parse_error(
+                config_path,
+                self.declaration_line,
+                format!(
+                    "'auth users' directive in module '{}' must list at least one user",
+                    self.name
+                ),
+            ));
+        }
+
+        if self.auth_users.is_some() && self.secrets_file.is_none() {
+            return Err(config_parse_error(
+                config_path,
+                self.declaration_line,
+                format!(
+                    "module '{}' specifies 'auth users' but is missing the required 'secrets file' directive",
+                    self.name
+                ),
+            ));
+        }
+
         Ok(ModuleDefinition {
             name: self.name,
             path,
             comment: self.comment,
             hosts_allow: self.hosts_allow.unwrap_or_default(),
             hosts_deny: self.hosts_deny.unwrap_or_default(),
+            auth_users: self.auth_users.unwrap_or_default(),
+            secrets_file: self.secrets_file,
         })
     }
+}
+
+fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
+    let mut users = Vec::new();
+    let mut seen = HashSet::new();
+
+    for segment in value.split(',') {
+        for token in segment.split_whitespace() {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if seen.insert(trimmed.to_ascii_lowercase()) {
+                users.push(trimmed.to_string());
+            }
+        }
+    }
+
+    if users.is_empty() {
+        return Err("must specify at least one username".to_string());
+    }
+
+    Ok(users)
+}
+
+fn validate_secrets_file(
+    path: &Path,
+    config_path: &Path,
+    line: usize,
+) -> Result<PathBuf, DaemonError> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        config_parse_error(
+            config_path,
+            line,
+            format!(
+                "failed to access secrets file '{}': {}",
+                path.display(),
+                error
+            ),
+        )
+    })?;
+
+    if !metadata.is_file() {
+        return Err(config_parse_error(
+            config_path,
+            line,
+            format!("secrets file '{}' must be a regular file", path.display()),
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let mode = metadata.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "secrets file '{}' must not be accessible to group or others (expected permissions 0600)",
+                    path.display()
+                ),
+            ));
+        }
+    }
+
+    Ok(path.to_path_buf())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1123,20 +1308,34 @@ fn respond_with_module_request(
     request: &str,
     peer_ip: IpAddr,
 ) -> io::Result<()> {
-    let payload = if let Some(module) = modules.iter().find(|module| module.name == request) {
+    if let Some(module) = modules.iter().find(|module| module.name == request) {
         if module.permits(peer_ip) {
-            MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request)
+            if module.requires_authentication() {
+                let message = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired {
+                    module: Some(&module.name),
+                });
+                stream.write_all(message.as_bytes())?;
+                let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+                stream.write_all(exit.as_bytes())?;
+                return stream.flush();
+            }
+
+            let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request);
+            stream.write_all(payload.as_bytes())?;
+            stream.write_all(b"\n")?;
         } else {
-            ACCESS_DENIED_PAYLOAD
+            let payload = ACCESS_DENIED_PAYLOAD
                 .replace("{module}", request)
-                .replace("{addr}", &peer_ip.to_string())
+                .replace("{addr}", &peer_ip.to_string());
+            stream.write_all(payload.as_bytes())?;
+            stream.write_all(b"\n")?;
         }
     } else {
-        UNKNOWN_MODULE_PAYLOAD.replace("{module}", request)
-    };
+        let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", request);
+        stream.write_all(payload.as_bytes())?;
+        stream.write_all(b"\n")?;
+    }
 
-    stream.write_all(payload.as_bytes())?;
-    stream.write_all(b"\n")?;
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
     stream.write_all(exit.as_bytes())?;
     stream.flush()
@@ -1196,6 +1395,8 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         comment,
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
+        auth_users: Vec::new(),
+        secrets_file: None,
     })
 }
 
@@ -1487,6 +1688,101 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_parse_auth_users_and_secrets_file() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[secure]\npath = {}\nauth users = alice, bob\nsecrets file = {}\n",
+            module_dir.display(),
+            secrets_path.display()
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse auth users");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(
+            module.auth_users(),
+            &[String::from("alice"), String::from("bob")]
+        );
+        assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_require_secrets_file_with_auth_users() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[secure]\npath = /srv/secure\nauth users = alice\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("missing secrets file should error");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("missing the required 'secrets file' directive")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_options_rejects_world_readable_secrets_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+        fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o644))
+            .expect("chmod secrets");
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\n",
+            module_dir.display(),
+            secrets_path.display()
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("world-readable secrets file should error");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("must not be accessible to group or others")
+        );
+    }
+
+    #[test]
     fn runtime_options_rejects_config_missing_path() {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(file, "[docs]\ncomment = sample\n").expect("write config");
@@ -1564,6 +1860,80 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("error message");
         assert!(line.starts_with("@ERROR:"));
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit message");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_requests_authentication_for_protected_module() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!(
+                "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\n",
+                module_dir.display(),
+                secrets_path.display()
+            ),
+        )
+        .expect("write config");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--once"),
+                OsString::from("--config"),
+                config_path.as_os_str().to_os_string(),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        stream.write_all(b"secure\n").expect("send module request");
+        stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("auth request");
+        assert_eq!(line, "@RSYNCD: AUTHREQD secure\n");
 
         line.clear();
         reader.read_line(&mut line).expect("exit message");
