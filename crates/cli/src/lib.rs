@@ -71,12 +71,13 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     client::{
-        BandwidthLimit, ClientConfig, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
-        run_client as run_core_client, run_module_list,
+        BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientSummary, FilterRuleKind,
+        FilterRuleSpec, ModuleListRequest, run_client as run_core_client, run_module_list,
     },
     message::{Message, Role},
     rsync_error,
@@ -110,6 +111,12 @@ const HELP_TEXT: &str = concat!(
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
+    "      --progress   Show progress information during transfers.\n",
+    "      --no-progress  Disable progress reporting.\n",
+    "      --partial    Keep partially transferred files on errors.\n",
+    "      --no-partial Discard partially transferred files on errors.\n",
+    "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
@@ -129,7 +136,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -147,6 +154,9 @@ struct ParsedArgs {
     times: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
+    verbosity: u8,
+    progress: bool,
+    partial: bool,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
     exclude_from: Vec<OsString>,
@@ -204,6 +214,49 @@ fn clap_command() -> Command {
                 .help("Disable sparse file handling.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("sparse"),
+        )
+        .arg(
+            Arg::new("verbose")
+                .long("verbose")
+                .short('v')
+                .help("Increase verbosity; may be supplied multiple times.")
+                .action(ArgAction::Count),
+        )
+        .arg(
+            Arg::new("progress")
+                .long("progress")
+                .help("Show progress information during transfers.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-progress"),
+        )
+        .arg(
+            Arg::new("no-progress")
+                .long("no-progress")
+                .help("Disable progress reporting.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("progress"),
+        )
+        .arg(
+            Arg::new("partial")
+                .long("partial")
+                .help("Keep partially transferred files on error.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-partial"),
+        )
+        .arg(
+            Arg::new("no-partial")
+                .long("no-partial")
+                .help("Discard partially transferred files on error.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("partial-progress")
+                .short('P')
+                .help("Equivalent to --partial --progress.")
+                .action(ArgAction::Count)
+                .overrides_with("no-partial")
+                .overrides_with("no-progress"),
         )
         .arg(
             Arg::new("delete")
@@ -419,6 +472,21 @@ where
     } else {
         None
     };
+    let verbosity = matches.get_count("verbose") as u8;
+    let mut progress = matches.get_flag("progress");
+    let mut partial = matches.get_flag("partial");
+    if matches.get_flag("no-progress") {
+        progress = false;
+    }
+    if matches.get_flag("no-partial") {
+        partial = false;
+    }
+    if matches.get_count("partial-progress") > 0 {
+        partial = true;
+        if !matches.get_flag("no-progress") {
+            progress = true;
+        }
+    }
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -466,6 +534,9 @@ where
         times,
         numeric_ids,
         sparse,
+        verbosity,
+        progress,
+        partial,
         excludes,
         includes,
         exclude_from,
@@ -539,6 +610,9 @@ where
         from0,
         numeric_ids,
         sparse,
+        verbosity,
+        progress,
+        partial,
     } = parsed;
 
     if show_help {
@@ -650,7 +724,10 @@ where
         .permissions(preserve_permissions)
         .times(preserve_times)
         .numeric_ids(numeric_ids)
-        .sparse(sparse);
+        .sparse(sparse)
+        .verbosity(verbosity)
+        .progress(progress)
+        .partial(partial);
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -699,7 +776,21 @@ where
     let config = builder.build();
 
     match run_core_client(config) {
-        Ok(()) => 0,
+        Ok(summary) => {
+            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stdout) {
+                let message = rsync_error!(1, "failed to write transfer summary: {}", error)
+                    .with_role(Role::Client);
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(
+                        stderr.writer_mut(),
+                        "failed to write transfer summary: {}",
+                        error
+                    );
+                }
+                return 1;
+            }
+            0
+        }
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
                 let _ = writeln!(
@@ -709,6 +800,139 @@ where
             }
             error.exit_code()
         }
+    }
+}
+
+/// Emits verbose and progress-oriented output derived from a [`ClientSummary`].
+fn emit_transfer_summary<W: Write>(
+    summary: &ClientSummary,
+    verbosity: u8,
+    progress: bool,
+    stdout: &mut W,
+) -> io::Result<()> {
+    if summary.events().is_empty() {
+        return Ok(());
+    }
+
+    if progress {
+        emit_progress(summary.events(), stdout)?;
+    }
+
+    if verbosity > 0 {
+        emit_verbose(summary.events(), verbosity, stdout)?;
+    }
+
+    Ok(())
+}
+
+/// Renders progress lines for the provided transfer events.
+fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
+    let mut total_bytes = 0u64;
+    let mut total_elapsed = Duration::default();
+    let mut emitted = false;
+
+    for event in events {
+        let bytes = event.bytes_transferred();
+        if bytes == 0 {
+            continue;
+        }
+
+        emitted = true;
+        total_bytes = total_bytes.saturating_add(bytes);
+        total_elapsed += event.elapsed();
+
+        if let Some(rate) = compute_rate(bytes, event.elapsed()) {
+            writeln!(
+                stdout,
+                "{}: {} bytes ({rate:.1} B/s)",
+                event.relative_path().display(),
+                bytes
+            )?;
+        } else {
+            writeln!(
+                stdout,
+                "{}: {} bytes",
+                event.relative_path().display(),
+                bytes
+            )?;
+        }
+    }
+
+    if !emitted {
+        writeln!(stdout, "Total transferred: 0 bytes")?;
+        return Ok(());
+    }
+
+    let seconds = total_elapsed.as_secs_f64();
+    if seconds > 0.0 {
+        let rate = total_bytes as f64 / seconds;
+        writeln!(
+            stdout,
+            "Total transferred: {total_bytes} bytes in {seconds:.3}s ({rate:.1} B/s)"
+        )
+    } else {
+        writeln!(stdout, "Total transferred: {total_bytes} bytes")
+    }
+}
+
+/// Renders verbose listings for the provided transfer events.
+fn emit_verbose<W: Write>(events: &[ClientEvent], verbosity: u8, stdout: &mut W) -> io::Result<()> {
+    for event in events {
+        if verbosity == 1 {
+            writeln!(stdout, "{}", event.relative_path().display())?;
+            continue;
+        }
+
+        let descriptor = describe_event_kind(event.kind());
+        let bytes = event.bytes_transferred();
+        if bytes > 0 {
+            if let Some(rate) = compute_rate(bytes, event.elapsed()) {
+                writeln!(
+                    stdout,
+                    "{descriptor}: {} ({} bytes, {rate:.1} B/s)",
+                    event.relative_path().display(),
+                    bytes
+                )?;
+            } else {
+                writeln!(
+                    stdout,
+                    "{descriptor}: {} ({} bytes)",
+                    event.relative_path().display(),
+                    bytes
+                )?;
+            }
+        } else {
+            writeln!(stdout, "{descriptor}: {}", event.relative_path().display())?;
+        }
+    }
+    Ok(())
+}
+
+/// Maps an event kind to a human-readable description.
+fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
+    match kind {
+        ClientEventKind::DataCopied => "copied",
+        ClientEventKind::MetadataReused => "metadata reused",
+        ClientEventKind::HardLink => "hard link",
+        ClientEventKind::SymlinkCopied => "symlink",
+        ClientEventKind::FifoCopied => "fifo",
+        ClientEventKind::DeviceCopied => "device",
+        ClientEventKind::DirectoryCreated => "directory",
+        ClientEventKind::EntryDeleted => "deleted",
+    }
+}
+
+/// Computes the throughput in bytes per second for the provided measurements.
+fn compute_rate(bytes: u64, elapsed: Duration) -> Option<f64> {
+    if elapsed.is_zero() {
+        return None;
+    }
+
+    let seconds = elapsed.as_secs_f64();
+    if seconds <= 0.0 {
+        None
+    } else {
+        Some(bytes as f64 / seconds)
     }
 }
 
@@ -1329,6 +1553,62 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"cli copy"
+        );
+    }
+
+    #[test]
+    fn verbose_transfer_emits_event_lines() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("file.txt");
+        let destination = tmp.path().join("out.txt");
+        std::fs::write(&source, b"verbose").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-v"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
+        assert!(rendered.contains("file.txt"));
+        assert!(!rendered.contains("Total transferred"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"verbose"
+        );
+    }
+
+    #[test]
+    fn progress_transfer_reports_totals() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("progress.txt");
+        let destination = tmp.path().join("progress.out");
+        std::fs::write(&source, b"progress").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+        assert!(rendered.contains("progress.txt"));
+        assert!(rendered.contains("Total transferred"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"progress"
         );
     }
 
@@ -2286,10 +2566,37 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_short_option_reports_error() {
+    fn combined_archive_and_verbose_flags_are_supported() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("combo.txt");
+        let destination = tmp.path().join("combo.out");
+        std::fs::write(&source, b"combo").expect("write source");
+
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("-av"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
+        assert!(rendered.contains("combo.txt"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"combo"
+        );
+    }
+
+    #[test]
+    fn unsupported_short_option_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-z"),
             OsString::from("source"),
             OsString::from("dest"),
         ]);
@@ -2298,7 +2605,10 @@ mod tests {
         assert!(stdout.is_empty());
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("unsupported option '-av'"));
+        assert!(
+            rendered.contains("unsupported option '-z'"),
+            "stderr: {rendered}"
+        );
         assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 

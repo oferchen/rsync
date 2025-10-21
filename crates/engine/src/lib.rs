@@ -69,5 +69,6 @@
 pub mod local_copy;
 
 pub use local_copy::{
-    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
+    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
+    LocalCopyPlan, LocalCopyRecord, LocalCopyReport,
 };
