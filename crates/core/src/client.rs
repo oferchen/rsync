@@ -490,6 +490,8 @@ pub enum FilterRuleKind {
     Include,
     /// Exclude matching paths.
     Exclude,
+    /// Protect matching destination paths from deletion.
+    Protect,
 }
 
 /// Filter rule supplied by the caller.
@@ -514,6 +516,15 @@ impl FilterRuleSpec {
     pub fn exclude(pattern: impl Into<String>) -> Self {
         Self {
             kind: FilterRuleKind::Exclude,
+            pattern: pattern.into(),
+        }
+    }
+
+    /// Creates a protect rule for the given pattern text.
+    #[must_use]
+    pub fn protect(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Protect,
             pattern: pattern.into(),
         }
     }
@@ -1704,6 +1715,7 @@ fn compile_filter_set(rules: &[FilterRuleSpec]) -> Result<Option<FilterSet>, Cli
     let compiled_rules = rules.iter().map(|rule| match rule.kind() {
         FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
         FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
+        FilterRuleKind::Protect => EngineFilterRule::protect(rule.pattern()),
     });
 
     let set = FilterSet::from_rules(compiled_rules).map_err(filter_compile_error)?;

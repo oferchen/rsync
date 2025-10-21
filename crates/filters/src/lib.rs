@@ -4,35 +4,43 @@
 
 //! # Overview
 //!
-//! `rsync_filters` provides ordered include/exclude pattern evaluation for the
+//! `rsync_filters` provides ordered include/exclude/protect pattern evaluation for the
 //! Rust `oc-rsync` workspace. The implementation focuses on reproducing the
 //! subset of rsync's filter grammar that governs `--include`/`--exclude`
 //! handling for local filesystem transfers. Patterns honour anchored matches
 //! (leading `/`), directory-only rules (trailing `/`), and recursive wildcards
 //! using the same glob semantics exposed by upstream rsync. Rules are evaluated
-//! sequentially with the last matching rule determining whether a path is
-//! copied.
+//! sequentially with the last matching include/exclude directive determining
+//! whether a path is copied. `protect` directives accumulate alongside these
+//! rules to prevent matching destination paths from being removed during
+//! `--delete` sweeps.
 //!
 //! # Design
 //!
-//! - [`FilterRule`] captures the user-supplied action (`Include`/`Exclude`) and
+//! - [`FilterRule`] captures the user-supplied action (`Include`/`Exclude`/
+//!   `Protect`) and pattern text. The rule itself is lightweight; heavy lifting
 //!   pattern text. The rule itself is lightweight; heavy lifting happens when a
 //!   [`FilterSet`] is constructed.
 //! - [`FilterSet`] owns the compiled representation of each rule, expanding
 //!   directory-only patterns into matchers that also cover their contents while
-//!   deduplicating equivalent glob expressions.
+//!   deduplicating equivalent glob expressions. Protect rules are tracked in a
+//!   dedicated list so deletion checks can honour them without affecting copy
+//!   decisions.
 //! - Matching occurs against relative paths using native [`Path`] semantics so
 //!   callers can operate directly on `std::path::PathBuf` instances without
 //!   additional conversions.
 //!
 //! # Invariants
 //!
-//! - Rules are applied in definition order. The last matching rule wins and
-//!   defaults to `Include` when no rule matches.
+//! - Include/exclude rules are applied in definition order. The last matching
+//!   rule wins and defaults to `Include` when no rule matches.
 //! - Trailing `/` marks a directory-only rule. The directory itself must match
 //!   the rule to trigger exclusion; descendants are excluded automatically.
 //! - Leading `/` anchors a rule to the transfer root. Patterns without a leading
 //!   slash are matched at any depth by implicitly prefixing `**/`.
+//! - Protect rules accumulate independently of include/exclude decisions and
+//!   prevent matching destination paths from being removed when `--delete` is
+//!   active.
 //!
 //! # Errors
 //!
@@ -81,6 +89,8 @@ pub enum FilterAction {
     Include,
     /// Exclude the matching path.
     Exclude,
+    /// Protect the matching path from deletion while leaving transfer decisions unchanged.
+    Protect,
 }
 
 /// User-visible filter rule consisting of an action and pattern.
@@ -105,6 +115,15 @@ impl FilterRule {
     pub fn exclude(pattern: impl Into<String>) -> Self {
         Self {
             action: FilterAction::Exclude,
+            pattern: pattern.into(),
+        }
+    }
+
+    /// Creates a protect rule for `pattern`.
+    #[must_use]
+    pub fn protect(pattern: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::Protect,
             pattern: pattern.into(),
         }
     }
@@ -170,43 +189,98 @@ impl FilterSet {
     where
         I: IntoIterator<Item = FilterRule>,
     {
-        let compiled = rules
-            .into_iter()
-            .map(|rule| CompiledRule::new(rule.action, rule.pattern))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut include_exclude = Vec::new();
+        let mut protect = Vec::new();
+
+        for rule in rules.into_iter() {
+            match rule.action {
+                FilterAction::Include | FilterAction::Exclude => {
+                    include_exclude.push(CompiledRule::new(rule.action, rule.pattern)?);
+                }
+                FilterAction::Protect => {
+                    protect.push(CompiledRule::new(rule.action, rule.pattern)?);
+                }
+            }
+        }
 
         Ok(Self {
-            inner: Arc::new(FilterSetInner { rules: compiled }),
+            inner: Arc::new(FilterSetInner {
+                include_exclude,
+                protect,
+            }),
         })
     }
 
     /// Reports whether the set contains any rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.rules.is_empty()
+        self.inner.include_exclude.is_empty() && self.inner.protect.is_empty()
     }
 
     /// Determines whether the provided path is allowed.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
-        self.inner.allows(path, is_dir)
+        self.inner.decision(path, is_dir).allows_transfer()
+    }
+
+    /// Determines whether deleting the provided path is permitted.
+    ///
+    /// Protect directives prevent deletion regardless of the include/exclude
+    /// decision, matching upstream `--filter 'protect …'` semantics.
+    #[must_use]
+    pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner.decision(path, is_dir).allows_deletion()
     }
 }
 
 #[derive(Debug, Default)]
 struct FilterSetInner {
-    rules: Vec<CompiledRule>,
+    include_exclude: Vec<CompiledRule>,
+    protect: Vec<CompiledRule>,
 }
 
 impl FilterSetInner {
-    fn allows(&self, path: &Path, is_dir: bool) -> bool {
-        let mut decision = true;
-        for rule in &self.rules {
+    fn decision(&self, path: &Path, is_dir: bool) -> FilterDecision {
+        let mut decision = FilterDecision::default();
+
+        for rule in &self.include_exclude {
             if rule.matches(path, is_dir) {
-                decision = matches!(rule.action, FilterAction::Include);
+                decision.transfer_allowed = matches!(rule.action, FilterAction::Include);
             }
         }
+
+        for rule in &self.protect {
+            if rule.matches(path, is_dir) {
+                decision.protected = true;
+            }
+        }
+
         decision
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FilterDecision {
+    transfer_allowed: bool,
+    protected: bool,
+}
+
+impl FilterDecision {
+    const fn allows_transfer(self) -> bool {
+        self.transfer_allowed
+    }
+
+    const fn allows_deletion(self) -> bool {
+        self.transfer_allowed && !self.protected
+    }
+}
+
+impl Default for FilterDecision {
+    fn default() -> Self {
+        Self {
+            transfer_allowed: true,
+            protected: false,
+        }
     }
 }
 
@@ -228,7 +302,7 @@ impl CompiledRule {
         }
 
         let mut descendant_patterns = HashSet::new();
-        if directory_only || matches!(action, FilterAction::Exclude) {
+        if directory_only || matches!(action, FilterAction::Exclude | FilterAction::Protect) {
             descendant_patterns.insert(format!("{}/**", core_pattern));
             if !anchored {
                 descendant_patterns.insert(format!("**/{}/**", core_pattern));
@@ -308,12 +382,14 @@ mod tests {
     fn empty_rules_allow_everything() {
         let set = FilterSet::from_rules(Vec::new()).expect("empty set");
         assert!(set.allows(Path::new("foo"), false));
+        assert!(set.allows_deletion(Path::new("foo"), false));
     }
 
     #[test]
     fn include_rule_allows_path() {
         let set = FilterSet::from_rules([FilterRule::include("foo")]).expect("compiled");
         assert!(set.allows(Path::new("foo"), false));
+        assert!(set.allows_deletion(Path::new("foo"), false));
     }
 
     #[test]
@@ -321,6 +397,7 @@ mod tests {
         let set = FilterSet::from_rules([FilterRule::exclude("foo")]).expect("compiled");
         assert!(!set.allows(Path::new("foo"), false));
         assert!(!set.allows(Path::new("bar/foo"), false));
+        assert!(!set.allows_deletion(Path::new("foo"), false));
     }
 
     #[test]
@@ -332,6 +409,7 @@ mod tests {
         let set = FilterSet::from_rules(rules).expect("compiled");
         assert!(set.allows(Path::new("foo/bar.txt"), false));
         assert!(!set.allows(Path::new("foo/baz.txt"), false));
+        assert!(set.allows_deletion(Path::new("foo/bar.txt"), false));
     }
 
     #[test]
@@ -347,6 +425,7 @@ mod tests {
         assert!(!set.allows(Path::new("build"), true));
         assert!(!set.allows(Path::new("build/output.bin"), false));
         assert!(!set.allows(Path::new("dir/build/log.txt"), false));
+        assert!(!set.allows_deletion(Path::new("build/output.bin"), false));
     }
 
     #[test]
@@ -441,5 +520,20 @@ mod tests {
         path.push("foo");
         path.push("bar");
         assert!(!set.allows(&path, false));
+    }
+
+    #[test]
+    fn protect_rule_blocks_deletion_without_affecting_transfer() {
+        let set = FilterSet::from_rules([FilterRule::protect("*.bak")]).expect("compiled");
+        assert!(set.allows(Path::new("keep.bak"), false));
+        assert!(!set.allows_deletion(Path::new("keep.bak"), false));
+    }
+
+    #[test]
+    fn protect_rule_applies_to_directory_descendants() {
+        let set = FilterSet::from_rules([FilterRule::protect("secrets/")]).expect("compiled");
+        assert!(set.allows(Path::new("secrets/data.txt"), false));
+        assert!(!set.allows_deletion(Path::new("secrets/data.txt"), false));
+        assert!(!set.allows_deletion(Path::new("dir/secrets/data.txt"), false));
     }
 }
