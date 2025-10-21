@@ -13,12 +13,13 @@ referenced functionality ships and parity is verified by tests or goldens.
     permissions and timestamps. A `--dry-run` flag validates transfers without
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
-    list available modules, but remote transfers, ACLs,
-    compression, and progress reporting remain unavailable. Filter handling via
-    `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
-    with `+`/`-` actions and `merge FILE` directives mirrors rsync's glob
-    semantics for local copies, but the broader filter/merge language is still
-    missing.
+    list available modules, but remote transfers, ACLs, and compression remain
+    unavailable. Filter handling via `--exclude`/`--exclude-from`/`--include`/
+    `--include-from` and `--filter` with `+`/`-` actions and `merge FILE`
+    directives mirrors rsync's glob semantics for local copies, but the
+    broader filter/merge language is still missing. Progress reporting is
+    limited to per-file summaries and aggregate totals instead of the streaming
+    progress meter shown by upstream `rsync`.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, and validate the resulting behaviour via
