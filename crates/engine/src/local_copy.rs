@@ -58,6 +58,8 @@ use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime};
 
 use rsync_filters::FilterSet;
@@ -68,6 +70,7 @@ use rsync_meta::{
 };
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
+static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Exit code returned when operand validation fails.
 const INVALID_OPERAND_EXIT_CODE: i32 = 23;
@@ -343,6 +346,7 @@ pub struct LocalCopyOptions {
     numeric_ids: bool,
     sparse: bool,
     partial: bool,
+    inplace: bool,
     collect_events: bool,
 }
 
@@ -361,6 +365,7 @@ impl LocalCopyOptions {
             numeric_ids: false,
             sparse: false,
             partial: false,
+            inplace: false,
             collect_events: false,
         }
     }
@@ -444,6 +449,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that destination updates be performed in place instead of via temporary files.
+    #[must_use]
+    #[doc(alias = "--inplace")]
+    pub const fn inplace(mut self, inplace: bool) -> Self {
+        self.inplace = inplace;
+        self
+    }
+
     /// Enables collection of transfer events that describe the work performed by the engine.
     #[must_use]
     pub const fn collect_events(mut self, collect: bool) -> Self {
@@ -509,6 +522,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn partial_enabled(&self) -> bool {
         self.partial
+    }
+
+    /// Reports whether in-place destination updates have been requested.
+    #[must_use]
+    pub const fn inplace_enabled(&self) -> bool {
+        self.inplace
     }
 
     /// Reports whether the execution should record transfer events.
@@ -753,6 +772,10 @@ impl CopyContext {
 
     fn partial_enabled(&self) -> bool {
         self.options.partial_enabled()
+    }
+
+    fn inplace_enabled(&self) -> bool {
+        self.options.inplace_enabled()
     }
 
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
@@ -1515,6 +1538,7 @@ fn copy_file(
 
     let use_sparse_writes = context.sparse_enabled();
     let partial_enabled = context.partial_enabled();
+    let inplace_enabled = context.inplace_enabled();
     let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -1569,28 +1593,20 @@ fn copy_file(
 
     let mut reader = fs::File::open(source)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
-    let write_target = if partial_enabled {
-        let partial = partial_destination_path(destination);
-        if let Err(error) = fs::remove_file(&partial) {
-            if error.kind() != io::ErrorKind::NotFound {
-                return Err(LocalCopyError::io(
-                    "remove existing partial file",
-                    partial.clone(),
-                    error,
-                ));
-            }
-        }
-        partial
-    } else {
-        destination.to_path_buf()
-    };
+    let mut guard = None;
 
-    let mut writer = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&write_target)
-        .map_err(|error| LocalCopyError::io("copy file", write_target.clone(), error))?;
+    let mut writer = if inplace_enabled {
+        fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(destination)
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
+    } else {
+        let (new_guard, file) = DestinationWriteGuard::new(destination, partial_enabled)?;
+        guard = Some(new_guard);
+        file
+    };
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
 
     let start = Instant::now();
@@ -1607,27 +1623,8 @@ fn copy_file(
 
     drop(writer);
 
-    if partial_enabled {
-        if let Err(error) = fs::rename(&write_target, destination) {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                fs::remove_file(destination).map_err(|remove_error| {
-                    LocalCopyError::io(
-                        "remove existing destination",
-                        destination.to_path_buf(),
-                        remove_error,
-                    )
-                })?;
-                fs::rename(&write_target, destination).map_err(|rename_error| {
-                    LocalCopyError::io("finalise partial file", write_target.clone(), rename_error)
-                })?;
-            } else {
-                return Err(LocalCopyError::io(
-                    "finalise partial file",
-                    write_target.clone(),
-                    error,
-                ));
-            }
-        }
+    if let Some(guard) = guard {
+        guard.commit()?;
     }
 
     apply_file_metadata_with_options(destination, metadata, metadata_options)
@@ -1651,6 +1648,125 @@ fn partial_destination_path(destination: &Path) -> PathBuf {
         .unwrap_or_else(|| "partial".to_string());
     let partial_name = format!(".oc-rsync-partial-{}", file_name);
     destination.with_file_name(partial_name)
+}
+
+fn temporary_destination_path(destination: &Path, unique: usize) -> PathBuf {
+    let file_name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "temp".to_string());
+    let temp_name = format!(".oc-rsync-tmp-{file_name}-{}-{}", process::id(), unique);
+    destination.with_file_name(temp_name)
+}
+
+struct DestinationWriteGuard {
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    preserve_on_error: bool,
+    committed: bool,
+}
+
+impl DestinationWriteGuard {
+    fn new(destination: &Path, partial: bool) -> Result<(Self, fs::File), LocalCopyError> {
+        if partial {
+            let temp_path = partial_destination_path(destination);
+            if let Err(error) = fs::remove_file(&temp_path) {
+                if error.kind() != io::ErrorKind::NotFound {
+                    return Err(LocalCopyError::io(
+                        "remove existing partial file",
+                        temp_path.clone(),
+                        error,
+                    ));
+                }
+            }
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&temp_path)
+                .map_err(|error| LocalCopyError::io("copy file", temp_path.clone(), error))?;
+            Ok((
+                Self {
+                    final_path: destination.to_path_buf(),
+                    temp_path,
+                    preserve_on_error: true,
+                    committed: false,
+                },
+                file,
+            ))
+        } else {
+            loop {
+                let unique = NEXT_TEMP_FILE_ID.fetch_add(1, AtomicOrdering::Relaxed);
+                let temp_path = temporary_destination_path(destination, unique);
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp_path)
+                {
+                    Ok(file) => {
+                        return Ok((
+                            Self {
+                                final_path: destination.to_path_buf(),
+                                temp_path,
+                                preserve_on_error: false,
+                                committed: false,
+                            },
+                            file,
+                        ));
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(LocalCopyError::io("copy file", temp_path.clone(), error));
+                    }
+                }
+            }
+        }
+    }
+
+    fn commit(mut self) -> Result<(), LocalCopyError> {
+        match fs::rename(&self.temp_path, &self.final_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&self.final_path).map_err(|remove_error| {
+                    LocalCopyError::io(
+                        "remove existing destination",
+                        self.final_path.clone(),
+                        remove_error,
+                    )
+                })?;
+                fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
+                    LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), rename_error)
+                })?;
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    self.finalise_action(),
+                    self.temp_path.clone(),
+                    error,
+                ));
+            }
+        }
+        self.committed = true;
+        Ok(())
+    }
+
+    fn finalise_action(&self) -> &'static str {
+        if self.preserve_on_error {
+            "finalise partial file"
+        } else {
+            "finalise temporary file"
+        }
+    }
+}
+
+impl Drop for DestinationWriteGuard {
+    fn drop(&mut self) {
+        if !self.committed && !self.preserve_on_error {
+            let _ = fs::remove_file(&self.temp_path);
+        }
+    }
 }
 
 fn copy_file_contents(
@@ -3091,6 +3207,97 @@ mod tests {
 
         assert_eq!(dense_meta.len(), sparse_meta.len());
         assert!(sparse_meta.blocks() < dense_meta.blocks());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_without_inplace_replaces_destination_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"updated").expect("write source");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+        let destination = dest_dir.join("target.txt");
+        fs::write(&destination, b"original").expect("write destination");
+
+        let original_inode = fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino();
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan.execute().expect("copy succeeds");
+        assert_eq!(summary.files_copied(), 1);
+
+        let updated_metadata = fs::metadata(&destination).expect("destination metadata");
+        assert_ne!(updated_metadata.ino(), original_inode);
+        assert_eq!(
+            fs::read(&destination).expect("read destination"),
+            b"updated"
+        );
+
+        let mut entries = fs::read_dir(&dest_dir).expect("list dest dir");
+        assert!(entries.all(|entry| {
+            let name = entry.expect("dir entry").file_name();
+            !name.to_string_lossy().starts_with(".oc-rsync-tmp-")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_inplace_succeeds_with_read_only_directory() {
+        use rustix::fs::{Mode, chmod};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"replacement").expect("write source");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+        let destination = dest_dir.join("target.txt");
+        fs::write(&destination, b"original").expect("write destination");
+        fs::set_permissions(&destination, PermissionsExt::from_mode(0o644))
+            .expect("make destination writable");
+
+        let original_inode = fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino();
+
+        let readonly = Mode::from_bits_truncate(0o555);
+        chmod(&dest_dir, readonly).expect("restrict directory permissions");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().inplace(true),
+            )
+            .expect("in-place copy succeeds");
+
+        let contents = fs::read(&destination).expect("read destination");
+        assert_eq!(contents, b"replacement");
+        assert_eq!(summary.files_copied(), 1);
+
+        let updated_inode = fs::metadata(&destination)
+            .expect("destination metadata")
+            .ino();
+        assert_eq!(updated_inode, original_inode);
+
+        let restore = Mode::from_bits_truncate(0o755);
+        chmod(&dest_dir, restore).expect("restore directory permissions");
     }
 
     #[test]

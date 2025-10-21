@@ -127,6 +127,7 @@ pub struct ClientConfig {
     verbosity: u8,
     progress: bool,
     partial: bool,
+    inplace: bool,
 }
 
 impl ClientConfig {
@@ -240,6 +241,13 @@ impl ClientConfig {
         self.partial
     }
 
+    /// Reports whether destination updates should be performed in place.
+    #[must_use]
+    #[doc(alias = "--inplace")]
+    pub const fn inplace(&self) -> bool {
+        self.inplace
+    }
+
     /// Returns whether the configuration requires collection of transfer events.
     #[must_use]
     pub const fn collect_events(&self) -> bool {
@@ -264,6 +272,7 @@ pub struct ClientConfigBuilder {
     verbosity: u8,
     progress: bool,
     partial: bool,
+    inplace: bool,
 }
 
 impl ClientConfigBuilder {
@@ -380,6 +389,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables in-place updates for destination files.
+    #[must_use]
+    #[doc(alias = "--inplace")]
+    #[doc(alias = "--no-inplace")]
+    pub const fn inplace(mut self, inplace: bool) -> Self {
+        self.inplace = inplace;
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -415,6 +433,7 @@ impl ClientConfigBuilder {
             verbosity: self.verbosity,
             progress: self.progress,
             partial: self.partial,
+            inplace: self.inplace,
         }
     }
 }
@@ -720,6 +739,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
         .filters(filter_set)
         .numeric_ids(config.numeric_ids())
         .sparse(config.sparse())
+        .inplace(config.inplace())
         .partial(config.partial());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
@@ -864,6 +884,22 @@ mod tests {
             .build();
 
         assert!(config.sparse());
+    }
+
+    #[test]
+    fn builder_sets_inplace() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .inplace(true)
+            .build();
+
+        assert!(config.inplace());
+
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!config.inplace());
     }
 
     #[test]
