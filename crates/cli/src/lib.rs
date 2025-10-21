@@ -904,16 +904,18 @@ fn emit_transfer_summary<W: Write>(
     progress: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
-    if summary.events().is_empty() {
-        return Ok(());
+    let events = summary.events();
+
+    if progress && !events.is_empty() {
+        emit_progress(events, stdout)?;
     }
 
-    if progress {
-        emit_progress(summary.events(), stdout)?;
+    if verbosity > 0 && !events.is_empty() {
+        emit_verbose(events, verbosity, stdout)?;
     }
 
     if verbosity > 0 {
-        emit_verbose(summary.events(), verbosity, stdout)?;
+        emit_totals(summary, stdout)?;
     }
 
     Ok(())
@@ -967,6 +969,35 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
     } else {
         writeln!(stdout, "Total transferred: {total_bytes} bytes")
     }
+}
+
+/// Emits the summary lines reported by verbose transfers.
+fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+    let sent = summary.bytes_copied();
+    let received = 0u64;
+    let total_size = summary.total_source_bytes();
+    let elapsed = summary.total_elapsed();
+    let seconds = elapsed.as_secs_f64();
+    let rate = if seconds > 0.0 {
+        (sent + received) as f64 / seconds
+    } else {
+        0.0
+    };
+    let transmitted = sent.saturating_add(received);
+    let speedup = if transmitted > 0 {
+        total_size as f64 / transmitted as f64
+    } else {
+        0.0
+    };
+
+    writeln!(
+        stdout,
+        "sent {sent} bytes  received {received} bytes  {rate:.2} bytes/sec"
+    )?;
+    writeln!(
+        stdout,
+        "total size is {total_size}  speedup is {speedup:.2}"
+    )
 }
 
 /// Renders verbose listings for the provided transfer events.
@@ -1695,6 +1726,8 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
         assert!(rendered.contains("file.txt"));
         assert!(!rendered.contains("Total transferred"));
+        assert!(rendered.contains("sent 7 bytes  received 0 bytes"));
+        assert!(rendered.contains("total size is 7  speedup is 1.00"));
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"verbose"

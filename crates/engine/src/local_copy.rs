@@ -656,6 +656,8 @@ pub struct LocalCopySummary {
     fifos_created: u64,
     items_deleted: u64,
     bytes_copied: u64,
+    total_source_bytes: u64,
+    total_elapsed: Duration,
 }
 
 impl LocalCopySummary {
@@ -707,9 +709,29 @@ impl LocalCopySummary {
         self.bytes_copied
     }
 
+    /// Returns the aggregate size of all source files considered during the transfer.
+    #[must_use]
+    pub const fn total_source_bytes(&self) -> u64 {
+        self.total_source_bytes
+    }
+
+    /// Returns the total elapsed time spent copying file payloads.
+    #[must_use]
+    pub const fn total_elapsed(&self) -> Duration {
+        self.total_elapsed
+    }
+
     fn record_file(&mut self, bytes: u64) {
         self.files_copied = self.files_copied.saturating_add(1);
         self.bytes_copied = self.bytes_copied.saturating_add(bytes);
+    }
+
+    fn record_total_bytes(&mut self, bytes: u64) {
+        self.total_source_bytes = self.total_source_bytes.saturating_add(bytes);
+    }
+
+    fn record_elapsed(&mut self, elapsed: Duration) {
+        self.total_elapsed = self.total_elapsed.saturating_add(elapsed);
     }
 
     fn record_directory(&mut self) {
@@ -1576,6 +1598,7 @@ fn copy_file(
                 .unwrap_or_else(PathBuf::new)
         });
     let file_size = metadata.len();
+    context.summary_mut().record_total_bytes(file_size);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1630,7 +1653,7 @@ fn copy_file(
             ));
         }
 
-        context.summary_mut().record_file(metadata.len());
+        context.summary_mut().record_file(file_size);
         context.record(LocalCopyRecord::new(
             record_path,
             LocalCopyAction::DataCopied,
@@ -1766,8 +1789,9 @@ fn copy_file(
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     hard_links.record(metadata, destination);
-    context.summary_mut().record_file(file_size);
     let elapsed = start.elapsed();
+    context.summary_mut().record_file(file_size);
+    context.summary_mut().record_elapsed(elapsed);
     context.record(LocalCopyRecord::new(
         record_path,
         LocalCopyAction::DataCopied,
