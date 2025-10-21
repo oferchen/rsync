@@ -14,7 +14,9 @@ referenced functionality ships and parity is verified by tests or goldens.
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
     list available modules, but remote transfers, xattrs/ACLs,
-    filters, compression, and progress reporting remain unavailable.
+    compression, and progress reporting remain unavailable. Basic filter
+    handling via `--exclude`/`--include` mirrors rsync's glob semantics for
+    local copies, but the broader filter/merge language is still missing.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, and validate the resulting behaviour via
@@ -31,11 +33,12 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, and symbolic links, but delta transfer,
-    xattrs/ACLs, filters, and compression remain unavailable. Remote
+    xattrs/ACLs, and compression remain unavailable. Remote
     orchestration is still missing, preventing the client from negotiating
     network transports.
   - *Removal plan*: Extend the engine with delta-transfer support and integrate
-    `filters`, `compress`, and enhanced metadata handling from `rsync_meta`.
+    full filter semantics alongside `compress` and enhanced metadata handling
+    from `rsync_meta`.
     Wire the resulting pipeline into both client and daemon orchestration and
     validate it via the parity harness.
 - **No interop or packaging automation**
