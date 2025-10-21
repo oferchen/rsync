@@ -777,7 +777,9 @@ where
 
     match run_core_client(config) {
         Ok(summary) => {
-            let _ = summary;
+            if emit_transfer_summary(&summary, verbosity, progress, stdout).is_err() {
+                return 1;
+            }
             0
         }
         Err(error) => {

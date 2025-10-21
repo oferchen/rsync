@@ -87,8 +87,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rsync_engine::local_copy::{
-    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
-    LocalCopySummary,
+    LocalCopyAction, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions,
+    LocalCopyPlan, LocalCopyRecord, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::{FilterError, FilterRule as EngineFilterRule, FilterSet};
 use rsync_protocol::ProtocolVersion;
@@ -533,17 +533,76 @@ impl Error for ClientError {}
 /// Summary of the work performed by [`run_client`].
 #[derive(Clone, Debug, Default)]
 pub struct ClientSummary {
+    stats: LocalCopySummary,
     events: Vec<ClientEvent>,
 }
 
 impl ClientSummary {
-    fn from_report(report: LocalCopyReport) -> Self {
+    fn from_summary(summary: LocalCopySummary) -> Self {
+        Self {
+            stats: summary,
+            events: Vec::new(),
+        }
+    }
+
+    fn from_report(summary: LocalCopySummary, report: LocalCopyReport) -> Self {
         let events = report
             .records()
             .iter()
             .map(ClientEvent::from_record)
             .collect();
-        Self { events }
+        Self {
+            stats: summary,
+            events,
+        }
+    }
+
+    /// Returns the number of regular files copied or updated.
+    #[must_use]
+    pub fn files_copied(&self) -> u64 {
+        self.stats.files_copied()
+    }
+
+    /// Returns the number of directories created during the transfer.
+    #[must_use]
+    pub fn directories_created(&self) -> u64 {
+        self.stats.directories_created()
+    }
+
+    /// Returns the number of symbolic links copied.
+    #[must_use]
+    pub fn symlinks_copied(&self) -> u64 {
+        self.stats.symlinks_copied()
+    }
+
+    /// Returns the number of hard links materialised.
+    #[must_use]
+    pub fn hard_links_created(&self) -> u64 {
+        self.stats.hard_links_created()
+    }
+
+    /// Returns the number of device nodes created.
+    #[must_use]
+    pub fn devices_created(&self) -> u64 {
+        self.stats.devices_created()
+    }
+
+    /// Returns the number of FIFOs created during the transfer.
+    #[must_use]
+    pub fn fifos_created(&self) -> u64 {
+        self.stats.fifos_created()
+    }
+
+    /// Returns the number of entries removed because of `--delete`.
+    #[must_use]
+    pub fn items_deleted(&self) -> u64 {
+        self.stats.items_deleted()
+    }
+
+    /// Returns the aggregate number of bytes written for copied files.
+    #[must_use]
+    pub fn bytes_copied(&self) -> u64 {
+        self.stats.bytes_copied()
     }
 
     /// Returns the list of recorded transfer actions.
@@ -556,6 +615,12 @@ impl ClientSummary {
     #[must_use]
     pub fn into_events(self) -> Vec<ClientEvent> {
         self.events
+    }
+
+    /// Returns the underlying transfer statistics.
+    #[must_use]
+    pub fn stats(&self) -> &LocalCopySummary {
+        &self.stats
     }
 }
 
@@ -639,7 +704,7 @@ impl ClientEvent {
 /// The current implementation offers best-effort local copies covering
 /// directories, regular files, and symbolic links. Metadata preservation, delta
 /// compression, and remote transports remain unimplemented.
-pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError> {
+pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
@@ -674,12 +739,12 @@ pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError>
 
     if collect_events {
         plan.execute_with_report(mode, options.collect_events(true))
-            .map(ClientSummary::from_report)
+            .map(|(summary, report)| ClientSummary::from_report(summary, report))
             .map_err(map_local_copy_error)
     } else {
         plan.execute_with_options(mode, options)
-            .map_err(map_local_copy_error)?;
-        Ok(ClientSummary::default())
+            .map(ClientSummary::from_summary)
+            .map_err(map_local_copy_error)
     }
 }
 

@@ -191,7 +191,16 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopySummary, LocalCopyError> {
-        copy_sources(self, mode, options)
+        copy_sources(self, mode, options).map(CopyOutcome::into_summary)
+    }
+
+    /// Executes the planned copy and returns the detailed event report.
+    pub fn execute_with_report(
+        &self,
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+    ) -> Result<(LocalCopySummary, LocalCopyReport), LocalCopyError> {
+        copy_sources(self, mode, options).map(CopyOutcome::into_summary_and_report)
     }
 }
 
@@ -646,28 +655,46 @@ impl LocalCopySummary {
     }
 }
 
+struct CopyOutcome {
+    summary: LocalCopySummary,
+    events: Option<Vec<LocalCopyRecord>>,
+}
+
+impl CopyOutcome {
+    fn into_summary(self) -> LocalCopySummary {
+        self.summary
+    }
+
+    fn into_summary_and_report(self) -> (LocalCopySummary, LocalCopyReport) {
+        let records = self.events.unwrap_or_default();
+        (self.summary, LocalCopyReport::new(records))
+    }
+}
+
 struct CopyContext {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
     hard_links: HardLinkTracker,
     limiter: Option<BandwidthLimiter>,
     summary: LocalCopySummary,
+    events: Option<Vec<LocalCopyRecord>>,
 }
 
 impl CopyContext {
     fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
-        let events = if options.events_enabled() {
-            Some(Vec::new())
-        } else {
-            None
-        };
+        let collect_events = options.events_enabled();
         Self {
             mode,
             options,
             hard_links: HardLinkTracker::new(),
             limiter,
             summary: LocalCopySummary::default(),
+            events: if collect_events {
+                Some(Vec::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -712,8 +739,21 @@ impl CopyContext {
         &mut self.summary
     }
 
-    fn into_summary(self) -> LocalCopySummary {
-        self.summary
+    fn record(&mut self, record: LocalCopyRecord) {
+        if let Some(events) = &mut self.events {
+            events.push(record);
+        }
+    }
+
+    fn partial_enabled(&self) -> bool {
+        self.options.partial_enabled()
+    }
+
+    fn into_outcome(self) -> CopyOutcome {
+        CopyOutcome {
+            summary: self.summary,
+            events: self.events,
+        }
     }
 }
 
@@ -1083,7 +1123,7 @@ fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
-) -> Result<LocalCopySummary, LocalCopyError> {
+) -> Result<CopyOutcome, LocalCopyError> {
     let mut context = CopyContext::new(mode, options);
 
     let multiple_sources = plan.sources.len() > 1;
@@ -1191,7 +1231,7 @@ fn copy_sources(
         }
     }
 
-    Ok(context.into_summary())
+    Ok(context.into_outcome())
 }
 
 fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {
@@ -1544,6 +1584,7 @@ fn copy_file(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
+    context.summary_mut().record_file(file_size);
     let elapsed = start.elapsed();
     context.record(LocalCopyRecord::new(
         record_path,
@@ -1646,10 +1687,6 @@ fn write_sparse_chunk(
         }
     }
 
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
-        .map_err(map_metadata_error)?;
-    hard_links.record(metadata, destination);
-    context.summary_mut().record_file(metadata.len());
     Ok(())
 }
 
