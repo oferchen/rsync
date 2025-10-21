@@ -202,13 +202,64 @@ pub fn apply_directory_metadata(
     apply_directory_metadata_with_options(destination, metadata, MetadataOptions::default())
 }
 
+/// Applies directory metadata while supplying optional source ownership names.
+///
+/// This overload allows callers that know the original user and group names to
+/// forward them directly so UID/GID remapping can occur without relying on the
+/// destination system having matching numeric identifiers. Upstream rsync maps
+/// ownership by name when `--numeric-ids` is not requested; providing the names
+/// here ensures the same semantics even when UID/GID assignments differ between
+/// hosts.
+#[cfg(unix)]
+pub fn apply_directory_metadata_with_names(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    apply_directory_metadata_internal(destination, metadata, options, names)
+}
+
 /// Applies metadata from `metadata` to the destination directory using explicit options.
 pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, options)?;
+    apply_directory_metadata_internal(destination, metadata, options, OwnershipNames::default())
+}
+
+#[cfg(unix)]
+fn apply_directory_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, true, options, names)?;
+    if options.permissions() {
+        set_permissions_like(metadata, destination)?;
+    }
+    if options.times() {
+        set_timestamp_like(metadata, destination, true)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_directory_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    _names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(
+        metadata,
+        destination,
+        true,
+        options,
+        OwnershipNames::default(),
+    )?;
     if options.permissions() {
         set_permissions_like(metadata, destination)?;
     }
@@ -229,13 +280,61 @@ pub fn apply_file_metadata(
     apply_file_metadata_with_options(destination, metadata, MetadataOptions::default())
 }
 
+/// Applies file metadata while supplying optional source ownership names.
+///
+/// Callers that decode rsync's file list can pass the sender's user and group
+/// names so ownership remapping honours name-based semantics when numeric
+/// identifiers differ between hosts.
+#[cfg(unix)]
+pub fn apply_file_metadata_with_names(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    apply_file_metadata_internal(destination, metadata, options, names)
+}
+
 /// Applies file metadata using explicit [`MetadataOptions`].
 pub fn apply_file_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, options)?;
+    apply_file_metadata_internal(destination, metadata, options, OwnershipNames::default())
+}
+
+#[cfg(unix)]
+fn apply_file_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, true, options, names)?;
+    if options.permissions() {
+        set_permissions_like(metadata, destination)?;
+    }
+    if options.times() {
+        set_timestamp_like(metadata, destination, true)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_file_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    _names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(
+        metadata,
+        destination,
+        true,
+        options,
+        OwnershipNames::default(),
+    )?;
     if options.permissions() {
         set_permissions_like(metadata, destination)?;
     }
@@ -254,13 +353,54 @@ pub fn apply_symlink_metadata(
     apply_symlink_metadata_with_options(destination, metadata, MetadataOptions::default())
 }
 
+/// Applies symlink metadata while supplying optional source ownership names.
+#[cfg(unix)]
+pub fn apply_symlink_metadata_with_names(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    apply_symlink_metadata_internal(destination, metadata, options, names)
+}
+
 /// Applies symbolic link metadata using explicit [`MetadataOptions`].
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, false, options)?;
+    apply_symlink_metadata_internal(destination, metadata, options, OwnershipNames::default())
+}
+
+#[cfg(unix)]
+fn apply_symlink_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, false, options, names)?;
+    if options.times() {
+        set_timestamp_like(metadata, destination, false)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_symlink_metadata_internal(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+    _names: OwnershipNames<'_>,
+) -> Result<(), MetadataError> {
+    set_owner_like(
+        metadata,
+        destination,
+        false,
+        options,
+        OwnershipNames::default(),
+    )?;
     if options.times() {
         set_timestamp_like(metadata, destination, false)?;
     }
@@ -404,6 +544,56 @@ fn create_device_node_inner(
     ))
 }
 
+/// Ownership names supplied by the metadata source.
+///
+/// When rsync transfers metadata between hosts with differing UID/GID
+/// assignments, the receiver must map ownership by the original user and group
+/// names. `OwnershipNames` carries those names so remapping can be performed
+/// without re-querying the local user database using the potentially foreign
+/// numeric identifiers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OwnershipNames<'a> {
+    owner: Option<&'a [u8]>,
+    group: Option<&'a [u8]>,
+}
+
+impl<'a> OwnershipNames<'a> {
+    /// Creates an empty `OwnershipNames` value.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            owner: None,
+            group: None,
+        }
+    }
+
+    /// Records the source owner's name.
+    #[must_use]
+    pub const fn with_owner(mut self, owner: Option<&'a [u8]>) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    /// Records the source group's name.
+    #[must_use]
+    pub const fn with_group(mut self, group: Option<&'a [u8]>) -> Self {
+        self.group = group;
+        self
+    }
+
+    /// Returns the configured owner name, if any.
+    #[must_use]
+    pub const fn owner_name(&self) -> Option<&'a [u8]> {
+        self.owner
+    }
+
+    /// Returns the configured group name, if any.
+    #[must_use]
+    pub const fn group_name(&self) -> Option<&'a [u8]> {
+        self.group
+    }
+}
+
 /// Options that control metadata preservation during copy operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetadataOptions {
@@ -510,6 +700,7 @@ fn set_owner_like(
     destination: &Path,
     follow_symlinks: bool,
     options: MetadataOptions,
+    names: OwnershipNames<'_>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -518,12 +709,20 @@ fn set_owner_like(
         }
 
         let owner = if options.owner() {
-            map_uid(metadata.uid() as RawUid, options.numeric_ids_enabled())
+            map_uid(
+                metadata.uid() as RawUid,
+                names.owner_name(),
+                options.numeric_ids_enabled(),
+            )
         } else {
             None
         };
         let group = if options.group() {
-            map_gid(metadata.gid() as RawGid, options.numeric_ids_enabled())
+            map_gid(
+                metadata.gid() as RawGid,
+                names.group_name(),
+                options.numeric_ids_enabled(),
+            )
         } else {
             None
         };
@@ -569,43 +768,67 @@ mod id_lookup {
     use rustix::fs::{Gid, Uid};
     use std::ptr;
 
-    pub(super) fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
+    pub(super) fn map_uid(
+        uid: RawUid,
+        source_name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> Option<Uid> {
         if numeric_ids {
             return Some(ownership::uid_from_raw(uid));
         }
 
-        let mapped = match lookup_user_name(uid) {
-            Ok(Some(bytes)) => match lookup_user_by_name(&bytes) {
+        let mapped = if let Some(name) = source_name {
+            match lookup_user_by_name(name) {
                 Ok(Some(mapped)) => mapped,
                 Ok(None) => uid,
                 Err(_) => uid,
-            },
-            Ok(None) => uid,
-            Err(_) => uid,
+            }
+        } else {
+            match lookup_user_name(uid) {
+                Ok(Some(bytes)) => match lookup_user_by_name(&bytes) {
+                    Ok(Some(mapped)) => mapped,
+                    Ok(None) => uid,
+                    Err(_) => uid,
+                },
+                Ok(None) => uid,
+                Err(_) => uid,
+            }
         };
 
         Some(ownership::uid_from_raw(mapped))
     }
 
-    pub(super) fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
+    pub(super) fn map_gid(
+        gid: RawGid,
+        source_name: Option<&[u8]>,
+        numeric_ids: bool,
+    ) -> Option<Gid> {
         if numeric_ids {
             return Some(ownership::gid_from_raw(gid));
         }
 
-        let mapped = match lookup_group_name(gid) {
-            Ok(Some(bytes)) => match lookup_group_by_name(&bytes) {
+        let mapped = if let Some(name) = source_name {
+            match lookup_group_by_name(name) {
                 Ok(Some(mapped)) => mapped,
                 Ok(None) => gid,
                 Err(_) => gid,
-            },
-            Ok(None) => gid,
-            Err(_) => gid,
+            }
+        } else {
+            match lookup_group_name(gid) {
+                Ok(Some(bytes)) => match lookup_group_by_name(&bytes) {
+                    Ok(Some(mapped)) => mapped,
+                    Ok(None) => gid,
+                    Err(_) => gid,
+                },
+                Ok(None) => gid,
+                Err(_) => gid,
+            }
         };
 
         Some(ownership::gid_from_raw(mapped))
     }
 
-    fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
+    pub(super) fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
         let mut buffer = vec![0_u8; 1024];
         loop {
             let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
@@ -677,7 +900,7 @@ mod id_lookup {
         }
     }
 
-    fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
+    pub(super) fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
         let mut buffer = vec![0_u8; 1024];
         loop {
             let mut grp = MaybeUninit::<libc::group>::zeroed();
@@ -947,7 +1170,7 @@ mod tests {
     #[test]
     fn map_uid_round_trips_current_user_without_numeric_flag() {
         let uid = rustix::process::geteuid().as_raw();
-        let mapped = super::map_uid(uid, false).expect("uid");
+        let mapped = super::map_uid(uid, None, false).expect("uid");
         assert_eq!(mapped.as_raw(), uid);
     }
 
@@ -955,8 +1178,32 @@ mod tests {
     #[test]
     fn map_gid_round_trips_current_group_without_numeric_flag() {
         let gid = rustix::process::getegid().as_raw();
-        let mapped = super::map_gid(gid, false).expect("gid");
+        let mapped = super::map_gid(gid, None, false).expect("gid");
         assert_eq!(mapped.as_raw(), gid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn map_uid_uses_provided_name_when_ids_differ() {
+        let actual_uid = rustix::process::geteuid().as_raw();
+        let name = super::id_lookup::lookup_user_name(actual_uid)
+            .expect("lookup user name")
+            .expect("current user name");
+        let foreign_uid = actual_uid.saturating_add(1);
+        let mapped = super::map_uid(foreign_uid, Some(name.as_slice()), false).expect("uid");
+        assert_eq!(mapped.as_raw(), actual_uid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn map_gid_uses_provided_name_when_ids_differ() {
+        let actual_gid = rustix::process::getegid().as_raw();
+        let name = super::id_lookup::lookup_group_name(actual_gid)
+            .expect("lookup group name")
+            .expect("current group name");
+        let foreign_gid = actual_gid.saturating_add(1);
+        let mapped = super::map_gid(foreign_gid, Some(name.as_slice()), false).expect("gid");
+        assert_eq!(mapped.as_raw(), actual_gid);
     }
 
     #[test]
