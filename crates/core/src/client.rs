@@ -695,6 +695,18 @@ impl ClientSummary {
     pub fn bytes_copied(&self) -> u64 {
         self.stats.bytes_copied()
     }
+
+    /// Returns the aggregate size of all source files considered during the transfer.
+    #[must_use]
+    pub fn total_source_bytes(&self) -> u64 {
+        self.stats.total_source_bytes()
+    }
+
+    /// Returns the total elapsed time spent transferring file payloads.
+    #[must_use]
+    pub fn total_elapsed(&self) -> Duration {
+        self.stats.total_elapsed()
+    }
 }
 
 /// Describes a transfer action performed by the local copy engine.
