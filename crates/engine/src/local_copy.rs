@@ -1382,12 +1382,12 @@ fn delete_extraneous_entries(
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
 
-        if let Some(filters) = filters {
-            let entry_relative = match relative {
-                Some(base) => base.join(&name_path),
-                None => name_path.clone(),
-            };
+        let entry_relative = match relative {
+            Some(base) => base.join(&name_path),
+            None => name_path.clone(),
+        };
 
+        if let Some(filters) = filters {
             if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
                 continue;
             }
@@ -1397,29 +1397,117 @@ fn delete_extraneous_entries(
             continue;
         }
 
-        remove_extraneous_path(path, file_type)?;
+        remove_extraneous_path(path, file_type, filters, entry_relative.as_path())?;
     }
 
     Ok(())
 }
 
-fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), LocalCopyError> {
-    let context = if file_type.is_dir() {
-        "remove extraneous directory"
+fn remove_extraneous_path(
+    path: PathBuf,
+    file_type: fs::FileType,
+    filters: Option<&FilterSet>,
+    relative: &Path,
+) -> Result<(), LocalCopyError> {
+    if file_type.is_dir() {
+        let _ = remove_extraneous_directory(path.as_path(), filters, relative)?;
+        Ok(())
     } else {
-        "remove extraneous entry"
+        remove_extraneous_file(path)
+    }
+}
+
+fn remove_extraneous_directory(
+    path: &Path,
+    filters: Option<&FilterSet>,
+    relative: &Path,
+) -> Result<bool, LocalCopyError> {
+    if filters.is_none() {
+        return match fs::remove_dir_all(path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(LocalCopyError::io(
+                "remove extraneous directory",
+                path.to_path_buf(),
+                error,
+            )),
+        };
+    }
+
+    let filters = filters.unwrap();
+
+    let read_dir = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "read extraneous directory",
+                path.to_path_buf(),
+                error,
+            ));
+        }
     };
 
-    let result = if file_type.is_dir() {
-        fs::remove_dir_all(&path)
-    } else {
-        fs::remove_file(&path)
-    };
+    let mut removed_all = true;
 
-    match result {
+    for entry in read_dir {
+        let entry = entry.map_err(|error| {
+            LocalCopyError::io("read extraneous directory entry", path.to_path_buf(), error)
+        })?;
+
+        let name = entry.file_name();
+        let child_path = path.join(&name);
+        let child_type = entry.file_type().map_err(|error| {
+            LocalCopyError::io(
+                "inspect extraneous destination entry",
+                child_path.clone(),
+                error,
+            )
+        })?;
+
+        let child_relative = relative.join(Path::new(&name));
+
+        if !filters.allows(child_relative.as_path(), child_type.is_dir()) {
+            removed_all = false;
+            continue;
+        }
+
+        if child_type.is_dir() {
+            let child_removed = remove_extraneous_directory(
+                child_path.as_path(),
+                Some(filters),
+                child_relative.as_path(),
+            )?;
+
+            if !child_removed {
+                removed_all = false;
+            }
+        } else {
+            remove_extraneous_file(child_path)?;
+        }
+    }
+
+    if removed_all {
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => Ok(false),
+            Err(error) => Err(LocalCopyError::io(
+                "remove extraneous directory",
+                path.to_path_buf(),
+                error,
+            )),
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+fn remove_extraneous_file(path: PathBuf) -> Result<(), LocalCopyError> {
+    match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(LocalCopyError::io(context, path, error)),
+        Err(error) => Err(LocalCopyError::io("remove extraneous entry", path, error)),
     }
 }
 
