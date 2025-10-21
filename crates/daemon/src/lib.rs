@@ -216,6 +216,7 @@ struct ModuleDefinition {
     auth_users: Vec<String>,
     secrets_file: Option<PathBuf>,
     bandwidth_limit: Option<NonZeroU64>,
+    refuse_options: Vec<String>,
 }
 
 impl ModuleDefinition {
@@ -250,6 +251,11 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    #[cfg(test)]
+    fn refused_options(&self) -> &[String] {
+        &self.refuse_options
     }
 }
 
@@ -571,6 +577,16 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 let limit = parse_config_bwlimit(value, path, line_number)?;
                 builder.set_bandwidth_limit(limit, path, line_number)?;
             }
+            "refuse options" => {
+                let options = parse_refuse_option_list(value).map_err(|error| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid 'refuse options' directive: {error}"),
+                    )
+                })?;
+                builder.set_refuse_options(options, path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -595,6 +611,7 @@ struct ModuleDefinitionBuilder {
     declaration_line: usize,
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_limit_set: bool,
+    refuse_options: Option<Vec<String>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -610,6 +627,7 @@ impl ModuleDefinitionBuilder {
             declaration_line: line,
             bandwidth_limit: None,
             bandwidth_limit_set: false,
+            refuse_options: None,
         }
     }
 
@@ -758,6 +776,38 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_refuse_options(
+        &mut self,
+        options: Vec<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.refuse_options.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'refuse options' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        if options.is_empty() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "'refuse options' directive in module '{}' must list at least one option",
+                    self.name
+                ),
+            ));
+        }
+
+        self.refuse_options = Some(options);
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -801,6 +851,7 @@ impl ModuleDefinitionBuilder {
             auth_users: self.auth_users.unwrap_or_default(),
             secrets_file: self.secrets_file,
             bandwidth_limit: self.bandwidth_limit,
+            refuse_options: self.refuse_options.unwrap_or_default(),
         })
     }
 }
@@ -827,6 +878,31 @@ fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
     }
 
     Ok(users)
+}
+
+fn parse_refuse_option_list(value: &str) -> Result<Vec<String>, String> {
+    let mut options = Vec::new();
+    let mut seen = HashSet::new();
+
+    for segment in value.split(',') {
+        for token in segment.split_whitespace() {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let canonical = trimmed.to_ascii_lowercase();
+            if seen.insert(canonical.clone()) {
+                options.push(canonical);
+            }
+        }
+    }
+
+    if options.is_empty() {
+        return Err("must specify at least one option".to_string());
+    }
+
+    Ok(options)
 }
 
 fn validate_secrets_file(
@@ -1469,6 +1545,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         auth_users: Vec::new(),
         secrets_file: None,
         bandwidth_limit: None,
+        refuse_options: Vec::new(),
     })
 }
 
@@ -1720,10 +1797,12 @@ mod tests {
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
         assert!(modules[0].bandwidth_limit().is_none());
+        assert!(modules[0].refused_options().is_empty());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
+        assert!(modules[1].refused_options().is_empty());
     }
 
     #[test]
@@ -1775,6 +1854,31 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_loads_refuse_options_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nrefuse options = delete, compress progress\n"
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name, "docs");
+        assert_eq!(
+            module.refused_options(),
+            &["delete", "compress", "progress"]
+        );
+    }
+
+    #[test]
     fn runtime_options_rejects_invalid_bwlimit_in_config() {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = nope\n").expect("write config");
@@ -1814,6 +1918,44 @@ mod tests {
                 .to_string()
                 .contains("duplicate 'bwlimit' directive")
         );
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_refuse_options_directives() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nrefuse options = delete\nrefuse options = compress\n"
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("duplicate refuse options should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate 'refuse options' directive")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_empty_refuse_options_directive() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nrefuse options =   \n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("empty refuse options should fail");
+
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("must specify at least one option"));
     }
 
     #[test]
