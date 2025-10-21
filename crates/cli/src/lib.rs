@@ -777,8 +777,11 @@ where
 
     match run_core_client(config) {
         Ok(summary) => {
-            if emit_transfer_summary(&summary, verbosity, progress, stdout).is_err() {
-                return 1;
+            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stdout) {
+                let _ = writeln!(
+                    stdout,
+                    "warning: failed to render transfer summary: {error}"
+                );
             }
             0
         }

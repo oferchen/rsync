@@ -538,71 +538,21 @@ pub struct ClientSummary {
 }
 
 impl ClientSummary {
-    fn from_summary(summary: LocalCopySummary) -> Self {
-        Self {
-            stats: summary,
-            events: Vec::new(),
-        }
-    }
-
-    fn from_report(summary: LocalCopySummary, report: LocalCopyReport) -> Self {
+    fn from_report(report: LocalCopyReport) -> Self {
+        let stats = *report.summary();
         let events = report
             .records()
             .iter()
             .map(ClientEvent::from_record)
             .collect();
+        Self { stats, events }
+    }
+
+    fn from_summary(summary: LocalCopySummary) -> Self {
         Self {
             stats: summary,
-            events,
+            events: Vec::new(),
         }
-    }
-
-    /// Returns the number of regular files copied or updated.
-    #[must_use]
-    pub fn files_copied(&self) -> u64 {
-        self.stats.files_copied()
-    }
-
-    /// Returns the number of directories created during the transfer.
-    #[must_use]
-    pub fn directories_created(&self) -> u64 {
-        self.stats.directories_created()
-    }
-
-    /// Returns the number of symbolic links copied.
-    #[must_use]
-    pub fn symlinks_copied(&self) -> u64 {
-        self.stats.symlinks_copied()
-    }
-
-    /// Returns the number of hard links materialised.
-    #[must_use]
-    pub fn hard_links_created(&self) -> u64 {
-        self.stats.hard_links_created()
-    }
-
-    /// Returns the number of device nodes created.
-    #[must_use]
-    pub fn devices_created(&self) -> u64 {
-        self.stats.devices_created()
-    }
-
-    /// Returns the number of FIFOs created during the transfer.
-    #[must_use]
-    pub fn fifos_created(&self) -> u64 {
-        self.stats.fifos_created()
-    }
-
-    /// Returns the number of entries removed because of `--delete`.
-    #[must_use]
-    pub fn items_deleted(&self) -> u64 {
-        self.stats.items_deleted()
-    }
-
-    /// Returns the aggregate number of bytes written for copied files.
-    #[must_use]
-    pub fn bytes_copied(&self) -> u64 {
-        self.stats.bytes_copied()
     }
 
     /// Returns the list of recorded transfer actions.
@@ -617,10 +567,52 @@ impl ClientSummary {
         self.events
     }
 
-    /// Returns the underlying transfer statistics.
+    /// Returns the number of regular files copied or updated during the transfer.
     #[must_use]
-    pub fn stats(&self) -> &LocalCopySummary {
-        &self.stats
+    pub fn files_copied(&self) -> u64 {
+        self.stats.files_copied()
+    }
+
+    /// Returns the number of directories created during the transfer.
+    #[must_use]
+    pub fn directories_created(&self) -> u64 {
+        self.stats.directories_created()
+    }
+
+    /// Returns the number of symbolic links copied during the transfer.
+    #[must_use]
+    pub fn symlinks_copied(&self) -> u64 {
+        self.stats.symlinks_copied()
+    }
+
+    /// Returns the number of hard links materialised during the transfer.
+    #[must_use]
+    pub fn hard_links_created(&self) -> u64 {
+        self.stats.hard_links_created()
+    }
+
+    /// Returns the number of device nodes created during the transfer.
+    #[must_use]
+    pub fn devices_created(&self) -> u64 {
+        self.stats.devices_created()
+    }
+
+    /// Returns the number of FIFOs created during the transfer.
+    #[must_use]
+    pub fn fifos_created(&self) -> u64 {
+        self.stats.fifos_created()
+    }
+
+    /// Returns the number of extraneous entries removed due to `--delete`.
+    #[must_use]
+    pub fn items_deleted(&self) -> u64 {
+        self.stats.items_deleted()
+    }
+
+    /// Returns the aggregate number of bytes copied.
+    #[must_use]
+    pub fn bytes_copied(&self) -> u64 {
+        self.stats.bytes_copied()
     }
 }
 
