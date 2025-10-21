@@ -3186,8 +3186,7 @@ mod tests {
             b"root"
         );
         assert_eq!(
-            fs::read(dest_root.join("dir").join("child.txt"))
-                .expect("read nested copy"),
+            fs::read(dest_root.join("dir").join("child.txt")).expect("read nested copy"),
             b"child"
         );
         assert!(
