@@ -8,7 +8,7 @@
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
 //! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter`, `--files-from`,
-//! `--from0`, and `--bwlimit`) and delegates local copy operations to
+//! `--from0`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -92,7 +92,7 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] [-a] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] [-a] [-S] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -110,6 +110,8 @@ const HELP_TEXT: &str = concat!(
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
+    "      --no-sparse Disable sparse file handling.\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
@@ -127,7 +129,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -144,6 +146,7 @@ struct ParsedArgs {
     perms: Option<bool>,
     times: Option<bool>,
     numeric_ids: Option<bool>,
+    sparse: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
     exclude_from: Vec<OsString>,
@@ -186,6 +189,21 @@ fn clap_command() -> Command {
                 .short('a')
                 .help("Enable archive mode (implies --owner and --group).")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("sparse")
+                .long("sparse")
+                .short('S')
+                .help("Preserve sparse files by creating holes in the destination.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-sparse"),
+        )
+        .arg(
+            Arg::new("no-sparse")
+                .long("no-sparse")
+                .help("Disable sparse file handling.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("sparse"),
         )
         .arg(
             Arg::new("delete")
@@ -394,6 +412,13 @@ where
     } else {
         None
     };
+    let sparse = if matches.get_flag("sparse") {
+        Some(true)
+    } else if matches.get_flag("no-sparse") {
+        Some(false)
+    } else {
+        None
+    };
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -439,11 +464,12 @@ where
         group,
         perms,
         times,
+        numeric_ids,
+        sparse,
         excludes,
         includes,
         exclude_from,
         include_from,
-        numeric_ids,
         filters,
         files_from,
         from0,
@@ -512,6 +538,7 @@ where
         files_from,
         from0,
         numeric_ids,
+        sparse,
     } = parsed;
 
     if show_help {
@@ -611,6 +638,7 @@ where
     let preserve_group = group.unwrap_or(archive);
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
+    let sparse = sparse.unwrap_or(false);
 
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
@@ -621,7 +649,8 @@ where
         .group(preserve_group)
         .permissions(preserve_permissions)
         .times(preserve_times)
-        .numeric_ids(numeric_ids);
+        .numeric_ids(numeric_ids)
+        .sparse(sparse);
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -1206,7 +1235,7 @@ mod tests {
     use rsync_core::client::FilterRuleKind;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::ffi::OsStr;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     use std::time::Duration;
@@ -1351,6 +1380,51 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"limited"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_request_with_sparse_preserves_holes() {
+        use std::os::unix::fs::MetadataExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let mut source_file = std::fs::File::create(&source).expect("create source");
+        source_file.write_all(&[0x10]).expect("write leading byte");
+        source_file
+            .seek(SeekFrom::Start(1 * 1024 * 1024))
+            .expect("seek to hole");
+        source_file.write_all(&[0x20]).expect("write trailing byte");
+        source_file.set_len(3 * 1024 * 1024).expect("extend source");
+
+        let dense_dest = tmp.path().join("dense.bin");
+        let sparse_dest = tmp.path().join("sparse.bin");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            source.clone().into_os_string(),
+            dense_dest.clone().into_os_string(),
+        ]);
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--sparse"),
+            source.into_os_string(),
+            sparse_dest.clone().into_os_string(),
+        ]);
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let dense_meta = std::fs::metadata(&dense_dest).expect("dense metadata");
+        let sparse_meta = std::fs::metadata(&sparse_dest).expect("sparse metadata");
+
+        assert_eq!(dense_meta.len(), sparse_meta.len());
+        assert!(sparse_meta.blocks() < dense_meta.blocks());
     }
 
     #[test]
@@ -1634,7 +1708,6 @@ mod tests {
 
         let parsed = parse_args([
             OsString::from("oc-rsync"),
-            OsString::from("--numeric-ids"),
             OsString::from("--no-numeric-ids"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -1642,6 +1715,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.numeric_ids, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_sparse_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--sparse"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.sparse, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-sparse"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.sparse, Some(false));
     }
 
     #[test]

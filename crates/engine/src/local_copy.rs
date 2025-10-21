@@ -18,7 +18,9 @@
 //! - Helper functions preserve metadata after content writes, matching upstream
 //!   rsync's ordering and covering regular files, directories, symbolic links,
 //!   FIFOs, and device nodes. Hard linked files are reproduced as hard links in
-//!   the destination when the platform exposes inode identifiers.
+//!   the destination when the platform exposes inode identifiers, and optional
+//!   sparse handling skips zero-filled regions when requested so destination
+//!   files retain holes present in the source.
 //!
 //! # Invariants
 //!
@@ -52,7 +54,7 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -215,6 +217,7 @@ pub struct LocalCopyOptions {
     preserve_times: bool,
     filters: Option<FilterSet>,
     numeric_ids: bool,
+    sparse: bool,
 }
 
 impl LocalCopyOptions {
@@ -230,6 +233,7 @@ impl LocalCopyOptions {
             preserve_times: false,
             filters: None,
             numeric_ids: false,
+            sparse: false,
         }
     }
 
@@ -296,6 +300,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that sparse files be recreated using holes rather than literal zero writes.
+    #[must_use]
+    #[doc(alias = "--sparse")]
+    pub const fn sparse(mut self, sparse: bool) -> Self {
+        self.sparse = sparse;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -342,6 +354,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
+    }
+
+    /// Reports whether sparse handling has been requested.
+    #[must_use]
+    pub const fn sparse_enabled(&self) -> bool {
+        self.sparse
     }
 }
 
@@ -449,6 +467,10 @@ impl CopyContext {
             ..
         } = self;
         (hard_links, limiter.as_mut())
+    }
+
+    fn sparse_enabled(&self) -> bool {
+        self.options.sparse_enabled()
     }
 
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
@@ -1141,7 +1163,8 @@ fn copy_file(
         }
     }
 
-    let (hard_links, mut limiter) = context.split_mut();
+    let use_sparse_writes = context.sparse_enabled();
+    let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
         match fs::hard_link(&existing_target, destination) {
@@ -1190,9 +1213,36 @@ fn copy_file(
         .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
 
+    copy_file_contents(
+        &mut reader,
+        &mut writer,
+        &mut buffer,
+        limiter,
+        use_sparse_writes,
+        source,
+        destination,
+    )?;
+
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
+    hard_links.record(metadata, destination);
+    Ok(())
+}
+
+fn copy_file_contents(
+    reader: &mut fs::File,
+    writer: &mut fs::File,
+    buffer: &mut [u8],
+    mut limiter: Option<&mut BandwidthLimiter>,
+    sparse: bool,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), LocalCopyError> {
+    let mut total_bytes: u64 = 0;
+
     loop {
         let read = reader
-            .read(&mut buffer)
+            .read(buffer)
             .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
         if read == 0 {
             break;
@@ -1202,14 +1252,66 @@ fn copy_file(
             limiter.register(read);
         }
 
-        writer
-            .write_all(&buffer[..read])
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+        if sparse {
+            write_sparse_chunk(writer, &buffer[..read], destination)?;
+        } else {
+            writer.write_all(&buffer[..read]).map_err(|error| {
+                LocalCopyError::io("copy file", destination.to_path_buf(), error)
+            })?;
+        }
+
+        total_bytes = total_bytes.saturating_add(read as u64);
     }
 
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
-        .map_err(map_metadata_error)?;
-    hard_links.record(metadata, destination);
+    if sparse {
+        writer.set_len(total_bytes).map_err(|error| {
+            LocalCopyError::io(
+                "truncate destination file",
+                destination.to_path_buf(),
+                error,
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn write_sparse_chunk(
+    writer: &mut fs::File,
+    chunk: &[u8],
+    destination: &Path,
+) -> Result<(), LocalCopyError> {
+    let mut index = 0usize;
+
+    while index < chunk.len() {
+        if chunk[index] == 0 {
+            let start = index;
+            while index < chunk.len() && chunk[index] == 0 {
+                index += 1;
+            }
+            let span = index - start;
+            if span > 0 {
+                writer
+                    .seek(SeekFrom::Current(span as i64))
+                    .map_err(|error| {
+                        LocalCopyError::io(
+                            "seek in destination file",
+                            destination.to_path_buf(),
+                            error,
+                        )
+                    })?;
+            }
+        } else {
+            let start = index;
+            while index < chunk.len() && chunk[index] != 0 {
+                index += 1;
+            }
+            writer.write_all(&chunk[start..index]).map_err(|error| {
+                LocalCopyError::io("copy file", destination.to_path_buf(), error)
+            })?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1805,6 +1907,7 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 mod tests {
     use super::*;
     use filetime::{FileTime, set_file_mtime};
+    use std::io::{Seek, SeekFrom, Write};
     use std::num::NonZeroU64;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -1820,6 +1923,12 @@ mod tests {
         let options = LocalCopyOptions::default().numeric_ids(true);
         let context = CopyContext::new(LocalCopyExecution::Apply, options);
         assert!(context.metadata_options().numeric_ids_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_sparse_round_trip() {
+        let options = LocalCopyOptions::default().sparse(true);
+        assert!(options.sparse_enabled());
     }
 
     #[cfg(unix)]
@@ -2407,6 +2516,52 @@ mod tests {
         assert_eq!(metadata_b.nlink(), 2);
         assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
         assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_sparse_enabled_creates_holes() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("sparse.bin");
+        let mut source_file = fs::File::create(&source).expect("create source");
+        source_file.write_all(&[0xAA]).expect("write leading byte");
+        source_file
+            .seek(SeekFrom::Start(2 * 1024 * 1024))
+            .expect("seek to create hole");
+        source_file.write_all(&[0xBB]).expect("write trailing byte");
+        source_file.set_len(4 * 1024 * 1024).expect("extend source");
+
+        let dense_dest = temp.path().join("dense.bin");
+        let sparse_dest = temp.path().join("sparse-copy.bin");
+
+        let plan_dense = LocalCopyPlan::from_operands(&[
+            source.clone().into_os_string(),
+            dense_dest.clone().into_os_string(),
+        ])
+        .expect("plan dense");
+        plan_dense
+            .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+            .expect("dense copy succeeds");
+
+        let plan_sparse = LocalCopyPlan::from_operands(&[
+            source.into_os_string(),
+            sparse_dest.clone().into_os_string(),
+        ])
+        .expect("plan sparse");
+        plan_sparse
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().sparse(true),
+            )
+            .expect("sparse copy succeeds");
+
+        let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+        let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+        assert_eq!(dense_meta.len(), sparse_meta.len());
+        assert!(sparse_meta.blocks() < dense_meta.blocks());
     }
 
     #[test]
