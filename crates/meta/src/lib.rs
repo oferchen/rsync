@@ -80,6 +80,12 @@ use filetime::{FileTime, set_file_times, set_symlink_file_times};
 use std::os::unix::fs::MetadataExt;
 
 #[cfg(unix)]
+use std::{
+    ffi::{CStr, CString},
+    mem::MaybeUninit,
+};
+
+#[cfg(unix)]
 use rustix::{
     fs::{self as unix_fs, AtFlags, CWD, Gid, Uid},
     process::{RawGid, RawUid},
@@ -405,6 +411,7 @@ pub struct MetadataOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    numeric_ids: bool,
 }
 
 impl MetadataOptions {
@@ -419,6 +426,7 @@ impl MetadataOptions {
             preserve_group: false,
             preserve_permissions: true,
             preserve_times: true,
+            numeric_ids: false,
         }
     }
 
@@ -452,6 +460,14 @@ impl MetadataOptions {
         self
     }
 
+    /// Requests that UID/GID preservation use numeric identifiers instead of mapping by name.
+    #[must_use]
+    #[doc(alias = "--numeric-ids")]
+    pub const fn numeric_ids(mut self, numeric: bool) -> Self {
+        self.numeric_ids = numeric;
+        self
+    }
+
     /// Reports whether ownership should be preserved.
     #[must_use]
     pub const fn owner(&self) -> bool {
@@ -475,6 +491,12 @@ impl MetadataOptions {
     pub const fn times(&self) -> bool {
         self.preserve_times
     }
+
+    /// Reports whether numeric UID/GID preservation was requested.
+    #[must_use]
+    pub const fn numeric_ids_enabled(&self) -> bool {
+        self.numeric_ids
+    }
 }
 
 impl Default for MetadataOptions {
@@ -495,12 +517,16 @@ fn set_owner_like(
             return Ok(());
         }
 
-        let owner = options
-            .owner()
-            .then(|| ownership::uid_from_raw(metadata.uid() as RawUid));
-        let group = options
-            .group()
-            .then(|| ownership::gid_from_raw(metadata.gid() as RawGid));
+        let owner = if options.owner() {
+            map_uid(metadata.uid() as RawUid, options.numeric_ids_enabled())
+        } else {
+            None
+        };
+        let group = if options.group() {
+            map_gid(metadata.gid() as RawGid, options.numeric_ids_enabled())
+        } else {
+            None
+        };
 
         if owner.is_none() && group.is_none() {
             return Ok(());
@@ -533,6 +559,199 @@ fn set_owner_like(
 
     Ok(())
 }
+
+#[cfg(unix)]
+mod id_lookup {
+    #![allow(unsafe_code)]
+
+    use super::{CStr, CString, MaybeUninit, RawGid, RawUid, io, ownership};
+    use libc;
+    use rustix::fs::{Gid, Uid};
+    use std::ptr;
+
+    pub(super) fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
+        if numeric_ids {
+            return Some(ownership::uid_from_raw(uid));
+        }
+
+        let mapped = match lookup_user_name(uid) {
+            Ok(Some(bytes)) => match lookup_user_by_name(&bytes) {
+                Ok(Some(mapped)) => mapped,
+                Ok(None) => uid,
+                Err(_) => uid,
+            },
+            Ok(None) => uid,
+            Err(_) => uid,
+        };
+
+        Some(ownership::uid_from_raw(mapped))
+    }
+
+    pub(super) fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
+        if numeric_ids {
+            return Some(ownership::gid_from_raw(gid));
+        }
+
+        let mapped = match lookup_group_name(gid) {
+            Ok(Some(bytes)) => match lookup_group_by_name(&bytes) {
+                Ok(Some(mapped)) => mapped,
+                Ok(None) => gid,
+                Err(_) => gid,
+            },
+            Ok(None) => gid,
+            Err(_) => gid,
+        };
+
+        Some(ownership::gid_from_raw(mapped))
+    }
+
+    fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
+        let mut buffer = vec![0_u8; 1024];
+        loop {
+            let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
+            let mut result: *mut libc::passwd = ptr::null_mut();
+            let errno = unsafe {
+                libc::getpwuid_r(
+                    uid as libc::uid_t,
+                    pwd.as_mut_ptr(),
+                    buffer.as_mut_ptr() as *mut libc::c_char,
+                    buffer.len(),
+                    &mut result,
+                )
+            };
+
+            if errno == 0 {
+                if result.is_null() {
+                    return Ok(None);
+                }
+
+                let pwd = unsafe { pwd.assume_init() };
+                let name = unsafe { CStr::from_ptr(pwd.pw_name) };
+                return Ok(Some(name.to_bytes().to_vec()));
+            }
+
+            if errno == libc::ERANGE {
+                buffer.resize(buffer.len().saturating_mul(2), 0);
+                continue;
+            }
+
+            return Err(io::Error::from_raw_os_error(errno));
+        }
+    }
+
+    fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
+        let c_name = match CString::new(name) {
+            Ok(name) => name,
+            Err(_) => return Ok(None),
+        };
+
+        let mut buffer = vec![0_u8; 1024];
+        loop {
+            let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
+            let mut result: *mut libc::passwd = ptr::null_mut();
+            let errno = unsafe {
+                libc::getpwnam_r(
+                    c_name.as_ptr(),
+                    pwd.as_mut_ptr(),
+                    buffer.as_mut_ptr() as *mut libc::c_char,
+                    buffer.len(),
+                    &mut result,
+                )
+            };
+
+            if errno == 0 {
+                if result.is_null() {
+                    return Ok(None);
+                }
+
+                let pwd = unsafe { pwd.assume_init() };
+                return Ok(Some(pwd.pw_uid as RawUid));
+            }
+
+            if errno == libc::ERANGE {
+                buffer.resize(buffer.len().saturating_mul(2), 0);
+                continue;
+            }
+
+            return Err(io::Error::from_raw_os_error(errno));
+        }
+    }
+
+    fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
+        let mut buffer = vec![0_u8; 1024];
+        loop {
+            let mut grp = MaybeUninit::<libc::group>::zeroed();
+            let mut result: *mut libc::group = ptr::null_mut();
+            let errno = unsafe {
+                libc::getgrgid_r(
+                    gid as libc::gid_t,
+                    grp.as_mut_ptr(),
+                    buffer.as_mut_ptr() as *mut libc::c_char,
+                    buffer.len(),
+                    &mut result,
+                )
+            };
+
+            if errno == 0 {
+                if result.is_null() {
+                    return Ok(None);
+                }
+
+                let grp = unsafe { grp.assume_init() };
+                let name = unsafe { CStr::from_ptr(grp.gr_name) };
+                return Ok(Some(name.to_bytes().to_vec()));
+            }
+
+            if errno == libc::ERANGE {
+                buffer.resize(buffer.len().saturating_mul(2), 0);
+                continue;
+            }
+
+            return Err(io::Error::from_raw_os_error(errno));
+        }
+    }
+
+    fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
+        let c_name = match CString::new(name) {
+            Ok(name) => name,
+            Err(_) => return Ok(None),
+        };
+
+        let mut buffer = vec![0_u8; 1024];
+        loop {
+            let mut grp = MaybeUninit::<libc::group>::zeroed();
+            let mut result: *mut libc::group = ptr::null_mut();
+            let errno = unsafe {
+                libc::getgrnam_r(
+                    c_name.as_ptr(),
+                    grp.as_mut_ptr(),
+                    buffer.as_mut_ptr() as *mut libc::c_char,
+                    buffer.len(),
+                    &mut result,
+                )
+            };
+
+            if errno == 0 {
+                if result.is_null() {
+                    return Ok(None);
+                }
+
+                let grp = unsafe { grp.assume_init() };
+                return Ok(Some(grp.gr_gid as RawGid));
+            }
+
+            if errno == libc::ERANGE {
+                buffer.resize(buffer.len().saturating_mul(2), 0);
+                continue;
+            }
+
+            return Err(io::Error::from_raw_os_error(errno));
+        }
+    }
+}
+
+#[cfg(unix)]
+use id_lookup::{map_gid, map_uid};
 
 fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), MetadataError> {
     #[cfg(unix)]
@@ -715,6 +934,29 @@ mod tests {
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
         assert_ne!(dest_mtime, mtime);
+    }
+
+    #[test]
+    fn metadata_options_numeric_ids_toggle() {
+        let opts = MetadataOptions::new().numeric_ids(true);
+        assert!(opts.numeric_ids_enabled());
+        assert!(!MetadataOptions::new().numeric_ids_enabled());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn map_uid_round_trips_current_user_without_numeric_flag() {
+        let uid = rustix::process::geteuid().as_raw();
+        let mapped = super::map_uid(uid, false).expect("uid");
+        assert_eq!(mapped.as_raw(), uid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn map_gid_round_trips_current_group_without_numeric_flag() {
+        let gid = rustix::process::getegid().as_raw();
+        let mapped = super::map_gid(gid, false).expect("gid");
+        assert_eq!(mapped.as_raw(), gid);
     }
 
     #[test]
