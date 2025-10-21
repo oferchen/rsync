@@ -476,6 +476,7 @@ dependencies = [
  "clap",
  "filetime",
  "rsync-core",
+ "rsync-filters",
  "rsync-logging",
  "tempfile",
 ]

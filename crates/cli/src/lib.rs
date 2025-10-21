@@ -65,13 +65,15 @@
 //! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Write};
 use std::num::NonZeroU64;
+use std::path::PathBuf;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     client::{
-        BandwidthLimit, ClientConfig, FilterRuleSpec, ModuleListRequest,
+        BandwidthLimit, ClientConfig, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
         run_client as run_core_client, run_module_list,
     },
     message::{Message, Role},
@@ -99,7 +101,9 @@ const HELP_TEXT: &str = concat!(
     "  -a, --archive    Enable archive mode (implies --owner and --group).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
+    "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
+    "      --include-from=FILE  Read include patterns from FILE.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include and '-' exclude).\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
@@ -119,7 +123,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --filter, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -138,6 +142,8 @@ struct ParsedArgs {
     numeric_ids: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
+    exclude_from: Vec<OsString>,
+    include_from: Vec<OsString>,
     filters: Vec<OsString>,
 }
 
@@ -190,10 +196,26 @@ fn clap_command() -> Command {
                 .action(ArgAction::Append),
         )
         .arg(
+            Arg::new("exclude-from")
+                .long("exclude-from")
+                .value_name("FILE")
+                .help("Read exclude patterns from FILE.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
             Arg::new("include")
                 .long("include")
                 .value_name("PATTERN")
                 .help("Re-include files matching PATTERN after exclusions.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("include-from")
+                .long("include-from")
+                .value_name("FILE")
+                .help("Read include patterns from FILE.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -367,6 +389,14 @@ where
         .remove_many::<OsString>("include")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let exclude_from = matches
+        .remove_many::<OsString>("exclude-from")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let include_from = matches
+        .remove_many::<OsString>("include-from")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let filters = matches
         .remove_many::<OsString>("filter")
         .map(|values| values.collect())
@@ -386,6 +416,8 @@ where
         times,
         excludes,
         includes,
+        exclude_from,
+        include_from,
         numeric_ids,
         filters,
     })
@@ -447,6 +479,8 @@ where
         times,
         excludes,
         includes,
+        exclude_from,
+        include_from,
         filters,
         numeric_ids,
     } = parsed;
@@ -544,11 +578,29 @@ where
         .numeric_ids(numeric_ids);
 
     let mut filter_rules = Vec::new();
+    if let Err(message) =
+        append_filter_rules_from_files(&mut filter_rules, &exclude_from, FilterRuleKind::Exclude)
+    {
+        if write_message(&message, stderr).is_err() {
+            let fallback = message.to_string();
+            let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+        }
+        return 1;
+    }
     filter_rules.extend(
         excludes
             .into_iter()
             .map(|pattern| FilterRuleSpec::exclude(os_string_to_pattern(pattern))),
     );
+    if let Err(message) =
+        append_filter_rules_from_files(&mut filter_rules, &include_from, FilterRuleKind::Include)
+    {
+        if write_message(&message, stderr).is_err() {
+            let fallback = message.to_string();
+            let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+        }
+        return 1;
+    }
     filter_rules.extend(
         includes
             .into_iter()
@@ -696,6 +748,63 @@ fn parse_filter_rule(argument: &OsStr) -> Result<FilterRuleSpec, Message> {
             Err(message)
         }
     }
+}
+
+fn append_filter_rules_from_files(
+    destination: &mut Vec<FilterRuleSpec>,
+    files: &[OsString],
+    kind: FilterRuleKind,
+) -> Result<(), Message> {
+    for path in files {
+        let patterns = load_filter_file_patterns(path.as_os_str())?;
+        destination.extend(patterns.into_iter().map(|pattern| match kind {
+            FilterRuleKind::Include => FilterRuleSpec::include(pattern),
+            FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
+        }));
+    }
+    Ok(())
+}
+
+fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
+    let path_buf = PathBuf::from(path);
+    let path_display = path_buf.display().to_string();
+    let file = File::open(&path_buf).map_err(|error| {
+        let text = format!("failed to read filter file '{}': {}", path_display, error);
+        rsync_error!(1, text).with_role(Role::Client)
+    })?;
+
+    let mut reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    let mut patterns = Vec::new();
+
+    loop {
+        buffer.clear();
+        let bytes_read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
+            let text = format!("failed to read filter file '{}': {}", path_display, error);
+            rsync_error!(1, text).with_role(Role::Client)
+        })?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        if buffer.last() == Some(&b'\n') {
+            buffer.pop();
+        }
+        if buffer.last() == Some(&b'\r') {
+            buffer.pop();
+        }
+
+        let line = String::from_utf8_lossy(&buffer);
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        patterns.push(line.into_owned());
+    }
+
+    Ok(patterns)
 }
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
@@ -885,6 +994,7 @@ fn render_module_list<W: Write>(
 mod tests {
     use super::*;
     use rsync_core::client::FilterRuleKind;
+    use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::ffi::OsStr;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
@@ -1247,6 +1357,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_filter_files() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude-from"),
+            OsString::from("excludes.txt"),
+            OsString::from("--include-from"),
+            OsString::from("includes.txt"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.exclude_from, vec![OsString::from("excludes.txt")]);
+        assert_eq!(parsed.include_from, vec![OsString::from("includes.txt")]);
+    }
+
+    #[test]
     fn parse_filter_rule_accepts_include_and_exclude() {
         let include = parse_filter_rule(OsStr::new("+ assets/**")).expect("include rule parses");
         assert_eq!(include.kind(), FilterRuleKind::Include);
@@ -1320,6 +1447,141 @@ mod tests {
         let copied_root = dest_root.join("source");
         assert!(copied_root.join("keep.txt").exists());
         assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_exclude_from_skips_patterns() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let exclude_file = tmp.path().join("filters.txt");
+        std::fs::write(&exclude_file, "# comment\n\n*.tmp\n").expect("write filters");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude-from"),
+            exclude_file.as_os_str().to_os_string(),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_include_from_reinstate_patterns() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        let keep_dir = source_root.join("keep");
+        std::fs::create_dir_all(&keep_dir).expect("create keep dir");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(keep_dir.join("file.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let include_file = tmp.path().join("includes.txt");
+        std::fs::write(&include_file, "keep/\nkeep/**\n").expect("write include file");
+
+        let mut expected_rules = Vec::new();
+        expected_rules.push(FilterRuleSpec::exclude("*".to_string()));
+        append_filter_rules_from_files(
+            &mut expected_rules,
+            &[include_file.as_os_str().to_os_string()],
+            FilterRuleKind::Include,
+        )
+        .expect("load include patterns");
+
+        let engine_rules = expected_rules.iter().map(|rule| match rule.kind() {
+            FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
+            FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
+        });
+        let filter_set = FilterSet::from_rules(engine_rules).expect("filters");
+        assert!(filter_set.allows(std::path::Path::new("keep"), true));
+        assert!(filter_set.allows(std::path::Path::new("keep/file.txt"), false));
+        assert!(!filter_set.allows(std::path::Path::new("skip.tmp"), false));
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude"),
+            OsString::from("*"),
+            OsString::from("--include-from"),
+            include_file.as_os_str().to_os_string(),
+            source_operand,
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        assert!(dest_root.join("keep/file.txt").exists());
+        assert!(!dest_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_reports_filter_file_errors() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--exclude-from"),
+            OsString::from("missing.txt"),
+            OsString::from("src"),
+            OsString::from("dst"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+        assert!(rendered.contains("failed to read filter file 'missing.txt'"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
+    fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("filters.txt");
+        std::fs::write(&path, b"# comment\r\n\r\n include \r\npattern\r\n").expect("write filters");
+
+        let patterns =
+            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+
+        assert_eq!(
+            patterns,
+            vec![" include ".to_string(), "pattern".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_filter_file_patterns_handles_invalid_utf8() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("filters.bin");
+        std::fs::write(&path, [0xFFu8, b'\n']).expect("write invalid bytes");
+
+        let patterns =
+            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+
+        assert_eq!(patterns, vec!["\u{fffd}".to_string()]);
     }
 
     #[test]
