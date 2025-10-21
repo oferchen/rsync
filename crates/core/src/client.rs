@@ -1461,6 +1461,35 @@ mod tests {
     }
 
     #[test]
+    fn run_module_list_collects_warnings() {
+        let responses = vec![
+            "@WARNING: Maintenance scheduled\n",
+            "@RSYNCD: OK\n",
+            "delta\n",
+            "@WARNING: Additional notice\n",
+            "@RSYNCD: EXIT\n",
+        ];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "delta");
+        assert_eq!(
+            list.warnings(),
+            &[
+                String::from("Maintenance scheduled"),
+                String::from("Additional notice")
+            ]
+        );
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -1923,13 +1952,18 @@ fn strip_daemon_username(input: &str) -> Result<&str, ClientError> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModuleList {
     motd: Vec<String>,
+    warnings: Vec<String>,
     entries: Vec<ModuleListEntry>,
 }
 
 impl ModuleList {
-    /// Creates a new list from the supplied entries and optional MOTD lines.
-    fn new(motd: Vec<String>, entries: Vec<ModuleListEntry>) -> Self {
-        Self { motd, entries }
+    /// Creates a new list from the supplied entries, warning lines, and optional MOTD lines.
+    fn new(motd: Vec<String>, warnings: Vec<String>, entries: Vec<ModuleListEntry>) -> Self {
+        Self {
+            motd,
+            warnings,
+            entries,
+        }
     }
 
     /// Returns the advertised module entries.
@@ -1942,6 +1976,12 @@ impl ModuleList {
     #[must_use]
     pub fn motd_lines(&self) -> &[String] {
         &self.motd
+    }
+
+    /// Returns the warning messages emitted by the daemon while processing the request.
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 }
 
@@ -2012,6 +2052,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 
     let mut entries = Vec::new();
     let mut motd = Vec::new();
+    let mut warnings = Vec::new();
     let mut acknowledged = false;
 
     while let Some(line) = read_trimmed_line(&mut reader)
@@ -2050,6 +2091,11 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
             ));
         }
 
+        if let Some(payload) = line.strip_prefix("@WARNING:") {
+            warnings.push(payload.trim_start().to_string());
+            continue;
+        }
+
         if !acknowledged {
             return Err(daemon_protocol_error(&line));
         }
@@ -2063,7 +2109,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
         ));
     }
 
-    Ok(ModuleList::new(motd, entries))
+    Ok(ModuleList::new(motd, warnings, entries))
 }
 
 fn normalize_motd_payload(payload: &str) -> String {

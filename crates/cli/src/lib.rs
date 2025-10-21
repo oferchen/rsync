@@ -702,7 +702,7 @@ where
             Ok(Some(request)) => {
                 return match run_module_list(request) {
                     Ok(list) => {
-                        if render_module_list(stdout, &list).is_err() {
+                        if render_module_list(stdout, stderr.writer_mut(), &list).is_err() {
                             1
                         } else {
                             0
@@ -1456,19 +1456,24 @@ fn parse_bwlimit_bytes(text: &str) -> Result<Option<u64>, BandwidthParseError> {
     Ok(Some(bytes_u64))
 }
 
-fn render_module_list<W: Write>(
-    writer: &mut W,
+fn render_module_list<W: Write, E: Write>(
+    stdout: &mut W,
+    stderr: &mut E,
     list: &rsync_core::client::ModuleList,
 ) -> io::Result<()> {
+    for warning in list.warnings() {
+        writeln!(stderr, "@WARNING: {}", warning)?;
+    }
+
     for line in list.motd_lines() {
-        writeln!(writer, "{}", line)?;
+        writeln!(stdout, "{}", line)?;
     }
 
     for entry in list.entries() {
         if let Some(comment) = entry.comment() {
-            writeln!(writer, "{}\t{}", entry.name(), comment)?;
+            writeln!(stdout, "{}\t{}", entry.name(), comment)?;
         } else {
-            writeln!(writer, "{}", entry.name())?;
+            writeln!(stdout, "{}", entry.name())?;
         }
     }
     Ok(())
@@ -2494,6 +2499,32 @@ mod tests {
         assert!(rendered.contains("Welcome to the test daemon"));
         assert!(rendered.contains("first\tFirst module"));
         assert!(rendered.contains("second"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn remote_daemon_listing_renders_warnings() {
+        let (addr, handle) = spawn_stub_daemon(vec![
+            "@WARNING: Maintenance\n",
+            "@RSYNCD: OK\n",
+            "module\n",
+            "@RSYNCD: EXIT\n",
+        ]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+
+        assert_eq!(code, 0);
+        assert!(
+            String::from_utf8(stdout)
+                .expect("modules")
+                .contains("module")
+        );
+
+        let rendered_err = String::from_utf8(stderr).expect("warnings are UTF-8");
+        assert!(rendered_err.contains("@WARNING: Maintenance"));
 
         handle.join().expect("server thread");
     }
