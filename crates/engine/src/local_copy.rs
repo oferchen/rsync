@@ -214,6 +214,7 @@ pub struct LocalCopyOptions {
     preserve_permissions: bool,
     preserve_times: bool,
     filters: Option<FilterSet>,
+    numeric_ids: bool,
 }
 
 impl LocalCopyOptions {
@@ -228,6 +229,7 @@ impl LocalCopyOptions {
             preserve_permissions: false,
             preserve_times: false,
             filters: None,
+            numeric_ids: false,
         }
     }
 
@@ -286,6 +288,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that UID/GID preservation use numeric identifiers.
+    #[must_use]
+    #[doc(alias = "--numeric-ids")]
+    pub const fn numeric_ids(mut self, numeric: bool) -> Self {
+        self.numeric_ids = numeric;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -326,6 +336,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn filter_set(&self) -> Option<&FilterSet> {
         self.filters.as_ref()
+    }
+
+    /// Reports whether numeric UID/GID preservation should be used.
+    #[must_use]
+    pub const fn numeric_ids_enabled(&self) -> bool {
+        self.numeric_ids
     }
 }
 
@@ -423,6 +439,7 @@ impl CopyContext {
             .preserve_group(self.options.preserve_group())
             .preserve_permissions(self.options.preserve_permissions())
             .preserve_times(self.options.preserve_times())
+            .numeric_ids(self.options.numeric_ids_enabled())
     }
 
     fn split_mut(&mut self) -> (&mut HardLinkTracker, Option<&mut BandwidthLimiter>) {
@@ -1699,6 +1716,19 @@ mod tests {
     use std::num::NonZeroU64;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn local_copy_options_numeric_ids_round_trip() {
+        let options = LocalCopyOptions::default().numeric_ids(true);
+        assert!(options.numeric_ids_enabled());
+    }
+
+    #[test]
+    fn metadata_options_reflect_numeric_ids_setting() {
+        let options = LocalCopyOptions::default().numeric_ids(true);
+        let context = CopyContext::new(LocalCopyExecution::Apply, options);
+        assert!(context.metadata_options().numeric_ids_enabled());
+    }
 
     #[cfg(unix)]
     mod unix_ids {
