@@ -1391,6 +1391,8 @@ fn delete_extraneous_entries(
             if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
                 continue;
             }
+
+            entry_relative = Some(relative_path);
         }
 
         if mode.is_dry_run() {
@@ -1508,6 +1510,25 @@ fn remove_extraneous_file(path: PathBuf) -> Result<(), LocalCopyError> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(LocalCopyError::io("remove extraneous entry", path, error)),
+    }
+}
+
+fn remove_directory_if_empty(path: PathBuf) -> Result<(), LocalCopyError> {
+    match fs::remove_dir(&path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(LocalCopyError::io(
+            "remove extraneous directory",
+            path,
+            error,
+        )),
     }
 }
 
@@ -2487,5 +2508,41 @@ mod tests {
         let skip_path = target_root.join("skip.tmp");
         assert!(skip_path.exists());
         assert_eq!(fs::read(skip_path).expect("read skip"), b"dest skip");
+    }
+
+    #[test]
+    fn delete_preserves_directories_with_filtered_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+
+        let target_root = dest.join("source");
+        let cache_dir = target_root.join("cache");
+        fs::create_dir_all(&cache_dir).expect("create cache dir");
+        fs::write(cache_dir.join("temp.tmp"), b"cache data").expect("write cache file");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .filters(Some(filters));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(cache_dir.exists());
+        let preserved = cache_dir.join("temp.tmp");
+        assert!(preserved.exists());
+        assert_eq!(fs::read(preserved).expect("read preserved"), b"cache data");
     }
 }
