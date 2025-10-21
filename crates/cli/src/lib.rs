@@ -7,7 +7,8 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter`, and `--bwlimit`) and delegates local copy operations to
+//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter`, `--files-from`,
+//! `--from0`, and `--bwlimit`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -20,7 +21,8 @@
 //! iterator of arguments together with handles for standard output and error,
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`, `--filter`, and `--bwlimit` flags while treating all other
+//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
+//! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
 //! deterministic local copy pipeline with optional bandwidth pacing.
@@ -105,6 +107,8 @@ const HELP_TEXT: &str = concat!(
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include and '-' exclude).\n",
+    "      --files-from=FILE  Read additional source operands from FILE.\n",
+    "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
@@ -123,7 +127,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -145,6 +149,8 @@ struct ParsedArgs {
     exclude_from: Vec<OsString>,
     include_from: Vec<OsString>,
     filters: Vec<OsString>,
+    files_from: Vec<OsString>,
+    from0: bool,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -226,6 +232,20 @@ fn clap_command() -> Command {
                 .help("Apply filter RULE (supports '+' include and '-' exclude).")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("files-from")
+                .long("files-from")
+                .value_name("FILE")
+                .help("Read additional source operands from FILE.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("from0")
+                .long("from0")
+                .help("Treat file list entries as NUL-terminated records.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("owner")
@@ -401,6 +421,11 @@ where
         .remove_many::<OsString>("filter")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let files_from = matches
+        .remove_many::<OsString>("files-from")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let from0 = matches.get_flag("from0");
 
     Ok(ParsedArgs {
         show_help,
@@ -420,6 +445,8 @@ where
         include_from,
         numeric_ids,
         filters,
+        files_from,
+        from0,
     })
 }
 
@@ -482,6 +509,8 @@ where
         exclude_from,
         include_from,
         filters,
+        files_from,
+        from0,
         numeric_ids,
     } = parsed;
 
@@ -530,36 +559,53 @@ where
 
     let numeric_ids = numeric_ids.unwrap_or(false);
 
-    match ModuleListRequest::from_operands(&remainder) {
-        Ok(Some(request)) => {
-            return match run_module_list(request) {
-                Ok(list) => {
-                    if render_module_list(stdout, &list).is_err() {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                Err(error) => {
-                    if write_message(error.message(), stderr).is_err() {
-                        let _ = writeln!(
-                            stderr.writer_mut(),
-                            "rsync error: daemon functionality is unavailable in this build (code {})",
-                            error.exit_code()
-                        );
-                    }
-                    error.exit_code()
-                }
-            };
-        }
-        Ok(None) => {}
-        Err(error) => {
-            if write_message(error.message(), stderr).is_err() {
-                let _ = writeln!(stderr.writer_mut(), "{}", error);
+    let mut file_list_operands = match load_file_list_operands(&files_from, from0) {
+        Ok(operands) => operands,
+        Err(message) => {
+            if write_message(&message, stderr).is_err() {
+                let fallback = message.to_string();
+                let _ = writeln!(stderr.writer_mut(), "{}", fallback);
             }
-            return error.exit_code();
+            return 1;
+        }
+    };
+
+    if file_list_operands.is_empty() {
+        match ModuleListRequest::from_operands(&remainder) {
+            Ok(Some(request)) => {
+                return match run_module_list(request) {
+                    Ok(list) => {
+                        if render_module_list(stdout, &list).is_err() {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    Err(error) => {
+                        if write_message(error.message(), stderr).is_err() {
+                            let _ = writeln!(
+                                stderr.writer_mut(),
+                                "rsync error: daemon functionality is unavailable in this build (code {})",
+                                error.exit_code()
+                            );
+                        }
+                        error.exit_code()
+                    }
+                };
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if write_message(error.message(), stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", error);
+                }
+                return error.exit_code();
+            }
         }
     }
+
+    let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
+    transfer_operands.append(&mut file_list_operands);
+    transfer_operands.extend(remainder);
 
     let preserve_owner = owner.unwrap_or(archive);
     let preserve_group = group.unwrap_or(archive);
@@ -567,7 +613,7 @@ where
     let preserve_times = times.unwrap_or(archive);
 
     let mut builder = ClientConfig::builder()
-        .transfer_args(remainder)
+        .transfer_args(transfer_operands)
         .dry_run(dry_run)
         .delete(delete)
         .bandwidth_limit(bandwidth_limit)
@@ -805,6 +851,120 @@ fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
     }
 
     Ok(patterns)
+}
+
+fn load_file_list_operands(
+    files: &[OsString],
+    zero_terminated: bool,
+) -> Result<Vec<OsString>, Message> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let mut stdin_handle: Option<io::Stdin> = None;
+
+    for path in files {
+        if path.as_os_str() == OsStr::new("-") {
+            let stdin = stdin_handle.get_or_insert_with(io::stdin);
+            let mut reader = stdin.lock();
+            read_file_list_from_reader(&mut reader, zero_terminated, &mut entries)
+                .map_err(|error| {
+                    rsync_error!(
+                        1,
+                        format!("failed to read file list from standard input: {error}")
+                    )
+                    .with_role(Role::Client)
+                })?;
+            continue;
+        }
+
+        let path_buf = PathBuf::from(path);
+        let display = path_buf.display().to_string();
+        let file = File::open(&path_buf).map_err(|error| {
+            rsync_error!(
+                1,
+                format!("failed to read file list '{}': {}", display, error)
+            )
+            .with_role(Role::Client)
+        })?;
+        let mut reader = BufReader::new(file);
+        read_file_list_from_reader(&mut reader, zero_terminated, &mut entries).map_err(
+            |error| {
+                rsync_error!(
+                    1,
+                    format!("failed to read file list '{}': {}", display, error)
+                )
+                .with_role(Role::Client)
+            },
+        )?;
+    }
+
+    Ok(entries)
+}
+
+fn read_file_list_from_reader<R: BufRead>(
+    reader: &mut R,
+    zero_terminated: bool,
+    entries: &mut Vec<OsString>,
+) -> io::Result<()> {
+    if zero_terminated {
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer)?;
+        let mut start = 0;
+        while start < buffer.len() {
+            let end = match buffer[start..].iter().position(|&byte| byte == b'\0') {
+                Some(offset) => start + offset,
+                None => buffer.len(),
+            };
+            push_file_list_entry(&buffer[start..end], entries);
+            if end == buffer.len() {
+                break;
+            }
+            start = end + 1;
+        }
+        return Ok(());
+    }
+
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let bytes_read = reader.read_until(b'\n', &mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        if buffer.last() == Some(&b'\n') {
+            buffer.pop();
+        }
+        if buffer.last() == Some(&b'\r') {
+            buffer.pop();
+        }
+
+        push_file_list_entry(&buffer, entries);
+    }
+
+    Ok(())
+}
+
+fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
+    if bytes.is_empty() {
+        return;
+    }
+
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'\r' {
+        end -= 1;
+    }
+
+    if end == 0 {
+        return;
+    }
+
+    let text = String::from_utf8_lossy(&bytes[..end]).into_owned();
+    if !text.is_empty() {
+        entries.push(OsString::from(text));
+    }
 }
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
@@ -1143,6 +1303,104 @@ mod tests {
         );
     }
 
+    #[test]
+    fn transfer_request_with_files_from_copies_listed_sources() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_a = tmp.path().join("files-from-a.txt");
+        let source_b = tmp.path().join("files-from-b.txt");
+        std::fs::write(&source_a, b"files-from-a").expect("write source a");
+        std::fs::write(&source_b, b"files-from-b").expect("write source b");
+
+        let list_path = tmp.path().join("files-from.list");
+        let list_contents = format!("{}\n{}\n", source_a.display(), source_b.display());
+        std::fs::write(&list_path, list_contents).expect("write list");
+
+        let dest_dir = tmp.path().join("files-from-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_a = dest_dir.join(source_a.file_name().expect("file name a"));
+        let copied_b = dest_dir.join(source_b.file_name().expect("file name b"));
+        assert_eq!(
+            std::fs::read(&copied_a).expect("read copied a"),
+            b"files-from-a"
+        );
+        assert_eq!(
+            std::fs::read(&copied_b).expect("read copied b"),
+            b"files-from-b"
+        );
+    }
+
+    #[test]
+    fn transfer_request_with_from0_reads_null_separated_list() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_a = tmp.path().join("from0-a.txt");
+        let source_b = tmp.path().join("from0-b.txt");
+        std::fs::write(&source_a, b"from0-a").expect("write source a");
+        std::fs::write(&source_b, b"from0-b").expect("write source b");
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(source_a.display().to_string().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(source_b.display().to_string().as_bytes());
+        bytes.push(0);
+        let list_path = tmp.path().join("files-from0.list");
+        std::fs::write(&list_path, bytes).expect("write list");
+
+        let dest_dir = tmp.path().join("files-from0-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--from0"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_a = dest_dir.join(source_a.file_name().expect("file name a"));
+        let copied_b = dest_dir.join(source_b.file_name().expect("file name b"));
+        assert_eq!(std::fs::read(&copied_a).expect("read copied a"), b"from0-a");
+        assert_eq!(std::fs::read(&copied_b).expect("read copied b"), b"from0-b");
+    }
+
+    #[test]
+    fn files_from_reports_read_failures() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let missing = tmp.path().join("missing.list");
+        let dest_dir = tmp.path().join("files-from-error-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--files-from={}", missing.display())),
+            dest_dir.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("utf8");
+        assert!(rendered.contains("failed to read file list"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn transfer_request_with_owner_group_preserves_flags() {
@@ -1371,6 +1629,38 @@ mod tests {
 
         assert_eq!(parsed.exclude_from, vec![OsString::from("excludes.txt")]);
         assert_eq!(parsed.include_from, vec![OsString::from("includes.txt")]);
+    }
+
+    #[test]
+    fn parse_args_collects_files_from_paths() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--files-from"),
+            OsString::from("list-a"),
+            OsString::from("--files-from"),
+            OsString::from("list-b"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            parsed.files_from,
+            vec![OsString::from("list-a"), OsString::from("list-b")]
+        );
+    }
+
+    #[test]
+    fn parse_args_sets_from0_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--from0"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.from0);
     }
 
     #[test]
