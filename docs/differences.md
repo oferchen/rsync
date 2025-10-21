@@ -16,8 +16,9 @@ referenced functionality ships and parity is verified by tests or goldens.
     list available modules, but remote transfers, xattrs/ACLs,
     compression, and progress reporting remain unavailable. Filter handling via
     `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
-    with `+`/`-` actions mirrors rsync's glob semantics for local copies, but
-    the broader filter/merge language is still missing.
+    with `+`/`-` actions and `merge FILE` directives mirrors rsync's glob
+    semantics for local copies, but the broader filter/merge language is still
+    missing.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, and validate the resulting behaviour via
