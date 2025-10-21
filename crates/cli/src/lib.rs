@@ -100,7 +100,9 @@ const HELP_TEXT: &str = concat!(
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
+    "      --no-owner   Disable ownership preservation.\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
+    "      --no-group   Disable group preservation.\n",
     "  -p, --perms      Preserve file permissions.\n",
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
@@ -112,7 +114,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, --group, --perms/-p, --no-perms, --times/-t, and --no-times";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, and --no-times";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -124,8 +126,8 @@ struct ParsedArgs {
     delete: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
-    owner: bool,
-    group: bool,
+    owner: Option<bool>,
+    group: Option<bool>,
     perms: Option<bool>,
     times: Option<bool>,
 }
@@ -175,14 +177,30 @@ fn clap_command() -> Command {
                 .long("owner")
                 .short('o')
                 .help("Preserve file ownership (requires super-user).")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-owner"),
+        )
+        .arg(
+            Arg::new("no-owner")
+                .long("no-owner")
+                .help("Disable ownership preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("owner"),
         )
         .arg(
             Arg::new("group")
                 .long("group")
                 .short('g')
                 .help("Preserve file group (requires suitable privileges).")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-group"),
+        )
+        .arg(
+            Arg::new("no-group")
+                .long("no-group")
+                .help("Disable group preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("group"),
         )
         .arg(
             Arg::new("perms")
@@ -252,8 +270,20 @@ where
     let dry_run = matches.get_flag("dry-run");
     let archive = matches.get_flag("archive");
     let delete = matches.get_flag("delete");
-    let owner = matches.get_flag("owner");
-    let group = matches.get_flag("group");
+    let owner = if matches.get_flag("owner") {
+        Some(true)
+    } else if matches.get_flag("no-owner") {
+        Some(false)
+    } else {
+        None
+    };
+    let group = if matches.get_flag("group") {
+        Some(true)
+    } else if matches.get_flag("no-group") {
+        Some(false)
+    } else {
+        None
+    };
     let perms = if matches.get_flag("perms") {
         Some(true)
     } else if matches.get_flag("no-perms") {
@@ -407,6 +437,8 @@ where
         }
     }
 
+    let preserve_owner = parsed.owner.unwrap_or(parsed.archive);
+    let preserve_group = parsed.group.unwrap_or(parsed.archive);
     let preserve_permissions = parsed.perms.unwrap_or(parsed.archive);
     let preserve_times = parsed.times.unwrap_or(parsed.archive);
 
@@ -415,8 +447,8 @@ where
         .dry_run(parsed.dry_run)
         .delete(parsed.delete)
         .bandwidth_limit(bandwidth_limit)
-        .owner(parsed.owner || parsed.archive)
-        .group(parsed.group || parsed.archive)
+        .owner(preserve_owner)
+        .group(preserve_group)
         .permissions(preserve_permissions)
         .times(preserve_times)
         .build();
@@ -950,6 +982,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_owner_overrides() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--owner"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.owner, Some(true));
+        assert_eq!(parsed.group, None);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--no-owner"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.owner, Some(false));
+        assert!(parsed.archive);
+    }
+
+    #[test]
+    fn parse_args_recognises_group_overrides() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--group"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.group, Some(true));
+        assert_eq!(parsed.owner, None);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--no-group"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.group, Some(false));
+        assert!(parsed.archive);
+    }
+
+    #[test]
     fn transfer_request_with_times_preserves_timestamp() {
         use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
@@ -1186,8 +1270,8 @@ mod tests {
         .expect("parse succeeds");
 
         assert!(parsed.archive);
-        assert!(!parsed.owner);
-        assert!(!parsed.group);
+        assert_eq!(parsed.owner, None);
+        assert_eq!(parsed.group, None);
     }
 
     #[test]
