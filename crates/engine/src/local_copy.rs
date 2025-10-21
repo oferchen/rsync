@@ -45,7 +45,7 @@
 use std::cmp::Ordering;
 #[cfg(unix)]
 use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -519,6 +519,41 @@ struct DirectoryEntry {
     metadata: fs::Metadata,
 }
 
+#[derive(Default)]
+struct DeletionPlanner {
+    directories: BTreeMap<PathBuf, HashSet<OsString>>,
+}
+
+impl DeletionPlanner {
+    fn record_directory(&mut self, destination: &Path, entries: &[DirectoryEntry]) {
+        let keep = self
+            .directories
+            .entry(destination.to_path_buf())
+            .or_default();
+
+        for entry in entries {
+            keep.insert(entry.file_name.clone());
+        }
+    }
+
+    fn record_child(&mut self, path: &Path) {
+        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+            self.directories
+                .entry(parent.to_path_buf())
+                .or_default()
+                .insert(name.to_os_string());
+        }
+    }
+
+    fn finalize(self, mode: LocalCopyExecution) -> Result<(), LocalCopyError> {
+        for (directory, keep) in self.directories {
+            delete_extraneous_entries(&directory, &keep, mode)?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Destination operand capturing directory semantics requested by the caller.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DestinationSpec {
@@ -557,6 +592,11 @@ fn copy_sources(
     let destination_path = plan.destination.path();
     let mut destination_state = query_destination_state(destination_path)?;
     let mut hard_links = HardLinkTracker::new();
+    let mut deletion_plan = if options.delete_extraneous() {
+        Some(DeletionPlanner::default())
+    } else {
+        None
+    };
 
     if plan.destination.force_directory() {
         ensure_destination_directory(destination_path, &mut destination_state, mode)?;
@@ -590,13 +630,19 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
+            if let Some(plan) = deletion_plan.as_mut() {
+                if target != destination_path {
+                    plan.record_child(&target);
+                }
+            }
+
             copy_directory_recursive(
                 source_path,
                 &target,
                 &metadata,
                 mode,
-                options,
                 &mut hard_links,
+                &mut deletion_plan,
             )?;
         } else if file_type.is_file() {
             let target = if destination_behaves_like_directory {
@@ -609,6 +655,12 @@ fn copy_sources(
             };
 
             copy_file(source_path, &target, &metadata, mode, &mut hard_links)?;
+
+            if let Some(plan) = deletion_plan.as_mut() {
+                if target != destination_path {
+                    plan.record_child(&target);
+                }
+            }
         } else if file_type.is_symlink() {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -620,6 +672,12 @@ fn copy_sources(
             };
 
             copy_symlink(source_path, &target, &metadata, mode)?;
+
+            if let Some(plan) = deletion_plan.as_mut() {
+                if target != destination_path {
+                    plan.record_child(&target);
+                }
+            }
         } else if is_fifo(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -631,6 +689,12 @@ fn copy_sources(
             };
 
             copy_fifo(&target, &metadata, mode)?;
+
+            if let Some(plan) = deletion_plan.as_mut() {
+                if target != destination_path {
+                    plan.record_child(&target);
+                }
+            }
         } else if is_device(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -642,11 +706,21 @@ fn copy_sources(
             };
 
             copy_device(&target, &metadata, mode)?;
+
+            if let Some(plan) = deletion_plan.as_mut() {
+                if target != destination_path {
+                    plan.record_child(&target);
+                }
+            }
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
             ));
         }
+    }
+
+    if let Some(plan) = deletion_plan {
+        plan.finalize(mode)?;
     }
 
     Ok(())
@@ -675,8 +749,8 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
-    options: LocalCopyOptions,
     hard_links: &mut HardLinkTracker,
+    deletion_plan: &mut Option<DeletionPlanner>,
 ) -> Result<(), LocalCopyError> {
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -704,6 +778,10 @@ fn copy_directory_recursive(
 
     let entries = read_directory_entries_sorted(source)?;
 
+    if let Some(plan) = deletion_plan.as_mut() {
+        plan.record_directory(destination, &entries);
+    }
+
     for entry in entries.iter() {
         let file_name = &entry.file_name;
         let entry_path = &entry.path;
@@ -717,8 +795,8 @@ fn copy_directory_recursive(
                 &target_path,
                 entry_metadata,
                 mode,
-                options,
                 hard_links,
+                deletion_plan,
             )?;
         } else if entry_type.is_file() {
             copy_file(entry_path, &target_path, entry_metadata, mode, hard_links)?;
@@ -733,10 +811,6 @@ fn copy_directory_recursive(
                 LocalCopyArgumentError::UnsupportedFileType,
             ));
         }
-    }
-
-    if options.delete_extraneous() {
-        delete_extraneous_entries(destination, &entries, mode)?;
     }
 
     if !mode.is_dry_run() {
@@ -1017,14 +1091,9 @@ fn copy_device(
 
 fn delete_extraneous_entries(
     destination: &Path,
-    source_entries: &[DirectoryEntry],
+    keep: &HashSet<OsString>,
     mode: LocalCopyExecution,
 ) -> Result<(), LocalCopyError> {
-    let mut keep = HashSet::with_capacity(source_entries.len());
-    for entry in source_entries {
-        keep.insert(entry.file_name.clone());
-    }
-
     let read_dir = match fs::read_dir(destination) {
         Ok(iter) => iter,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -1677,6 +1746,47 @@ mod tests {
             b"fresh"
         );
         assert!(!dest_root.join("extra.txt").exists());
+    }
+
+    #[test]
+    fn execute_with_delete_preserves_union_across_sources() {
+        let temp = tempdir().expect("tempdir");
+        let source_one = temp.path().join("one");
+        let source_two = temp.path().join("two");
+        fs::create_dir_all(&source_one).expect("create first source");
+        fs::create_dir_all(&source_two).expect("create second source");
+        fs::write(source_one.join("alpha.txt"), b"from-one").expect("write alpha");
+        fs::write(source_two.join("beta.txt"), b"from-two").expect("write beta");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create destination");
+        fs::write(dest_root.join("alpha.txt"), b"stale").expect("write stale alpha");
+        fs::write(dest_root.join("obsolete.txt"), b"remove").expect("write obsolete");
+
+        let mut source_one_operand = source_one.clone().into_os_string();
+        source_one_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let mut source_two_operand = source_two.clone().into_os_string();
+        source_two_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![
+            source_one_operand,
+            source_two_operand,
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete(true);
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("alpha.txt")).expect("read alpha"),
+            b"from-one"
+        );
+        assert_eq!(
+            fs::read(dest_root.join("beta.txt")).expect("read beta"),
+            b"from-two"
+        );
+        assert!(!dest_root.join("obsolete.txt").exists());
     }
 
     #[test]
