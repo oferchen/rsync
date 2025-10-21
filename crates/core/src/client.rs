@@ -115,6 +115,8 @@ pub struct ClientConfig {
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
+    preserve_permissions: bool,
+    preserve_times: bool,
 }
 
 impl ClientConfig {
@@ -170,6 +172,20 @@ impl ClientConfig {
     pub const fn preserve_group(&self) -> bool {
         self.preserve_group
     }
+
+    /// Reports whether permissions should be preserved.
+    #[must_use]
+    #[doc(alias = "--perms")]
+    pub const fn preserve_permissions(&self) -> bool {
+        self.preserve_permissions
+    }
+
+    /// Reports whether timestamps should be preserved.
+    #[must_use]
+    #[doc(alias = "--times")]
+    pub const fn preserve_times(&self) -> bool {
+        self.preserve_times
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -181,6 +197,8 @@ pub struct ClientConfigBuilder {
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
+    preserve_permissions: bool,
+    preserve_times: bool,
 }
 
 impl ClientConfigBuilder {
@@ -236,6 +254,22 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that permissions be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--perms")]
+    pub const fn permissions(mut self, preserve: bool) -> Self {
+        self.preserve_permissions = preserve;
+        self
+    }
+
+    /// Requests that timestamps be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--times")]
+    pub const fn times(mut self, preserve: bool) -> Self {
+        self.preserve_times = preserve;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -246,6 +280,8 @@ impl ClientConfigBuilder {
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
             preserve_group: self.preserve_group,
+            preserve_permissions: self.preserve_permissions,
+            preserve_times: self.preserve_times,
         }
     }
 }
@@ -334,7 +370,9 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
                 .map(|limit| limit.bytes_per_second()),
         )
         .owner(config.preserve_owner())
-        .group(config.preserve_group());
+        .group(config.preserve_group())
+        .permissions(config.preserve_permissions())
+        .times(config.preserve_times());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -424,6 +462,28 @@ mod tests {
     }
 
     #[test]
+    fn builder_preserves_permissions_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .permissions(true)
+            .build();
+
+        assert!(config.preserve_permissions());
+        assert!(!config.preserve_times());
+    }
+
+    #[test]
+    fn builder_preserves_times_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .times(true)
+            .build();
+
+        assert!(config.preserve_times());
+        assert!(!config.preserve_permissions());
+    }
+
+    #[test]
     fn run_client_reports_missing_operands() {
         let config = ClientConfig::builder().build();
         let error = run_client(config).expect_err("missing operands should error");
@@ -443,7 +503,12 @@ mod tests {
 
         let config = ClientConfig::builder()
             .transfer_args([source.clone(), destination.clone()])
+            .permissions(true)
+            .times(true)
             .build();
+
+        assert!(config.preserve_permissions());
+        assert!(config.preserve_times());
 
         run_client(config).expect("copy succeeds");
 
@@ -615,8 +680,17 @@ mod tests {
         let mtime = FileTime::from_unix_time(1_700_000_100, 456_000_000);
         set_file_times(&source, atime, mtime).expect("set source timestamps");
 
+        let source_metadata = fs::metadata(&source).expect("source metadata");
+        assert_eq!(source_metadata.permissions().mode() & 0o777, mode);
+        let src_atime = FileTime::from_last_access_time(&source_metadata);
+        let src_mtime = FileTime::from_last_modification_time(&source_metadata);
+        assert_eq!(src_atime, atime);
+        assert_eq!(src_mtime, mtime);
+
         let config = ClientConfig::builder()
             .transfer_args([source.clone(), destination.clone()])
+            .permissions(true)
+            .times(true)
             .build();
 
         run_client(config).expect("copy succeeds");
@@ -649,7 +723,12 @@ mod tests {
         let destination_dir = tmp.path().join("dest-dir");
         let config = ClientConfig::builder()
             .transfer_args([source_dir.clone(), destination_dir.clone()])
+            .permissions(true)
+            .times(true)
             .build();
+
+        assert!(config.preserve_permissions());
+        assert!(config.preserve_times());
 
         run_client(config).expect("directory copy succeeds");
 
@@ -696,7 +775,12 @@ mod tests {
 
         let config = ClientConfig::builder()
             .transfer_args([source_dir.clone(), dest_root.clone()])
+            .permissions(true)
+            .times(true)
             .build();
+
+        assert!(config.preserve_permissions());
+        assert!(config.preserve_times());
 
         run_client(config).expect("directory copy succeeds");
 
