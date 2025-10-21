@@ -352,6 +352,7 @@ pub struct LocalCopyOptions {
     partial: bool,
     inplace: bool,
     collect_events: bool,
+    relative_paths: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -374,6 +375,7 @@ impl LocalCopyOptions {
             partial: false,
             inplace: false,
             collect_events: false,
+            relative_paths: false,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
         }
@@ -456,6 +458,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--sparse")]
     pub const fn sparse(mut self, sparse: bool) -> Self {
         self.sparse = sparse;
+        self
+    }
+
+    /// Requests that source-relative path components be preserved in the destination.
+    #[must_use]
+    #[doc(alias = "--relative")]
+    pub const fn relative_paths(mut self, relative: bool) -> Self {
+        self.relative_paths = relative;
         self
     }
 
@@ -557,6 +567,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn sparse_enabled(&self) -> bool {
         self.sparse
+    }
+
+    /// Reports whether relative path preservation has been requested.
+    #[must_use]
+    pub const fn relative_paths_enabled(&self) -> bool {
+        self.relative_paths
     }
 
     /// Reports whether partial transfer handling has been requested.
@@ -831,6 +847,10 @@ impl CopyContext {
 
     fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
+    }
+
+    fn relative_paths_enabled(&self) -> bool {
+        self.options.relative_paths_enabled()
     }
 
     fn checksum_enabled(&self) -> bool {
@@ -1208,6 +1228,7 @@ impl LocalCopyArgumentError {
 pub struct SourceSpec {
     path: PathBuf,
     copy_contents: bool,
+    relative_prefix_components: Option<usize>,
 }
 
 impl SourceSpec {
@@ -1228,7 +1249,40 @@ impl SourceSpec {
         Ok(Self {
             path: PathBuf::from(operand),
             copy_contents,
+            relative_prefix_components: detect_relative_prefix_components(operand.as_os_str()),
         })
+    }
+
+    fn relative_root(&self) -> Option<PathBuf> {
+        use std::path::Component;
+
+        let skip = self.relative_prefix_components.unwrap_or(0);
+        let mut index = 0;
+        let mut relative = PathBuf::new();
+
+        for component in self.path.components() {
+            if index < skip {
+                index += 1;
+                continue;
+            }
+
+            index += 1;
+
+            match component {
+                Component::CurDir | Component::RootDir => {}
+                Component::Prefix(prefix) => {
+                    relative.push(Path::new(prefix.as_os_str()));
+                }
+                Component::ParentDir => relative.push(Path::new("..")),
+                Component::Normal(part) => relative.push(Path::new(part)),
+            }
+        }
+
+        if relative.as_os_str().is_empty() {
+            None
+        } else {
+            Some(relative)
+        }
     }
 
     /// Returns the source path.
@@ -1242,6 +1296,43 @@ impl SourceSpec {
     pub const fn copy_contents(&self) -> bool {
         self.copy_contents
     }
+}
+
+fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
+    use std::path::{Component, Path};
+
+    let path = Path::new(operand);
+
+    #[cfg(unix)]
+    if let Some(count) = detect_marker_components_unix(operand) {
+        return Some(count);
+    }
+
+    #[cfg(windows)]
+    if let Some(count) = detect_marker_components_windows(operand) {
+        return Some(count);
+    }
+
+    let components: Vec<Component<'_>> = path.components().collect();
+
+    if components.is_empty() {
+        return None;
+    }
+
+    let mut skip = 0;
+
+    if let Some(Component::Prefix(_)) = components.first() {
+        if !path.has_root() {
+            return None;
+        }
+        skip += 1;
+    }
+
+    if let Some(Component::RootDir) = components.get(skip) {
+        skip += 1;
+    }
+
+    if skip > 0 { Some(skip) } else { None }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1286,6 +1377,153 @@ impl DestinationSpec {
     }
 }
 
+#[cfg(unix)]
+fn detect_marker_components_unix(operand: &OsStr) -> Option<usize> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let bytes = operand.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut index = 0;
+    let len = bytes.len();
+    let mut component_count = 0;
+
+    if bytes[0] == b'/' {
+        component_count += 1;
+        while index < len && bytes[index] == b'/' {
+            index += 1;
+        }
+    }
+
+    if index >= len {
+        return None;
+    }
+
+    let mut start = index;
+    let mut count = component_count;
+
+    while index <= len {
+        if index == len || bytes[index] == b'/' {
+            if start != index {
+                let component = &bytes[start..index];
+                if component == b"." {
+                    return Some(count);
+                }
+                count += 1;
+            }
+
+            while index < len && bytes[index] == b'/' {
+                index += 1;
+            }
+            start = index;
+            if index == len {
+                break;
+            }
+        } else {
+            index += 1;
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn detect_marker_components_windows(operand: &OsStr) -> Option<usize> {
+    use std::os::windows::ffi::OsStrExt;
+
+    fn is_separator(unit: u16) -> bool {
+        unit == b'/' as u16 || unit == b'\\' as u16
+    }
+
+    fn is_single_dot(units: &[u16]) -> bool {
+        units.len() == 1 && units[0] == b'.' as u16
+    }
+
+    let units: Vec<u16> = operand.encode_wide().collect();
+    if units.is_empty() {
+        return None;
+    }
+
+    let len = units.len();
+    let mut index = 0;
+    let mut count = 0;
+
+    if len >= 2 && units[1] == b':' as u16 {
+        count += 1;
+        index = 2;
+        if index < len && is_separator(units[index]) {
+            count += 1;
+            while index < len && is_separator(units[index]) {
+                index += 1;
+            }
+        }
+    } else if len >= 2 && is_separator(units[0]) && is_separator(units[1]) {
+        count += 1;
+        index = 2;
+        while index < len && !is_separator(units[index]) {
+            index += 1;
+        }
+        if index < len && is_separator(units[index]) {
+            index += 1;
+        }
+        while index < len && !is_separator(units[index]) {
+            index += 1;
+        }
+        if index < len && is_separator(units[index]) {
+            count += 1;
+            while index < len && is_separator(units[index]) {
+                index += 1;
+            }
+        }
+    } else if is_separator(units[0]) {
+        count += 1;
+        while index < len && is_separator(units[index]) {
+            index += 1;
+        }
+    }
+
+    if index >= len {
+        return None;
+    }
+
+    let mut start = index;
+    let mut components = count;
+
+    while index <= len {
+        if index == len || is_separator(units[index]) {
+            if start != index {
+                let component = &units[start..index];
+                if is_single_dot(component) {
+                    return Some(components);
+                }
+                components += 1;
+            }
+
+            while index < len && is_separator(units[index]) {
+                index += 1;
+            }
+            start = index;
+            if index == len {
+                break;
+            }
+        } else {
+            index += 1;
+        }
+    }
+
+    None
+}
+
+fn non_empty_path(path: &Path) -> Option<&Path> {
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
 fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
@@ -1308,6 +1546,8 @@ fn copy_sources(
     let destination_behaves_like_directory =
         destination_state.is_dir || plan.destination.force_directory();
 
+    let relative_enabled = context.relative_paths_enabled();
+
     for source in &plan.sources {
         let source_path = source.path();
         let metadata = fs::symlink_metadata(source_path).map_err(|error| {
@@ -1316,14 +1556,53 @@ fn copy_sources(
         let file_type = metadata.file_type();
         let metadata_options = context.metadata_options();
 
+        let relative_root = if relative_enabled {
+            source.relative_root()
+        } else {
+            None
+        };
+        let relative_root = relative_root.filter(|path| !path.as_os_str().is_empty());
+        let relative_parent = relative_root
+            .as_ref()
+            .and_then(|root| root.parent().map(|parent| parent.to_path_buf()))
+            .filter(|parent| !parent.as_os_str().is_empty());
+
+        let requires_directory_destination = relative_parent.is_some()
+            || (relative_root.is_some() && (source.copy_contents() || file_type.is_dir()));
+
+        if requires_directory_destination && !destination_behaves_like_directory {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::DestinationMustBeDirectory,
+            ));
+        }
+
+        let destination_base = if let Some(parent) = &relative_parent {
+            destination_path.join(parent)
+        } else {
+            destination_path.to_path_buf()
+        };
+
         if file_type.is_dir() {
             if source.copy_contents() {
+                if let Some(root) = relative_root.as_ref() {
+                    if !context.allows(root.as_path(), true) {
+                        continue;
+                    }
+                }
+
+                let mut target_root = destination_path.to_path_buf();
+                if let Some(root) = &relative_root {
+                    target_root = destination_path.join(root);
+                }
+
                 copy_directory_recursive(
                     &mut context,
                     source_path,
-                    destination_path,
+                    &target_root,
                     &metadata,
-                    None,
+                    relative_root
+                        .as_ref()
+                        .and_then(|root| non_empty_path(root.as_path())),
                 )?;
                 continue;
             }
@@ -1331,13 +1610,15 @@ fn copy_sources(
             let name = source_path.file_name().ok_or_else(|| {
                 LocalCopyError::invalid_argument(LocalCopyArgumentError::DirectoryNameUnavailable)
             })?;
-            let relative = PathBuf::from(Path::new(name));
+            let relative = relative_root
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(Path::new(name)));
             if !context.allows(&relative, true) {
                 continue;
             }
 
             let target = if destination_behaves_like_directory || multiple_sources {
-                destination_path.join(name)
+                destination_base.join(name)
             } else {
                 destination_path.to_path_buf()
             };
@@ -1347,31 +1628,28 @@ fn copy_sources(
                 source_path,
                 &target,
                 &metadata,
-                Some(relative.as_path()),
+                non_empty_path(relative.as_path()),
             )?;
         } else {
             let name = source_path.file_name().ok_or_else(|| {
                 LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
             })?;
-            let relative = PathBuf::from(Path::new(name));
-            if !context.allows(&relative, file_type.is_dir()) {
+            let relative = relative_root
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(Path::new(name)));
+            if !context.allows(&relative, false) {
                 continue;
             }
 
             let target = if destination_behaves_like_directory {
-                destination_path.join(name)
+                destination_base.join(name)
             } else {
                 destination_path.to_path_buf()
             };
 
+            let record_path = non_empty_path(relative.as_path());
             if file_type.is_file() {
-                copy_file(
-                    &mut context,
-                    source_path,
-                    &target,
-                    &metadata,
-                    Some(relative.as_path()),
-                )?;
+                copy_file(&mut context, source_path, &target, &metadata, record_path)?;
             } else if file_type.is_symlink() {
                 copy_symlink(
                     &mut context,
@@ -1379,7 +1657,7 @@ fn copy_sources(
                     &target,
                     &metadata,
                     metadata_options,
-                    Some(relative.as_path()),
+                    record_path,
                 )?;
             } else if is_fifo(&file_type) {
                 copy_fifo(
@@ -1388,7 +1666,7 @@ fn copy_sources(
                     &target,
                     &metadata,
                     metadata_options,
-                    Some(relative.as_path()),
+                    record_path,
                 )?;
             } else if is_device(&file_type) {
                 copy_device(
@@ -1397,7 +1675,7 @@ fn copy_sources(
                     &target,
                     &metadata,
                     metadata_options,
-                    Some(relative.as_path()),
+                    record_path,
                 )?;
             } else {
                 return Err(LocalCopyError::invalid_argument(
@@ -2745,8 +3023,10 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 mod tests {
     use super::*;
     use filetime::{FileTime, set_file_mtime};
+    use std::ffi::OsString;
     use std::io::{Seek, SeekFrom, Write};
     use std::num::NonZeroU64;
+    use std::path::Path;
     use std::time::Duration;
     use tempfile::tempdir;
 
@@ -2778,6 +3058,62 @@ mod tests {
     fn local_copy_options_sparse_round_trip() {
         let options = LocalCopyOptions::default().sparse(true);
         assert!(options.sparse_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_relative_round_trip() {
+        let options = LocalCopyOptions::default().relative_paths(true);
+        assert!(options.relative_paths_enabled());
+        assert!(!LocalCopyOptions::default().relative_paths_enabled());
+    }
+
+    #[test]
+    fn relative_root_drops_absolute_prefix_without_marker() {
+        let operand = OsString::from("/var/log/messages");
+        let spec = SourceSpec::from_operand(&operand).expect("source spec");
+        let expected = Path::new("var").join("log").join("messages");
+        assert_eq!(spec.relative_root(), Some(expected));
+    }
+
+    #[test]
+    fn relative_root_respects_marker_boundary() {
+        let operand = OsString::from("/srv/./data/file.txt");
+        let spec = SourceSpec::from_operand(&operand).expect("source spec");
+        assert_eq!(
+            spec.relative_root(),
+            Some(Path::new("data/file.txt").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn relative_root_keeps_relative_paths_without_marker() {
+        let operand = OsString::from("nested/dir/file.txt");
+        let spec = SourceSpec::from_operand(&operand).expect("source spec");
+        assert_eq!(
+            spec.relative_root(),
+            Some(Path::new("nested/dir/file.txt").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn relative_root_counts_parent_components_before_marker() {
+        let operand = OsString::from("dir/.././trimmed/file.txt");
+        let spec = SourceSpec::from_operand(&operand).expect("source spec");
+        assert_eq!(
+            spec.relative_root(),
+            Some(Path::new("trimmed/file.txt").to_path_buf())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn relative_root_handles_windows_drive_prefix() {
+        let operand = OsString::from(r"C:\\path\\.\\to\\file.txt");
+        let spec = SourceSpec::from_operand(&operand).expect("source spec");
+        assert_eq!(
+            spec.relative_root(),
+            Some(Path::new("to/file.txt").to_path_buf())
+        );
     }
 
     #[cfg(feature = "xattr")]
@@ -2917,6 +3253,72 @@ mod tests {
 
         assert_eq!(fs::read(destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[test]
+    fn execute_with_relative_preserves_parent_directories() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(source_root.join("foo/bar")).expect("create source tree");
+        fs::create_dir_all(&destination_root).expect("create destination root");
+        let source_file = source_root.join("foo").join("bar").join("nested.txt");
+        fs::write(&source_file, b"relative").expect("write source");
+
+        let operand = source_root
+            .join(".")
+            .join("foo")
+            .join("bar")
+            .join("nested.txt");
+
+        let operands = vec![
+            operand.into_os_string(),
+            destination_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().relative_paths(true),
+            )
+            .expect("copy succeeds");
+
+        let copied = destination_root.join("foo").join("bar").join("nested.txt");
+        assert_eq!(fs::read(copied).expect("read copied"), b"relative");
+        assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[test]
+    fn execute_with_relative_requires_directory_destination() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("src");
+        fs::create_dir_all(source_root.join("dir")).expect("create source tree");
+        let source_file = source_root.join("dir").join("file.txt");
+        fs::write(&source_file, b"dir").expect("write source");
+
+        let destination = temp.path().join("dest.txt");
+        fs::write(&destination, b"target").expect("write destination");
+
+        let operand = source_root.join(".").join("dir").join("file.txt");
+
+        let operands = vec![
+            operand.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let result = plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().relative_paths(true),
+        );
+
+        let error = result.expect_err("relative paths require directory destination");
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::DestinationMustBeDirectory)
+        ));
+        assert_eq!(fs::read(&destination).expect("read destination"), b"target");
     }
 
     #[cfg(feature = "xattr")]
