@@ -14,4 +14,4 @@ rsync-meta = { path = "../meta" }
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
-rustix = { version = "0.38", features = ["fs"] }
+rustix = { version = "0.38", features = ["fs", "process"] }

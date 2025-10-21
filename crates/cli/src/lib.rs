@@ -98,15 +98,17 @@ const HELP_TEXT: &str = concat!(
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "      --owner      Preserve file ownership (requires super-user).\n",
+    "      --group      Preserve file group (requires suitable privileges).\n",
     "\n",
     "All SOURCE operands must reside on the local filesystem. When multiple\n",
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
-    "is limited to basic permissions and modification times.\n",
+    "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str =
-    "--help/-h, --version/-V, --dry-run/-n, --delete, and --bwlimit";
+    "--help/-h, --version/-V, --dry-run/-n, --delete, --bwlimit, --owner, and --group";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -117,6 +119,8 @@ struct ParsedArgs {
     delete: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
+    owner: bool,
+    group: bool,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -150,6 +154,20 @@ fn clap_command() -> Command {
             Arg::new("delete")
                 .long("delete")
                 .help("Remove destination files that are absent from the source.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("owner")
+                .long("owner")
+                .short('o')
+                .help("Preserve file ownership (requires super-user).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("group")
+                .long("group")
+                .short('g')
+                .help("Preserve file group (requires suitable privileges).")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -189,6 +207,8 @@ where
     let show_version = matches.get_flag("version");
     let dry_run = matches.get_flag("dry-run");
     let delete = matches.get_flag("delete");
+    let owner = matches.get_flag("owner");
+    let group = matches.get_flag("group");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -204,6 +224,8 @@ where
         delete,
         remainder,
         bwlimit,
+        owner,
+        group,
     })
 }
 
@@ -328,6 +350,8 @@ where
         .dry_run(parsed.dry_run)
         .delete(parsed.delete)
         .bandwidth_limit(bandwidth_limit)
+        .owner(parsed.owner)
+        .group(parsed.group)
         .build();
 
     match run_core_client(config) {
@@ -713,6 +737,33 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"limited"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_request_with_owner_group_preserves_flags() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"metadata").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--owner"),
+            OsString::from("--group"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"metadata"
         );
     }
 

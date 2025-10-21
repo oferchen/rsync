@@ -4,8 +4,8 @@ use crate::negotiation::{
     sniff_negotiation_stream_with_sniffer,
 };
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned,
-    NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
+    NegotiationPrologueSniffer, ProtocolVersion,
 };
 use std::cmp;
 use std::collections::TryReserveError;
@@ -815,20 +815,20 @@ where
     )?;
 
     let mut line = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN + 32);
-let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
-let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
+    let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
+    let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
 
-let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
+    let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
-let banner = build_client_greeting(&server_greeting, negotiated_protocol);
-stream.write_all(&banner)?;
-stream.flush()?;
+    let banner = build_client_greeting(&server_greeting, negotiated_protocol);
+    stream.write_all(&banner)?;
+    stream.flush()?;
 
-Ok(LegacyDaemonHandshake {
-    stream,
-    server_greeting,
-    negotiated_protocol,
-})
+    Ok(LegacyDaemonHandshake {
+        stream,
+        server_greeting,
+        negotiated_protocol,
+    })
 }
 
 fn build_client_greeting(
@@ -1506,9 +1506,8 @@ mod tests {
     fn legacy_client_greeting_echoes_digest_list() {
         let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
 
-        let handshake =
-            negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
-                .expect("handshake should succeed");
+        let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+            .expect("handshake should succeed");
 
         let mut stream = handshake.into_stream();
         stream
@@ -1538,6 +1537,9 @@ mod tests {
         stream.flush().expect("flush propagates");
 
         let inner = stream.into_inner();
-        assert_eq!(inner.written(), b"@RSYNCD: 29.0 sha512 sha256\n@RSYNCD: OK\n");
+        assert_eq!(
+            inner.written(),
+            b"@RSYNCD: 29.0 sha512 sha256\n@RSYNCD: OK\n"
+        );
     }
 }

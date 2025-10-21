@@ -19,9 +19,10 @@
 //! - [`run_client`] executes the client flow. The helper delegates to
 //!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
-//!   filesystem while preserving permissions and timestamps, but without delta
-//!   compression or advanced metadata handling such as ownership, ACLs, or
-//!   extended attributes. When deletion is requested, the helper removes
+//!   filesystem while preserving permissions, timestamps, and optional
+//!   ownership/group metadata. Delta compression and advanced metadata such as
+//!   ACLs or extended attributes remain out of scope for this snapshot. When
+//!   deletion is requested, the helper removes
 //!   destination entries that are absent from the source tree before applying
 //!   metadata.
 //! - [`ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
@@ -112,6 +113,8 @@ pub struct ClientConfig {
     dry_run: bool,
     delete: bool,
     bandwidth_limit: Option<BandwidthLimit>,
+    preserve_owner: bool,
+    preserve_group: bool,
 }
 
 impl ClientConfig {
@@ -153,6 +156,20 @@ impl ClientConfig {
     pub fn bandwidth_limit(&self) -> Option<BandwidthLimit> {
         self.bandwidth_limit
     }
+
+    /// Reports whether ownership preservation was requested.
+    #[must_use]
+    #[doc(alias = "--owner")]
+    pub const fn preserve_owner(&self) -> bool {
+        self.preserve_owner
+    }
+
+    /// Reports whether group preservation was requested.
+    #[must_use]
+    #[doc(alias = "--group")]
+    pub const fn preserve_group(&self) -> bool {
+        self.preserve_group
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -162,6 +179,8 @@ pub struct ClientConfigBuilder {
     dry_run: bool,
     delete: bool,
     bandwidth_limit: Option<BandwidthLimit>,
+    preserve_owner: bool,
+    preserve_group: bool,
 }
 
 impl ClientConfigBuilder {
@@ -201,6 +220,22 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that ownership be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--owner")]
+    pub const fn owner(mut self, preserve: bool) -> Self {
+        self.preserve_owner = preserve;
+        self
+    }
+
+    /// Requests that group metadata be preserved.
+    #[must_use]
+    #[doc(alias = "--group")]
+    pub const fn group(mut self, preserve: bool) -> Self {
+        self.preserve_group = preserve;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -209,6 +244,8 @@ impl ClientConfigBuilder {
             dry_run: self.dry_run,
             delete: self.delete,
             bandwidth_limit: self.bandwidth_limit,
+            preserve_owner: self.preserve_owner,
+            preserve_group: self.preserve_group,
         }
     }
 }
@@ -295,7 +332,9 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
             config
                 .bandwidth_limit()
                 .map(|limit| limit.bytes_per_second()),
-        );
+        )
+        .owner(config.preserve_owner())
+        .group(config.preserve_group());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
@@ -360,6 +399,28 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_preserves_owner_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .owner(true)
+            .build();
+
+        assert!(config.preserve_owner());
+        assert!(!config.preserve_group());
+    }
+
+    #[test]
+    fn builder_preserves_group_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .group(true)
+            .build();
+
+        assert!(config.preserve_group());
+        assert!(!config.preserve_owner());
     }
 
     #[test]
