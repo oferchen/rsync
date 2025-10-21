@@ -670,7 +670,10 @@ where
     let config = builder.build();
 
     match run_core_client(config) {
-        Ok(()) => 0,
+        Ok(summary) => {
+            let _ = summary;
+            0
+        }
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
                 let _ = writeln!(
