@@ -1050,7 +1050,7 @@ fn handle_legacy_session(
     let request = request.unwrap_or_default();
 
     if request == "#list" {
-        respond_with_module_list(reader.get_mut(), modules, motd_lines)?;
+        respond_with_module_list(reader.get_mut(), modules, motd_lines, peer_addr.ip())?;
     } else if request.is_empty() {
         reader
             .get_mut()
@@ -1085,6 +1085,7 @@ fn respond_with_module_list(
     stream: &mut TcpStream,
     modules: &[ModuleDefinition],
     motd_lines: &[String],
+    peer_ip: IpAddr,
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
@@ -1099,7 +1100,7 @@ fn respond_with_module_list(
     let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
     stream.write_all(ok.as_bytes())?;
 
-    for module in modules {
+    for module in modules.iter().filter(|module| module.permits(peer_ip)) {
         let mut line = module.name.clone();
         if let Some(comment) = &module.comment {
             if !comment.is_empty() {
@@ -1793,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    fn run_daemon_lists_all_modules_during_list_request() {
+    fn run_daemon_filters_modules_during_list_request() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -1836,11 +1837,9 @@ mod tests {
         assert_eq!(line.trim_end(), "public");
 
         line.clear();
-        reader.read_line(&mut line).expect("private module");
-        assert_eq!(line.trim_end(), "private");
-
-        line.clear();
-        reader.read_line(&mut line).expect("exit line");
+        reader
+            .read_line(&mut line)
+            .expect("exit line after accessible modules");
         assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
