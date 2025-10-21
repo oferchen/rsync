@@ -1399,6 +1399,32 @@ mod tests {
     }
 
     #[test]
+    fn run_module_list_collects_motd_after_acknowledgement() {
+        let responses = vec![
+            "@RSYNCD: OK\n",
+            "@RSYNCD: MOTD: Post-acknowledgement notice\n",
+            "gamma\n",
+            "@RSYNCD: EXIT\n",
+        ];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(
+            list.motd_lines(),
+            &[String::from("Post-acknowledgement notice")]
+        );
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "gamma");
+        assert!(list.entries()[0].comment().is_none());
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -1971,7 +1997,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
                         return Err(daemon_access_denied_error(reason.trim()));
                     }
 
-                    if !acknowledged {
+                    if is_motd_payload(payload) {
                         motd.push(normalize_motd_payload(payload));
                         continue;
                     }
@@ -2005,10 +2031,28 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 }
 
 fn normalize_motd_payload(payload: &str) -> String {
-    for prefix in ["MOTD ", "MOTD", "motd ", "motd"] {
-        if let Some(rest) = payload.strip_prefix(prefix) {
-            return rest.trim_start().to_string();
-        }
+    if !is_motd_payload(payload) {
+        return payload.to_string();
     }
-    payload.to_string()
+
+    let remainder = &payload[4..];
+    let remainder = remainder.trim_start_matches(&[' ', '\t', ':']);
+    remainder.trim_start().to_string()
+}
+
+fn is_motd_payload(payload: &str) -> bool {
+    let bytes = payload.as_bytes();
+    if bytes.len() < 4 {
+        return false;
+    }
+
+    if !bytes[..4].eq_ignore_ascii_case(b"motd") {
+        return false;
+    }
+
+    if bytes.len() == 4 {
+        return true;
+    }
+
+    matches!(bytes[4], b' ' | b'\t' | b'\r' | b'\n' | b':')
 }
