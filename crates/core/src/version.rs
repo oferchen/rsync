@@ -43,15 +43,19 @@
 //!
 //! # Examples
 //!
-//! Retrieve the compiled feature list for the current build. The default test
-//! configuration does not enable optional features, so the returned slice is
-//! empty.
+//! Retrieve the compiled feature list for the current build. Optional
+//! capabilities appear when their corresponding Cargo features are enabled at
+//! compile time.
 //!
 //! ```
-//! use rsync_core::version::{compiled_features, RUST_VERSION};
+//! use rsync_core::version::{compiled_features, CompiledFeature, RUST_VERSION};
 //!
 //! assert_eq!(RUST_VERSION, "3.4.1-rust");
-//! assert!(compiled_features().is_empty());
+//! let features = compiled_features();
+//! #[cfg(feature = "xattr")]
+//! assert!(features.contains(&CompiledFeature::Xattr));
+//! #[cfg(not(feature = "xattr"))]
+//! assert!(features.is_empty());
 //! ```
 //!
 //! # See also

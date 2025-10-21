@@ -13,7 +13,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     permissions and timestamps. A `--dry-run` flag validates transfers without
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
-    list available modules, but remote transfers, xattrs/ACLs,
+    list available modules, but remote transfers, ACLs,
     compression, and progress reporting remain unavailable. Filter handling via
     `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
     with `+`/`-` actions and `merge FILE` directives mirrors rsync's glob
@@ -35,7 +35,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, and symbolic links, but delta transfer,
-    xattrs/ACLs, and compression remain unavailable. Remote
+    ACLs, and compression remain unavailable. Remote
     orchestration is still missing, preventing the client from negotiating
     network transports.
   - *Removal plan*: Extend the engine with delta-transfer support and integrate

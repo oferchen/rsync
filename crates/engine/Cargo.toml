@@ -9,11 +9,16 @@ description = "Transfer engine components for the Rust rsync implementation"
 repository = "https://github.com/oferchen/rsync"
 
 [dependencies]
-rsync-meta = { path = "../meta" }
+rsync-meta = { path = "../meta", default-features = false }
 rsync-filters = { path = "../filters" }
 rsync-checksums = { path = "../checksums" }
+
+[features]
+default = []
+xattr = ["rsync-meta/xattr"]
 
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
 rustix = { version = "0.38", features = ["fs", "process"] }
+xattr = "1.3"
