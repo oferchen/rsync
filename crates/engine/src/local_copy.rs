@@ -752,6 +752,7 @@ fn copy_file(
         return Ok(());
     }
 
+    let mut preserve_existing_hard_link_target = false;
     if let Some(existing_target) = hard_links.existing_target(metadata) {
         let link_error = match fs::hard_link(&existing_target, destination) {
             Ok(()) => {
@@ -785,12 +786,16 @@ fn copy_file(
                 link_error,
             ));
         }
+
+        preserve_existing_hard_link_target = true;
     }
 
     fs::copy(source, destination)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
-    hard_links.record(metadata, destination);
+    if !preserve_existing_hard_link_target {
+        hard_links.record(metadata, destination);
+    }
     Ok(())
 }
 
