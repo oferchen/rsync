@@ -105,7 +105,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
-    "  -a, --archive    Enable archive mode (implies --owner and --group).\n",
+    "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, and --times).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
@@ -212,7 +212,7 @@ fn clap_command() -> Command {
             Arg::new("archive")
                 .long("archive")
                 .short('a')
-                .help("Enable archive mode (implies --owner and --group).")
+                .help("Enable archive mode (implies --owner, --group, --perms, and --times).")
                 .action(ArgAction::SetTrue),
         )
         .arg(
