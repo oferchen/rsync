@@ -13,7 +13,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     permissions and timestamps. A `--dry-run` flag validates transfers without
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
-    list available modules, but remote transfers, ownership/xattrs/ACLs,
+    list available modules, but remote transfers, xattrs/ACLs,
     filters, compression, and progress reporting remain unavailable.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
@@ -31,7 +31,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, and symbolic links, but delta transfer,
-    ownership/xattrs/ACLs, filters, and compression remain unavailable. Remote
+    xattrs/ACLs, filters, and compression remain unavailable. Remote
     orchestration is still missing, preventing the client from negotiating
     network transports.
   - *Removal plan*: Extend the engine with delta-transfer support and integrate

@@ -3,7 +3,8 @@
 //! Implements deterministic local filesystem copies used by the current
 //! `oc-rsync` development snapshot. The module constructs
 //! [`LocalCopyPlan`] values from CLI-style operands and executes them while
-//! preserving permissions and timestamps via [`rsync_meta`].
+//! preserving permissions, timestamps, and optional ownership metadata via
+//! [`rsync_meta`].
 //!
 //! # Design
 //!
@@ -12,7 +13,8 @@
 //! - [`LocalCopyError`] mirrors upstream exit codes so higher layers can render
 //!   canonical diagnostics.
 //! - [`LocalCopyOptions`] configures behaviours such as deleting destination
-//!   entries that are absent from the source when `--delete` is requested.
+//!   entries that are absent from the source when `--delete` is requested or
+//!   preserving ownership/group metadata when `--owner`/`--group` are supplied.
 //! - Helper functions preserve metadata after content writes, matching upstream
 //!   rsync's ordering and covering regular files, directories, symbolic links,
 //!   FIFOs, and device nodes. Hard linked files are reproduced as hard links in
@@ -56,8 +58,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use rsync_meta::{
-    MetadataError, apply_directory_metadata, apply_file_metadata, apply_symlink_metadata,
-    create_device_node, create_fifo,
+    MetadataError, MetadataOptions, apply_directory_metadata_with_options,
+    apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
+    create_fifo,
 };
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
@@ -71,7 +74,8 @@ const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 ///
 /// Instances are constructed from CLI-style operands using
 /// [`LocalCopyPlan::from_operands`]. Execution copies regular files, directories,
-/// and symbolic links while preserving permissions and timestamps.
+/// and symbolic links while preserving permissions, timestamps, and
+/// optional ownership metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalCopyPlan {
     sources: Vec<SourceSpec>,
@@ -204,6 +208,8 @@ impl LocalCopyExecution {
 pub struct LocalCopyOptions {
     delete: bool,
     bandwidth_limit: Option<NonZeroU64>,
+    preserve_owner: bool,
+    preserve_group: bool,
 }
 
 impl LocalCopyOptions {
@@ -213,6 +219,8 @@ impl LocalCopyOptions {
         Self {
             delete: false,
             bandwidth_limit: None,
+            preserve_owner: false,
+            preserve_group: false,
         }
     }
 
@@ -232,6 +240,22 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that ownership be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--owner")]
+    pub const fn owner(mut self, preserve: bool) -> Self {
+        self.preserve_owner = preserve;
+        self
+    }
+
+    /// Requests that the group be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--group")]
+    pub const fn group(mut self, preserve: bool) -> Self {
+        self.preserve_group = preserve;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -242,6 +266,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    /// Reports whether ownership preservation has been requested.
+    #[must_use]
+    pub const fn preserve_owner(&self) -> bool {
+        self.preserve_owner
+    }
+
+    /// Reports whether group preservation has been requested.
+    #[must_use]
+    pub const fn preserve_group(&self) -> bool {
+        self.preserve_group
     }
 }
 
@@ -331,6 +367,12 @@ impl CopyContext {
 
     fn options(&self) -> LocalCopyOptions {
         self.options
+    }
+
+    fn metadata_options(&self) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_owner(self.options.preserve_owner())
+            .preserve_group(self.options.preserve_group())
     }
 
     fn split_mut(&mut self) -> (&mut HardLinkTracker, Option<&mut BandwidthLimiter>) {
@@ -733,6 +775,7 @@ fn copy_sources(
             LocalCopyError::io("access source", source_path.to_path_buf(), error)
         })?;
         let file_type = metadata.file_type();
+        let metadata_options = context.metadata_options();
 
         if file_type.is_dir() {
             let target = if source.copy_contents() {
@@ -770,7 +813,13 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_symlink(source_path, &target, &metadata, context.mode())?;
+            copy_symlink(
+                source_path,
+                &target,
+                &metadata,
+                context.mode(),
+                metadata_options,
+            )?;
         } else if is_fifo(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -781,7 +830,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_fifo(&target, &metadata, context.mode())?;
+            copy_fifo(&target, &metadata, context.mode(), metadata_options)?;
         } else if is_device(&file_type) {
             let target = if destination_behaves_like_directory {
                 let name = source_path.file_name().ok_or_else(|| {
@@ -792,7 +841,7 @@ fn copy_sources(
                 destination_path.to_path_buf()
             };
 
-            copy_device(&target, &metadata, context.mode())?;
+            copy_device(&target, &metadata, context.mode(), metadata_options)?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -859,17 +908,34 @@ fn copy_directory_recursive(
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
         let target_path = destination.join(Path::new(file_name));
+        let metadata_options = context.metadata_options();
 
         if entry_type.is_dir() {
             copy_directory_recursive(context, entry_path, &target_path, entry_metadata)?;
         } else if entry_type.is_file() {
             copy_file(context, entry_path, &target_path, entry_metadata)?;
         } else if entry_type.is_symlink() {
-            copy_symlink(entry_path, &target_path, entry_metadata, context.mode())?;
+            copy_symlink(
+                entry_path,
+                &target_path,
+                entry_metadata,
+                context.mode(),
+                metadata_options,
+            )?;
         } else if is_fifo(&entry_type) {
-            copy_fifo(&target_path, entry_metadata, context.mode())?;
+            copy_fifo(
+                &target_path,
+                entry_metadata,
+                context.mode(),
+                metadata_options,
+            )?;
         } else if is_device(&entry_type) {
-            copy_device(&target_path, entry_metadata, context.mode())?;
+            copy_device(
+                &target_path,
+                entry_metadata,
+                context.mode(),
+                metadata_options,
+            )?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -882,7 +948,9 @@ fn copy_directory_recursive(
     }
 
     if !context.mode().is_dry_run() {
-        apply_directory_metadata(destination, metadata).map_err(map_metadata_error)?;
+        let metadata_options = context.metadata_options();
+        apply_directory_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
     }
 
     Ok(())
@@ -894,6 +962,7 @@ fn copy_file(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), LocalCopyError> {
+    let metadata_options = context.metadata_options();
     let mode = context.mode();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1009,7 +1078,8 @@ fn copy_file(
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
     }
 
-    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
     Ok(())
 }
@@ -1018,6 +1088,7 @@ fn copy_fifo(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1095,7 +1166,8 @@ fn copy_fifo(
     }
 
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
-    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
     Ok(())
 }
 
@@ -1103,6 +1175,7 @@ fn copy_device(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1180,7 +1253,8 @@ fn copy_device(
     }
 
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
-    apply_file_metadata(destination, metadata).map_err(map_metadata_error)?;
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
     Ok(())
 }
 
@@ -1259,6 +1333,7 @@ fn copy_symlink(
     destination: &Path,
     metadata: &fs::Metadata,
     mode: LocalCopyExecution,
+    metadata_options: MetadataOptions,
 ) -> Result<(), LocalCopyError> {
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1327,7 +1402,8 @@ fn copy_symlink(
         LocalCopyError::io("create symbolic link", destination.to_path_buf(), error)
     })?;
 
-    apply_symlink_metadata(destination, metadata).map_err(map_metadata_error)?;
+    apply_symlink_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
 
     Ok(())
 }
@@ -1529,6 +1605,19 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    mod unix_ids {
+        #![allow(unsafe_code)]
+
+        pub(super) fn uid(raw: u32) -> rustix::fs::Uid {
+            unsafe { rustix::fs::Uid::from_raw(raw) }
+        }
+
+        pub(super) fn gid(raw: u32) -> rustix::fs::Gid {
+            unsafe { rustix::fs::Gid::from_raw(raw) }
+        }
+    }
+
     #[test]
     fn plan_from_operands_requires_destination() {
         let operands = vec![OsString::from("only-source")];
@@ -1713,6 +1802,49 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_preserves_ownership_when_requested() {
+        use rustix::fs::{AtFlags, chownat};
+        use std::os::unix::fs::MetadataExt;
+
+        if rustix::process::geteuid().as_raw() != 0 {
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"metadata").expect("write source");
+
+        let owner = 23_456;
+        let group = 65_432;
+        chownat(
+            rustix::fs::CWD,
+            &source,
+            Some(unix_ids::uid(owner)),
+            Some(unix_ids::gid(group)),
+            AtFlags::empty(),
+        )
+        .expect("assign ownership");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().owner(true).group(true),
+        )
+        .expect("copy succeeds");
+
+        let metadata = fs::metadata(&destination).expect("dest metadata");
+        assert_eq!(metadata.uid(), owner);
+        assert_eq!(metadata.gid(), group);
     }
 
     #[cfg(unix)]

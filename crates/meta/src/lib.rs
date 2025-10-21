@@ -76,6 +76,30 @@ use std::path::{Path, PathBuf};
 
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
+#[cfg(unix)]
+use rustix::{
+    fs::{self as unix_fs, AtFlags, CWD, Gid, Uid},
+    process::{RawGid, RawUid},
+};
+
+#[cfg(unix)]
+mod ownership {
+    #![allow(unsafe_code)]
+
+    use super::{Gid, RawGid, RawUid, Uid};
+
+    pub(super) fn uid_from_raw(raw: RawUid) -> Uid {
+        unsafe { Uid::from_raw(raw) }
+    }
+
+    pub(super) fn gid_from_raw(raw: RawGid) -> Gid {
+        unsafe { Gid::from_raw(raw) }
+    }
+}
+
 /// Error produced when metadata preservation fails.
 #[derive(Debug)]
 pub struct MetadataError {
@@ -169,6 +193,16 @@ pub fn apply_directory_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
+    apply_directory_metadata_with_options(destination, metadata, MetadataOptions::default())
+}
+
+/// Applies metadata from `metadata` to the destination directory using explicit options.
+pub fn apply_directory_metadata_with_options(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, true, options)?;
     set_permissions_like(metadata, destination)?;
     set_timestamp_like(metadata, destination, true)?;
     Ok(())
@@ -182,6 +216,16 @@ pub fn apply_file_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
+    apply_file_metadata_with_options(destination, metadata, MetadataOptions::default())
+}
+
+/// Applies file metadata using explicit [`MetadataOptions`].
+pub fn apply_file_metadata_with_options(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, true, options)?;
     set_permissions_like(metadata, destination)?;
     set_timestamp_like(metadata, destination, true)?;
     Ok(())
@@ -193,6 +237,16 @@ pub fn apply_symlink_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
+    apply_symlink_metadata_with_options(destination, metadata, MetadataOptions::default())
+}
+
+/// Applies symbolic link metadata using explicit [`MetadataOptions`].
+pub fn apply_symlink_metadata_with_options(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: MetadataOptions,
+) -> Result<(), MetadataError> {
+    set_owner_like(metadata, destination, false, options)?;
     set_timestamp_like(metadata, destination, false)?;
     Ok(())
 }
@@ -334,6 +388,107 @@ fn create_device_node_inner(
     ))
 }
 
+/// Options that control ownership preservation when applying metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetadataOptions {
+    preserve_owner: bool,
+    preserve_group: bool,
+}
+
+impl MetadataOptions {
+    /// Creates a new [`MetadataOptions`] value with defaults applied.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            preserve_owner: false,
+            preserve_group: false,
+        }
+    }
+
+    /// Requests that ownership be preserved when applying metadata.
+    #[must_use]
+    pub const fn preserve_owner(mut self, preserve: bool) -> Self {
+        self.preserve_owner = preserve;
+        self
+    }
+
+    /// Requests that the group be preserved when applying metadata.
+    #[must_use]
+    pub const fn preserve_group(mut self, preserve: bool) -> Self {
+        self.preserve_group = preserve;
+        self
+    }
+
+    /// Reports whether ownership should be preserved.
+    #[must_use]
+    pub const fn owner(&self) -> bool {
+        self.preserve_owner
+    }
+
+    /// Reports whether the group should be preserved.
+    #[must_use]
+    pub const fn group(&self) -> bool {
+        self.preserve_group
+    }
+}
+
+impl Default for MetadataOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn set_owner_like(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    follow_symlinks: bool,
+    options: MetadataOptions,
+) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    {
+        if !options.owner() && !options.group() {
+            return Ok(());
+        }
+
+        let owner = options
+            .owner()
+            .then(|| ownership::uid_from_raw(metadata.uid() as RawUid));
+        let group = options
+            .group()
+            .then(|| ownership::gid_from_raw(metadata.gid() as RawGid));
+
+        if owner.is_none() && group.is_none() {
+            return Ok(());
+        }
+
+        let flags = if follow_symlinks {
+            AtFlags::empty()
+        } else {
+            AtFlags::SYMLINK_NOFOLLOW
+        };
+
+        unix_fs::chownat(CWD, destination, owner, group, flags).map_err(|error| {
+            MetadataError::new("preserve ownership", destination, io::Error::from(error))
+        })?
+    }
+
+    #[cfg(not(unix))]
+    {
+        if options.owner() || options.group() {
+            return Err(MetadataError::new(
+                "preserve ownership",
+                destination,
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "preserving ownership is not supported on this platform",
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -424,6 +579,47 @@ mod tests {
         {
             assert_eq!(current_mode(&dest) & 0o777, 0o640);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_ownership_is_preserved_when_requested() {
+        use rustix::fs::{AtFlags, chownat};
+
+        if rustix::process::geteuid().as_raw() != 0 {
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-owner.txt");
+        let dest = temp.path().join("dest-owner.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let owner = 12_345;
+        let group = 54_321;
+        chownat(
+            CWD,
+            &source,
+            Some(ownership::uid_from_raw(owner)),
+            Some(ownership::gid_from_raw(group)),
+            AtFlags::empty(),
+        )
+        .expect("assign ownership");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_owner(true)
+                .preserve_group(true),
+        )
+        .expect("preserve metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        assert_eq!(dest_meta.uid(), owner);
+        assert_eq!(dest_meta.gid(), group);
     }
 
     #[test]
