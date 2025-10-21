@@ -116,6 +116,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-progress  Disable progress reporting.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
+    "      --inplace    Write updated data directly to destination files.\n",
+    "      --no-inplace Use temporary files when updating regular files.\n",
     "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
@@ -136,7 +138,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -157,6 +159,7 @@ struct ParsedArgs {
     verbosity: u8,
     progress: bool,
     partial: bool,
+    inplace: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
     exclude_from: Vec<OsString>,
@@ -249,6 +252,20 @@ fn clap_command() -> Command {
                 .help("Discard partially transferred files on error.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("inplace")
+                .long("inplace")
+                .help("Write updated data directly to destination files.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-inplace"),
+        )
+        .arg(
+            Arg::new("no-inplace")
+                .long("no-inplace")
+                .help("Use temporary files when updating regular files.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("inplace"),
         )
         .arg(
             Arg::new("partial-progress")
@@ -487,6 +504,13 @@ where
             progress = true;
         }
     }
+    let inplace = if matches.get_flag("no-inplace") {
+        Some(false)
+    } else if matches.get_flag("inplace") {
+        Some(true)
+    } else {
+        None
+    };
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -537,6 +561,7 @@ where
         verbosity,
         progress,
         partial,
+        inplace,
         excludes,
         includes,
         exclude_from,
@@ -613,6 +638,7 @@ where
         verbosity,
         progress,
         partial,
+        inplace,
     } = parsed;
 
     if show_help {
@@ -727,7 +753,8 @@ where
         .sparse(sparse)
         .verbosity(verbosity)
         .progress(progress)
-        .partial(partial);
+        .partial(partial)
+        .inplace(inplace.unwrap_or(false));
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -2012,6 +2039,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.sparse, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_inplace_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--inplace"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.inplace, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-inplace"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.inplace, Some(false));
     }
 
     #[test]
