@@ -95,6 +95,7 @@ use rsync_protocol::ProtocolVersion;
 use rsync_transport::negotiate_legacy_daemon_session;
 
 use crate::{
+    bandwidth::{self, BandwidthParseError},
     message::{Message, Role},
     rsync_error,
 };
@@ -525,6 +526,12 @@ impl BandwidthLimit {
     #[must_use]
     pub const fn from_bytes_per_second(bytes_per_second: NonZeroU64) -> Self {
         Self { bytes_per_second }
+    }
+
+    /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
+    pub fn parse(text: &str) -> Result<Option<Self>, BandwidthParseError> {
+        bandwidth::parse_bandwidth_argument(text)
+            .map(|value| value.map(Self::from_bytes_per_second))
     }
 
     /// Returns the configured rate in bytes per second.

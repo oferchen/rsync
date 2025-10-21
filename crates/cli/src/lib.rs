@@ -70,7 +70,6 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
-use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -79,6 +78,7 @@ use std::os::unix::ffi::OsStringExt;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
+    bandwidth::BandwidthParseError,
     client::{
         BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientSummary, FilterRuleKind,
         FilterRuleSpec, ModuleListRequest, run_client as run_core_client, run_module_list,
@@ -1422,10 +1422,8 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
 
 fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
     let text = argument.to_string_lossy();
-    match parse_bwlimit_bytes(&text) {
-        Ok(Some(bytes)) => Ok(Some(BandwidthLimit::from_bytes_per_second(
-            NonZeroU64::new(bytes).expect("bandwidth limit must be non-zero"),
-        ))),
+    match BandwidthLimit::parse(&text) {
+        Ok(Some(limit)) => Ok(Some(limit)),
         Ok(None) => Ok(None),
         Err(BandwidthParseError::Invalid) => {
             Err(rsync_error!(1, "--bwlimit={} is invalid", text).with_role(Role::Client))
@@ -1440,149 +1438,6 @@ fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Mes
             Err(rsync_error!(1, "--bwlimit={} is too large", text).with_role(Role::Client))
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BandwidthParseError {
-    Invalid,
-    TooSmall,
-    TooLarge,
-}
-
-fn parse_bwlimit_bytes(text: &str) -> Result<Option<u64>, BandwidthParseError> {
-    if text.is_empty() {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    let mut digits_seen = false;
-    let mut decimal_seen = false;
-    let mut numeric_end = text.len();
-
-    for (index, ch) in text.char_indices() {
-        if ch.is_ascii_digit() {
-            digits_seen = true;
-            continue;
-        }
-
-        if (ch == '.' || ch == ',') && !decimal_seen {
-            decimal_seen = true;
-            continue;
-        }
-
-        numeric_end = index;
-        break;
-    }
-
-    let numeric_part = &text[..numeric_end];
-    let remainder = &text[numeric_end..];
-
-    if !digits_seen || numeric_part == "." || numeric_part == "," {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    let normalized_numeric = numeric_part.replace(',', ".");
-    let numeric_value: f64 = normalized_numeric
-        .parse()
-        .map_err(|_| BandwidthParseError::Invalid)?;
-
-    let (suffix, mut remainder_after_suffix) =
-        if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
-            ('K', remainder)
-        } else {
-            let mut chars = remainder.chars();
-            let ch = chars.next().unwrap();
-            (ch, chars.as_str())
-        };
-
-    let repetitions = match suffix.to_ascii_lowercase() {
-        'b' => 0,
-        'k' => 1,
-        'm' => 2,
-        'g' => 3,
-        't' => 4,
-        'p' => 5,
-        _ => return Err(BandwidthParseError::Invalid),
-    };
-
-    let mut base: f64 = 1024.0;
-
-    if !remainder_after_suffix.is_empty() {
-        let bytes = remainder_after_suffix.as_bytes();
-        match bytes[0] {
-            b'b' | b'B' => {
-                base = 1000.0;
-                remainder_after_suffix = &remainder_after_suffix[1..];
-            }
-            b'i' | b'I' => {
-                if bytes.len() < 2 {
-                    return Err(BandwidthParseError::Invalid);
-                }
-                if matches!(bytes[1], b'b' | b'B') {
-                    base = 1024.0;
-                    remainder_after_suffix = &remainder_after_suffix[2..];
-                } else {
-                    return Err(BandwidthParseError::Invalid);
-                }
-            }
-            b'+' | b'-' => {}
-            _ => return Err(BandwidthParseError::Invalid),
-        }
-    }
-
-    let mut adjust = 0.0f64;
-    if !remainder_after_suffix.is_empty() {
-        if remainder_after_suffix == "+1" && numeric_end > 0 {
-            adjust = 1.0;
-            remainder_after_suffix = "";
-        } else if remainder_after_suffix == "-1" && numeric_end > 0 {
-            adjust = -1.0;
-            remainder_after_suffix = "";
-        }
-    }
-
-    if !remainder_after_suffix.is_empty() {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    let scale = match repetitions {
-        0 => 1.0,
-        reps => base.powi(reps as i32),
-    };
-
-    let mut size = numeric_value * scale;
-    if !size.is_finite() {
-        return Err(BandwidthParseError::TooLarge);
-    }
-    size += adjust;
-    if !size.is_finite() {
-        return Err(BandwidthParseError::TooLarge);
-    }
-
-    let truncated = size.trunc();
-    if truncated < 0.0 || truncated > u128::MAX as f64 {
-        return Err(BandwidthParseError::TooLarge);
-    }
-
-    let bytes = truncated as u128;
-
-    if bytes == 0 {
-        return Ok(None);
-    }
-
-    if bytes < 512 {
-        return Err(BandwidthParseError::TooSmall);
-    }
-
-    let rounded = bytes
-        .checked_add(512)
-        .ok_or(BandwidthParseError::TooLarge)?
-        / 1024;
-    let rounded_bytes = rounded
-        .checked_mul(1024)
-        .ok_or(BandwidthParseError::TooLarge)?;
-
-    let bytes_u64 = u64::try_from(rounded_bytes).map_err(|_| BandwidthParseError::TooLarge)?;
-    Ok(Some(bytes_u64))
 }
 
 fn render_module_list<W: Write, E: Write>(
@@ -2469,11 +2324,8 @@ mod tests {
         std::fs::create_dir_all(&dest_root).expect("create dest root");
 
         let filter_file = tmp.path().join("filters.txt");
-        std::fs::write(
-            &filter_file,
-            format!("merge {}\n", filter_file.display()),
-        )
-        .expect("write recursive filter");
+        std::fs::write(&filter_file, format!("merge {}\n", filter_file.display()))
+            .expect("write recursive filter");
 
         let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
 
