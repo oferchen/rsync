@@ -191,7 +191,16 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopySummary, LocalCopyError> {
-        copy_sources(self, mode, options)
+        copy_sources(self, mode, options).map(CopyContext::into_summary)
+    }
+
+    /// Executes the planned copy and returns a detailed report of performed actions.
+    pub fn execute_with_report(
+        &self,
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+    ) -> Result<LocalCopyReport, LocalCopyError> {
+        copy_sources(self, mode, options).map(CopyContext::into_report)
     }
 }
 
@@ -284,18 +293,37 @@ impl LocalCopyRecord {
 /// Report returned after executing a [`LocalCopyPlan`] with event collection enabled.
 #[derive(Clone, Debug, Default)]
 pub struct LocalCopyReport {
+    summary: LocalCopySummary,
     records: Vec<LocalCopyRecord>,
 }
 
 impl LocalCopyReport {
-    fn new(records: Vec<LocalCopyRecord>) -> Self {
-        Self { records }
+    fn new(summary: LocalCopySummary, records: Vec<LocalCopyRecord>) -> Self {
+        Self { summary, records }
+    }
+
+    /// Returns the high-level summary collected during execution.
+    #[must_use]
+    pub const fn summary(&self) -> &LocalCopySummary {
+        &self.summary
+    }
+
+    /// Consumes the report and returns the aggregated summary.
+    #[must_use]
+    pub fn into_summary(self) -> LocalCopySummary {
+        self.summary
     }
 
     /// Returns the list of records captured during execution.
     #[must_use]
     pub fn records(&self) -> &[LocalCopyRecord] {
         &self.records
+    }
+
+    /// Consumes the report and returns the recorded events.
+    #[must_use]
+    pub fn into_records(self) -> Vec<LocalCopyRecord> {
+        self.records
     }
 }
 
@@ -652,22 +680,24 @@ struct CopyContext {
     hard_links: HardLinkTracker,
     limiter: Option<BandwidthLimiter>,
     summary: LocalCopySummary,
+    events: Option<Vec<LocalCopyRecord>>,
 }
 
 impl CopyContext {
     fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
-        let events = if options.events_enabled() {
-            Some(Vec::new())
-        } else {
-            None
-        };
+        let collect_events = options.events_enabled();
         Self {
             mode,
             options,
             hard_links: HardLinkTracker::new(),
             limiter,
             summary: LocalCopySummary::default(),
+            events: if collect_events {
+                Some(Vec::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -701,6 +731,10 @@ impl CopyContext {
         self.options.sparse_enabled()
     }
 
+    fn partial_enabled(&self) -> bool {
+        self.options.partial_enabled()
+    }
+
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
         match self.options.filter_set() {
             Some(filters) => filters.allows(relative, is_dir),
@@ -714,6 +748,20 @@ impl CopyContext {
 
     fn into_summary(self) -> LocalCopySummary {
         self.summary
+    }
+
+    fn into_report(self) -> LocalCopyReport {
+        let Self {
+            summary, events, ..
+        } = self;
+        let records = events.unwrap_or_default();
+        LocalCopyReport::new(summary, records)
+    }
+
+    fn record(&mut self, record: LocalCopyRecord) {
+        if let Some(events) = &mut self.events {
+            events.push(record);
+        }
     }
 }
 
@@ -1083,7 +1131,7 @@ fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
-) -> Result<LocalCopySummary, LocalCopyError> {
+) -> Result<CopyContext, LocalCopyError> {
     let mut context = CopyContext::new(mode, options);
 
     let multiple_sources = plan.sources.len() > 1;
@@ -1172,17 +1220,24 @@ fn copy_sources(
                     &target,
                     &metadata,
                     metadata_options,
+                    Some(relative.as_path()),
                 )?;
-                context.record(LocalCopyRecord::new(
-                    relative,
-                    LocalCopyAction::SymlinkCopied,
-                    0,
-                    Duration::default(),
-                ));
             } else if is_fifo(&file_type) {
-                copy_fifo(&mut context, &target, &metadata, metadata_options)?;
+                copy_fifo(
+                    &mut context,
+                    &target,
+                    &metadata,
+                    metadata_options,
+                    Some(relative.as_path()),
+                )?;
             } else if is_device(&file_type) {
-                copy_device(&mut context, &target, &metadata, metadata_options)?;
+                copy_device(
+                    &mut context,
+                    &target,
+                    &metadata,
+                    metadata_options,
+                    Some(relative.as_path()),
+                )?;
             } else {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::UnsupportedFileType,
@@ -1191,7 +1246,7 @@ fn copy_sources(
         }
     }
 
-    Ok(context.into_summary())
+    Ok(context)
 }
 
 fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {
@@ -1301,11 +1356,24 @@ fn copy_directory_recursive(
                 &target_path,
                 entry_metadata,
                 metadata_options,
+                Some(entry_relative.as_path()),
             )?;
         } else if is_fifo(&entry_type) {
-            copy_fifo(context, &target_path, entry_metadata, metadata_options)?;
+            copy_fifo(
+                context,
+                &target_path,
+                entry_metadata,
+                metadata_options,
+                Some(entry_relative.as_path()),
+            )?;
         } else if is_device(&entry_type) {
-            copy_device(context, &target_path, entry_metadata, metadata_options)?;
+            copy_device(
+                context,
+                &target_path,
+                entry_metadata,
+                metadata_options,
+                Some(entry_relative.as_path()),
+            )?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
@@ -1460,6 +1528,12 @@ fn copy_file(
 
         hard_links.record(metadata, destination);
         context.summary_mut().record_hard_link();
+        context.record(LocalCopyRecord::new(
+            record_path,
+            LocalCopyAction::HardLink,
+            0,
+            Duration::default(),
+        ));
         return Ok(());
     }
 
@@ -1544,6 +1618,7 @@ fn copy_file(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
+    context.summary_mut().record_file(file_size);
     let elapsed = start.elapsed();
     context.record(LocalCopyRecord::new(
         record_path,
@@ -1646,10 +1721,6 @@ fn write_sparse_chunk(
         }
     }
 
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
-        .map_err(map_metadata_error)?;
-    hard_links.record(metadata, destination);
-    context.summary_mut().record_file(metadata.len());
     Ok(())
 }
 
@@ -1720,8 +1791,12 @@ fn copy_fifo(
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| destination.file_name().map(PathBuf::from));
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1769,6 +1844,14 @@ fn copy_fifo(
         }
 
         context.summary_mut().record_fifo();
+        if let Some(path) = record_path {
+            context.record(LocalCopyRecord::new(
+                path,
+                LocalCopyAction::FifoCopied,
+                0,
+                Duration::default(),
+            ));
+        }
         return Ok(());
     }
 
@@ -1802,6 +1885,14 @@ fn copy_fifo(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     context.summary_mut().record_fifo();
+    if let Some(path) = record_path {
+        context.record(LocalCopyRecord::new(
+            path,
+            LocalCopyAction::FifoCopied,
+            0,
+            Duration::default(),
+        ));
+    }
     Ok(())
 }
 
@@ -1810,8 +1901,12 @@ fn copy_device(
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| destination.file_name().map(PathBuf::from));
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -1859,6 +1954,14 @@ fn copy_device(
         }
 
         context.summary_mut().record_device();
+        if let Some(path) = record_path {
+            context.record(LocalCopyRecord::new(
+                path,
+                LocalCopyAction::DeviceCopied,
+                0,
+                Duration::default(),
+            ));
+        }
         return Ok(());
     }
 
@@ -1892,6 +1995,14 @@ fn copy_device(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     context.summary_mut().record_device();
+    if let Some(path) = record_path {
+        context.record(LocalCopyRecord::new(
+            path,
+            LocalCopyAction::DeviceCopied,
+            0,
+            Duration::default(),
+        ));
+    }
     Ok(())
 }
 
@@ -1931,17 +2042,16 @@ fn delete_extraneous_entries(
 
         let name_path = PathBuf::from(name.as_os_str());
         let path = destination.join(&name_path);
+        let entry_relative = match relative {
+            Some(base) => base.join(&name_path),
+            None => name_path.clone(),
+        };
 
         let file_type = entry.file_type().map_err(|error| {
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
 
         if let Some(filters) = filters {
-            let entry_relative = match relative {
-                Some(base) => base.join(&name_path),
-                None => name_path.clone(),
-            };
-
             if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
                 continue;
             }
@@ -1949,11 +2059,23 @@ fn delete_extraneous_entries(
 
         if context.mode().is_dry_run() {
             context.summary_mut().record_deletion();
+            context.record(LocalCopyRecord::new(
+                entry_relative,
+                LocalCopyAction::EntryDeleted,
+                0,
+                Duration::default(),
+            ));
             continue;
         }
 
         remove_extraneous_path(path, file_type)?;
         context.summary_mut().record_deletion();
+        context.record(LocalCopyRecord::new(
+            entry_relative,
+            LocalCopyAction::EntryDeleted,
+            0,
+            Duration::default(),
+        ));
     }
 
     Ok(())
@@ -1985,8 +2107,12 @@ fn copy_symlink(
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
+    relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| destination.file_name().map(PathBuf::from));
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -2048,6 +2174,14 @@ fn copy_symlink(
 
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
+        if let Some(path) = record_path {
+            context.record(LocalCopyRecord::new(
+                path,
+                LocalCopyAction::SymlinkCopied,
+                0,
+                Duration::default(),
+            ));
+        }
         return Ok(());
     }
 
@@ -2059,6 +2193,14 @@ fn copy_symlink(
         .map_err(map_metadata_error)?;
 
     context.summary_mut().record_symlink();
+    if let Some(path) = record_path {
+        context.record(LocalCopyRecord::new(
+            path,
+            LocalCopyAction::SymlinkCopied,
+            0,
+            Duration::default(),
+        ));
+    }
     Ok(())
 }
 
