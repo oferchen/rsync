@@ -176,6 +176,8 @@ const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailab
 /// Error payload returned when a configured module is requested but file serving is unavailable.
 const MODULE_UNAVAILABLE_PAYLOAD: &str =
     "@ERROR: module '{module}' transfers are not yet implemented in this build";
+const AUTHENTICATION_UNAVAILABLE_PAYLOAD: &str =
+    "@ERROR: authentication for module '{module}' is not implemented in this build";
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
@@ -1314,6 +1316,10 @@ fn respond_with_module_request(
                     module: Some(&module.name),
                 });
                 stream.write_all(message.as_bytes())?;
+                let payload =
+                    AUTHENTICATION_UNAVAILABLE_PAYLOAD.replace("{module}", &module.name);
+                stream.write_all(payload.as_bytes())?;
+                stream.write_all(b"\n")?;
                 let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
                 stream.write_all(exit.as_bytes())?;
                 return stream.flush();
@@ -1933,6 +1939,15 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("auth request");
         assert_eq!(line, "@RSYNCD: AUTHREQD secure\n");
+
+        line.clear();
+        reader
+            .read_line(&mut line)
+            .expect("authentication error message");
+        assert_eq!(
+            line,
+            "@ERROR: authentication for module 'secure' is not implemented in this build\n"
+        );
 
         line.clear();
         reader.read_line(&mut line).expect("exit message");
