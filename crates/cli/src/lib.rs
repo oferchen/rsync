@@ -112,7 +112,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', 'protect PATTERN', and 'merge FILE').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', and 'merge FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
@@ -1224,13 +1224,21 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return handle_keyword("exclude", FilterRuleSpec::exclude);
     }
 
+    if keyword.eq_ignore_ascii_case("show") {
+        return handle_keyword("show", FilterRuleSpec::include);
+    }
+
+    if keyword.eq_ignore_ascii_case("hide") {
+        return handle_keyword("hide", FilterRuleSpec::exclude);
+    }
+
     if keyword.eq_ignore_ascii_case("protect") {
         return handle_keyword("protect", FilterRuleSpec::protect);
     }
 
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'protect PATTERN', and 'merge FILE' directives"
+        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', and 'merge FILE' directives"
     )
     .with_role(Role::Client);
     Err(message)
@@ -2335,6 +2343,23 @@ mod tests {
         assert_eq!(
             protect_keyword,
             FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_hide_and_show_keywords() {
+        let show_keyword =
+            parse_filter_directive(OsStr::new("show images/**")).expect("keyword show parses");
+        assert_eq!(
+            show_keyword,
+            FilterDirective::Rule(FilterRuleSpec::include("images/**".to_string()))
+        );
+
+        let hide_keyword =
+            parse_filter_directive(OsStr::new("hide *.swp")).expect("keyword hide parses");
+        assert_eq!(
+            hide_keyword,
+            FilterDirective::Rule(FilterRuleSpec::exclude("*.swp".to_string()))
         );
     }
 
