@@ -3,113 +3,13 @@ use crate::negotiation::{
     NegotiatedStream, NegotiatedStreamParts, TryMapInnerError, sniff_negotiation_stream,
     sniff_negotiation_stream_with_sniffer,
 };
-use core::fmt::{self, Write as FmtWrite};
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
-    NegotiationPrologueSniffer, ProtocolVersion, write_legacy_daemon_greeting,
+    LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned,
+    NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
 use std::cmp;
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
-
-const LEGACY_GREETING_BUFFER_CAPACITY: usize = LEGACY_DAEMON_PREFIX_LEN + 7;
-
-/// Stack-allocated buffer used to render the legacy daemon greeting without allocating.
-///
-/// The buffer keeps previously written bytes until [`Self::clear`]
-/// is invoked, making it inexpensive to reuse across multiple negotiations when the
-/// caller wants to avoid repeated stack initialisation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LegacyGreetingBuffer {
-    buf: [u8; LEGACY_GREETING_BUFFER_CAPACITY],
-    len: usize,
-}
-
-impl LegacyGreetingBuffer {
-    const fn new() -> Self {
-        Self {
-            buf: [0; LEGACY_GREETING_BUFFER_CAPACITY],
-            len: 0,
-        }
-    }
-
-    /// Reports whether the buffer is empty.
-    #[must_use]
-    const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Clears the buffer without zeroing the underlying storage.
-    fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    #[must_use]
-    fn as_bytes(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
-
-    /// Renders a canonical legacy daemon greeting into the buffer.
-    ///
-    /// The helper clears any existing contents before delegating to
-    /// [`write_legacy_daemon_greeting`], ensuring reused buffers never retain
-    /// stale bytes from previous negotiations. On success the borrowed slice
-    /// exposes the freshly written banner; on failure the buffer is cleared so
-    /// callers can retry without observing partially formatted data.
-    #[must_use = "callers typically forward the rendered greeting to the daemon"]
-    fn render_greeting(&mut self, version: ProtocolVersion) -> Result<&[u8], fmt::Error> {
-        self.clear();
-
-        match write_legacy_daemon_greeting(self, version) {
-            Ok(()) => {
-                debug_assert!(
-                    !self.is_empty(),
-                    "successful greeting rendering must populate the buffer",
-                );
-                Ok(self.as_bytes())
-            }
-            Err(err) => {
-                self.clear();
-                Err(err)
-            }
-        }
-    }
-}
-
-impl Default for LegacyGreetingBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AsRef<[u8]> for LegacyGreetingBuffer {
-    fn as_ref(&self) -> &[u8] {
-        self.as_bytes()
-    }
-}
-
-impl FmtWrite for LegacyGreetingBuffer {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let bytes = s.as_bytes();
-        let Some(end) = self.len.checked_add(bytes.len()) else {
-            return Err(fmt::Error);
-        };
-
-        if end > self.buf.len() {
-            return Err(fmt::Error);
-        }
-
-        self.buf[self.len..end].copy_from_slice(bytes);
-        self.len = end;
-        Ok(())
-    }
-
-    fn write_char(&mut self, ch: char) -> fmt::Result {
-        let mut encoded = [0u8; 4];
-        let encoded = ch.encode_utf8(&mut encoded);
-        self.write_str(encoded)
-    }
-}
 
 /// Result of performing the legacy ASCII daemon negotiation.
 ///
@@ -915,34 +815,54 @@ where
     )?;
 
     let mut line = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN + 32);
-    let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
-    let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
+let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
+let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
 
-    let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
+let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
 
-    let mut banner = LegacyGreetingBuffer::new();
-    let bytes = banner.render_greeting(negotiated_protocol).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "failed to format legacy daemon greeting",
-        )
-    })?;
+let banner = build_client_greeting(&server_greeting, negotiated_protocol);
+stream.write_all(&banner)?;
+stream.flush()?;
 
-    if bytes.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "legacy daemon greeting formatter produced empty banner",
-        ));
+Ok(LegacyDaemonHandshake {
+    stream,
+    server_greeting,
+    negotiated_protocol,
+})
+}
+
+fn build_client_greeting(
+    server_greeting: &LegacyDaemonGreetingOwned,
+    negotiated_protocol: ProtocolVersion,
+) -> Vec<u8> {
+    let mut greeting = String::with_capacity(
+        LEGACY_DAEMON_PREFIX.len()
+            + 16
+            + server_greeting
+                .digest_list()
+                .map(|list| list.len() + 1)
+                .unwrap_or(0),
+    );
+
+    greeting.push_str(LEGACY_DAEMON_PREFIX);
+    greeting.push(' ');
+    greeting.push_str(&negotiated_protocol.as_u8().to_string());
+    greeting.push('.');
+
+    let fractional = if negotiated_protocol == server_greeting.protocol() {
+        server_greeting.subprotocol()
+    } else {
+        0
+    };
+    greeting.push_str(&fractional.to_string());
+
+    if let Some(digests) = server_greeting.digest_list() {
+        greeting.push(' ');
+        greeting.push_str(digests);
     }
 
-    stream.write_all(bytes)?;
-    stream.flush()?;
-
-    Ok(LegacyDaemonHandshake {
-        stream,
-        server_greeting,
-        negotiated_protocol,
-    })
+    greeting.push('\n');
+    greeting.into_bytes()
 }
 
 #[cfg(test)]
@@ -1583,53 +1503,41 @@ mod tests {
     }
 
     #[test]
-    fn legacy_greeting_buffer_matches_formatter() {
-        let mut buffer = LegacyGreetingBuffer::new();
-        let rendered = buffer
-            .render_greeting(ProtocolVersion::NEWEST)
-            .expect("writing to stack buffer succeeds");
+    fn legacy_client_greeting_echoes_digest_list() {
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n");
 
+        let handshake =
+            negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+                .expect("handshake should succeed");
+
+        let mut stream = handshake.into_stream();
+        stream
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        stream.flush().expect("flush propagates");
+
+        let inner = stream.into_inner();
         assert_eq!(
-            rendered,
-            format_legacy_daemon_greeting(ProtocolVersion::NEWEST).as_bytes()
+            inner.written(),
+            b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
         );
     }
 
     #[test]
-    fn legacy_greeting_buffer_supports_reuse() {
-        let mut buffer = LegacyGreetingBuffer::default();
-        let first = buffer
-            .render_greeting(ProtocolVersion::NEWEST)
-            .expect("writing to stack buffer succeeds")
-            .to_vec();
+    fn legacy_client_greeting_respects_protocol_cap() {
+        let desired = ProtocolVersion::from_supported(29).expect("protocol 29 supported");
+        let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 sha256\n");
 
-        assert_eq!(buffer.as_bytes().len(), first.len());
+        let handshake =
+            negotiate_legacy_daemon_session(transport, desired).expect("handshake should succeed");
 
-        let second = buffer
-            .render_greeting(ProtocolVersion::NEWEST)
-            .expect("writing after reuse succeeds");
-        assert_eq!(second, first.as_slice());
-    }
+        let mut stream = handshake.into_stream();
+        stream
+            .write_all(b"@RSYNCD: OK\n")
+            .expect("write propagates");
+        stream.flush().expect("flush propagates");
 
-    #[test]
-    fn legacy_greeting_buffer_rejects_overflow() {
-        let mut buffer = LegacyGreetingBuffer::new();
-        let long = "@RSYNCD: 32.0 additional";
-
-        assert!(buffer.write_str(long).is_err());
-        assert!(buffer.as_bytes().is_empty());
-        assert!(buffer.is_empty());
-        assert_eq!(buffer.as_bytes().len(), 0);
-    }
-
-    #[test]
-    fn legacy_greeting_buffer_detects_internal_len_overflow() {
-        let mut buffer = LegacyGreetingBuffer::new();
-        buffer.len = usize::MAX;
-
-        let result = buffer.write_str("@RSYNCD: 31.0\n");
-        assert!(result.is_err());
-        assert_eq!(buffer.len, usize::MAX);
-        assert!(buffer.buf.iter().all(|&byte| byte == 0));
+        let inner = stream.into_inner();
+        assert_eq!(inner.written(), b"@RSYNCD: 29.0 sha512 sha256\n@RSYNCD: OK\n");
     }
 }
