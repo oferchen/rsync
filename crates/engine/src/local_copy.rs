@@ -191,7 +191,7 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopySummary, LocalCopyError> {
-        copy_sources(self, mode, options).map(CopyContext::into_summary)
+        copy_sources(self, mode, options).map(CopyOutcome::into_summary)
     }
 
     /// Executes the planned copy and returns a detailed report of performed actions.
@@ -200,7 +200,10 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopyReport, LocalCopyError> {
-        copy_sources(self, mode, options).map(CopyContext::into_report)
+        copy_sources(self, mode, options).map(|outcome| {
+            let (_summary, report) = outcome.into_summary_and_report();
+            report
+        })
     }
 }
 
@@ -685,8 +688,9 @@ impl CopyOutcome {
     }
 
     fn into_summary_and_report(self) -> (LocalCopySummary, LocalCopyReport) {
+        let summary = self.summary;
         let records = self.events.unwrap_or_default();
-        (self.summary, LocalCopyReport::new(records))
+        (summary, LocalCopyReport::new(summary, records))
     }
 }
 
@@ -768,28 +772,10 @@ impl CopyContext {
         }
     }
 
-    fn partial_enabled(&self) -> bool {
-        self.options.partial_enabled()
-    }
-
     fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {
             summary: self.summary,
             events: self.events,
-        }
-    }
-
-    fn into_report(self) -> LocalCopyReport {
-        let Self {
-            summary, events, ..
-        } = self;
-        let records = events.unwrap_or_default();
-        LocalCopyReport::new(summary, records)
-    }
-
-    fn record(&mut self, record: LocalCopyRecord) {
-        if let Some(events) = &mut self.events {
-            events.push(record);
         }
     }
 }
@@ -1160,7 +1146,7 @@ fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
-) -> Result<CopyContext, LocalCopyError> {
+) -> Result<CopyOutcome, LocalCopyError> {
     let mut context = CopyContext::new(mode, options);
 
     let multiple_sources = plan.sources.len() > 1;
@@ -1275,7 +1261,7 @@ fn copy_sources(
         }
     }
 
-    Ok(context)
+    Ok(context.into_outcome())
 }
 
 fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {

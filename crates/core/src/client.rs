@@ -731,7 +731,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 
     if collect_events {
         plan.execute_with_report(mode, options.collect_events(true))
-            .map(|(summary, report)| ClientSummary::from_report(summary, report))
+            .map(ClientSummary::from_report)
             .map_err(map_local_copy_error)
     } else {
         plan.execute_with_options(mode, options)
