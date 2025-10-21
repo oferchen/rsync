@@ -974,6 +974,7 @@ fn copy_directory_recursive(
         };
 
         if !context.allows(&entry_relative, entry_type.is_dir()) {
+            keep_names.push(file_name.clone());
             continue;
         }
 
@@ -1019,7 +1020,14 @@ fn copy_directory_recursive(
     }
 
     if context.options().delete_extraneous() {
-        delete_extraneous_entries(destination, &keep_names, context.mode())?;
+        let filters = context.options().filter_set().cloned();
+        delete_extraneous_entries(
+            destination,
+            relative,
+            &keep_names,
+            context.mode(),
+            filters.as_ref(),
+        )?;
     }
 
     if !context.mode().is_dry_run() {
@@ -1335,8 +1343,10 @@ fn copy_device(
 
 fn delete_extraneous_entries(
     destination: &Path,
+    relative: Option<&Path>,
     source_entries: &[OsString],
     mode: LocalCopyExecution,
+    filters: Option<&FilterSet>,
 ) -> Result<(), LocalCopyError> {
     let mut keep = HashSet::with_capacity(source_entries.len());
     for name in source_entries {
@@ -1365,18 +1375,28 @@ fn delete_extraneous_entries(
             continue;
         }
 
-        let path = destination.join(&name);
-
-        if mode.is_dry_run() {
-            entry.file_type().map_err(|error| {
-                LocalCopyError::io("inspect extraneous destination entry", path, error)
-            })?;
-            continue;
-        }
+        let name_path = PathBuf::from(name.as_os_str());
+        let path = destination.join(&name_path);
 
         let file_type = entry.file_type().map_err(|error| {
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
+
+        if let Some(filters) = filters {
+            let entry_relative = match relative {
+                Some(base) => base.join(&name_path),
+                None => name_path.clone(),
+            };
+
+            if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
+                continue;
+            }
+        }
+
+        if mode.is_dry_run() {
+            continue;
+        }
+
         remove_extraneous_path(path, file_type)?;
     }
 
@@ -2343,5 +2363,41 @@ mod tests {
         let target_root = dest.join("source");
         assert!(target_root.join("keep.tmp").exists());
         assert!(!target_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn delete_respects_exclude_filters() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+
+        let target_root = dest.join("source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
+        fs::write(target_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .filters(Some(filters));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("extra.txt").exists());
+        let skip_path = target_root.join("skip.tmp");
+        assert!(skip_path.exists());
+        assert_eq!(fs::read(skip_path).expect("read skip"), b"dest skip");
     }
 }
