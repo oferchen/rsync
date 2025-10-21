@@ -1391,8 +1391,6 @@ fn delete_extraneous_entries(
             if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
                 continue;
             }
-
-            entry_relative = Some(relative_path);
         }
 
         if mode.is_dry_run() {
