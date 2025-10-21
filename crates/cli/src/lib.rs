@@ -1456,18 +1456,18 @@ fn read_file_list_from_reader<R: BufRead>(
 ) -> io::Result<()> {
     if zero_terminated {
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
-        let mut start = 0;
-        while start < buffer.len() {
-            let end = match buffer[start..].iter().position(|&byte| byte == b'\0') {
-                Some(offset) => start + offset,
-                None => buffer.len(),
-            };
-            push_file_list_entry(&buffer[start..end], entries);
-            if end == buffer.len() {
+        loop {
+            buffer.clear();
+            let read = reader.read_until(b'\0', &mut buffer)?;
+            if read == 0 {
                 break;
             }
-            start = end + 1;
+
+            if buffer.last() == Some(&b'\0') {
+                buffer.pop();
+            }
+
+            push_file_list_entry(&buffer, entries);
         }
         return Ok(());
     }
@@ -1974,6 +1974,24 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].as_os_str().as_bytes(), b"fo\x80");
+    }
+
+    #[test]
+    fn from0_reader_accepts_missing_trailing_separator() {
+        let data = b"alpha\0beta\0gamma";
+        let mut reader = BufReader::new(&data[..]);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, true, &mut entries).expect("read list");
+
+        assert_eq!(
+            entries,
+            vec![
+                OsString::from("alpha"),
+                OsString::from("beta"),
+                OsString::from("gamma"),
+            ]
+        );
     }
 
     #[cfg(unix)]
