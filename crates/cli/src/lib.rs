@@ -663,7 +663,7 @@ where
         return 0;
     }
 
-    if show_version && raw_remainder.is_empty() {
+    if show_version {
         let report = VersionInfoReport::default();
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
@@ -1530,6 +1530,37 @@ mod tests {
     #[test]
     fn short_version_flag_renders_report() {
         let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-V")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default().human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn version_flag_ignores_additional_operands() {
+        let (code, stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsync"),
+            OsStr::new("--version"),
+            OsStr::new("source"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default().human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn short_version_flag_ignores_additional_operands() {
+        let (code, stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsync"),
+            OsStr::new("-V"),
+            OsStr::new("source"),
+            OsStr::new("dest"),
+        ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
