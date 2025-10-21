@@ -468,7 +468,8 @@ pub fn run_client(config: ClientConfig) -> Result<(), ClientError> {
         .group(config.preserve_group())
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
-        .filters(filter_set);
+        .filters(filter_set)
+        .numeric_ids(config.numeric_ids());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {

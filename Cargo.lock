@@ -535,6 +535,7 @@ name = "rsync-meta"
 version = "0.0.0"
 dependencies = [
  "filetime",
+ "libc",
  "rustix 0.38.44",
  "tempfile",
 ]
