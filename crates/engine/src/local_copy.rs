@@ -1382,22 +1382,41 @@ fn delete_extraneous_entries(
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
 
+        let mut entry_relative = None;
         if let Some(filters) = filters {
-            let entry_relative = match relative {
+            let relative_path = match relative {
                 Some(base) => base.join(&name_path),
                 None => name_path.clone(),
             };
 
-            if !filters.allows(entry_relative.as_path(), file_type.is_dir()) {
+            if !filters.allows(relative_path.as_path(), file_type.is_dir()) {
                 continue;
             }
+
+            entry_relative = Some(relative_path);
         }
 
         if mode.is_dry_run() {
             continue;
         }
 
-        remove_extraneous_path(path, file_type)?;
+        if file_type.is_dir() {
+            if let (Some(filters), Some(relative_path)) = (filters, entry_relative.as_ref()) {
+                let empty: [OsString; 0] = [];
+                delete_extraneous_entries(
+                    path.as_path(),
+                    Some(relative_path.as_path()),
+                    &empty,
+                    mode,
+                    Some(filters),
+                )?;
+                remove_directory_if_empty(path)?;
+            } else {
+                remove_extraneous_path(path, file_type)?;
+            }
+        } else {
+            remove_extraneous_path(path, file_type)?;
+        }
     }
 
     Ok(())
@@ -1420,6 +1439,25 @@ fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), 
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(LocalCopyError::io(context, path, error)),
+    }
+}
+
+fn remove_directory_if_empty(path: PathBuf) -> Result<(), LocalCopyError> {
+    match fs::remove_dir(&path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(LocalCopyError::io(
+            "remove extraneous directory",
+            path,
+            error,
+        )),
     }
 }
 
@@ -2399,5 +2437,41 @@ mod tests {
         let skip_path = target_root.join("skip.tmp");
         assert!(skip_path.exists());
         assert_eq!(fs::read(skip_path).expect("read skip"), b"dest skip");
+    }
+
+    #[test]
+    fn delete_preserves_directories_with_filtered_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+
+        let target_root = dest.join("source");
+        let cache_dir = target_root.join("cache");
+        fs::create_dir_all(&cache_dir).expect("create cache dir");
+        fs::write(cache_dir.join("temp.tmp"), b"cache data").expect("write cache file");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .filters(Some(filters));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(cache_dir.exists());
+        let preserved = cache_dir.join("temp.tmp");
+        assert!(preserved.exists());
+        assert_eq!(fs::read(preserved).expect("read preserved"), b"cache data");
     }
 }
