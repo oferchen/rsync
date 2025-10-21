@@ -83,7 +83,7 @@ use std::fmt;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::num::NonZeroU64;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rsync_engine::local_copy::{
@@ -124,6 +124,9 @@ pub struct ClientConfig {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    verbosity: u8,
+    progress: bool,
+    partial: bool,
 }
 
 impl ClientConfig {
@@ -213,6 +216,35 @@ impl ClientConfig {
     pub const fn sparse(&self) -> bool {
         self.sparse
     }
+
+    /// Returns the requested verbosity level.
+    #[must_use]
+    #[doc(alias = "--verbose")]
+    #[doc(alias = "-v")]
+    pub const fn verbosity(&self) -> u8 {
+        self.verbosity
+    }
+
+    /// Reports whether progress output was requested.
+    #[must_use]
+    #[doc(alias = "--progress")]
+    pub const fn progress(&self) -> bool {
+        self.progress
+    }
+
+    /// Reports whether partial transfers were requested.
+    #[must_use]
+    #[doc(alias = "--partial")]
+    #[doc(alias = "-P")]
+    pub const fn partial(&self) -> bool {
+        self.partial
+    }
+
+    /// Returns whether the configuration requires collection of transfer events.
+    #[must_use]
+    pub const fn collect_events(&self) -> bool {
+        self.verbosity > 0 || self.progress
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -229,6 +261,9 @@ pub struct ClientConfigBuilder {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    verbosity: u8,
+    progress: bool,
+    partial: bool,
 }
 
 impl ClientConfigBuilder {
@@ -317,6 +352,34 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the verbosity level requested by the caller.
+    #[must_use]
+    #[doc(alias = "--verbose")]
+    #[doc(alias = "-v")]
+    pub const fn verbosity(mut self, verbosity: u8) -> Self {
+        self.verbosity = verbosity;
+        self
+    }
+
+    /// Enables or disables progress reporting for the transfer.
+    #[must_use]
+    #[doc(alias = "--progress")]
+    #[doc(alias = "--no-progress")]
+    pub const fn progress(mut self, progress: bool) -> Self {
+        self.progress = progress;
+        self
+    }
+
+    /// Enables or disables retention of partial files on failure.
+    #[must_use]
+    #[doc(alias = "--partial")]
+    #[doc(alias = "--no-partial")]
+    #[doc(alias = "-P")]
+    pub const fn partial(mut self, partial: bool) -> Self {
+        self.partial = partial;
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -349,6 +412,9 @@ impl ClientConfigBuilder {
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
+            verbosity: self.verbosity,
+            progress: self.progress,
+            partial: self.partial,
         }
     }
 }
@@ -464,6 +530,110 @@ impl fmt::Display for ClientError {
 
 impl Error for ClientError {}
 
+/// Summary of the work performed by [`run_client`].
+#[derive(Clone, Debug, Default)]
+pub struct ClientSummary {
+    events: Vec<ClientEvent>,
+}
+
+impl ClientSummary {
+    fn from_report(report: LocalCopyReport) -> Self {
+        let events = report
+            .records()
+            .iter()
+            .map(ClientEvent::from_record)
+            .collect();
+        Self { events }
+    }
+
+    /// Returns the list of recorded transfer actions.
+    #[must_use]
+    pub fn events(&self) -> &[ClientEvent] {
+        &self.events
+    }
+
+    /// Consumes the summary and returns the recorded actions.
+    #[must_use]
+    pub fn into_events(self) -> Vec<ClientEvent> {
+        self.events
+    }
+}
+
+/// Describes a transfer action performed by the local copy engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClientEventKind {
+    /// File data was copied into place.
+    DataCopied,
+    /// The destination already matched the source and metadata was reused.
+    MetadataReused,
+    /// A hard link was created to a previously copied destination file.
+    HardLink,
+    /// A symbolic link was recreated.
+    SymlinkCopied,
+    /// A FIFO node was recreated.
+    FifoCopied,
+    /// A device node was recreated.
+    DeviceCopied,
+    /// A directory was created during traversal.
+    DirectoryCreated,
+    /// An entry was deleted due to `--delete`.
+    EntryDeleted,
+}
+
+/// Event describing a single action performed during a client transfer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClientEvent {
+    relative_path: PathBuf,
+    kind: ClientEventKind,
+    bytes_transferred: u64,
+    elapsed: Duration,
+}
+
+impl ClientEvent {
+    fn from_record(record: &LocalCopyRecord) -> Self {
+        let kind = match record.action() {
+            LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
+            LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
+            LocalCopyAction::HardLink => ClientEventKind::HardLink,
+            LocalCopyAction::SymlinkCopied => ClientEventKind::SymlinkCopied,
+            LocalCopyAction::FifoCopied => ClientEventKind::FifoCopied,
+            LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
+            LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
+            LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
+        };
+        Self {
+            relative_path: record.relative_path().to_path_buf(),
+            kind,
+            bytes_transferred: record.bytes_transferred(),
+            elapsed: record.elapsed(),
+        }
+    }
+
+    /// Returns the relative path affected by this event.
+    #[must_use]
+    pub fn relative_path(&self) -> &Path {
+        &self.relative_path
+    }
+
+    /// Returns the action recorded by this event.
+    #[must_use]
+    pub fn kind(&self) -> &ClientEventKind {
+        &self.kind
+    }
+
+    /// Returns the number of bytes transferred as part of this event.
+    #[must_use]
+    pub const fn bytes_transferred(&self) -> u64 {
+        self.bytes_transferred
+    }
+
+    /// Returns the elapsed time spent on this event.
+    #[must_use]
+    pub const fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+}
+
 /// Runs the client orchestration using the provided configuration.
 ///
 /// The current implementation offers best-effort local copies covering
@@ -492,15 +662,25 @@ pub fn run_client(config: ClientConfig) -> Result<LocalCopySummary, ClientError>
         .times(config.preserve_times())
         .filters(filter_set)
         .numeric_ids(config.numeric_ids())
-        .sparse(config.sparse());
+        .sparse(config.sparse())
+        .partial(config.partial());
     let mode = if config.dry_run() {
         LocalCopyExecution::DryRun
     } else {
         LocalCopyExecution::Apply
     };
 
-    plan.execute_with_options(mode, options)
-        .map_err(map_local_copy_error)
+    let collect_events = config.collect_events();
+
+    if collect_events {
+        plan.execute_with_report(mode, options.collect_events(true))
+            .map(ClientSummary::from_report)
+            .map_err(map_local_copy_error)
+    } else {
+        plan.execute_with_options(mode, options)
+            .map_err(map_local_copy_error)?;
+        Ok(ClientSummary::default())
+    }
 }
 
 #[cfg(test)]
@@ -1005,7 +1185,8 @@ mod tests {
             .permissions(true)
             .times(true)
             .build();
-        run_client(dense_config).expect("dense copy succeeds");
+        let summary = run_client(dense_config).expect("dense copy succeeds");
+        assert!(summary.events().is_empty());
 
         let sparse_config = ClientConfig::builder()
             .transfer_args([
@@ -1016,7 +1197,8 @@ mod tests {
             .times(true)
             .sparse(true)
             .build();
-        run_client(sparse_config).expect("sparse copy succeeds");
+        let summary = run_client(sparse_config).expect("sparse copy succeeds");
+        assert!(summary.events().is_empty());
 
         let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
         let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
