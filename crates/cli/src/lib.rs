@@ -74,6 +74,9 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
+
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     client::{
@@ -1398,9 +1401,22 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         return;
     }
 
-    let text = String::from_utf8_lossy(&bytes[..end]).into_owned();
-    if !text.is_empty() {
-        entries.push(OsString::from(text));
+    let trimmed = &bytes[..end];
+
+    #[cfg(unix)]
+    {
+        if !trimmed.is_empty() {
+            entries.push(OsString::from_vec(trimmed.to_vec()));
+        }
+        return;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let text = String::from_utf8_lossy(trimmed).into_owned();
+        if !text.is_empty() {
+            entries.push(OsString::from(text));
+        }
     }
 }
 
@@ -1602,6 +1618,9 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -1973,6 +1992,22 @@ mod tests {
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("utf8");
         assert!(rendered.contains("failed to read file list"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn files_from_preserves_non_utf8_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let list_path = tmp.path().join("binary.list");
+        std::fs::write(&list_path, [b'f', b'o', 0x80, b'\n']).expect("write binary list");
+
+        let entries =
+            load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].as_os_str().as_bytes(), b"fo\x80");
     }
 
     #[cfg(unix)]
