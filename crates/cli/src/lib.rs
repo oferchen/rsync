@@ -935,11 +935,20 @@ fn emit_transfer_summary<W: Write>(
 ) -> io::Result<()> {
     let events = summary.events();
 
-    if progress && !events.is_empty() {
-        emit_progress(events, stdout)?;
+    let progress_rendered = if progress && !events.is_empty() {
+        emit_progress(events, stdout)?
+    } else {
+        false
+    };
+
+    if progress_rendered && verbosity > 0 {
+        writeln!(stdout)?;
     }
 
-    if verbosity > 0 && !events.is_empty() {
+    let emit_verbose_listing =
+        verbosity > 0 && !events.is_empty() && (!progress_rendered || verbosity > 1);
+
+    if emit_verbose_listing {
         emit_verbose(events, verbosity, stdout)?;
     }
 
@@ -950,54 +959,106 @@ fn emit_transfer_summary<W: Write>(
     Ok(())
 }
 
-/// Renders progress lines for the provided transfer events.
-fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
-    let mut total_bytes = 0u64;
-    let mut total_elapsed = Duration::default();
-    let mut emitted = false;
+/// Returns whether the provided event kind should be reflected in progress output.
+fn is_progress_event(kind: &ClientEventKind) -> bool {
+    matches!(
+        kind,
+        ClientEventKind::DataCopied
+            | ClientEventKind::MetadataReused
+            | ClientEventKind::HardLink
+            | ClientEventKind::SymlinkCopied
+            | ClientEventKind::FifoCopied
+            | ClientEventKind::DeviceCopied
+    )
+}
 
-    for event in events {
-        let bytes = event.bytes_transferred();
-        if bytes == 0 {
-            continue;
-        }
+/// Formats a byte count using thousands separators, mirroring upstream rsync progress lines.
+fn format_progress_bytes(bytes: u64) -> String {
+    if bytes == 0 {
+        return "0".to_string();
+    }
 
-        emitted = true;
-        total_bytes = total_bytes.saturating_add(bytes);
-        total_elapsed += event.elapsed();
-
-        if let Some(rate) = compute_rate(bytes, event.elapsed()) {
-            writeln!(
-                stdout,
-                "{}: {} bytes ({rate:.1} B/s)",
-                event.relative_path().display(),
-                bytes
-            )?;
+    let mut value = bytes;
+    let mut parts = Vec::new();
+    while value > 0 {
+        let chunk = value % 1_000;
+        value /= 1_000;
+        if value == 0 {
+            parts.push(chunk.to_string());
         } else {
-            writeln!(
-                stdout,
-                "{}: {} bytes",
-                event.relative_path().display(),
-                bytes
-            )?;
+            parts.push(format!("{chunk:03}"));
         }
     }
+    parts.reverse();
+    parts.join(",")
+}
 
-    if !emitted {
-        writeln!(stdout, "Total transferred: 0 bytes")?;
-        return Ok(());
+/// Formats a transfer rate in the `kB/s`, `MB/s`, or `GB/s` ranges.
+fn format_progress_rate(bytes: u64, elapsed: Duration) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+
+    if bytes == 0 || elapsed.is_zero() {
+        return "0.00kB/s".to_string();
     }
 
-    let seconds = total_elapsed.as_secs_f64();
-    if seconds > 0.0 {
-        let rate = total_bytes as f64 / seconds;
+    let seconds = elapsed.as_secs_f64();
+    if seconds <= 0.0 {
+        return "0.00kB/s".to_string();
+    }
+
+    let bytes_per_second = bytes as f64 / seconds;
+    let (value, unit) = if bytes_per_second >= GIB {
+        (bytes_per_second / GIB, "GB/s")
+    } else if bytes_per_second >= MIB {
+        (bytes_per_second / MIB, "MB/s")
+    } else {
+        (bytes_per_second / KIB, "kB/s")
+    };
+
+    format!("{value:.2}{unit}")
+}
+
+/// Formats an elapsed duration as `H:MM:SS`, matching rsync's progress output.
+fn format_progress_elapsed(elapsed: Duration) -> String {
+    let total_seconds = elapsed.as_secs();
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+    format!("{hours}:{minutes:02}:{seconds:02}")
+}
+
+/// Renders progress lines for the provided transfer events.
+fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<bool> {
+    let progress_events: Vec<_> = events
+        .iter()
+        .filter(|event| is_progress_event(event.kind()))
+        .collect();
+
+    if progress_events.is_empty() {
+        return Ok(false);
+    }
+
+    let total = progress_events.len();
+
+    for (index, event) in progress_events.into_iter().enumerate() {
+        writeln!(stdout, "{}", event.relative_path().display())?;
+
+        let bytes = event.bytes_transferred();
+        let size_field = format!("{:>15}", format_progress_bytes(bytes));
+        let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
+        let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
+        let remaining = total - index - 1;
+        let xfr_index = index + 1;
+
         writeln!(
             stdout,
-            "Total transferred: {total_bytes} bytes in {seconds:.3}s ({rate:.1} B/s)"
-        )
-    } else {
-        writeln!(stdout, "Total transferred: {total_bytes} bytes")
+            "{size_field} 100% {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+        )?;
     }
+
+    Ok(true)
 }
 
 /// Emits the summary lines reported by verbose transfers.
@@ -1777,7 +1838,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_transfer_reports_totals() {
+    fn progress_transfer_renders_progress_lines() {
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -1797,11 +1858,39 @@ mod tests {
 
         let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
         assert!(rendered.contains("progress.txt"));
-        assert!(rendered.contains("Total transferred"));
+        assert!(rendered.contains("(xfr#1, to-chk=0/1)"));
+        assert!(!rendered.contains("Total transferred"));
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"progress"
         );
+    }
+
+    #[test]
+    fn progress_with_verbose_inserts_separator_before_totals() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("progress.txt");
+        let destination = tmp.path().join("progress.out");
+        std::fs::write(&source, b"progress").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("-v"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+        assert!(rendered.contains("(xfr#1, to-chk=0/1)"));
+        assert!(rendered.contains("\n\nsent"));
+        assert!(rendered.contains("sent"));
+        assert!(rendered.contains("total size is"));
     }
 
     #[test]
