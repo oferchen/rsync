@@ -210,6 +210,8 @@ pub struct LocalCopyOptions {
     bandwidth_limit: Option<NonZeroU64>,
     preserve_owner: bool,
     preserve_group: bool,
+    preserve_permissions: bool,
+    preserve_times: bool,
 }
 
 impl LocalCopyOptions {
@@ -221,6 +223,8 @@ impl LocalCopyOptions {
             bandwidth_limit: None,
             preserve_owner: false,
             preserve_group: false,
+            preserve_permissions: false,
+            preserve_times: false,
         }
     }
 
@@ -256,6 +260,22 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that permissions be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--perms")]
+    pub const fn permissions(mut self, preserve: bool) -> Self {
+        self.preserve_permissions = preserve;
+        self
+    }
+
+    /// Requests that timestamps be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--times")]
+    pub const fn times(mut self, preserve: bool) -> Self {
+        self.preserve_times = preserve;
+        self
+    }
+
     /// Reports whether extraneous destination files should be removed.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
@@ -278,6 +298,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_group(&self) -> bool {
         self.preserve_group
+    }
+
+    /// Reports whether permissions should be preserved.
+    #[must_use]
+    pub const fn preserve_permissions(&self) -> bool {
+        self.preserve_permissions
+    }
+
+    /// Reports whether timestamps should be preserved.
+    #[must_use]
+    pub const fn preserve_times(&self) -> bool {
+        self.preserve_times
     }
 }
 
@@ -373,6 +405,8 @@ impl CopyContext {
         MetadataOptions::new()
             .preserve_owner(self.options.preserve_owner())
             .preserve_group(self.options.preserve_group())
+            .preserve_permissions(self.options.preserve_permissions())
+            .preserve_times(self.options.preserve_times())
     }
 
     fn split_mut(&mut self) -> (&mut HardLinkTracker, Option<&mut BandwidthLimiter>) {
@@ -1774,7 +1808,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn execute_preserves_metadata() {
+    fn execute_does_not_preserve_metadata_by_default() {
         use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
@@ -1795,6 +1829,40 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         plan.execute().expect("copy succeeds");
+
+        let metadata = fs::metadata(&destination).expect("dest metadata");
+        assert_ne!(metadata.permissions().mode() & 0o777, 0o640);
+        let dest_atime = FileTime::from_last_access_time(&metadata);
+        let dest_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_ne!(dest_atime, atime);
+        assert_ne!(dest_mtime, mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_preserves_metadata_when_requested() {
+        use filetime::{FileTime, set_file_times};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"metadata").expect("write source");
+        fs::write(&destination, b"metadata").expect("write dest");
+
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o640)).expect("set perms");
+        let atime = FileTime::from_unix_time(1_700_000_000, 123_000_000);
+        let mtime = FileTime::from_unix_time(1_700_000_100, 456_000_000);
+        set_file_times(&source, atime, mtime).expect("set times");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().permissions(true).times(true);
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
 
         let metadata = fs::metadata(&destination).expect("dest metadata");
         assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
@@ -1871,6 +1939,7 @@ mod tests {
         fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o640))
             .expect("set fifo permissions");
 
+        let source_fifo_path = source_fifo.clone();
         let destination_fifo = temp.path().join("dest.pipe");
         let operands = vec![
             source_fifo.into_os_string(),
@@ -1878,7 +1947,18 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("fifo copy succeeds");
+        let src_metadata = fs::symlink_metadata(&source_fifo_path).expect("source metadata");
+        assert_eq!(src_metadata.permissions().mode() & 0o777, 0o640);
+        let src_atime = FileTime::from_last_access_time(&src_metadata);
+        let src_mtime = FileTime::from_last_modification_time(&src_metadata);
+        assert_eq!(src_atime, atime);
+        assert_eq!(src_mtime, mtime);
+
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().permissions(true).times(true),
+        )
+        .expect("fifo copy succeeds");
 
         let dest_metadata = fs::symlink_metadata(&destination_fifo).expect("dest metadata");
         assert!(dest_metadata.file_type().is_fifo());
@@ -1917,13 +1997,25 @@ mod tests {
         fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o620))
             .expect("set fifo permissions");
 
+        let source_fifo_path = source_fifo.clone();
         let dest_root = temp.path().join("dest");
         let mut source_operand = source_root.clone().into_os_string();
         source_operand.push(std::path::MAIN_SEPARATOR.to_string());
         let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        plan.execute().expect("fifo copy succeeds");
+        let src_metadata = fs::symlink_metadata(&source_fifo_path).expect("source metadata");
+        assert_eq!(src_metadata.permissions().mode() & 0o777, 0o620);
+        let src_atime = FileTime::from_last_access_time(&src_metadata);
+        let src_mtime = FileTime::from_last_modification_time(&src_metadata);
+        assert_eq!(src_atime, atime);
+        assert_eq!(src_mtime, mtime);
+
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().permissions(true).times(true),
+        )
+        .expect("fifo copy succeeds");
 
         let dest_fifo = dest_root.join("dir").join("pipe");
         let metadata = fs::symlink_metadata(&dest_fifo).expect("dest fifo metadata");
