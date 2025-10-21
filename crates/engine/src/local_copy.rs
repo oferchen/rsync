@@ -55,7 +55,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use rsync_filters::FilterSet;
 use rsync_meta::{
@@ -1121,6 +1121,26 @@ fn copy_file(
         return Ok(());
     }
 
+    let existing_metadata = match fs::symlink_metadata(destination) {
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    if let Some(existing) = &existing_metadata {
+        if existing.file_type().is_dir() {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceDirectoryWithFile,
+            ));
+        }
+    }
+
     let (hard_links, mut limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -1149,6 +1169,15 @@ fn copy_file(
 
         hard_links.record(metadata, destination);
         return Ok(());
+    }
+
+    if let Some(existing) = existing_metadata.as_ref() {
+        if should_skip_copy(source, metadata, destination, existing, metadata_options) {
+            apply_file_metadata_with_options(destination, metadata, metadata_options)
+                .map_err(map_metadata_error)?;
+            hard_links.record(metadata, destination);
+            return Ok(());
+        }
     }
 
     let mut reader = fs::File::open(source)
@@ -1182,6 +1211,68 @@ fn copy_file(
         .map_err(map_metadata_error)?;
     hard_links.record(metadata, destination);
     Ok(())
+}
+
+fn should_skip_copy(
+    source_path: &Path,
+    source: &fs::Metadata,
+    destination_path: &Path,
+    destination: &fs::Metadata,
+    options: MetadataOptions,
+) -> bool {
+    if destination.len() != source.len() {
+        return false;
+    }
+
+    if options.times() {
+        match (source.modified(), destination.modified()) {
+            (Ok(src), Ok(dst)) if system_time_eq(src, dst) => {}
+            _ => return false,
+        }
+    }
+
+    files_match(source_path, destination_path)
+}
+
+fn system_time_eq(a: SystemTime, b: SystemTime) -> bool {
+    a.eq(&b)
+}
+
+fn files_match(source: &Path, destination: &Path) -> bool {
+    let mut source_file = match fs::File::open(source) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut destination_file = match fs::File::open(destination) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+
+    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    loop {
+        let source_read = match source_file.read(&mut source_buffer) {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+        let destination_read = match destination_file.read(&mut destination_buffer) {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+
+        if source_read != destination_read {
+            return false;
+        }
+
+        if source_read == 0 {
+            return true;
+        }
+
+        if source_buffer[..source_read] != destination_buffer[..destination_read] {
+            return false;
+        }
+    }
 }
 
 fn copy_fifo(
@@ -1713,6 +1804,7 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use filetime::{FileTime, set_file_mtime};
     use std::num::NonZeroU64;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -1873,6 +1965,50 @@ mod tests {
         assert_eq!(
             fs::read(dest_root.join("nested").join("file.txt")).expect("read"),
             b"tree"
+        );
+    }
+
+    #[test]
+    fn execute_skips_rewriting_identical_destination() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"identical").expect("write source");
+        fs::write(&destination, b"identical").expect("write destination");
+
+        let source_metadata = fs::metadata(&source).expect("source metadata");
+        let source_mtime = FileTime::from_last_modification_time(&source_metadata);
+        set_file_mtime(&destination, source_mtime).expect("align destination mtime");
+
+        let mut dest_perms = fs::metadata(&destination)
+            .expect("destination metadata")
+            .permissions();
+        dest_perms.set_readonly(true);
+        fs::set_permissions(&destination, dest_perms).expect("set destination readonly");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().permissions(true).times(true),
+        )
+        .expect("copy succeeds without rewriting");
+
+        let final_perms = fs::metadata(&destination)
+            .expect("destination metadata")
+            .permissions();
+        assert!(
+            !final_perms.readonly(),
+            "destination permissions should match writable source"
+        );
+        assert_eq!(
+            fs::read(&destination).expect("destination contents"),
+            b"identical"
         );
     }
 
