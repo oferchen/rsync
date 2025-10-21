@@ -11,6 +11,7 @@ repository = "https://github.com/oferchen/rsync"
 [dependencies]
 rsync-meta = { path = "../meta" }
 rsync-filters = { path = "../filters" }
+rsync-checksums = { path = "../checksums" }
 
 [dev-dependencies]
 filetime = "0.2"

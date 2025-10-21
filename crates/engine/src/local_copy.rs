@@ -62,6 +62,7 @@ use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime};
 
+use rsync_checksums::strong::Md5;
 use rsync_filters::FilterSet;
 use rsync_meta::{
     MetadataError, MetadataOptions, apply_directory_metadata_with_options,
@@ -345,6 +346,7 @@ pub struct LocalCopyOptions {
     filters: Option<FilterSet>,
     numeric_ids: bool,
     sparse: bool,
+    checksum: bool,
     partial: bool,
     inplace: bool,
     collect_events: bool,
@@ -364,6 +366,7 @@ impl LocalCopyOptions {
             filters: None,
             numeric_ids: false,
             sparse: false,
+            checksum: false,
             partial: false,
             inplace: false,
             collect_events: false,
@@ -422,6 +425,15 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
         self.filters = filters;
+        self
+    }
+
+    /// Enables or disables checksum-based change detection.
+    #[must_use]
+    #[doc(alias = "--checksum")]
+    #[doc(alias = "-c")]
+    pub const fn checksum(mut self, checksum: bool) -> Self {
+        self.checksum = checksum;
         self
     }
 
@@ -510,6 +522,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
+    }
+
+    /// Reports whether checksum-based change detection has been requested.
+    #[must_use]
+    pub const fn checksum_enabled(&self) -> bool {
+        self.checksum
     }
 
     /// Reports whether sparse handling has been requested.
@@ -768,6 +786,10 @@ impl CopyContext {
 
     fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
+    }
+
+    fn checksum_enabled(&self) -> bool {
+        self.options.checksum_enabled()
     }
 
     fn partial_enabled(&self) -> bool {
@@ -1539,6 +1561,7 @@ fn copy_file(
     let use_sparse_writes = context.sparse_enabled();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
+    let checksum_enabled = context.checksum_enabled();
     let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -1577,7 +1600,14 @@ fn copy_file(
     }
 
     if let Some(existing) = existing_metadata.as_ref() {
-        if should_skip_copy(source, metadata, destination, existing, metadata_options) {
+        if should_skip_copy(
+            source,
+            metadata,
+            destination,
+            existing,
+            metadata_options,
+            checksum_enabled,
+        ) {
             apply_file_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
             hard_links.record(metadata, destination);
@@ -1861,9 +1891,14 @@ fn should_skip_copy(
     destination_path: &Path,
     destination: &fs::Metadata,
     options: MetadataOptions,
+    checksum: bool,
 ) -> bool {
     if destination.len() != source.len() {
         return false;
+    }
+
+    if checksum {
+        return files_checksum_match(source_path, destination_path).unwrap_or(false);
     }
 
     if options.times() {
@@ -1871,6 +1906,8 @@ fn should_skip_copy(
             (Ok(src), Ok(dst)) if system_time_eq(src, dst) => {}
             _ => return false,
         }
+    } else {
+        return false;
     }
 
     files_match(source_path, destination_path)
@@ -1915,6 +1952,35 @@ fn files_match(source: &Path, destination: &Path) -> bool {
             return false;
         }
     }
+}
+
+fn files_checksum_match(source: &Path, destination: &Path) -> io::Result<bool> {
+    let mut source_file = fs::File::open(source)?;
+    let mut destination_file = fs::File::open(destination)?;
+
+    let mut source_hasher = Md5::new();
+    let mut destination_hasher = Md5::new();
+
+    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    loop {
+        let source_read = source_file.read(&mut source_buffer)?;
+        let destination_read = destination_file.read(&mut destination_buffer)?;
+
+        if source_read != destination_read {
+            return Ok(false);
+        }
+
+        if source_read == 0 {
+            break;
+        }
+
+        source_hasher.update(&source_buffer[..source_read]);
+        destination_hasher.update(&destination_buffer[..destination_read]);
+    }
+
+    Ok(source_hasher.finalize().as_ref() == destination_hasher.finalize().as_ref())
 }
 
 fn copy_fifo(
@@ -2538,6 +2604,14 @@ mod tests {
     fn local_copy_options_numeric_ids_round_trip() {
         let options = LocalCopyOptions::default().numeric_ids(true);
         assert!(options.numeric_ids_enabled());
+        assert!(!LocalCopyOptions::default().numeric_ids_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_checksum_round_trip() {
+        let options = LocalCopyOptions::default().checksum(true);
+        assert!(options.checksum_enabled());
+        assert!(!LocalCopyOptions::default().checksum_enabled());
     }
 
     #[test]
@@ -2749,6 +2823,65 @@ mod tests {
         assert_eq!(summary.files_copied(), 0);
     }
 
+    #[test]
+    fn execute_without_times_rewrites_when_checksum_disabled() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"content").expect("write source");
+        fs::write(&destination, b"content").expect("write destination");
+
+        let original_mtime = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_mtime(&destination, original_mtime).expect("set mtime");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 1);
+        let metadata = fs::metadata(&destination).expect("dest metadata");
+        let new_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_ne!(new_mtime, original_mtime);
+    }
+
+    #[test]
+    fn execute_without_times_skips_with_checksum() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"content").expect("write source");
+        fs::write(&destination, b"content").expect("write destination");
+
+        let preserved_mtime = FileTime::from_unix_time(1_700_100_000, 0);
+        set_file_mtime(&destination, preserved_mtime).expect("set mtime");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().checksum(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        let metadata = fs::metadata(&destination).expect("dest metadata");
+        let final_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(final_mtime, preserved_mtime);
+    }
+
     #[cfg(unix)]
     #[test]
     fn execute_copies_symbolic_link() {
@@ -2801,7 +2934,7 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_ne!(dest_atime, atime);
         assert_ne!(dest_mtime, mtime);
-        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.files_copied(), 1);
     }
 
     #[cfg(unix)]

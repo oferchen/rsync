@@ -103,6 +103,7 @@ const HELP_TEXT: &str = concat!(
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "  -a, --archive    Enable archive mode (implies --owner and --group).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
@@ -138,7 +139,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -148,6 +149,7 @@ struct ParsedArgs {
     dry_run: bool,
     archive: bool,
     delete: bool,
+    checksum: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     owner: Option<bool>,
@@ -201,6 +203,13 @@ fn clap_command() -> Command {
                 .long("archive")
                 .short('a')
                 .help("Enable archive mode (implies --owner and --group).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("checksum")
+                .long("checksum")
+                .short('c')
+                .help("Skip files whose contents already match by checksum.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -515,6 +524,8 @@ where
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let checksum = matches.get_flag("checksum");
+
     let bwlimit = matches
         .remove_one::<OsString>("bwlimit")
         .map(|value| value.into());
@@ -550,6 +561,7 @@ where
         dry_run,
         archive,
         delete,
+        checksum,
         remainder,
         bwlimit,
         owner,
@@ -620,6 +632,7 @@ where
         dry_run,
         archive,
         delete,
+        checksum,
         remainder: raw_remainder,
         bwlimit,
         owner,
@@ -749,6 +762,7 @@ where
         .group(preserve_group)
         .permissions(preserve_permissions)
         .times(preserve_times)
+        .checksum(checksum)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .verbosity(verbosity)
@@ -2388,6 +2402,51 @@ mod tests {
     }
 
     #[test]
+    fn checksum_with_no_times_preserves_existing_destination() {
+        use filetime::{FileTime, set_file_mtime};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-checksum.txt");
+        let destination = tmp.path().join("dest-checksum.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-times"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let preserved = FileTime::from_unix_time(1_700_200_000, 0);
+        set_file_mtime(&destination, preserved).expect("set destination mtime");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--checksum"),
+            OsString::from("--no-times"),
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let metadata = std::fs::metadata(&destination).expect("dest metadata");
+        let final_mtime = FileTime::from_last_modification_time(&metadata);
+        assert_eq!(final_mtime, preserved);
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"payload"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_exclude_from_stdin_skips_patterns() {
         use tempfile::tempdir;
 
@@ -2638,6 +2697,19 @@ mod tests {
         .expect("parse succeeds");
 
         assert!(parsed.archive);
+    }
+
+    #[test]
+    fn checksum_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--checksum"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.checksum);
     }
 
     #[test]
