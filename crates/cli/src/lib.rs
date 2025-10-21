@@ -7,7 +7,7 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, and `--bwlimit`) and delegates local copy operations to
+//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter`, and `--bwlimit`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
@@ -20,7 +20,7 @@
 //! iterator of arguments together with handles for standard output and error,
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`, and `--bwlimit` flags while treating all other
+//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`, `--filter`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
 //! deterministic local copy pipeline with optional bandwidth pacing.
@@ -100,6 +100,7 @@ const HELP_TEXT: &str = concat!(
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include and '-' exclude).\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
@@ -118,7 +119,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --exclude, --include, --filter, --bwlimit, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -137,6 +138,7 @@ struct ParsedArgs {
     numeric_ids: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
+    filters: Vec<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -192,6 +194,14 @@ fn clap_command() -> Command {
                 .long("include")
                 .value_name("PATTERN")
                 .help("Re-include files matching PATTERN after exclusions.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("filter")
+                .long("filter")
+                .value_name("RULE")
+                .help("Apply filter RULE (supports '+' include and '-' exclude).")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -357,6 +367,10 @@ where
         .remove_many::<OsString>("include")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let filters = matches
+        .remove_many::<OsString>("filter")
+        .map(|values| values.collect())
+        .unwrap_or_default();
 
     Ok(ParsedArgs {
         show_help,
@@ -373,6 +387,7 @@ where
         excludes,
         includes,
         numeric_ids,
+        filters,
     })
 }
 
@@ -432,6 +447,7 @@ where
         times,
         excludes,
         includes,
+        filters,
         numeric_ids,
     } = parsed;
 
@@ -538,6 +554,17 @@ where
             .into_iter()
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
+    for rule in filters {
+        match parse_filter_rule(&rule) {
+            Ok(spec) => filter_rules.push(spec),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        }
+    }
     if !filter_rules.is_empty() {
         builder = builder.extend_filter_rules(filter_rules);
     }
@@ -625,6 +652,49 @@ fn os_string_to_pattern(value: OsString) -> String {
     match value.into_string() {
         Ok(text) => text,
         Err(value) => value.to_string_lossy().into_owned(),
+    }
+}
+
+fn parse_filter_rule(argument: &OsStr) -> Result<FilterRuleSpec, Message> {
+    let text = argument.to_string_lossy();
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        let message = rsync_error!(
+            1,
+            "filter rule is empty: supply '+' or '-' followed by a pattern"
+        )
+        .with_role(Role::Client);
+        return Err(message);
+    }
+
+    let mut chars = trimmed.chars();
+    let action = chars.next().expect("non-empty after trim");
+    let remainder = chars
+        .as_str()
+        .trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+
+    if remainder.is_empty() {
+        let message = rsync_error!(
+            1,
+            "filter rule '{trimmed}' is missing a pattern after '{action}'"
+        )
+        .with_role(Role::Client);
+        return Err(message);
+    }
+
+    let pattern = remainder.to_string();
+    match action {
+        '+' => Ok(FilterRuleSpec::include(pattern)),
+        '-' => Ok(FilterRuleSpec::exclude(pattern)),
+        _ => {
+            let message = rsync_error!(
+                1,
+                "unsupported filter rule '{trimmed}': this build currently supports only '+' (include) and '-' (exclude) actions"
+            )
+            .with_role(Role::Client);
+            Err(message)
+        }
     }
 }
 
@@ -814,6 +884,7 @@ fn render_module_list<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsync_core::client::FilterRuleKind;
     use std::ffi::OsStr;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
@@ -1163,6 +1234,8 @@ mod tests {
             OsString::from("*.tmp"),
             OsString::from("--include"),
             OsString::from("important/**"),
+            OsString::from("--filter"),
+            OsString::from("+ staging/**"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -1170,6 +1243,26 @@ mod tests {
 
         assert_eq!(parsed.excludes, vec![OsString::from("*.tmp")]);
         assert_eq!(parsed.includes, vec![OsString::from("important/**")]);
+        assert_eq!(parsed.filters, vec![OsString::from("+ staging/**")]);
+    }
+
+    #[test]
+    fn parse_filter_rule_accepts_include_and_exclude() {
+        let include = parse_filter_rule(OsStr::new("+ assets/**")).expect("include rule parses");
+        assert_eq!(include.kind(), FilterRuleKind::Include);
+        assert_eq!(include.pattern(), "assets/**");
+
+        let exclude = parse_filter_rule(OsStr::new("- *.bak")).expect("exclude rule parses");
+        assert_eq!(exclude.kind(), FilterRuleKind::Exclude);
+        assert_eq!(exclude.pattern(), "*.bak");
+    }
+
+    #[test]
+    fn parse_filter_rule_rejects_missing_pattern() {
+        let error =
+            parse_filter_rule(OsStr::new("+   ")).expect_err("missing pattern should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("missing a pattern"));
     }
 
     #[test]
@@ -1198,6 +1291,35 @@ mod tests {
         let metadata = std::fs::metadata(&destination).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(dest_mtime, mtime);
+    }
+
+    #[test]
+    fn transfer_request_with_filter_excludes_patterns() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--filter"),
+            OsString::from("- *.tmp"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.tmp").exists());
     }
 
     #[test]
