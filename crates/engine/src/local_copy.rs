@@ -1368,15 +1368,15 @@ fn copy_directory_recursive(
             fs::create_dir_all(destination).map_err(|error| {
                 LocalCopyError::io("create directory", destination.to_path_buf(), error)
             })?;
+        }
 
-            if let Some(rel) = relative {
-                context.record(LocalCopyRecord::new(
-                    rel.to_path_buf(),
-                    LocalCopyAction::DirectoryCreated,
-                    0,
-                    Duration::default(),
-                ));
-            }
+        if let Some(rel) = relative {
+            context.record(LocalCopyRecord::new(
+                rel.to_path_buf(),
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Duration::default(),
+            ));
         }
     }
 
@@ -1544,6 +1544,12 @@ fn copy_file(
         }
 
         context.summary_mut().record_file(metadata.len());
+        context.record(LocalCopyRecord::new(
+            record_path,
+            LocalCopyAction::DataCopied,
+            file_size,
+            Duration::default(),
+        ));
         return Ok(());
     }
 
@@ -2889,6 +2895,60 @@ mod tests {
         let metadata = fs::metadata(&destination).expect("dest metadata");
         let final_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(final_mtime, preserved_mtime);
+    }
+
+    #[test]
+    fn execute_with_report_dry_run_records_file_event() {
+        use std::fs;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"dry-run").expect("write source");
+        let destination = temp.path().join("dest.txt");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().collect_events(true);
+        let report = plan
+            .execute_with_report(LocalCopyExecution::DryRun, options)
+            .expect("dry run succeeds");
+
+        let records = report.records();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.action(), &LocalCopyAction::DataCopied);
+        assert_eq!(record.relative_path(), Path::new("source.txt"));
+        assert_eq!(record.bytes_transferred(), 7);
+    }
+
+    #[test]
+    fn execute_with_report_dry_run_records_directory_event() {
+        use std::fs;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("tree");
+        fs::create_dir(&source_dir).expect("create source dir");
+        fs::write(source_dir.join("file.txt"), b"data").expect("write nested file");
+        let destination = temp.path().join("target");
+
+        let operands = vec![
+            source_dir.clone().into_os_string(),
+            destination.into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().collect_events(true);
+        let report = plan
+            .execute_with_report(LocalCopyExecution::DryRun, options)
+            .expect("dry run succeeds");
+
+        let records = report.records();
+        assert!(records.iter().any(|record| {
+            record.action() == &LocalCopyAction::DirectoryCreated
+                && record.relative_path() == Path::new("tree")
+        }));
     }
 
     #[cfg(unix)]
