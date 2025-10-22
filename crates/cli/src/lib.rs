@@ -7097,7 +7097,7 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn remote_fallback_respects_zero_compress_level() {
+    fn remote_fallback_forwards_whole_file_flags() {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -7114,9 +7114,10 @@ exit 0
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
+        let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
-            OsString::from("--compress-level=0"),
+            OsString::from("-W"),
             OsString::from("remote::module"),
             OsString::from("dest"),
         ]);
@@ -7177,7 +7178,7 @@ exit 0
             OsString::from("oc-rsync"),
             OsString::from("--no-whole-file"),
             OsString::from("remote::module"),
-            dest_path.clone().into_os_string(),
+            dest_path.into_os_string(),
         ]);
 
         assert_eq!(code, 0);
@@ -7186,6 +7187,44 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_respects_zero_compress_level() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=0"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(!args.iter().any(|arg| *arg == "--compress"));
+        assert!(args.contains(&"--compress-level"));
+        assert!(args.contains(&"0"));
         assert!(!args.contains(&"--whole-file"));
         assert!(args.contains(&"--no-whole-file"));
     }
