@@ -70,6 +70,7 @@
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
 //! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -1182,13 +1183,17 @@ where
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
     let mut merge_stack = Vec::new();
+    let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     for filter in filters {
         match parse_filter_directive(filter.as_os_str()) {
             Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
             Ok(FilterDirective::Merge(source)) => {
-                if let Err(message) =
-                    apply_merge_directive(source, &mut filter_rules, &mut merge_stack)
-                {
+                if let Err(message) = apply_merge_directive(
+                    source,
+                    merge_base.as_path(),
+                    &mut filter_rules,
+                    &mut merge_stack,
+                ) {
                     if write_message(&message, stderr).is_err() {
                         let _ = writeln!(stderr.writer_mut(), "{}", message);
                     }
@@ -2119,7 +2124,7 @@ fn append_filter_rules_from_files(
     }
 
     for path in files {
-        let patterns = load_filter_file_patterns(path.as_os_str())?;
+        let patterns = load_filter_file_patterns(Path::new(path.as_os_str()))?;
         destination.extend(patterns.into_iter().map(|pattern| match kind {
             FilterRuleKind::Include => FilterRuleSpec::include(pattern),
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
@@ -2131,14 +2136,13 @@ fn append_filter_rules_from_files(
     Ok(())
 }
 
-fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
-    if path == OsStr::new("-") {
+fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
+    if path == Path::new("-") {
         return read_filter_patterns_from_standard_input();
     }
 
-    let path_buf = PathBuf::from(path);
-    let path_display = path_buf.display().to_string();
-    let file = File::open(&path_buf).map_err(|error| {
+    let path_display = path.display().to_string();
+    let file = File::open(path).map_err(|error| {
         let text = format!("failed to read filter file '{}': {}", path_display, error);
         rsync_error!(1, text).with_role(Role::Client)
     })?;
@@ -2152,16 +2156,31 @@ fn load_filter_file_patterns(path: &OsStr) -> Result<Vec<String>, Message> {
 
 fn apply_merge_directive(
     source: OsString,
+    base_dir: &Path,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
-    let (guard_key, display) = if source.as_os_str() == OsStr::new("-") {
-        (PathBuf::from("-"), String::from("-"))
+    let is_stdin = source.as_os_str() == OsStr::new("-");
+    let (resolved_path, display, canonical_path) = if is_stdin {
+        (PathBuf::from("-"), String::from("-"), None)
     } else {
-        let path_buf = PathBuf::from(&source);
-        let display = path_buf.display().to_string();
-        let canonical = fs::canonicalize(&path_buf).unwrap_or(path_buf);
-        (canonical, display)
+        let raw_path = PathBuf::from(&source);
+        let resolved = if raw_path.is_absolute() {
+            raw_path
+        } else {
+            base_dir.join(raw_path)
+        };
+        let display = resolved.display().to_string();
+        let canonical = fs::canonicalize(&resolved).ok();
+        (resolved, display, canonical)
+    };
+
+    let guard_key = if is_stdin {
+        PathBuf::from("-")
+    } else if let Some(canonical) = &canonical_path {
+        canonical.clone()
+    } else {
+        resolved_path.clone()
     };
 
     if visited.contains(&guard_key) {
@@ -2170,20 +2189,35 @@ fn apply_merge_directive(
     }
 
     visited.push(guard_key);
+    let next_base_storage = if is_stdin {
+        None
+    } else {
+        let resolved_for_base = canonical_path.as_ref().unwrap_or(&resolved_path);
+        Some(
+            resolved_for_base
+                .parent()
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or_else(|| base_dir.to_path_buf()),
+        )
+    };
+    let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
+
     let result = (|| -> Result<(), Message> {
-        let entries = load_filter_file_patterns(source.as_os_str())?;
+        let entries = load_filter_file_patterns(&resolved_path)?;
         for entry in entries {
             match parse_filter_directive(OsStr::new(entry.as_str())) {
                 Ok(FilterDirective::Rule(rule)) => destination.push(rule),
                 Ok(FilterDirective::Merge(nested)) => {
-                    apply_merge_directive(nested, destination, visited).map_err(|error| {
-                        let detail = error.to_string();
-                        rsync_error!(
-                            1,
-                            format!("failed to process merge file '{display}': {detail}")
-                        )
-                        .with_role(Role::Client)
-                    })?;
+                    apply_merge_directive(nested, next_base, destination, visited).map_err(
+                        |error| {
+                            let detail = error.to_string();
+                            rsync_error!(
+                                1,
+                                format!("failed to process merge file '{display}': {detail}")
+                            )
+                            .with_role(Role::Client)
+                        },
+                    )?;
                 }
                 Ok(FilterDirective::Clear) => destination.clear(),
                 Err(error) => {
@@ -2573,9 +2607,10 @@ mod tests {
     use rsync_core::client::FilterRuleKind;
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::path::Path;
     use std::thread;
     use std::time::Duration;
 
@@ -4504,7 +4539,7 @@ mod tests {
         std::fs::write(&path, b"# comment\r\n\r\n include \r\npattern\r\n").expect("write filters");
 
         let patterns =
-            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+            load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
         assert_eq!(
             patterns,
@@ -4522,7 +4557,7 @@ mod tests {
             .expect("write filters");
 
         let patterns =
-            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+            load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
         assert_eq!(patterns, vec!["keep".to_string()]);
     }
@@ -4536,7 +4571,7 @@ mod tests {
         std::fs::write(&path, [0xFFu8, b'\n']).expect("write invalid bytes");
 
         let patterns =
-            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+            load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
         assert_eq!(patterns, vec!["\u{fffd}".to_string()]);
     }
@@ -4545,9 +4580,42 @@ mod tests {
     fn load_filter_file_patterns_reads_from_stdin() {
         super::set_filter_stdin_input(b"keep\n# comment\n\ninclude\n".to_vec());
         let patterns =
-            super::load_filter_file_patterns(OsStr::new("-")).expect("load stdin patterns");
+            super::load_filter_file_patterns(Path::new("-")).expect("load stdin patterns");
 
         assert_eq!(patterns, vec!["keep".to_string(), "include".to_string()]);
+    }
+
+    #[test]
+    fn apply_merge_directive_resolves_relative_paths() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let outer = temp.path().join("outer.rules");
+        let subdir = temp.path().join("nested");
+        std::fs::create_dir(&subdir).expect("create nested dir");
+        let child = subdir.join("child.rules");
+        let grand = subdir.join("grand.rules");
+
+        std::fs::write(&outer, b"+ outer\nmerge nested/child.rules\n").expect("write outer");
+        std::fs::write(&child, b"+ child\nmerge grand.rules\n").expect("write child");
+        std::fs::write(&grand, b"+ grand\n").expect("write grand");
+
+        let mut rules = Vec::new();
+        let mut visited = Vec::new();
+        super::apply_merge_directive(
+            OsString::from("outer.rules"),
+            temp.path(),
+            &mut rules,
+            &mut visited,
+        )
+        .expect("merge succeeds");
+
+        assert!(visited.is_empty());
+        let patterns: Vec<_> = rules
+            .iter()
+            .map(|rule| rule.pattern().to_string())
+            .collect();
+        assert_eq!(patterns, vec!["outer", "child", "grand"]);
     }
 
     #[test]
