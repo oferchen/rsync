@@ -61,28 +61,13 @@ impl CompressionLevel {
     /// Returns [`CompressionLevelError`] when `level` falls outside the inclusive
     /// range `1..=9` accepted by zlib.
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
-        if (1..=9).contains(&level) {
-            // SAFETY: the range check above guarantees `level` is non-zero and fits in a `u8`.
-            let precise = NonZeroU8::new(level as u8).expect("validated non-zero level");
-            Ok(Self::Precise(precise))
-        } else {
-            Err(CompressionLevelError::new(level))
-        }
-    }
-
-    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
-    #[must_use]
-    pub const fn precise(level: NonZeroU8) -> Self {
-        Self::Precise(level)
-    }
-}
         if !(1..=9).contains(&level) {
             return Err(CompressionLevelError::new(level));
         }
 
         let as_u8 = u8::try_from(level).map_err(|_| CompressionLevelError::new(level))?;
-        let value = NonZeroU8::new(as_u8).ok_or_else(|| CompressionLevelError::new(level))?;
-        Ok(Self::Precise(value))
+        let precise = NonZeroU8::new(as_u8).ok_or_else(|| CompressionLevelError::new(level))?;
+        Ok(Self::Precise(precise))
     }
 
     /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
@@ -265,7 +250,6 @@ mod tests {
     fn numeric_level_constructor_accepts_valid_range() {
         for level in 1..=9 {
             let precise = CompressionLevel::from_numeric(level).expect("valid level");
-            let expected = NonZeroU8::new(level as u8).expect("validated");
             let expected = NonZeroU8::new(level as u8).expect("range checked");
             assert_eq!(precise, CompressionLevel::Precise(expected));
         }
