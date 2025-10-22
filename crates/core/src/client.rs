@@ -2000,6 +2000,74 @@ mod tests {
     }
 
     #[test]
+    fn run_module_list_authenticates_with_password_override() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind override daemon");
+        let addr = listener.local_addr().expect("local addr");
+        let challenge = "override";
+        let expected = compute_daemon_auth_response(b"override-secret", challenge);
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("write timeout");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("write greeting");
+                stream.flush().expect("flush greeting");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read client greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                assert_eq!(line, "#list\n");
+
+                reader
+                    .get_mut()
+                    .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
+                    .expect("write challenge");
+                reader.get_mut().flush().expect("flush challenge");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read credentials");
+                let received = line.trim_end_matches(['\n', '\r']);
+                assert_eq!(received, format!("user {expected}"));
+
+                for response in ["@RSYNCD: OK\n", "override\n", "@RSYNCD: EXIT\n"] {
+                    reader
+                        .get_mut()
+                        .write_all(response.as_bytes())
+                        .expect("write response");
+                }
+                reader.get_mut().flush().expect("flush response");
+            }
+        });
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: Some(String::from("user")),
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        super::set_test_daemon_password(Some(b"wrong".to_vec()));
+        let list = run_module_list_with_password(request, Some(b"override-secret".to_vec()))
+            .expect("module list succeeds");
+        super::set_test_daemon_password(None);
+
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "override");
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn run_module_list_authenticates_with_split_challenge() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind split auth daemon");
         let addr = listener.local_addr().expect("local addr");
@@ -2707,9 +2775,21 @@ impl ModuleListEntry {
 
 /// Performs a daemon module listing by connecting to the supplied address.
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
+    run_module_list_with_password(request, None)
+}
+
+/// Performs a daemon module listing using an optional password override.
+///
+/// When `password_override` is `Some`, the bytes are used for authentication
+/// instead of loading `RSYNC_PASSWORD`. This mirrors `--password-file` in the
+/// CLI and simplifies testing by avoiding environment manipulation.
+pub fn run_module_list_with_password(
+    request: ModuleListRequest,
+    password_override: Option<Vec<u8>>,
+) -> Result<ModuleList, ClientError> {
     let addr = request.address();
     let username = request.username().map(str::to_owned);
-    let mut password_bytes: Option<Vec<u8>> = None;
+    let mut password_bytes = password_override;
     let mut auth_attempted = false;
     let mut auth_context: Option<DaemonAuthContext> = None;
 
