@@ -105,7 +105,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
-    "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, and --times).\n",
+    "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
@@ -129,6 +129,11 @@ const HELP_TEXT: &str = concat!(
     "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
+    "  -D              Equivalent to --devices --specials.\n",
+    "      --devices   Preserve device files.\n",
+    "      --no-devices  Disable device file preservation.\n",
+    "      --specials  Preserve special files such as FIFOs.\n",
+    "      --no-specials  Disable preservation of special files.\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
@@ -148,7 +153,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -167,6 +172,8 @@ struct ParsedArgs {
     times: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
+    devices: Option<bool>,
+    specials: Option<bool>,
     relative: Option<bool>,
     verbosity: u8,
     progress: bool,
@@ -238,6 +245,40 @@ fn clap_command() -> Command {
                 .help("Disable sparse file handling.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("sparse"),
+        )
+        .arg(
+            Arg::new("archive-devices")
+                .short('D')
+                .help("Preserve device and special files (equivalent to --devices --specials).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("devices")
+                .long("devices")
+                .help("Preserve device files.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-devices"),
+        )
+        .arg(
+            Arg::new("no-devices")
+                .long("no-devices")
+                .help("Disable device file preservation.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("devices"),
+        )
+        .arg(
+            Arg::new("specials")
+                .long("specials")
+                .help("Preserve special files such as FIFOs.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-specials"),
+        )
+        .arg(
+            Arg::new("no-specials")
+                .long("no-specials")
+                .help("Disable preservation of special files such as FIFOs.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("specials"),
         )
         .arg(
             Arg::new("verbose")
@@ -553,6 +594,25 @@ where
     } else {
         None
     };
+    let archive_devices = matches.get_flag("archive-devices");
+    let devices = if matches.get_flag("no-devices") {
+        Some(false)
+    } else if matches.get_flag("devices") {
+        Some(true)
+    } else if archive_devices {
+        Some(true)
+    } else {
+        None
+    };
+    let specials = if matches.get_flag("no-specials") {
+        Some(false)
+    } else if matches.get_flag("specials") {
+        Some(true)
+    } else if archive_devices {
+        Some(true)
+    } else {
+        None
+    };
     let relative = if matches.get_flag("relative") {
         Some(true)
     } else if matches.get_flag("no-relative") {
@@ -633,6 +693,8 @@ where
         times,
         numeric_ids,
         sparse,
+        devices,
+        specials,
         relative,
         verbosity,
         progress,
@@ -714,6 +776,8 @@ where
         from0,
         numeric_ids,
         sparse,
+        devices,
+        specials,
         relative,
         verbosity,
         progress,
@@ -833,6 +897,8 @@ where
     let preserve_group = group.unwrap_or(archive);
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
+    let preserve_devices = devices.unwrap_or(archive);
+    let preserve_specials = specials.unwrap_or(archive);
     let sparse = sparse.unwrap_or(false);
     let relative = relative.unwrap_or(false);
 
@@ -845,6 +911,8 @@ where
         .group(preserve_group)
         .permissions(preserve_permissions)
         .times(preserve_times)
+        .devices(preserve_devices)
+        .specials(preserve_specials)
         .checksum(checksum)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
@@ -1142,6 +1210,15 @@ fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<
 /// Renders verbose listings for the provided transfer events.
 fn emit_verbose<W: Write>(events: &[ClientEvent], verbosity: u8, stdout: &mut W) -> io::Result<()> {
     for event in events {
+        if matches!(event.kind(), ClientEventKind::SkippedNonRegular) {
+            writeln!(
+                stdout,
+                "skipping non-regular file \"{}\"",
+                event.relative_path().display()
+            )?;
+            continue;
+        }
+
         if verbosity == 1 {
             writeln!(stdout, "{}", event.relative_path().display())?;
             continue;
@@ -1182,6 +1259,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::FifoCopied => "fifo",
         ClientEventKind::DeviceCopied => "device",
         ClientEventKind::DirectoryCreated => "directory",
+        ClientEventKind::SkippedNonRegular => "skipped non-regular file",
         ClientEventKind::EntryDeleted => "deleted",
     }
 }
@@ -1886,6 +1964,39 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn verbose_transfer_reports_skipped_specials() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_fifo = tmp.path().join("skip.pipe");
+        mknodat(
+            CWD,
+            &source_fifo,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let destination = tmp.path().join("dest.pipe");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-v"),
+            source_fifo.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert!(std::fs::symlink_metadata(&destination).is_err());
+
+        let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
+        assert!(rendered.contains("skipping non-regular file \"skip.pipe\""));
+    }
+
     #[test]
     fn progress_transfer_renders_progress_lines() {
         use tempfile::tempdir;
@@ -2454,6 +2565,66 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.sparse, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_devices_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--devices"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.devices, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-devices"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.devices, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_specials_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--specials"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.specials, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-specials"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.specials, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_archive_devices_combo() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-D"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.devices, Some(true));
+        assert_eq!(parsed.specials, Some(true));
     }
 
     #[test]
