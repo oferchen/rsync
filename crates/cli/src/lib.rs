@@ -7,7 +7,7 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--daemon`, `--dry-run`/`-n`, `--delete`/`--delete-excluded`,
+//! `--version`/`-V`, `--daemon`, `--dry-run`/`-n`, `--list-only`, `--delete`/`--delete-excluded`,
 //! `--filter` (supporting `+`/`-` actions, the `!` clear directive, and
 //! `merge FILE` directives), `--files-from`, `--from0`, `--bwlimit`, and
 //! `--sparse`) and delegates local copy operations to
@@ -113,6 +113,7 @@ const HELP_TEXT: &str = concat!(
     "  -V, --version    Output version information and exit.\n",
     "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
+    "      --list-only  List files without performing a transfer.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
@@ -169,7 +170,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -177,6 +178,7 @@ struct ParsedArgs {
     show_help: bool,
     show_version: bool,
     dry_run: bool,
+    list_only: bool,
     archive: bool,
     delete: bool,
     delete_excluded: bool,
@@ -237,6 +239,12 @@ fn clap_command() -> Command {
                 .long("dry-run")
                 .short('n')
                 .help("Validate transfers without modifying the destination.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("list-only")
+                .long("list-only")
+                .help("List files without performing a transfer.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -615,7 +623,11 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
-    let dry_run = matches.get_flag("dry-run");
+    let mut dry_run = matches.get_flag("dry-run");
+    let list_only = matches.get_flag("list-only");
+    if list_only {
+        dry_run = true;
+    }
     let archive = matches.get_flag("archive");
     let mut delete = matches.get_flag("delete");
     let delete_excluded = matches.get_flag("delete-excluded");
@@ -767,6 +779,7 @@ where
         show_help,
         show_version,
         dry_run,
+        list_only,
         archive,
         delete,
         delete_excluded,
@@ -897,6 +910,7 @@ where
         show_help,
         show_version,
         dry_run,
+        list_only,
         archive,
         delete,
         delete_excluded,
@@ -1111,6 +1125,7 @@ where
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
         .dry_run(dry_run)
+        .list_only(list_only)
         .delete(delete)
         .delete_excluded(delete_excluded)
         .bandwidth_limit(bandwidth_limit)
@@ -1225,6 +1240,7 @@ where
                 progress,
                 stats,
                 progress_rendered_live,
+                list_only,
                 stdout,
             ) {
                 let _ = writeln!(
@@ -1328,9 +1344,32 @@ fn emit_transfer_summary<W: Write>(
     progress: bool,
     stats: bool,
     progress_already_rendered: bool,
+    list_only: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
     let events = summary.events();
+
+    if list_only {
+        let mut wrote_listing = false;
+        if !events.is_empty() {
+            emit_list_only(events, stdout)?;
+            wrote_listing = true;
+        }
+
+        if stats {
+            if wrote_listing {
+                writeln!(stdout)?;
+            }
+            emit_stats(summary, stdout)?;
+        } else if verbosity > 0 {
+            if wrote_listing {
+                writeln!(stdout)?;
+            }
+            emit_totals(summary, stdout)?;
+        }
+
+        return Ok(());
+    }
 
     let progress_rendered = if progress_already_rendered {
         true
@@ -1361,6 +1400,39 @@ fn emit_transfer_summary<W: Write>(
     }
 
     Ok(())
+}
+
+fn emit_list_only<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
+    for event in events {
+        if !list_only_event(event.kind()) {
+            continue;
+        }
+
+        if matches!(event.kind(), ClientEventKind::DirectoryCreated) {
+            let mut rendered = event.relative_path().to_string_lossy().into_owned();
+            if !rendered.ends_with('/') {
+                rendered.push('/');
+            }
+            writeln!(stdout, "{rendered}")?;
+        } else {
+            writeln!(stdout, "{}", event.relative_path().display())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn list_only_event(kind: &ClientEventKind) -> bool {
+    matches!(
+        kind,
+        ClientEventKind::DataCopied
+            | ClientEventKind::MetadataReused
+            | ClientEventKind::HardLink
+            | ClientEventKind::SymlinkCopied
+            | ClientEventKind::FifoCopied
+            | ClientEventKind::DeviceCopied
+            | ClientEventKind::DirectoryCreated
+    )
 }
 
 /// Returns whether the provided event kind should be reflected in progress output.
@@ -3475,6 +3547,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_list_only_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.list_only);
+        assert!(parsed.dry_run);
+    }
+
+    #[test]
     fn parse_args_collects_filter_patterns() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -5001,6 +5087,33 @@ mod tests {
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn list_only_lists_entries_without_copying() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        fs::create_dir(&source_dir).expect("create src dir");
+        let source_file = source_dir.join("file.txt");
+        fs::write(&source_file, b"contents").expect("write source file");
+        let destination_dir = tmp.path().join("dest");
+        fs::create_dir(&destination_dir).expect("create dest dir");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            source_dir.clone().into_os_string(),
+            destination_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+        assert!(rendered.contains("file.txt"));
+        assert!(!destination_dir.join("file.txt").exists());
     }
 
     #[test]
