@@ -484,6 +484,7 @@ dependencies = [
  "filetime",
  "rsync-checksums",
  "rsync-core",
+ "rsync-daemon",
  "rsync-filters",
  "rsync-logging",
  "rustix 0.38.44",

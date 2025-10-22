@@ -7,10 +7,12 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`/`--delete-excluded`, `--filter` (supporting
-//! `+`/`-` actions, the `!` clear directive, and `merge FILE` directives), `--files-from`,
-//! `--from0`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
-//! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
+//! `--version`/`-V`, `--daemon`, `--dry-run`/`-n`, `--delete`/`--delete-excluded`,
+//! `--filter` (supporting `+`/`-` actions, the `!` clear directive, and
+//! `merge FILE` directives), `--files-from`, `--from0`, `--bwlimit`, and
+//! `--sparse`) and delegates local copy operations to
+//! [`rsync_core::client::run_client`] or forwards daemon invocations to
+//! [`rsync_daemon::run`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
 //! downstream tooling to depend on a stable binary path (`oc-rsync`) while
@@ -100,13 +102,14 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] [-a] [-S] [-z] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
     "following options are recognised:\n",
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
+    "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
@@ -161,7 +164,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -796,8 +799,17 @@ where
     Out: Write,
     Err: Write,
 {
+    let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
+    if args.is_empty() {
+        args.push(OsString::from("oc-rsync"));
+    }
+
+    if let Some(daemon_args) = daemon_mode_arguments(&args) {
+        return run_daemon_mode(daemon_args, stdout, stderr);
+    }
+
     let mut stderr_sink = MessageSink::new(stderr);
-    match parse_args(arguments) {
+    match parse_args(args) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
             let mut message = rsync_error!(1, "{}", error);
@@ -808,6 +820,45 @@ where
             1
         }
     }
+}
+
+/// Returns the daemon argument vector when `--daemon` is present.
+fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let mut daemon_args = Vec::with_capacity(args.len());
+    daemon_args.push(OsString::from("oc-rsyncd"));
+
+    let mut found = false;
+    let mut reached_double_dash = false;
+
+    for arg in args.iter().skip(1) {
+        if !reached_double_dash && arg == "--" {
+            reached_double_dash = true;
+            daemon_args.push(arg.clone());
+            continue;
+        }
+
+        if !reached_double_dash && arg == "--daemon" {
+            found = true;
+            continue;
+        }
+
+        daemon_args.push(arg.clone());
+    }
+
+    if found { Some(daemon_args) } else { None }
+}
+
+/// Delegates execution to the daemon front-end.
+fn run_daemon_mode<Out, Err>(args: Vec<OsString>, stdout: &mut Out, stderr: &mut Err) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    rsync_daemon::run(args, stdout, stderr)
 }
 
 fn execute<Out, Err>(parsed: ParsedArgs, stdout: &mut Out, stderr: &mut MessageSink<Err>) -> i32
@@ -2164,6 +2215,7 @@ fn render_module_list<W: Write, E: Write>(
 mod tests {
     use super::*;
     use rsync_core::client::FilterRuleKind;
+    use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::ffi::OsStr;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
@@ -2240,6 +2292,66 @@ mod tests {
 
         let expected = VersionInfoReport::default().human_readable();
         assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn daemon_flag_delegates_to_daemon_help() {
+        let mut expected_stdout = Vec::new();
+        let mut expected_stderr = Vec::new();
+        let expected_code = daemon_cli::run(
+            [OsStr::new("oc-rsyncd"), OsStr::new("--help")],
+            &mut expected_stdout,
+            &mut expected_stderr,
+        );
+
+        assert_eq!(expected_code, 0);
+        assert!(expected_stderr.is_empty());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsync"),
+            OsStr::new("--daemon"),
+            OsStr::new("--help"),
+        ]);
+
+        assert_eq!(code, expected_code);
+        assert_eq!(stdout, expected_stdout);
+        assert_eq!(stderr, expected_stderr);
+    }
+
+    #[test]
+    fn daemon_flag_delegates_to_daemon_version() {
+        let mut expected_stdout = Vec::new();
+        let mut expected_stderr = Vec::new();
+        let expected_code = daemon_cli::run(
+            [OsStr::new("oc-rsyncd"), OsStr::new("--version")],
+            &mut expected_stdout,
+            &mut expected_stderr,
+        );
+
+        assert_eq!(expected_code, 0);
+        assert!(expected_stderr.is_empty());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsync"),
+            OsStr::new("--daemon"),
+            OsStr::new("--version"),
+        ]);
+
+        assert_eq!(code, expected_code);
+        assert_eq!(stdout, expected_stdout);
+        assert_eq!(stderr, expected_stderr);
+    }
+
+    #[test]
+    fn daemon_mode_arguments_ignore_operands_after_double_dash() {
+        let args = vec![
+            OsString::from("oc-rsync"),
+            OsString::from("--"),
+            OsString::from("--daemon"),
+            OsString::from("dest"),
+        ];
+
+        assert!(daemon_mode_arguments(&args).is_none());
     }
 
     #[test]
