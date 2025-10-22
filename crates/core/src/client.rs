@@ -77,7 +77,6 @@
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 //! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
-use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Write};
@@ -85,7 +84,11 @@ use std::net::TcpStream;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::{env, error::Error};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
+use rsync_checksums::strong::Md5;
 use rsync_engine::local_copy::{
     LocalCopyAction, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions,
     LocalCopyPlan, LocalCopyRecord, LocalCopyReport, LocalCopySummary,
@@ -96,6 +99,8 @@ use rsync_protocol::{
     parse_legacy_error_message, parse_legacy_warning_message,
 };
 use rsync_transport::negotiate_legacy_daemon_session;
+#[cfg(test)]
+use std::cell::RefCell;
 
 use crate::{
     bandwidth::{self, BandwidthParseError},
@@ -932,9 +937,16 @@ mod tests {
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::num::NonZeroU64;
+    use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_GUARD.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn builder_collects_transfer_arguments() {
@@ -1790,7 +1802,241 @@ mod tests {
         assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
         let rendered = error.message().to_string();
         assert!(rendered.contains("requires authentication"));
-        assert!(rendered.contains("modules"));
+        assert!(rendered.contains("username"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_requires_password_for_authentication() {
+        let responses = vec!["@RSYNCD: AUTHREQD challenge\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: Some(String::from("user")),
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        super::set_test_daemon_password(None);
+
+        let error = run_module_list(request).expect_err("missing password should fail");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(error.message().to_string().contains("RSYNC_PASSWORD"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_authenticates_with_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
+        let addr = listener.local_addr().expect("local addr");
+        let challenge = "abc123";
+        let expected = compute_daemon_auth_response(b"secret", challenge);
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("write timeout");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("write greeting");
+                stream.flush().expect("flush greeting");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read client greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                assert_eq!(line, "#list\n");
+
+                reader
+                    .get_mut()
+                    .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
+                    .expect("write challenge");
+                reader.get_mut().flush().expect("flush challenge");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read credentials");
+                let received = line.trim_end_matches(['\n', '\r']);
+                assert_eq!(received, format!("user {expected}"));
+
+                for response in ["@RSYNCD: OK\n", "secured\n", "@RSYNCD: EXIT\n"] {
+                    reader
+                        .get_mut()
+                        .write_all(response.as_bytes())
+                        .expect("write response");
+                }
+                reader.get_mut().flush().expect("flush response");
+            }
+        });
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: Some(String::from("user")),
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        super::set_test_daemon_password(Some(b"secret".to_vec()));
+        let list = run_module_list(request).expect("module list succeeds");
+        super::set_test_daemon_password(None);
+
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "secured");
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_authenticates_with_split_challenge() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind split auth daemon");
+        let addr = listener.local_addr().expect("local addr");
+        let challenge = "split123";
+        let expected = compute_daemon_auth_response(b"secret", challenge);
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("write timeout");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("write greeting");
+                stream.flush().expect("flush greeting");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read client greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                assert_eq!(line, "#list\n");
+
+                reader
+                    .get_mut()
+                    .write_all(b"@RSYNCD: AUTHREQD\n")
+                    .expect("write authreqd");
+                reader.get_mut().flush().expect("flush authreqd");
+
+                reader
+                    .get_mut()
+                    .write_all(format!("@RSYNCD: AUTH {challenge}\n").as_bytes())
+                    .expect("write challenge");
+                reader.get_mut().flush().expect("flush challenge");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read credentials");
+                let received = line.trim_end_matches(['\n', '\r']);
+                assert_eq!(received, format!("user {expected}"));
+
+                for response in ["@RSYNCD: OK\n", "protected\n", "@RSYNCD: EXIT\n"] {
+                    reader
+                        .get_mut()
+                        .write_all(response.as_bytes())
+                        .expect("write response");
+                }
+                reader.get_mut().flush().expect("flush response");
+            }
+        });
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: Some(String::from("user")),
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        super::set_test_daemon_password(Some(b"secret".to_vec()));
+        let list = run_module_list(request).expect("module list succeeds");
+        super::set_test_daemon_password(None);
+
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "protected");
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_authentication_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
+        let addr = listener.local_addr().expect("local addr");
+        let challenge = "abcdef";
+        let expected = compute_daemon_auth_response(b"secret", challenge);
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("write timeout");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("write greeting");
+                stream.flush().expect("flush greeting");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read client greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                assert_eq!(line, "#list\n");
+
+                reader
+                    .get_mut()
+                    .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
+                    .expect("write challenge");
+                reader.get_mut().flush().expect("flush challenge");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read credentials");
+                let received = line.trim_end_matches(['\n', '\r']);
+                assert_eq!(received, format!("user {expected}"));
+
+                reader
+                    .get_mut()
+                    .write_all(b"@RSYNCD: AUTHFAILED credentials rejected\n")
+                    .expect("write failure");
+                reader
+                    .get_mut()
+                    .write_all(b"@RSYNCD: EXIT\n")
+                    .expect("write exit");
+                reader.get_mut().flush().expect("flush failure");
+            }
+        });
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: Some(String::from("user")),
+        };
+
+        let _guard = env_lock().lock().unwrap();
+        super::set_test_daemon_password(Some(b"secret".to_vec()));
+        let error = run_module_list(request).expect_err("auth failure surfaces");
+        super::set_test_daemon_password(None);
+
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("rejected provided credentials")
+        );
 
         handle.join().expect("server thread");
     }
@@ -1949,6 +2195,17 @@ fn daemon_authentication_required_error(reason: &str) -> ClientError {
         "daemon requires authentication for module listing".to_string()
     } else {
         format!("daemon requires authentication for module listing: {reason}")
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}
+
+fn daemon_authentication_failed_error(reason: Option<&str>) -> ClientError {
+    let detail = match reason {
+        Some(text) if !text.is_empty() => {
+            format!("daemon rejected provided credentials: {text}")
+        }
+        _ => "daemon rejected provided credentials".to_string(),
     };
 
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
@@ -2337,6 +2594,10 @@ impl ModuleListEntry {
 /// Performs a daemon module listing by connecting to the supplied address.
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
     let addr = request.address();
+    let username = request.username().map(str::to_owned);
+    let mut password_bytes: Option<Vec<u8>> = None;
+    let mut auth_attempted = false;
+    let mut auth_context: Option<DaemonAuthContext> = None;
 
     let stream = TcpStream::connect((addr.host.as_str(), addr.port))
         .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
@@ -2394,11 +2655,60 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
                     continue;
                 }
                 Ok(LegacyDaemonMessage::AuthRequired { module }) => {
-                    return Err(daemon_authentication_required_error(module.unwrap_or("")));
+                    if auth_attempted {
+                        return Err(daemon_protocol_error(
+                            "daemon repeated authentication challenge",
+                        ));
+                    }
+
+                    let username = username.as_deref().ok_or_else(|| {
+                        daemon_authentication_required_error(
+                            "supply a username in the daemon URL (e.g. rsync://user@host/)",
+                        )
+                    })?;
+
+                    let secret = if let Some(secret) = password_bytes.as_ref() {
+                        secret.clone()
+                    } else {
+                        password_bytes = load_daemon_password();
+                        password_bytes.clone().ok_or_else(|| {
+                            daemon_authentication_required_error(
+                                "set RSYNC_PASSWORD before contacting authenticated daemons",
+                            )
+                        })?
+                    };
+
+                    let context = DaemonAuthContext::new(username.to_owned(), secret);
+                    if let Some(challenge) = module {
+                        send_daemon_auth_credentials(&mut reader, &context, challenge, &addr)?;
+                    }
+
+                    auth_context = Some(context);
+                    auth_attempted = true;
+                    continue;
+                }
+                Ok(LegacyDaemonMessage::AuthChallenge { challenge }) => {
+                    let context = auth_context.as_ref().ok_or_else(|| {
+                        daemon_protocol_error(
+                            "daemon issued authentication challenge before requesting credentials",
+                        )
+                    })?;
+
+                    send_daemon_auth_credentials(&mut reader, context, challenge, &addr)?;
+                    continue;
                 }
                 Ok(LegacyDaemonMessage::Other(payload)) => {
                     if let Some(reason) = payload.strip_prefix("DENIED") {
                         return Err(daemon_access_denied_error(reason.trim()));
+                    }
+
+                    if let Some(reason) = payload.strip_prefix("AUTHFAILED") {
+                        let reason = reason.trim();
+                        return Err(daemon_authentication_failed_error(if reason.is_empty() {
+                            None
+                        } else {
+                            Some(reason)
+                        }));
                     }
 
                     if is_motd_payload(payload) {
@@ -2431,6 +2741,84 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
     }
 
     Ok(ModuleList::new(motd, warnings, capabilities, entries))
+}
+
+struct DaemonAuthContext {
+    username: String,
+    secret: Vec<u8>,
+}
+
+impl DaemonAuthContext {
+    fn new(username: String, secret: Vec<u8>) -> Self {
+        Self { username, secret }
+    }
+}
+
+fn send_daemon_auth_credentials<S>(
+    reader: &mut BufReader<S>,
+    context: &DaemonAuthContext,
+    challenge: &str,
+    addr: &DaemonAddress,
+) -> Result<(), ClientError>
+where
+    S: Write,
+{
+    let digest = compute_daemon_auth_response(context.secret.as_slice(), challenge);
+    let mut command = String::with_capacity(context.username.len() + digest.len() + 2);
+    command.push_str(&context.username);
+    command.push(' ');
+    command.push_str(&digest);
+    command.push('\n');
+
+    reader
+        .get_mut()
+        .write_all(command.as_bytes())
+        .map_err(|error| socket_error("write to", addr.socket_addr_display(), error))?;
+    reader
+        .get_mut()
+        .flush()
+        .map_err(|error| socket_error("flush", addr.socket_addr_display(), error))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PASSWORD_OVERRIDE: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_test_daemon_password(password: Option<Vec<u8>>) {
+    TEST_PASSWORD_OVERRIDE.with(|slot| *slot.borrow_mut() = password);
+}
+
+fn load_daemon_password() -> Option<Vec<u8>> {
+    #[cfg(test)]
+    if let Some(password) = TEST_PASSWORD_OVERRIDE.with(|slot| slot.borrow().clone()) {
+        return Some(password);
+    }
+
+    env::var_os("RSYNC_PASSWORD").map(|value| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+
+            value.into_vec()
+        }
+
+        #[cfg(not(unix))]
+        {
+            value.to_string_lossy().into_owned().into_bytes()
+        }
+    })
+}
+
+fn compute_daemon_auth_response(secret: &[u8], challenge: &str) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(secret);
+    hasher.update(challenge.as_bytes());
+    let digest = hasher.finalize();
+    STANDARD_NO_PAD.encode(digest)
 }
 
 fn normalize_motd_payload(payload: &str) -> String {
