@@ -7,14 +7,16 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **Client binary implements local copies and daemon module listing only**
+- **Client binary uses native local copies and a fallback for remote transfers**
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. A `--dry-run` flag validates transfers without
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
-    list available modules, but remote transfers, ACLs, and compression remain
-    unavailable. Filter handling via `--exclude`/`--exclude-from`/`--include`/
+    list available modules and, when remote operands are supplied, spawns the
+    system `rsync` binary (configurable via `OC_RSYNC_FALLBACK`) so full network
+    functionality remains available while the native transport and delta engine
+    are built. Filter handling via `--exclude`/`--exclude-from`/`--include`/
     `--include-from` and `--filter` with `+`/`-` actions, `exclude-if-present=FILE`, and `merge FILE`
     directives mirrors rsync's glob semantics for local copies, but the
     broader filter/merge language is still missing. Progress reporting now
@@ -25,8 +27,8 @@ referenced functionality ships and parity is verified by tests or goldens.
     support.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
-    comprehensive metadata handling, and validate the resulting behaviour via
-    the parity harness.
+    comprehensive metadata handling, remove the fallback dependency, and
+    validate the resulting behaviour via the parity harness.
 - **Daemon functionality incomplete**
   - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
