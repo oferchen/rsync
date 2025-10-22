@@ -608,6 +608,7 @@ dependencies = [
  "rsync-compress",
  "rsync-filters",
  "rsync-meta",
+ "rsync-protocol",
  "rustix 0.38.44",
  "tempfile",
  "xattr",

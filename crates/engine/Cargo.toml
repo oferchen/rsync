@@ -13,6 +13,7 @@ rsync-meta = { path = "../meta", default-features = false }
 rsync-filters = { path = "../filters" }
 rsync-checksums = { path = "../checksums" }
 rsync-compress = { path = "../compress" }
+rsync-protocol = { path = "../protocol" }
 globset = "0.4"
 
 [features]
