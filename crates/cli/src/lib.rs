@@ -1468,8 +1468,7 @@ where
 
     match result {
         Ok(summary) => {
-            let progress_rendered_live =
-                live_progress.as_ref().is_some_and(LiveProgress::rendered);
+            let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
 
             if let Some(observer) = live_progress {
                 if let Err(error) = observer.finish() {
