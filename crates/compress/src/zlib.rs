@@ -43,6 +43,23 @@ pub enum CompressionLevel {
     Default,
     /// Favour the best possible compression ratio.
     Best,
+    /// Use an explicit zlib level in the inclusive range `0..=9`.
+    Precise(u8),
+}
+
+impl CompressionLevel {
+    /// Attempts to create a [`CompressionLevel`] from a raw zlib level.
+    ///
+    /// Returns [`None`] when the supplied level falls outside the `0..=9`
+    /// range recognised by zlib.
+    #[must_use]
+    pub const fn from_zlib_level(level: u8) -> Option<Self> {
+        if level <= 9 {
+            Some(Self::Precise(level))
+        } else {
+            None
+        }
+    }
 }
 
 impl From<CompressionLevel> for Compression {
@@ -51,6 +68,7 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
+            CompressionLevel::Precise(value) => Compression::new(u32::from(value)),
         }
     }
 }

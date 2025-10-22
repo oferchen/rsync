@@ -1299,6 +1299,7 @@ pub struct LocalCopyOptions {
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
+    compression_level: CompressionLevel,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1330,6 +1331,7 @@ impl LocalCopyOptions {
             remove_source_files: false,
             bandwidth_limit: None,
             compress: false,
+            compression_level: CompressionLevel::Default,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1390,6 +1392,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--compress")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        self
+    }
+
+    /// Sets the compression level that should be used when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
+        self.compression_level = level;
         self
     }
 
@@ -1565,6 +1575,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn compress_enabled(&self) -> bool {
         self.compress
+    }
+
+    /// Returns the compression level applied when compression is enabled.
+    #[must_use]
+    pub const fn compression_level(&self) -> CompressionLevel {
+        self.compression_level
     }
 
     /// Reports whether ownership preservation has been requested.
@@ -2288,7 +2304,7 @@ impl<'a> CopyContext<'a> {
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut compressor = if compress {
-            Some(CountingZlibEncoder::new(CompressionLevel::Default))
+            Some(CountingZlibEncoder::new(self.options.compression_level()))
         } else {
             None
         };
@@ -4963,6 +4979,16 @@ mod tests {
         let options = LocalCopyOptions::default().compress(true);
         assert!(options.compress_enabled());
         assert!(!LocalCopyOptions::default().compress_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_compression_level_round_trip() {
+        let options = LocalCopyOptions::default().with_compression_level(CompressionLevel::Best);
+        assert_eq!(options.compression_level(), CompressionLevel::Best);
+        assert_eq!(
+            LocalCopyOptions::default().compression_level(),
+            CompressionLevel::Default
+        );
     }
 
     #[test]

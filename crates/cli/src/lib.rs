@@ -88,9 +88,9 @@ use rsync_core::{
     client::{
         BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
         ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
-        DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
-        TransferTimeout, run_client_with_observer as run_core_client_with_observer,
-        run_module_list_with_password,
+        CompressionLevel, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec,
+        ModuleListRequest, TransferTimeout,
+        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
@@ -136,6 +136,7 @@ const HELP_TEXT: &str = concat!(
     "      --timeout=SECS  Set I/O timeout to SECS seconds (0 disables the timeout).\n",
     "      --protocol=NUM  Force protocol version NUM when accessing rsync daemons.\n",
     "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
+    "      --compress-level=NUM  Use zlib compression level NUM (0 disables compression).\n",
     "      --no-compress  Disable compression.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
@@ -176,7 +177,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --compress-level, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -199,6 +200,7 @@ struct ParsedArgs {
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     compress: bool,
+    compress_level: Option<OsString>,
     owner: Option<bool>,
     group: Option<bool>,
     perms: Option<bool>,
@@ -619,11 +621,22 @@ fn clap_command() -> Command {
                 .overrides_with("no-compress"),
         )
         .arg(
+            Arg::new("compress-level")
+                .long("compress-level")
+                .value_name("NUM")
+                .help("Set zlib compression level NUM (0 disables compression).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new())
+                .overrides_with("no-compress"),
+        )
+        .arg(
             Arg::new("no-compress")
                 .long("no-compress")
                 .help("Disable compression.")
                 .action(ArgAction::SetTrue)
-                .overrides_with("compress"),
+                .overrides_with("compress")
+                .overrides_with("compress-level"),
         )
         .arg(
             Arg::new("args")
@@ -775,6 +788,9 @@ where
     let bwlimit = matches
         .remove_one::<OsString>("bwlimit")
         .map(|value| value.into());
+    let compress_level = matches
+        .remove_one::<OsString>("compress-level")
+        .map(|value| value.into());
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(|values| values.collect())
@@ -819,6 +835,7 @@ where
         remainder,
         bwlimit,
         compress,
+        compress_level,
         owner,
         group,
         perms,
@@ -951,7 +968,8 @@ where
         ignore_existing,
         remainder: raw_remainder,
         bwlimit,
-        compress,
+        mut compress,
+        compress_level,
         owner,
         group,
         perms,
@@ -984,6 +1002,27 @@ where
     let desired_protocol = match protocol {
         Some(value) => match parse_protocol_version_arg(value.as_os_str()) {
             Ok(version) => Some(version),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    let compression_level = match compress_level {
+        Some(value) => match parse_compress_level_argument(value.as_os_str()) {
+            Ok(Some(level)) => {
+                compress = true;
+                Some(level)
+            }
+            Ok(None) => {
+                compress = false;
+                None
+            }
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
                     let fallback = message.to_string();
@@ -1182,6 +1221,7 @@ where
         .delete_excluded(delete_excluded)
         .bandwidth_limit(bandwidth_limit)
         .compress(compress)
+        .with_compression_level(compression_level)
         .owner(preserve_owner)
         .group(preserve_group)
         .permissions(preserve_permissions)
@@ -1977,6 +2017,64 @@ fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
                 rsync_error!(1, format!("invalid timeout '{}': {}", display, detail))
                     .with_role(Role::Client),
             )
+        }
+    }
+}
+
+fn parse_compress_level_argument(value: &OsStr) -> Result<Option<CompressionLevel>, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(
+            rsync_error!(1, "compress level value must not be empty").with_role(Role::Client)
+        );
+    }
+
+    if trimmed.starts_with('-') {
+        return Err(rsync_error!(
+            1,
+            format!(
+                "invalid compress level '{}': level must be non-negative",
+                display
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
+
+    match normalized.parse::<u32>() {
+        Ok(0) => Ok(None),
+        Ok(value) if value <= 9 => Ok(CompressionLevel::from_zlib_level(value as u8)),
+        Ok(_) => Err(rsync_error!(
+            1,
+            format!(
+                "invalid compress level '{}': level must be between 0 and 9",
+                display
+            )
+        )
+        .with_role(Role::Client)),
+        Err(error) => {
+            let detail = match error.kind() {
+                IntErrorKind::InvalidDigit => "compress level must be an unsigned integer",
+                IntErrorKind::Empty => "compress level value must not be empty",
+                IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
+                    "compress level value exceeds the supported range"
+                }
+                _ => "compress level value is invalid",
+            };
+
+            Err(rsync_error!(
+                1,
+                format!("invalid compress level '{}': {}", display, detail)
+            )
+            .with_role(Role::Client))
         }
     }
 }
@@ -2784,6 +2882,7 @@ mod tests {
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::ffi::{OsStr, OsString};
+    use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
@@ -4121,6 +4220,48 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_compress_level_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=7"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compress_level, Some(OsString::from("7")));
+    }
+
+    #[test]
+    fn compress_level_argument_positive_returns_level() {
+        let level = parse_compress_level_argument(OsStr::new("9"))
+            .expect("parse level")
+            .expect("level value");
+        assert_eq!(
+            level,
+            CompressionLevel::from_zlib_level(9).expect("valid level")
+        );
+    }
+
+    #[test]
+    fn compress_level_argument_zero_returns_none() {
+        let level = parse_compress_level_argument(OsStr::new("0")).expect("parse level");
+        assert!(level.is_none());
+    }
+
+    #[test]
+    fn compress_level_argument_negative_reports_error() {
+        let error = parse_compress_level_argument(OsStr::new("-1")).unwrap_err();
+        assert!(error.to_string().contains("level must be non-negative"));
+    }
+
+    #[test]
+    fn compress_level_argument_invalid_reports_error() {
+        let error = parse_compress_level_argument(OsStr::new("fast")).unwrap_err();
+        assert!(error.to_string().contains("invalid compress level 'fast'"));
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_include_and_exclude() {
         let include =
             parse_filter_directive(OsStr::new("+ assets/**")).expect("include rule parses");
@@ -4462,6 +4603,50 @@ mod tests {
         let copied_root = dest_root.join("source");
         assert!(copied_root.join("keep.txt").exists());
         assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn compress_level_controls_compression_end_to_end() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let dest_zero = temp.path().join("dest-zero.bin");
+        let dest_high = temp.path().join("dest-high.bin");
+        let payload = vec![b'A'; 64 * 1024];
+        fs::write(&source, &payload).expect("write source");
+
+        let (code_zero, stdout_zero, stderr_zero) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-z"),
+            OsString::from("--compress-level=0"),
+            OsString::from("--stats"),
+            source.clone().into_os_string(),
+            dest_zero.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code_zero, 0);
+        assert!(stderr_zero.is_empty());
+        assert_eq!(fs::read(&dest_zero).expect("read dest"), payload);
+
+        let stats_zero = String::from_utf8(stdout_zero).expect("stats utf8");
+        let sent_zero = parse_stats_value(&stats_zero, "Total bytes sent: ");
+        assert_eq!(sent_zero, payload.len() as u64);
+
+        let (code_high, stdout_high, stderr_high) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=9"),
+            OsString::from("--stats"),
+            source.into_os_string(),
+            dest_high.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code_high, 0);
+        assert!(stderr_high.is_empty());
+        assert_eq!(fs::read(&dest_high).expect("read dest"), payload);
+
+        let stats_high = String::from_utf8(stdout_high).expect("stats utf8");
+        let sent_high = parse_stats_value(&stats_high, "Total bytes sent: ");
+        assert!(sent_high < sent_zero);
+        assert!(sent_high < payload.len() as u64);
     }
 
     #[test]
@@ -5839,5 +6024,14 @@ mod tests {
             .expect("read dest xattr")
             .expect("xattr present");
         assert_eq!(copied, b"value");
+    }
+
+    fn parse_stats_value(output: &str, prefix: &str) -> u64 {
+        output
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .expect("statistics line present")
     }
 }

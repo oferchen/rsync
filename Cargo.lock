@@ -617,6 +617,7 @@ dependencies = [
  "filetime",
  "libc",
  "rsync-checksums",
+ "rsync-compress",
  "rsync-engine",
  "rsync-filters",
  "rsync-meta",

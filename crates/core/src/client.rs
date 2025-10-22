@@ -90,6 +90,7 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
+pub use rsync_compress::zlib::CompressionLevel;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
@@ -182,6 +183,7 @@ pub struct ClientConfig {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -313,6 +315,13 @@ impl ClientConfig {
         self.compress
     }
 
+    /// Returns the requested compression level, if any.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_level(&self) -> Option<CompressionLevel> {
+        self.compression_level
+    }
+
     /// Reports whether extended attributes should be preserved.
     #[cfg(feature = "xattr")]
     #[must_use]
@@ -436,6 +445,7 @@ pub struct ClientConfigBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -557,6 +567,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        self
+    }
+
+    /// Sets the compression level requested by the caller.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_level = level;
         self
     }
 
@@ -722,6 +740,7 @@ impl ClientConfigBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             compress: self.compress,
+            compression_level: self.compression_level,
             checksum: self.checksum,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
@@ -1548,6 +1567,11 @@ pub fn run_client_with_observer(
                     .map(|limit| limit.bytes_per_second()),
             )
             .compress(config.compress())
+            .with_compression_level(
+                config
+                    .compression_level()
+                    .unwrap_or(CompressionLevel::Default),
+            )
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
@@ -1701,6 +1725,16 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_sets_compression_level() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .with_compression_level(Some(CompressionLevel::Best))
+            .build();
+
+        assert_eq!(config.compression_level(), Some(CompressionLevel::Best));
     }
 
     #[test]
@@ -1920,6 +1954,7 @@ mod tests {
         let config = ClientConfig::builder()
             .transfer_args([source.clone(), destination.clone()])
             .compress(true)
+            .with_compression_level(Some(CompressionLevel::Best))
             .build();
 
         let summary = run_client(config).expect("copy succeeds");
