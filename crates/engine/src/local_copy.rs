@@ -1313,7 +1313,6 @@ pub struct LocalCopyOptions {
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
     compression_level: CompressionLevel,
-    compression_override: Option<CompressionLevel>,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1348,7 +1347,6 @@ impl LocalCopyOptions {
             compress: false,
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
-            compression_override: None,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1439,8 +1437,6 @@ impl LocalCopyOptions {
     #[doc(alias = "--compress-level")]
     pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
         self.compression_level_override = Some(level);
-    pub const fn with_compression_override(mut self, level: Option<CompressionLevel>) -> Self {
-        self.compression_override = level;
         self
     }
 
@@ -1485,7 +1481,7 @@ impl LocalCopyOptions {
 
     /// Applies a filter set using the legacy builder name for compatibility.
     #[must_use]
-    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
+    pub fn filters(self, filters: Option<FilterSet>) -> Self {
         self.with_filters(filters)
     }
 
@@ -1641,22 +1637,6 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn compression_level(&self) -> CompressionLevel {
         match self.compression_level_override {
-            Some(level) => level,
-            None => CompressionLevel::Default,
-    /// Returns the explicit compression override when compression is enabled.
-    #[must_use]
-    pub const fn compression_override(&self) -> Option<CompressionLevel> {
-        if self.compress {
-            self.compression_override
-        } else {
-            None
-        }
-    }
-
-    /// Returns the compression level that should be used for the transfer.
-    #[must_use]
-    pub const fn compression_level(&self) -> CompressionLevel {
-        match self.compression_override {
             Some(level) => level,
             None => self.compression_level,
         }
@@ -2419,7 +2399,6 @@ impl<'a> CopyContext<'a> {
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut compressor = if compress {
-            Some(CountingZlibEncoder::new(level))
             Some(CountingZlibEncoder::new(self.compression_level()))
         } else {
             None
@@ -5026,29 +5005,16 @@ mod tests {
         let override_level = CompressionLevel::precise(level);
         let options = LocalCopyOptions::default()
             .compress(true)
-            .with_compression_level_override(Some(CompressionLevel::precise(level)));
-        assert_eq!(
-            options.compression_level_override(),
-            Some(CompressionLevel::precise(level))
-        );
-        assert_eq!(
-            options.compression_level(),
-            CompressionLevel::precise(level)
-        );
-
-        let disabled = LocalCopyOptions::default()
-            .with_compression_level_override(Some(CompressionLevel::precise(level)))
-            .compress(false);
-        assert_eq!(disabled.compression_level_override(), None);
-        assert_eq!(disabled.compression_level(), CompressionLevel::Default);
-            .with_compression_override(Some(override_level));
-        assert_eq!(options.compression_override(), Some(override_level));
+            .with_compression_level_override(Some(override_level));
+        assert_eq!(options.compression_level_override(), Some(override_level));
+        assert_eq!(options.compression_level(), override_level);
         assert_eq!(options.effective_compression_level(), Some(override_level));
 
         let disabled = LocalCopyOptions::default()
-            .with_compression_override(Some(override_level))
+            .with_compression_level_override(Some(override_level))
             .compress(false);
-        assert_eq!(disabled.compression_override(), None);
+        assert_eq!(disabled.compression_level_override(), None);
+        assert_eq!(disabled.compression_level(), CompressionLevel::Default);
         assert_eq!(disabled.effective_compression_level(), None);
     }
 
