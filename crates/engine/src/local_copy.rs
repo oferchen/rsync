@@ -697,6 +697,7 @@ pub struct LocalCopyOptions {
     numeric_ids: bool,
     sparse: bool,
     checksum: bool,
+    size_only: bool,
     partial: bool,
     inplace: bool,
     collect_events: bool,
@@ -723,6 +724,7 @@ impl LocalCopyOptions {
             numeric_ids: false,
             sparse: false,
             checksum: false,
+            size_only: false,
             partial: false,
             inplace: false,
             collect_events: false,
@@ -802,6 +804,14 @@ impl LocalCopyOptions {
     #[doc(alias = "-c")]
     pub const fn checksum(mut self, checksum: bool) -> Self {
         self.checksum = checksum;
+        self
+    }
+
+    /// Enables or disables size-only change detection.
+    #[must_use]
+    #[doc(alias = "--size-only")]
+    pub const fn size_only(mut self, size_only: bool) -> Self {
+        self.size_only = size_only;
         self
     }
 
@@ -943,6 +953,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn checksum_enabled(&self) -> bool {
         self.checksum
+    }
+
+    /// Reports whether size-only change detection has been requested.
+    #[must_use]
+    pub const fn size_only_enabled(&self) -> bool {
+        self.size_only
     }
 
     /// Reports whether sparse handling has been requested.
@@ -1266,6 +1282,10 @@ impl CopyContext {
 
     fn checksum_enabled(&self) -> bool {
         self.options.checksum_enabled()
+    }
+
+    fn size_only_enabled(&self) -> bool {
+        self.options.size_only_enabled()
     }
 
     fn partial_enabled(&self) -> bool {
@@ -2698,6 +2718,7 @@ fn copy_file(
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();
+    let size_only_enabled = context.size_only_enabled();
     let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -2742,6 +2763,7 @@ fn copy_file(
             destination,
             existing,
             metadata_options,
+            size_only_enabled,
             checksum_enabled,
         ) {
             apply_file_metadata_with_options(destination, metadata, metadata_options)
@@ -3038,6 +3060,7 @@ fn should_skip_copy(
     destination_path: &Path,
     destination: &fs::Metadata,
     options: MetadataOptions,
+    size_only: bool,
     checksum: bool,
 ) -> bool {
     if destination.len() != source.len() {
@@ -3046,6 +3069,10 @@ fn should_skip_copy(
 
     if checksum {
         return files_checksum_match(source_path, destination_path).unwrap_or(false);
+    }
+
+    if size_only {
+        return true;
     }
 
     if options.times() {
@@ -3788,6 +3815,14 @@ mod tests {
     fn local_copy_options_sparse_round_trip() {
         let options = LocalCopyOptions::default().sparse(true);
         assert!(options.sparse_enabled());
+        assert!(!LocalCopyOptions::default().sparse_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_size_only_round_trip() {
+        let options = LocalCopyOptions::default().size_only(true);
+        assert!(options.size_only_enabled());
+        assert!(!LocalCopyOptions::default().size_only_enabled());
     }
 
     #[test]
@@ -4221,6 +4256,37 @@ mod tests {
         let metadata = fs::metadata(&destination).expect("dest metadata");
         let final_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(final_mtime, preserved_mtime);
+    }
+
+    #[test]
+    fn execute_with_size_only_skips_same_size_different_content() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&target_root).expect("create target root");
+
+        let source_path = source_root.join("file.txt");
+        let dest_path = target_root.join("file.txt");
+        fs::write(&source_path, b"abc").expect("write source");
+        fs::write(&dest_path, b"xyz").expect("write destination");
+
+        let operands = vec![
+            source_path.clone().into_os_string(),
+            dest_path.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().size_only(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.bytes_copied(), 0);
+        assert_eq!(fs::read(dest_path).expect("read destination"), b"xyz");
     }
 
     #[test]

@@ -108,6 +108,7 @@ const HELP_TEXT: &str = concat!(
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
+    "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
@@ -155,7 +156,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -166,6 +167,7 @@ struct ParsedArgs {
     archive: bool,
     delete: bool,
     checksum: bool,
+    size_only: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     compress: bool,
@@ -232,6 +234,12 @@ fn clap_command() -> Command {
                 .long("checksum")
                 .short('c')
                 .help("Skip files whose contents already match by checksum.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("size-only")
+                .long("size-only")
+                .help("Skip files whose size already matches the destination.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -670,6 +678,7 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let checksum = matches.get_flag("checksum");
+    let size_only = matches.get_flag("size-only");
 
     let bwlimit = matches
         .remove_one::<OsString>("bwlimit")
@@ -707,6 +716,7 @@ where
         archive,
         delete,
         checksum,
+        size_only,
         remainder,
         bwlimit,
         compress,
@@ -784,6 +794,7 @@ where
         archive,
         delete,
         checksum,
+        size_only,
         remainder: raw_remainder,
         bwlimit,
         compress,
@@ -939,6 +950,7 @@ where
         .devices(preserve_devices)
         .specials(preserve_specials)
         .checksum(checksum)
+        .size_only(size_only)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .relative_paths(relative)
@@ -3693,6 +3705,19 @@ mod tests {
         .expect("parse succeeds");
 
         assert!(parsed.checksum);
+    }
+
+    #[test]
+    fn size_only_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--size-only"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.size_only);
     }
 
     #[test]

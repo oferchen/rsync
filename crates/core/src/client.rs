@@ -133,6 +133,7 @@ pub struct ClientConfig {
     preserve_times: bool,
     compress: bool,
     checksum: bool,
+    size_only: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -246,6 +247,13 @@ impl ClientConfig {
         self.checksum
     }
 
+    /// Reports whether size-only change detection should be used when evaluating updates.
+    #[must_use]
+    #[doc(alias = "--size-only")]
+    pub const fn size_only(&self) -> bool {
+        self.size_only
+    }
+
     /// Reports whether numeric UID/GID values should be preserved.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
@@ -339,6 +347,7 @@ pub struct ClientConfigBuilder {
     preserve_times: bool,
     compress: bool,
     checksum: bool,
+    size_only: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -439,6 +448,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-c")]
     pub const fn checksum(mut self, checksum: bool) -> Self {
         self.checksum = checksum;
+        self
+    }
+
+    /// Enables or disables size-only change detection.
+    #[must_use]
+    #[doc(alias = "--size-only")]
+    pub const fn size_only(mut self, size_only: bool) -> Self {
+        self.size_only = size_only;
         self
     }
 
@@ -570,6 +587,7 @@ impl ClientConfigBuilder {
             preserve_times: self.preserve_times,
             compress: self.compress,
             checksum: self.checksum,
+            size_only: self.size_only,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
@@ -943,6 +961,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
             .permissions(config.preserve_permissions())
             .times(config.preserve_times())
             .checksum(config.checksum())
+            .size_only(config.size_only())
             .with_filter_program(filter_program.clone())
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
@@ -1149,6 +1168,17 @@ mod tests {
             .build();
 
         assert!(config.sparse());
+    }
+
+    #[test]
+    fn builder_enables_size_only() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .size_only(true)
+            .build();
+
+        assert!(config.size_only());
+        assert!(!ClientConfig::default().size_only());
     }
 
     #[test]
