@@ -47,13 +47,14 @@ referenced functionality ships and parity is verified by tests or goldens.
     from `rsync_meta`.
     Wire the resulting pipeline into both client and daemon orchestration and
     validate it via the parity harness.
-- **No interop or packaging automation**
-  - *Impact*: There is no exit-code oracle, goldens, CI interop matrix, or
-    packaging artifacts, preventing validation against upstream and distribution
-    deliverables.
+- **Interop harness and packaging automation incomplete**
+  - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix.
+    Packaging metadata for `cargo-deb`/`cargo-rpm` now installs both binaries, a
+    hardened systemd unit, and example configuration files, but SBOM generation
+    and CI validation remain pending.
   - *Removal plan*: Stand up the parity harness (`tests/goldens`), CI workflows,
-    and packaging targets (deb/rpm, SBOM, systemd unit) defined in the mission
-    brief once higher-level crates are available.
+    and finish the packaging pipeline by wiring SBOM generation and automated
+    install tests once higher-level crates are available.
 
 All remaining behaviour currently matches the limited scope implemented in the
 `protocol` crate; additional differences will be documented here as they are
