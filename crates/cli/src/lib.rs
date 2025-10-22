@@ -150,6 +150,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-relative  Disable preservation of source path components.\n",
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
+    "      --msgs2stderr  Route informational messages to standard error.\n",
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
@@ -186,7 +187,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -226,6 +227,7 @@ struct ParsedArgs {
     partial: bool,
     remove_source_files: bool,
     inplace: Option<bool>,
+    msgs_to_stderr: bool,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
     exclude_from: Vec<OsString>,
@@ -251,6 +253,12 @@ fn clap_command() -> ClapCommand {
                 .long("help")
                 .short('h')
                 .help("Show this help message and exit.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("msgs2stderr")
+                .long("msgs2stderr")
+                .help("Route informational messages to standard error.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -813,6 +821,7 @@ where
     } else {
         None
     };
+    let msgs_to_stderr = matches.get_flag("msgs2stderr");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -885,6 +894,7 @@ where
         partial,
         remove_source_files,
         inplace,
+        msgs_to_stderr,
         excludes,
         includes,
         exclude_from,
@@ -986,6 +996,24 @@ where
     rsync_daemon::run(args, stdout, stderr)
 }
 
+fn with_output_writer<'a, Out, Err, R>(
+    stdout: &'a mut Out,
+    stderr: &'a mut MessageSink<Err>,
+    use_stderr: bool,
+    f: impl FnOnce(&'a mut dyn Write) -> R,
+) -> R
+where
+    Out: Write + 'a,
+    Err: Write + 'a,
+{
+    if use_stderr {
+        let writer: &mut Err = stderr.writer_mut();
+        f(writer)
+    } else {
+        f(stdout)
+    }
+}
+
 fn execute<Out, Err>(parsed: ParsedArgs, stdout: &mut Out, stderr: &mut MessageSink<Err>) -> i32
 where
     Out: Write,
@@ -1029,6 +1057,7 @@ where
         partial,
         remove_source_files,
         inplace,
+        msgs_to_stderr,
         xattrs,
         no_motd,
         password_file,
@@ -1231,6 +1260,7 @@ where
             partial,
             remove_source_files,
             inplace,
+            msgs_to_stderr,
             bwlimit,
             excludes,
             includes,
@@ -1392,7 +1422,12 @@ where
     let config = builder.build();
 
     let mut live_progress = if progress {
-        Some(LiveProgress::new(stdout))
+        Some(with_output_writer(
+            stdout,
+            stderr,
+            msgs_to_stderr,
+            |writer| LiveProgress::new(writer),
+        ))
     } else {
         None
     };
@@ -1411,30 +1446,38 @@ where
 
             if let Some(observer) = live_progress {
                 if let Err(error) = observer.finish() {
-                    let _ = writeln!(stdout, "warning: failed to render progress output: {error}");
+                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                        writeln!(writer, "warning: failed to render progress output: {error}")
+                    });
                 }
             }
 
-            if let Err(error) = emit_transfer_summary(
-                &summary,
-                verbosity,
-                progress,
-                stats,
-                progress_rendered_live,
-                list_only,
-                stdout,
-            ) {
-                let _ = writeln!(
-                    stdout,
-                    "warning: failed to render transfer summary: {error}"
-                );
+            if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                emit_transfer_summary(
+                    &summary,
+                    verbosity,
+                    progress,
+                    stats,
+                    progress_rendered_live,
+                    list_only,
+                    writer,
+                )
+            }) {
+                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                    writeln!(
+                        writer,
+                        "warning: failed to render transfer summary: {error}"
+                    )
+                });
             }
             0
         }
         Err(error) => {
             if let Some(observer) = live_progress {
                 if let Err(err) = observer.finish() {
-                    let _ = writeln!(stdout, "warning: failed to render progress output: {err}");
+                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                        writeln!(writer, "warning: failed to render progress output: {err}")
+                    });
                 }
             }
 
@@ -1450,16 +1493,16 @@ where
 }
 
 /// Emits verbose, statistics, and progress-oriented output derived from a [`ClientSummary`].
-struct LiveProgress<'a, W: Write> {
-    writer: &'a mut W,
+struct LiveProgress<'a> {
+    writer: &'a mut dyn Write,
     rendered: bool,
     error: Option<io::Error>,
     active_path: Option<PathBuf>,
     line_active: bool,
 }
 
-impl<'a, W: Write> LiveProgress<'a, W> {
-    fn new(writer: &'a mut W) -> Self {
+impl<'a> LiveProgress<'a> {
+    fn new(writer: &'a mut dyn Write) -> Self {
         Self {
             writer,
             rendered: false,
@@ -1492,7 +1535,7 @@ impl<'a, W: Write> LiveProgress<'a, W> {
     }
 }
 
-impl<'a, W: Write> ClientProgressObserver for LiveProgress<'a, W> {
+impl<'a> ClientProgressObserver for LiveProgress<'a> {
     fn on_progress(&mut self, update: &ClientProgressUpdate) {
         if self.error.is_some() {
             return;
@@ -1554,34 +1597,34 @@ impl<'a, W: Write> ClientProgressObserver for LiveProgress<'a, W> {
     }
 }
 
-fn emit_transfer_summary<W: Write>(
+fn emit_transfer_summary(
     summary: &ClientSummary,
     verbosity: u8,
     progress: bool,
     stats: bool,
     progress_already_rendered: bool,
     list_only: bool,
-    stdout: &mut W,
+    writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
 
     if list_only {
         let mut wrote_listing = false;
         if !events.is_empty() {
-            emit_list_only(events, stdout)?;
+            emit_list_only(events, writer)?;
             wrote_listing = true;
         }
 
         if stats {
             if wrote_listing {
-                writeln!(stdout)?;
+                writeln!(writer)?;
             }
-            emit_stats(summary, stdout)?;
+            emit_stats(summary, writer)?;
         } else if verbosity > 0 {
             if wrote_listing {
-                writeln!(stdout)?;
+                writeln!(writer)?;
             }
-            emit_totals(summary, stdout)?;
+            emit_totals(summary, writer)?;
         }
 
         return Ok(());
@@ -1590,7 +1633,7 @@ fn emit_transfer_summary<W: Write>(
     let progress_rendered = if progress_already_rendered {
         true
     } else if progress && !events.is_empty() {
-        emit_progress(events, stdout)?
+        emit_progress(events, writer)?
     } else {
         false
     };
@@ -1599,26 +1642,26 @@ fn emit_transfer_summary<W: Write>(
         verbosity > 0 && !events.is_empty() && (!progress_rendered || verbosity > 1);
 
     if progress_rendered && (emit_verbose_listing || stats || verbosity > 0) {
-        writeln!(stdout)?;
+        writeln!(writer)?;
     }
 
     if emit_verbose_listing {
-        emit_verbose(events, verbosity, stdout)?;
+        emit_verbose(events, verbosity, writer)?;
         if stats {
-            writeln!(stdout)?;
+            writeln!(writer)?;
         }
     }
 
     if stats {
-        emit_stats(summary, stdout)?;
+        emit_stats(summary, writer)?;
     } else if verbosity > 0 {
-        emit_totals(summary, stdout)?;
+        emit_totals(summary, writer)?;
     }
 
     Ok(())
 }
 
-fn emit_list_only<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
+fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
             continue;
@@ -1793,7 +1836,7 @@ fn format_progress_elapsed(elapsed: Duration) -> String {
 }
 
 /// Renders progress lines for the provided transfer events.
-fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result<bool> {
+fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> io::Result<bool> {
     let progress_events: Vec<_> = events
         .iter()
         .filter(|event| is_progress_event(event.kind()))
@@ -1827,7 +1870,7 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
 }
 
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
-fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
     let matched = summary.regular_files_matched();
@@ -1881,7 +1924,7 @@ fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<(
 }
 
 /// Emits the summary lines reported by verbose transfers.
-fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
     let sent = summary
         .compressed_bytes()
         .unwrap_or_else(|| summary.bytes_copied());
@@ -1912,7 +1955,11 @@ fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<
 }
 
 /// Renders verbose listings for the provided transfer events.
-fn emit_verbose<W: Write>(events: &[ClientEvent], verbosity: u8, stdout: &mut W) -> io::Result<()> {
+fn emit_verbose<W: Write + ?Sized>(
+    events: &[ClientEvent],
+    verbosity: u8,
+    stdout: &mut W,
+) -> io::Result<()> {
     for event in events {
         match event.kind() {
             ClientEventKind::SkippedExisting => {
@@ -2924,6 +2971,7 @@ struct RemoteFallbackArgs {
     partial: bool,
     remove_source_files: bool,
     inplace: Option<bool>,
+    msgs_to_stderr: bool,
     bwlimit: Option<OsString>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
@@ -2976,6 +3024,7 @@ where
         partial,
         remove_source_files,
         inplace,
+        msgs_to_stderr,
         bwlimit,
         excludes,
         includes,
@@ -3055,6 +3104,9 @@ where
     }
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
+    }
+    if msgs_to_stderr {
+        command_args.push(OsString::from("--msgs2stderr"));
     }
 
     if let Some(limit) = bwlimit {
@@ -3781,6 +3833,37 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"progress"
+        );
+    }
+
+    #[test]
+    fn progress_transfer_routes_messages_to_stderr_when_requested() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("stderr-progress.txt");
+        let destination = tmp.path().join("stderr-progress.out");
+        std::fs::write(&source, b"stderr-progress").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("--msgs2stderr"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        let rendered_out = String::from_utf8(stdout).expect("stdout utf8");
+        assert!(rendered_out.trim().is_empty());
+
+        let rendered_err = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(rendered_err.contains("stderr-progress.txt"));
+        assert!(rendered_err.contains("(xfr#1, to-chk=0/1)"));
+
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"stderr-progress"
         );
     }
 
@@ -4664,6 +4747,19 @@ mod tests {
         .expect("parse");
 
         assert!(parsed.stats);
+    }
+
+    #[test]
+    fn parse_args_recognises_msgs2stderr_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--msgs2stderr"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.msgs_to_stderr);
     }
 
     #[test]
