@@ -128,7 +128,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
@@ -2063,6 +2063,43 @@ enum FilterDirective {
     Clear,
 }
 
+fn parse_filter_shorthand(
+    trimmed: &str,
+    short: char,
+    label: &str,
+    builder: fn(String) -> FilterRuleSpec,
+) -> Option<Result<FilterDirective, Message>> {
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    if !first.eq_ignore_ascii_case(&short) {
+        return None;
+    }
+
+    let remainder = chars.as_str();
+    if remainder.is_empty() {
+        let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
+        let message = rsync_error!(1, text).with_role(Role::Client);
+        return Some(Err(message));
+    }
+
+    if !remainder
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
+        return None;
+    }
+
+    let pattern = remainder.trim_start();
+    if pattern.is_empty() {
+        let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
+        let message = rsync_error!(1, text).with_role(Role::Client);
+        return Some(Err(message));
+    }
+
+    Some(Ok(FilterDirective::Rule(builder(pattern.to_string()))))
+}
+
 fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
     let trimmed_leading = text.trim_start();
@@ -2110,6 +2147,18 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     }
 
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'P', "P", FilterRuleSpec::protect) {
+        return result;
+    }
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'H', "H", FilterRuleSpec::hide) {
+        return result;
+    }
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'S', "S", FilterRuleSpec::show) {
+        return result;
+    }
 
     if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
         && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
@@ -4202,6 +4251,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
+        let protect =
+            parse_filter_directive(OsStr::new("P backups/**")).expect("shorthand protect parses");
+        assert_eq!(
+            protect,
+            FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        );
+
+        let hide = parse_filter_directive(OsStr::new("H *.tmp")).expect("shorthand hide parses");
+        assert_eq!(
+            hide,
+            FilterDirective::Rule(FilterRuleSpec::hide("*.tmp".to_string()))
+        );
+
+        let show =
+            parse_filter_directive(OsStr::new("S public/**")).expect("shorthand show parses");
+        assert_eq!(
+            show,
+            FilterDirective::Rule(FilterRuleSpec::show("public/**".to_string()))
+        );
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_exclude_if_present() {
         let directive = parse_filter_directive(OsStr::new("exclude-if-present marker"))
             .expect("exclude-if-present with whitespace parses");
@@ -4241,6 +4313,11 @@ mod tests {
         let error =
             parse_filter_directive(OsStr::new("+   ")).expect_err("missing pattern should error");
         let rendered = error.to_string();
+        assert!(rendered.contains("missing a pattern"));
+
+        let shorthand_error = parse_filter_directive(OsStr::new("P   "))
+            .expect_err("shorthand protect requires pattern");
+        let rendered = shorthand_error.to_string();
         assert!(rendered.contains("missing a pattern"));
     }
 
