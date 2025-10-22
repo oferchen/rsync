@@ -970,6 +970,8 @@ pub enum LocalCopyAction {
     DeviceCopied,
     /// A directory was created.
     DirectoryCreated,
+    /// An existing destination file was left untouched due to `--ignore-existing`.
+    SkippedExisting,
     /// A non-regular file was skipped because support was disabled.
     SkippedNonRegular,
     /// An entry was removed due to `--delete`.
@@ -1307,6 +1309,7 @@ pub struct LocalCopyOptions {
     sparse: bool,
     checksum: bool,
     size_only: bool,
+    ignore_existing: bool,
     partial: bool,
     inplace: bool,
     collect_events: bool,
@@ -1337,6 +1340,7 @@ impl LocalCopyOptions {
             sparse: false,
             checksum: false,
             size_only: false,
+            ignore_existing: false,
             partial: false,
             inplace: false,
             collect_events: false,
@@ -1449,6 +1453,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--size-only")]
     pub const fn size_only(mut self, size_only: bool) -> Self {
         self.size_only = size_only;
+        self
+    }
+
+    /// Requests that existing destination files be left untouched.
+    #[must_use]
+    #[doc(alias = "--ignore-existing")]
+    pub const fn ignore_existing(mut self, ignore: bool) -> Self {
+        self.ignore_existing = ignore;
         self
     }
 
@@ -1616,6 +1628,12 @@ impl LocalCopyOptions {
         self.size_only
     }
 
+    /// Reports whether existing destination files should be skipped.
+    #[must_use]
+    pub const fn ignore_existing_enabled(&self) -> bool {
+        self.ignore_existing
+    }
+
     /// Reports whether sparse handling has been requested.
     #[must_use]
     pub const fn sparse_enabled(&self) -> bool {
@@ -1737,6 +1755,7 @@ impl HardLinkTracker {
 pub struct LocalCopySummary {
     regular_files_total: u64,
     regular_files_matched: u64,
+    regular_files_ignored_existing: u64,
     directories_total: u64,
     symlinks_total: u64,
     devices_total: u64,
@@ -1773,6 +1792,12 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn regular_files_matched(&self) -> u64 {
         self.regular_files_matched
+    }
+
+    /// Returns the number of regular files skipped due to `--ignore-existing`.
+    #[must_use]
+    pub const fn regular_files_ignored_existing(&self) -> u64 {
+        self.regular_files_ignored_existing
     }
 
     /// Returns the number of directories created during the transfer.
@@ -1886,6 +1911,10 @@ impl LocalCopySummary {
 
     fn record_regular_file_matched(&mut self) {
         self.regular_files_matched = self.regular_files_matched.saturating_add(1);
+    }
+
+    fn record_regular_file_ignored_existing(&mut self) {
+        self.regular_files_ignored_existing = self.regular_files_ignored_existing.saturating_add(1);
     }
 
     fn record_total_bytes(&mut self, bytes: u64) {
@@ -2050,6 +2079,10 @@ impl<'a> CopyContext<'a> {
 
     fn size_only_enabled(&self) -> bool {
         self.options.size_only_enabled()
+    }
+
+    fn ignore_existing_enabled(&self) -> bool {
+        self.options.ignore_existing_enabled()
     }
 
     fn partial_enabled(&self) -> bool {
@@ -3711,15 +3744,16 @@ fn copy_file(
     }
 
     if mode.is_dry_run() {
-        match fs::symlink_metadata(destination) {
+        let destination_state = match fs::symlink_metadata(destination) {
             Ok(existing) => {
                 if existing.file_type().is_dir() {
                     return Err(LocalCopyError::invalid_argument(
                         LocalCopyArgumentError::ReplaceDirectoryWithFile,
                     ));
                 }
+                Some(existing)
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => {
                 return Err(LocalCopyError::io(
                     "inspect existing destination",
@@ -3727,6 +3761,18 @@ fn copy_file(
                     error,
                 ));
             }
+        };
+
+        if context.ignore_existing_enabled() && destination_state.is_some() {
+            context.summary_mut().record_regular_file_ignored_existing();
+            context.record(LocalCopyRecord::new(
+                record_path.clone(),
+                LocalCopyAction::SkippedExisting,
+                0,
+                Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
+            ));
+            return Ok(());
         }
 
         if let Err(error) = fs::File::open(source) {
@@ -3767,6 +3813,19 @@ fn copy_file(
                 LocalCopyArgumentError::ReplaceDirectoryWithFile,
             ));
         }
+    }
+
+    if context.ignore_existing_enabled() && existing_metadata.is_some() {
+        context.summary_mut().record_regular_file_ignored_existing();
+        context.hard_links.record(metadata, destination);
+        context.record(LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::SkippedExisting,
+            0,
+            Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
+        ));
+        return Ok(());
     }
 
     let use_sparse_writes = context.sparse_enabled();
@@ -4914,6 +4973,13 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_ignore_existing_round_trip() {
+        let options = LocalCopyOptions::default().ignore_existing(true);
+        assert!(options.ignore_existing_enabled());
+        assert!(!LocalCopyOptions::default().ignore_existing_enabled());
+    }
+
+    #[test]
     fn local_copy_options_devices_round_trip() {
         let options = LocalCopyOptions::default().devices(true);
         assert!(options.devices_enabled());
@@ -5408,6 +5474,39 @@ mod tests {
         assert_eq!(summary.files_copied(), 0);
         assert_eq!(summary.bytes_copied(), 0);
         assert_eq!(fs::read(dest_path).expect("read destination"), b"xyz");
+    }
+
+    #[test]
+    fn execute_with_ignore_existing_skips_existing_destination() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&target_root).expect("create target root");
+
+        let source_path = source_root.join("file.txt");
+        let dest_path = target_root.join("file.txt");
+        fs::write(&source_path, b"updated").expect("write source");
+        fs::write(&dest_path, b"original").expect("write destination");
+
+        let operands = vec![
+            source_path.clone().into_os_string(),
+            dest_path.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().ignore_existing(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.regular_files_matched(), 0);
+        assert_eq!(summary.regular_files_ignored_existing(), 1);
+        assert_eq!(fs::read(dest_path).expect("read destination"), b"original");
     }
 
     #[test]
