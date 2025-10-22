@@ -92,6 +92,7 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
+use rsync_compress::zlib::CompressionLevel;
 use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
@@ -258,6 +259,7 @@ pub struct ClientConfig {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
     whole_file: bool,
     checksum: bool,
@@ -392,6 +394,11 @@ impl ClientConfig {
         self.compress
     }
 
+    /// Returns the configured compression level override, if any.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_level(&self) -> Option<CompressionLevel> {
+        self.compression_level
     /// Returns the compression setting that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]
@@ -537,6 +544,7 @@ pub struct ClientConfigBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
     whole_file: Option<bool>,
     checksum: bool,
@@ -664,6 +672,11 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Applies an explicit compression level override when building the configuration.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_level(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_level = level;
     /// Sets the compression level that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]
@@ -850,6 +863,7 @@ impl ClientConfigBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             compress: self.compress,
+            compression_level: self.compression_level,
             compression_setting: self.compression_setting,
             whole_file: self.whole_file.unwrap_or(true),
             checksum: self.checksum,
@@ -1689,6 +1703,7 @@ pub fn run_client_with_observer(
             )
             .with_compression_level(config.compression_setting().level_or_default())
             .compress(config.compress())
+            .with_compression_level(config.compression_level())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
@@ -1755,7 +1770,7 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::num::NonZeroU64;
+    use std::num::{NonZeroU8, NonZeroU64};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -1856,6 +1871,23 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_sets_compression_level() {
+        let level = NonZeroU8::new(7).unwrap();
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compress(true)
+            .compression_level(Some(CompressionLevel::precise(level)))
+            .build();
+
+        assert!(config.compress());
+        assert_eq!(
+            config.compression_level(),
+            Some(CompressionLevel::precise(level))
+        );
+        assert_eq!(ClientConfig::default().compression_level(), None);
     }
 
     #[test]
