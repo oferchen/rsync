@@ -274,6 +274,7 @@ pub struct ClientConfig {
     stats: bool,
     partial: bool,
     inplace: bool,
+    force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
@@ -526,10 +527,16 @@ impl ClientConfig {
         self.inplace
     }
 
+    /// Reports whether event collection has been explicitly requested by the caller.
+    #[must_use]
+    pub const fn force_event_collection(&self) -> bool {
+        self.force_event_collection
+    }
+
     /// Returns whether the configuration requires collection of transfer events.
     #[must_use]
     pub const fn collect_events(&self) -> bool {
-        self.verbosity > 0 || self.progress || self.list_only
+        self.force_event_collection || self.verbosity > 0 || self.progress || self.list_only
     }
 }
 
@@ -563,6 +570,7 @@ pub struct ClientConfigBuilder {
     stats: bool,
     partial: bool,
     inplace: bool,
+    force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
@@ -822,6 +830,13 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Forces collection of transfer events regardless of verbosity.
+    #[must_use]
+    pub const fn force_event_collection(mut self, force: bool) -> Self {
+        self.force_event_collection = force;
+        self
+    }
+
     /// Enables or disables extended attribute preservation for the transfer.
     #[cfg(feature = "xattr")]
     #[must_use]
@@ -888,6 +903,7 @@ impl ClientConfigBuilder {
             stats: self.stats,
             partial: self.partial,
             inplace: self.inplace,
+            force_event_collection: self.force_event_collection,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
@@ -2078,6 +2094,17 @@ mod tests {
             .build();
 
         assert!(!disabled.stats());
+    }
+
+    #[test]
+    fn builder_forces_event_collection() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .force_event_collection(true)
+            .build();
+
+        assert!(config.force_event_collection());
+        assert!(config.collect_events());
     }
 
     #[test]
