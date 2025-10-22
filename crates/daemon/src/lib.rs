@@ -1899,6 +1899,8 @@ fn handle_legacy_session(
 
     let request = request.unwrap_or_default();
 
+    advertise_capabilities(reader.get_mut(), modules)?;
+
     if request == "#list" {
         respond_with_module_list(reader.get_mut(), modules, motd_lines, peer_addr.ip())?;
     } else if request.is_empty() {
@@ -1950,6 +1952,39 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     }
 
     Ok(Some(line))
+}
+
+fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleDefinition]) -> io::Result<()> {
+    for payload in advertised_capability_lines(modules) {
+        let message = format_legacy_daemon_message(LegacyDaemonMessage::Capabilities {
+            flags: payload.as_str(),
+        });
+        stream.write_all(message.as_bytes())?;
+    }
+
+    if modules.is_empty() {
+        Ok(())
+    } else {
+        stream.flush()
+    }
+}
+
+fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
+    if modules.is_empty() {
+        return Vec::new();
+    }
+
+    let mut features = Vec::with_capacity(2);
+    features.push(String::from("modules"));
+
+    if modules
+        .iter()
+        .any(ModuleDefinition::requires_authentication)
+    {
+        features.push(String::from("authlist"));
+    }
+
+    vec![features.join(" ")]
 }
 
 fn respond_with_module_list(
@@ -2489,6 +2524,52 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
+
+    fn base_module(name: &str) -> ModuleDefinition {
+        ModuleDefinition {
+            name: String::from(name),
+            path: PathBuf::from("/srv/module"),
+            comment: None,
+            hosts_allow: Vec::new(),
+            hosts_deny: Vec::new(),
+            auth_users: Vec::new(),
+            secrets_file: None,
+            bandwidth_limit: None,
+            refuse_options: Vec::new(),
+            read_only: false,
+            numeric_ids: false,
+            uid: None,
+            gid: None,
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn advertised_capability_lines_empty_without_modules() {
+        assert!(advertised_capability_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn advertised_capability_lines_report_modules_without_auth() {
+        let module = base_module("docs");
+
+        assert_eq!(
+            advertised_capability_lines(&[module]),
+            vec![String::from("modules")]
+        );
+    }
+
+    #[test]
+    fn advertised_capability_lines_include_authlist_when_required() {
+        let mut module = base_module("secure");
+        module.auth_users.push(String::from("alice"));
+        module.secrets_file = Some(PathBuf::from("secrets.txt"));
+
+        assert_eq!(
+            advertised_capability_lines(&[module]),
+            vec![String::from("modules authlist")]
+        );
+    }
 
     fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> ModuleDefinition {
         ModuleDefinition {
@@ -3341,6 +3422,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules authlist\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("auth request");
         assert!(line.starts_with("@RSYNCD: AUTHREQD "));
         let challenge = line
@@ -3429,6 +3514,10 @@ mod tests {
 
         stream.write_all(b"secure\n").expect("send module request");
         stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules authlist\n");
 
         line.clear();
         reader.read_line(&mut line).expect("auth request");
@@ -3607,6 +3696,10 @@ mod tests {
         stream.flush().expect("flush list request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("ok line");
         assert_eq!(line, "@RSYNCD: OK\n");
 
@@ -3678,6 +3771,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("refusal message");
         assert_eq!(
             line.trim_end(),
@@ -3736,6 +3833,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("error message");
         assert_eq!(
             line.trim_end(),
@@ -3786,6 +3887,10 @@ mod tests {
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
 
         line.clear();
         reader.read_line(&mut line).expect("ok line");
@@ -3846,6 +3951,10 @@ mod tests {
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
 
         line.clear();
         reader.read_line(&mut line).expect("motd line 1");
