@@ -31,8 +31,10 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config` before explaining that
-    transfers are unavailable. Authentication, authorization, real module
-    serving, and advanced directives remain unimplemented.
+    transfers are unavailable. Authentication and authorization flows are in
+    place, and module-level `use chroot` directives are parsed with absolute-path
+    enforcement, but real module serving and the broader directive matrix remain
+    unimplemented.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.

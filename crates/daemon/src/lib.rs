@@ -242,6 +242,7 @@ struct ModuleDefinition {
     gid: Option<u32>,
     timeout: Option<NonZeroU64>,
     listable: bool,
+    use_chroot: bool,
 }
 
 impl ModuleDefinition {
@@ -324,6 +325,11 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn listable(&self) -> bool {
         self.listable
+    }
+
+    #[cfg(test)]
+    fn use_chroot(&self) -> bool {
+        self.use_chroot
     }
 }
 
@@ -809,6 +815,16 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 })?;
                 builder.set_read_only(parsed, path, line_number)?;
             }
+            "use chroot" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid boolean value '{value}' for 'use chroot'"),
+                    )
+                })?;
+                builder.set_use_chroot(parsed, path, line_number)?;
+            }
             "numeric ids" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_parse_error(
@@ -878,6 +894,7 @@ struct ModuleDefinitionBuilder {
     gid: Option<u32>,
     timeout: Option<Option<NonZeroU64>>,
     listable: Option<bool>,
+    use_chroot: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -900,6 +917,7 @@ impl ModuleDefinitionBuilder {
             gid: None,
             timeout: None,
             listable: None,
+            use_chroot: None,
         }
     }
 
@@ -1137,6 +1155,24 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_use_chroot(
+        &mut self,
+        use_chroot: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.use_chroot.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'use chroot' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.use_chroot = Some(use_chroot);
+        Ok(())
+    }
+
     fn set_uid(&mut self, uid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
         if self.uid.is_some() {
             return Err(config_parse_error(
@@ -1193,6 +1229,19 @@ impl ModuleDefinitionBuilder {
             )
         })?;
 
+        let use_chroot = self.use_chroot.unwrap_or(true);
+
+        if use_chroot && !path.is_absolute() {
+            return Err(config_parse_error(
+                config_path,
+                self.declaration_line,
+                format!(
+                    "module '{}' requires an absolute path when 'use chroot' is enabled",
+                    self.name
+                ),
+            ));
+        }
+
         if self.auth_users.as_ref().map_or(false, Vec::is_empty) {
             return Err(config_parse_error(
                 config_path,
@@ -1231,6 +1280,7 @@ impl ModuleDefinitionBuilder {
             gid: self.gid,
             timeout: self.timeout.unwrap_or(None),
             listable: self.listable.unwrap_or(true),
+            use_chroot,
         })
     }
 }
@@ -2402,9 +2452,17 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
 
     let comment = comment_part.filter(|value| !value.is_empty());
 
+    let path = PathBuf::from(path_text);
+    if !path.is_absolute() {
+        return Err(config_error(format!(
+            "module path '{}' must be absolute when 'use chroot' is enabled",
+            path_text
+        )));
+    }
+
     Ok(ModuleDefinition {
         name: name.to_string(),
-        path: PathBuf::from(path_text),
+        path,
         comment,
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
@@ -2418,6 +2476,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         gid: None,
         timeout: None,
         listable: true,
+        use_chroot: true,
     })
 }
 
@@ -2640,6 +2699,7 @@ mod tests {
             gid: None,
             timeout: None,
             listable: true,
+            use_chroot: true,
         }
     }
 
@@ -2693,6 +2753,7 @@ mod tests {
             gid: None,
             timeout: None,
             listable: true,
+            use_chroot: true,
         }
     }
 
@@ -2908,6 +2969,7 @@ mod tests {
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
         assert!(modules[1].listable());
+        assert!(modules.iter().all(ModuleDefinition::use_chroot));
     }
 
     #[test]
@@ -2979,6 +3041,40 @@ mod tests {
         assert_eq!(module.uid(), Some(1234));
         assert_eq!(module.gid(), Some(4321));
         assert!(!module.listable());
+        assert!(module.use_chroot());
+    }
+
+    #[test]
+    fn runtime_options_loads_use_chroot_directive_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nuse chroot = no\n",).expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        assert!(!modules[0].use_chroot());
+    }
+
+    #[test]
+    fn runtime_options_allows_relative_path_when_use_chroot_disabled() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = data/docs\nuse chroot = no\n",).expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].path, PathBuf::from("data/docs"));
+        assert!(!modules[0].use_chroot());
     }
 
     #[test]
@@ -3031,6 +3127,48 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("invalid boolean value 'maybe'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_use_chroot_directive() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nuse chroot = yes\nuse chroot = no\n",
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("duplicate directive should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate 'use chroot' directive")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_relative_path_with_chroot_enabled() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = data/docs\nuse chroot = yes\n",).expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("relative path with chroot should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("requires an absolute path when 'use chroot' is enabled")
         );
     }
 
