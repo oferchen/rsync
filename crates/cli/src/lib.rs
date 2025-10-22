@@ -135,6 +135,8 @@ const HELP_TEXT: &str = concat!(
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
+    "      --remove-source-files  Remove source files after a successful transfer.\n",
+    "      --remove-sent-files   Alias of --remove-source-files.\n",
     "      --inplace    Write updated data directly to destination files.\n",
     "      --no-inplace Use temporary files when updating regular files.\n",
     "  -P              Equivalent to --partial --progress.\n",
@@ -164,7 +166,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -193,6 +195,7 @@ struct ParsedArgs {
     progress: bool,
     stats: bool,
     partial: bool,
+    remove_source_files: bool,
     inplace: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
@@ -356,6 +359,13 @@ fn clap_command() -> Command {
                 .help("Discard partially transferred files on error.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("remove-source-files")
+                .long("remove-source-files")
+                .alias("remove-sent-files")
+                .help("Remove source files after a successful transfer.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("inplace")
@@ -694,6 +704,7 @@ where
             progress = true;
         }
     }
+    let remove_source_files = matches.get_flag("remove-source-files");
     let inplace = if matches.get_flag("no-inplace") {
         Some(false)
     } else if matches.get_flag("inplace") {
@@ -763,6 +774,7 @@ where
         progress,
         stats,
         partial,
+        remove_source_files,
         inplace,
         excludes,
         includes,
@@ -898,6 +910,7 @@ where
         progress,
         stats,
         partial,
+        remove_source_files,
         inplace,
         xattrs,
         password_file,
@@ -1068,6 +1081,7 @@ where
         .progress(progress)
         .stats(stats)
         .partial(partial)
+        .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false));
     #[cfg(feature = "xattr")]
     {
@@ -1530,6 +1544,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::DirectoryCreated => "directory",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
         ClientEventKind::EntryDeleted => "deleted",
+        ClientEventKind::SourceRemoved => "source removed",
     }
 }
 
@@ -2618,6 +2633,32 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"archive"
+        );
+    }
+
+    #[test]
+    fn transfer_request_with_remove_source_files_deletes_source() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"move me").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--remove-source-files"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert!(!source.exists(), "source should be removed");
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"move me"
         );
     }
 
