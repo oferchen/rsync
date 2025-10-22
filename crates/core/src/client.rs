@@ -2132,6 +2132,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -2165,6 +2166,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -2194,6 +2196,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -2225,6 +2228,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let list = run_module_list(request).expect("module list succeeds");
@@ -2246,6 +2250,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let error = run_module_list(request).expect_err("daemon error should surface");
@@ -2263,6 +2268,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let error = run_module_list(request).expect_err("auth requirement should surface");
@@ -2282,6 +2288,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: Some(String::from("user")),
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let _guard = env_lock().lock().unwrap();
@@ -2348,6 +2355,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: Some(String::from("user")),
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let _guard = env_lock().lock().unwrap();
@@ -2415,6 +2423,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: Some(String::from("user")),
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let _guard = env_lock().lock().unwrap();
@@ -2489,6 +2498,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: Some(String::from("user")),
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let _guard = env_lock().lock().unwrap();
@@ -2558,6 +2568,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: Some(String::from("user")),
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let _guard = env_lock().lock().unwrap();
@@ -2584,6 +2595,7 @@ mod tests {
         let request = ModuleListRequest {
             address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
             username: None,
+            protocol: ProtocolVersion::NEWEST,
         };
 
         let error = run_module_list(request).expect_err("denied response should surface");
@@ -2860,6 +2872,7 @@ impl fmt::Display for SocketAddrDisplay<'_> {
 pub struct ModuleListRequest {
     address: DaemonAddress,
     username: Option<String>,
+    protocol: ProtocolVersion,
 }
 
 impl ModuleListRequest {
@@ -2891,7 +2904,11 @@ impl ModuleListRequest {
     }
 
     fn new(address: DaemonAddress, username: Option<String>) -> Self {
-        Self { address, username }
+        Self {
+            address,
+            username,
+            protocol: ProtocolVersion::NEWEST,
+        }
     }
 
     /// Returns the parsed daemon address.
@@ -2904,6 +2921,19 @@ impl ModuleListRequest {
     #[must_use]
     pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
+    }
+
+    /// Returns the desired protocol version for daemon negotiation.
+    #[must_use]
+    pub const fn protocol(&self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns a new request that clamps the negotiation to the provided protocol.
+    #[must_use]
+    pub const fn with_protocol(mut self, protocol: ProtocolVersion) -> Self {
+        self.protocol = protocol;
+        self
     }
 }
 
@@ -3187,7 +3217,7 @@ pub fn run_module_list_with_password(
         .set_write_timeout(Some(DAEMON_SOCKET_TIMEOUT))
         .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
 
-    let handshake = negotiate_legacy_daemon_session(stream, ProtocolVersion::NEWEST)
+    let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
     let stream = handshake.into_stream();
     let mut reader = BufReader::new(stream);
