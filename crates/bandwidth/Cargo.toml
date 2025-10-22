@@ -1,0 +1,17 @@
+[package]
+name = "rsync-bandwidth"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Bandwidth parsing and pacing utilities for the Rust rsync implementation"
+repository = "https://github.com/oferchen/rsync"
+publish = false
+
+[features]
+default = []
+test-support = []
+
+[dev-dependencies]
+proptest = "1.8"

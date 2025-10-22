@@ -18,3 +18,4 @@ rsync-checksums = { path = "../checksums" }
 
 [dev-dependencies]
 tempfile = "3.10"
+rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
