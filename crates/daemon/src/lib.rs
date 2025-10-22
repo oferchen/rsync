@@ -227,6 +227,11 @@ struct ModuleDefinition {
     secrets_file: Option<PathBuf>,
     bandwidth_limit: Option<NonZeroU64>,
     refuse_options: Vec<String>,
+    read_only: bool,
+    numeric_ids: bool,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    timeout: Option<NonZeroU64>,
 }
 
 impl ModuleDefinition {
@@ -266,6 +271,31 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn refused_options(&self) -> &[String] {
         &self.refuse_options
+    }
+
+    #[cfg(test)]
+    fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    #[cfg(test)]
+    fn numeric_ids(&self) -> bool {
+        self.numeric_ids
+    }
+
+    #[cfg(test)]
+    fn uid(&self) -> Option<u32> {
+        self.uid
+    }
+
+    #[cfg(test)]
+    fn gid(&self) -> Option<u32> {
+        self.gid
+    }
+
+    #[cfg(test)]
+    fn timeout(&self) -> Option<NonZeroU64> {
+        self.timeout
     }
 }
 
@@ -597,6 +627,44 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 })?;
                 builder.set_refuse_options(options, path, line_number)?;
             }
+            "read only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid boolean value '{value}' for 'read only'"),
+                    )
+                })?;
+                builder.set_read_only(parsed, path, line_number)?;
+            }
+            "numeric ids" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid boolean value '{value}' for 'numeric ids'"),
+                    )
+                })?;
+                builder.set_numeric_ids(parsed, path, line_number)?;
+            }
+            "uid" => {
+                let uid = parse_numeric_identifier(value).ok_or_else(|| {
+                    config_parse_error(path, line_number, format!("invalid uid '{value}'"))
+                })?;
+                builder.set_uid(uid, path, line_number)?;
+            }
+            "gid" => {
+                let gid = parse_numeric_identifier(value).ok_or_else(|| {
+                    config_parse_error(path, line_number, format!("invalid gid '{value}'"))
+                })?;
+                builder.set_gid(gid, path, line_number)?;
+            }
+            "timeout" => {
+                let timeout = parse_timeout_seconds(value).ok_or_else(|| {
+                    config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
+                })?;
+                builder.set_timeout(timeout, path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -622,6 +690,11 @@ struct ModuleDefinitionBuilder {
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_limit_set: bool,
     refuse_options: Option<Vec<String>>,
+    read_only: Option<bool>,
+    numeric_ids: Option<bool>,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    timeout: Option<Option<NonZeroU64>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -638,6 +711,11 @@ impl ModuleDefinitionBuilder {
             bandwidth_limit: None,
             bandwidth_limit_set: false,
             refuse_options: None,
+            read_only: None,
+            numeric_ids: None,
+            uid: None,
+            gid: None,
+            timeout: None,
         }
     }
 
@@ -818,6 +896,89 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_read_only(
+        &mut self,
+        read_only: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.read_only.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'read only' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.read_only = Some(read_only);
+        Ok(())
+    }
+
+    fn set_numeric_ids(
+        &mut self,
+        numeric_ids: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.numeric_ids.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'numeric ids' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.numeric_ids = Some(numeric_ids);
+        Ok(())
+    }
+
+    fn set_uid(&mut self, uid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
+        if self.uid.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'uid' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.uid = Some(uid);
+        Ok(())
+    }
+
+    fn set_gid(&mut self, gid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
+        if self.gid.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'gid' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.gid = Some(gid);
+        Ok(())
+    }
+
+    fn set_timeout(
+        &mut self,
+        timeout: Option<NonZeroU64>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.timeout.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'timeout' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.timeout = Some(timeout);
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -862,6 +1023,11 @@ impl ModuleDefinitionBuilder {
             secrets_file: self.secrets_file,
             bandwidth_limit: self.bandwidth_limit,
             refuse_options: self.refuse_options.unwrap_or_default(),
+            read_only: self.read_only.unwrap_or(false),
+            numeric_ids: self.numeric_ids.unwrap_or(false),
+            uid: self.uid,
+            gid: self.gid,
+            timeout: self.timeout.unwrap_or(None),
         })
     }
 }
@@ -956,6 +1122,38 @@ fn validate_secrets_file(
     }
 
     Ok(path.to_path_buf())
+}
+
+fn parse_boolean_directive(value: &str) -> Option<bool> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_numeric_identifier(value: &str) -> Option<u32> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    trimmed.parse().ok()
+}
+
+fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let seconds: u64 = trimmed.parse().ok()?;
+    if seconds == 0 {
+        Some(None)
+    } else {
+        Some(NonZeroU64::new(seconds))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1598,6 +1796,7 @@ fn respond_with_module_request(
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         if module.permits(peer_ip) {
+            apply_module_timeout(reader.get_mut(), module)?;
             if module.requires_authentication() {
                 match perform_module_authentication(reader, module, peer_ip)? {
                     AuthenticationStatus::Denied => return Ok(()),
@@ -1624,6 +1823,16 @@ fn respond_with_module_request(
     let stream = reader.get_mut();
     stream.write_all(exit.as_bytes())?;
     stream.flush()
+}
+
+fn apply_module_timeout(stream: &TcpStream, module: &ModuleDefinition) -> io::Result<()> {
+    if let Some(timeout) = module.timeout {
+        let duration = Duration::from_secs(timeout.get());
+        stream.set_read_timeout(Some(duration))?;
+        stream.set_write_timeout(Some(duration))?;
+    }
+
+    Ok(())
 }
 
 fn missing_argument_value(option: &str) -> DaemonError {
@@ -1684,6 +1893,11 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         secrets_file: None,
         bandwidth_limit: None,
         refuse_options: Vec::new(),
+        read_only: false,
+        numeric_ids: false,
+        uid: None,
+        gid: None,
+        timeout: None,
     })
 }
 
@@ -2014,6 +2228,111 @@ mod tests {
             module.refused_options(),
             &["delete", "compress", "progress"]
         );
+    }
+
+    #[test]
+    fn runtime_options_loads_boolean_and_id_directives_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nread only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert!(module.read_only());
+        assert!(module.numeric_ids());
+        assert_eq!(module.uid(), Some(1234));
+        assert_eq!(module.gid(), Some(4321));
+    }
+
+    #[test]
+    fn runtime_options_loads_timeout_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\ntimeout = 120\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.timeout().map(NonZeroU64::get), Some(120));
+    }
+
+    #[test]
+    fn runtime_options_allows_timeout_zero_in_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\ntimeout = 0\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert!(module.timeout().is_none());
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_boolean_directive() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nread only = maybe\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid boolean should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid boolean value 'maybe'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_uid() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nuid = alpha\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid uid should fail");
+
+        assert!(error.message().to_string().contains("invalid uid"));
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_timeout() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\ntimeout = never\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid timeout should fail");
+
+        assert!(error.message().to_string().contains("invalid timeout"));
     }
 
     #[test]
