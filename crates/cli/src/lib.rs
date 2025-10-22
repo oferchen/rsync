@@ -123,6 +123,7 @@ const HELP_TEXT: &str = concat!(
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
+    "      --ignore-existing  Skip updating files that already exist at the destination.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
@@ -175,7 +176,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -194,6 +195,7 @@ struct ParsedArgs {
     delete_excluded: bool,
     checksum: bool,
     size_only: bool,
+    ignore_existing: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     compress: bool,
@@ -276,6 +278,12 @@ fn clap_command() -> Command {
             Arg::new("size-only")
                 .long("size-only")
                 .help("Skip files whose size already matches the destination.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("ignore-existing")
+                .long("ignore-existing")
+                .help("Skip updating files that already exist at the destination.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -792,6 +800,7 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
+    let ignore_existing = matches.get_flag("ignore-existing");
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
@@ -806,6 +815,7 @@ where
         delete_excluded,
         checksum,
         size_only,
+        ignore_existing,
         remainder,
         bwlimit,
         compress,
@@ -938,6 +948,7 @@ where
         delete_excluded,
         checksum,
         size_only,
+        ignore_existing,
         remainder: raw_remainder,
         bwlimit,
         compress,
@@ -1179,6 +1190,7 @@ where
         .specials(preserve_specials)
         .checksum(checksum)
         .size_only(size_only)
+        .ignore_existing(ignore_existing)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .relative_paths(relative)
@@ -1779,6 +1791,15 @@ fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<
 /// Renders verbose listings for the provided transfer events.
 fn emit_verbose<W: Write>(events: &[ClientEvent], verbosity: u8, stdout: &mut W) -> io::Result<()> {
     for event in events {
+        if matches!(event.kind(), ClientEventKind::SkippedExisting) {
+            writeln!(
+                stdout,
+                "skipping existing file \"{}\"",
+                event.relative_path().display()
+            )?;
+            continue;
+        }
+
         if matches!(event.kind(), ClientEventKind::SkippedNonRegular) {
             writeln!(
                 stdout,
@@ -1828,6 +1849,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::FifoCopied => "fifo",
         ClientEventKind::DeviceCopied => "device",
         ClientEventKind::DirectoryCreated => "directory",
+        ClientEventKind::SkippedExisting => "skipped existing file",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
         ClientEventKind::EntryDeleted => "deleted",
         ClientEventKind::SourceRemoved => "source removed",
@@ -3270,6 +3292,32 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"limited"
+        );
+    }
+
+    #[test]
+    fn transfer_request_with_ignore_existing_leaves_destination_unchanged() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"updated").expect("write source");
+        std::fs::write(&destination, b"original").expect("write destination");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ignore-existing"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"original"
         );
     }
 
