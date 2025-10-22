@@ -1273,6 +1273,8 @@ struct LiveProgress<'a, W: Write> {
     writer: &'a mut W,
     rendered: bool,
     error: Option<io::Error>,
+    active_path: Option<PathBuf>,
+    line_active: bool,
 }
 
 impl<'a, W: Write> LiveProgress<'a, W> {
@@ -1281,6 +1283,8 @@ impl<'a, W: Write> LiveProgress<'a, W> {
             writer,
             rendered: false,
             error: None,
+            active_path: None,
+            line_active: false,
         }
     }
 
@@ -1296,10 +1300,14 @@ impl<'a, W: Write> LiveProgress<'a, W> {
 
     fn finish(self) -> io::Result<()> {
         if let Some(error) = self.error {
-            Err(error)
-        } else {
-            Ok(())
+            return Err(error);
         }
+
+        if self.line_active {
+            writeln!(self.writer)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1314,18 +1322,45 @@ impl<'a, W: Write> ClientProgressObserver for LiveProgress<'a, W> {
         let remaining = total.saturating_sub(update.index());
 
         let write_result = (|| -> io::Result<()> {
-            writeln!(self.writer, "{}", event.relative_path().display())?;
+            let relative = event.relative_path();
+            let path_changed = self
+                .active_path
+                .as_deref()
+                .map_or(true, |path| path != relative);
+
+            if path_changed {
+                if self.line_active {
+                    writeln!(self.writer)?;
+                    self.line_active = false;
+                }
+                writeln!(self.writer, "{}", relative.display())?;
+                self.active_path = Some(relative.to_path_buf());
+            }
 
             let bytes = event.bytes_transferred();
             let size_field = format!("{:>15}", format_progress_bytes(bytes));
+            let percent = format_progress_percent(bytes, update.total_bytes());
+            let percent_field = format!("{:>4}", percent);
             let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
             let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
             let xfr_index = update.index();
 
-            writeln!(
+            if self.line_active {
+                write!(self.writer, "\r")?;
+            }
+
+            write!(
                 self.writer,
-                "{size_field} 100% {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+                "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
             )?;
+
+            if update.is_final() {
+                writeln!(self.writer)?;
+                self.line_active = false;
+                self.active_path = None;
+            } else {
+                self.line_active = true;
+            }
             Ok(())
         })();
 
@@ -1461,6 +1496,20 @@ fn format_progress_bytes(bytes: u64) -> String {
     parts.join(",")
 }
 
+/// Formats a progress percentage, producing the upstream `??%` placeholder when totals are
+/// unavailable.
+fn format_progress_percent(bytes: u64, total: Option<u64>) -> String {
+    match total {
+        Some(total_bytes) if total_bytes > 0 => {
+            let capped = bytes.min(total_bytes);
+            let percent = (capped.saturating_mul(100)) / total_bytes;
+            format!("{percent}%")
+        }
+        Some(_) => "100%".to_string(),
+        None => "??%".to_string(),
+    }
+}
+
 /// Formats a transfer rate in the `kB/s`, `MB/s`, or `GB/s` ranges.
 fn format_progress_rate(bytes: u64, elapsed: Duration) -> String {
     const KIB: f64 = 1024.0;
@@ -1515,6 +1564,8 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
 
         let bytes = event.bytes_transferred();
         let size_field = format!("{:>15}", format_progress_bytes(bytes));
+        let percent_hint = matches!(event.kind(), ClientEventKind::DataCopied).then_some(bytes);
+        let percent_field = format!("{:>4}", format_progress_percent(bytes, percent_hint));
         let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
         let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
         let remaining = total - index - 1;
@@ -1522,7 +1573,7 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
 
         writeln!(
             stdout,
-            "{size_field} 100% {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+            "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
         )?;
     }
 
@@ -2778,6 +2829,83 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"progress"
         );
+    }
+
+    #[test]
+    fn progress_percent_placeholder_used_for_unknown_totals() {
+        assert_eq!(format_progress_percent(42, None), "??%");
+        assert_eq!(format_progress_percent(0, Some(0)), "100%");
+        assert_eq!(format_progress_percent(50, Some(200)), "25%");
+    }
+
+    #[test]
+    fn progress_reports_intermediate_updates() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("large.bin");
+        let destination = tmp.path().join("large.out");
+        let payload = vec![0xA5u8; 256 * 1024];
+        std::fs::write(&source, &payload).expect("write large source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+        assert!(rendered.contains("large.bin"));
+        assert!(rendered.contains("(xfr#1, to-chk=0/1)"));
+        assert!(rendered.contains("\r"));
+        assert!(rendered.contains(" 50%"));
+        assert!(rendered.contains("100%"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            payload
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn progress_reports_unknown_totals_with_placeholder() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::os::unix::fs::FileTypeExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("fifo.in");
+        mknodat(
+            CWD,
+            &source,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let destination = tmp.path().join("fifo.out");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("--specials"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+        assert!(rendered.contains("fifo.in"));
+        assert!(rendered.contains("??%"));
+        assert!(rendered.contains("to-chk=0/1"));
+
+        let metadata = std::fs::symlink_metadata(&destination).expect("stat destination");
+        assert!(metadata.file_type().is_fifo());
     }
 
     #[test]

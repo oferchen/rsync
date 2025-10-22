@@ -93,8 +93,8 @@ use rsync_checksums::strong::Md5;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, FilterProgram, FilterProgramEntry, LocalCopyAction, LocalCopyError,
-    LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
-    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
+    LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -1073,6 +1073,15 @@ impl ClientEvent {
         }
     }
 
+    fn from_progress(relative: &Path, bytes_transferred: u64, elapsed: Duration) -> Self {
+        Self {
+            relative_path: relative.to_path_buf(),
+            kind: ClientEventKind::DataCopied,
+            bytes_transferred,
+            elapsed,
+        }
+    }
+
     /// Returns the relative path affected by this event.
     #[must_use]
     pub fn relative_path(&self) -> &Path {
@@ -1121,6 +1130,8 @@ pub struct ClientProgressUpdate {
     total: usize,
     remaining: usize,
     index: usize,
+    total_bytes: Option<u64>,
+    final_update: bool,
 }
 
 impl ClientProgressUpdate {
@@ -1147,9 +1158,24 @@ impl ClientProgressUpdate {
     pub const fn index(&self) -> usize {
         self.index
     }
+
+    /// Returns the total number of bytes expected for this transfer step, when known.
+    #[must_use]
+    pub const fn total_bytes(&self) -> Option<u64> {
+        self.total_bytes
+    }
+
+    /// Reports whether this update corresponds to the completion of an action.
+    #[must_use]
+    pub const fn is_final(&self) -> bool {
+        self.final_update
+    }
 }
 
 /// Observer invoked for each progress update generated during client execution.
+///
+/// Implementations should expect multiple updates for a single path as file
+/// contents stream into place.
 pub trait ClientProgressObserver {
     /// Handles a new progress update.
     fn on_progress(&mut self, update: &ClientProgressUpdate);
@@ -1216,11 +1242,44 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         let index = self.emitted;
         let remaining = self.total.saturating_sub(index);
 
+        let total_bytes = if matches!(record.action(), LocalCopyAction::DataCopied) {
+            Some(record.bytes_transferred())
+        } else {
+            None
+        };
+
         let update = ClientProgressUpdate {
             event,
             total: self.total,
             remaining,
             index,
+            total_bytes,
+            final_update: true,
+        };
+
+        self.observer.on_progress(&update);
+    }
+
+    fn handle_progress(&mut self, progress: LocalCopyProgress<'_>) {
+        if self.total == 0 {
+            return;
+        }
+
+        let index = (self.emitted + 1).min(self.total);
+        let remaining = self.total.saturating_sub(index);
+        let event = ClientEvent::from_progress(
+            progress.relative_path(),
+            progress.bytes_transferred(),
+            progress.elapsed(),
+        );
+
+        let update = ClientProgressUpdate {
+            event,
+            total: self.total,
+            remaining,
+            index,
+            total_bytes: progress.total_bytes(),
+            final_update: false,
         };
 
         self.observer.on_progress(&update);
