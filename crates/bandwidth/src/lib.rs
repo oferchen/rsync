@@ -58,7 +58,10 @@ use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 #[cfg(any(test, feature = "test-support"))]
-use std::sync::{Mutex, OnceLock};
+use std::mem;
+
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const MICROS_PER_SECOND: u128 = 1_000_000;
 const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
@@ -68,6 +71,86 @@ const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
     static RECORDED_SLEEPS: OnceLock<Mutex<Vec<Duration>>> = OnceLock::new();
     RECORDED_SLEEPS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn recorded_sleep_session_lock() -> &'static Mutex<()> {
+    static SESSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    SESSION_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+/// Guard that provides exclusive access to the recorded sleep durations.
+///
+/// Tests obtain a [`RecordedSleepSession`] at the start of a scenario, call
+/// [`RecordedSleepSession::clear`] to discard previous measurements, execute the
+/// code under test, and finally inspect the captured durations via
+/// [`RecordedSleepSession::take`]. Holding the guard ensures concurrent tests do
+/// not drain or append to the shared buffer while assertions run, eliminating
+/// the data races observed when multiple tests exercised the limiter in
+/// parallel.
+pub struct RecordedSleepSession<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<'a> RecordedSleepSession<'a> {
+    /// Removes any previously recorded durations.
+    #[inline]
+    pub fn clear(&mut self) {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .clear();
+    }
+
+    /// Returns `true` when no sleep durations have been recorded.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .is_empty()
+    }
+
+    /// Returns the number of recorded sleep intervals.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .len()
+    }
+
+    /// Drains the recorded sleep durations, returning ownership of the vector.
+    #[inline]
+    pub fn take(&mut self) -> Vec<Duration> {
+        let mut guard = recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps");
+        mem::take(&mut *guard)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+/// Obtains a guard that serialises access to recorded sleep durations.
+#[must_use]
+pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
+    RecordedSleepSession {
+        _guard: recorded_sleep_session_lock()
+            .lock()
+            .expect("lock recorded sleep session"),
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[deprecated(note = "use `recorded_sleep_session()` to guard access during tests")]
+/// Retrieves and clears the recorded sleep durations.
+pub fn take_recorded_sleeps() -> Vec<Duration> {
+    let mut session = recorded_sleep_session();
+    session.take()
 }
 
 fn duration_from_microseconds(us: u128) -> Duration {
@@ -413,13 +496,6 @@ impl BandwidthLimiter {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-/// Returns and clears the recorded sleep durations.
-pub fn take_recorded_sleeps() -> Vec<Duration> {
-    let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
-    std::mem::take(&mut *guard)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -521,10 +597,11 @@ mod tests {
 
     #[test]
     fn limiter_records_sleep_for_large_writes() {
-        crate::take_recorded_sleeps();
+        let mut session = crate::recorded_sleep_session();
+        session.clear();
         let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
         limiter.register(4096);
-        let recorded = crate::take_recorded_sleeps();
+        let recorded = session.take();
         assert!(
             recorded
                 .iter()
