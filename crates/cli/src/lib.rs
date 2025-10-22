@@ -124,6 +124,7 @@ const HELP_TEXT: &str = concat!(
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
+    "  -u, --update    Skip files that are newer on the destination.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
@@ -179,6 +180,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --update/-u, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
@@ -199,6 +201,7 @@ struct ParsedArgs {
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
+    update: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     compress: bool,
@@ -289,6 +292,13 @@ fn clap_command() -> Command {
             Arg::new("ignore-existing")
                 .long("ignore-existing")
                 .help("Skip updating files that already exist at the destination.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("update")
+                .long("update")
+                .short('u')
+                .help("Skip files that are newer on the destination.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -834,6 +844,7 @@ where
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
     let ignore_existing = matches.get_flag("ignore-existing");
+    let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
@@ -850,6 +861,7 @@ where
         checksum,
         size_only,
         ignore_existing,
+        update,
         remainder,
         bwlimit,
         compress,
@@ -985,6 +997,7 @@ where
         checksum,
         size_only,
         ignore_existing,
+        update,
         remainder: raw_remainder,
         bwlimit,
         compress,
@@ -1246,6 +1259,7 @@ where
         .checksum(checksum)
         .size_only(size_only)
         .ignore_existing(ignore_existing)
+        .update(update)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .relative_paths(relative)
@@ -1846,22 +1860,32 @@ fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<
 /// Renders verbose listings for the provided transfer events.
 fn emit_verbose<W: Write>(events: &[ClientEvent], verbosity: u8, stdout: &mut W) -> io::Result<()> {
     for event in events {
-        if matches!(event.kind(), ClientEventKind::SkippedExisting) {
-            writeln!(
-                stdout,
-                "skipping existing file \"{}\"",
-                event.relative_path().display()
-            )?;
-            continue;
-        }
-
-        if matches!(event.kind(), ClientEventKind::SkippedNonRegular) {
-            writeln!(
-                stdout,
-                "skipping non-regular file \"{}\"",
-                event.relative_path().display()
-            )?;
-            continue;
+        match event.kind() {
+            ClientEventKind::SkippedExisting => {
+                writeln!(
+                    stdout,
+                    "skipping existing file \"{}\"",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
+            ClientEventKind::SkippedNewerDestination => {
+                writeln!(
+                    stdout,
+                    "skipping newer destination file \"{}\"",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
+            ClientEventKind::SkippedNonRegular => {
+                writeln!(
+                    stdout,
+                    "skipping non-regular file \"{}\"",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
+            _ => {}
         }
 
         if verbosity == 1 {
@@ -1906,6 +1930,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::DirectoryCreated => "directory",
         ClientEventKind::SkippedExisting => "skipped existing file",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
+        ClientEventKind::SkippedNewerDestination => "skipped newer destination file",
         ClientEventKind::EntryDeleted => "deleted",
         ClientEventKind::SourceRemoved => "source removed",
     }
@@ -3830,6 +3855,19 @@ mod tests {
 
         assert_eq!(parsed.perms, Some(false));
         assert_eq!(parsed.times, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_update_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--update"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.update);
     }
 
     #[test]
