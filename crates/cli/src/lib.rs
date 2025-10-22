@@ -154,6 +154,7 @@ const HELP_TEXT: &str = concat!(
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
     "      --msgs2stderr  Route informational messages to standard error.\n",
+    "      --out-format=FORMAT  Customise transfer output using FORMAT.\n",
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
@@ -192,12 +193,189 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
     "[year]/[month padding:zero]/[day padding:zero] [hour padding:zero]:[minute padding:zero]:[second padding:zero]"
 );
+
+#[derive(Clone, Debug)]
+struct OutFormat {
+    tokens: Vec<OutFormatToken>,
+}
+
+#[derive(Clone, Debug)]
+enum OutFormatToken {
+    Literal(String),
+    Placeholder(OutFormatPlaceholder),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OutFormatPlaceholder {
+    FileName,
+    FullPath,
+    Length,
+    BytesTransferred,
+    Operation,
+    Permissions,
+}
+
+fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
+    let text = value.to_string_lossy();
+    if text.is_empty() {
+        return Err(rsync_error!(1, "--out-format value must not be empty").with_role(Role::Client));
+    }
+
+    let mut tokens = Vec::new();
+    let mut literal = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '%' => {
+                let Some(next) = chars.next() else {
+                    return Err(rsync_error!(1, "--out-format value may not end with '%'")
+                        .with_role(Role::Client));
+                };
+                match next {
+                    '%' => literal.push('%'),
+                    'n' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FileName));
+                    }
+                    'f' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FullPath));
+                    }
+                    'l' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::Length));
+                    }
+                    'b' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::BytesTransferred,
+                        ));
+                    }
+                    'o' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::Operation));
+                    }
+                    'M' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::Permissions,
+                        ));
+                    }
+                    other => {
+                        return Err(rsync_error!(
+                            1,
+                            format!("unsupported --out-format placeholder '%{other}'"),
+                        )
+                        .with_role(Role::Client));
+                    }
+                }
+            }
+            '\\' => {
+                let Some(next) = chars.next() else {
+                    literal.push('\\');
+                    break;
+                };
+                match next {
+                    'n' => literal.push('\n'),
+                    'r' => literal.push('\r'),
+                    't' => literal.push('\t'),
+                    '\\' => literal.push('\\'),
+                    other => {
+                        literal.push('\\');
+                        literal.push(other);
+                    }
+                }
+            }
+            other => literal.push(other),
+        }
+    }
+
+    if !literal.is_empty() {
+        tokens.push(OutFormatToken::Literal(literal));
+    }
+
+    Ok(OutFormat { tokens })
+}
+
+impl OutFormat {
+    fn render<W: Write + ?Sized>(&self, event: &ClientEvent, writer: &mut W) -> io::Result<()> {
+        use std::fmt::Write as _;
+        let mut buffer = String::new();
+        for token in &self.tokens {
+            match token {
+                OutFormatToken::Literal(text) => buffer.push_str(text),
+                OutFormatToken::Placeholder(placeholder) => match placeholder {
+                    OutFormatPlaceholder::FileName | OutFormatPlaceholder::FullPath => {
+                        let _ = write!(&mut buffer, "{}", event.relative_path().display());
+                    }
+                    OutFormatPlaceholder::Length => {
+                        let length = event
+                            .metadata()
+                            .map(ClientEntryMetadata::length)
+                            .unwrap_or(0);
+                        let _ = write!(&mut buffer, "{length}");
+                    }
+                    OutFormatPlaceholder::BytesTransferred => {
+                        let bytes = event.bytes_transferred();
+                        let _ = write!(&mut buffer, "{bytes}");
+                    }
+                    OutFormatPlaceholder::Operation => {
+                        buffer.push_str(describe_event_kind(event.kind()));
+                    }
+                    OutFormatPlaceholder::Permissions => {
+                        if let Some(metadata) = event.metadata() {
+                            buffer.push_str(&format_list_permissions(metadata));
+                        } else {
+                            buffer.push_str("??????????");
+                        }
+                    }
+                },
+            }
+        }
+
+        if buffer.ends_with('\n') {
+            writer.write_all(buffer.as_bytes())
+        } else {
+            writer.write_all(buffer.as_bytes())?;
+            writer.write_all(b"\n")
+        }
+    }
+}
+
+fn emit_out_format<W: Write + ?Sized>(
+    events: &[ClientEvent],
+    format: &OutFormat,
+    writer: &mut W,
+) -> io::Result<()> {
+    for event in events {
+        format.render(event, writer)?;
+    }
+    Ok(())
+}
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -248,6 +426,7 @@ struct ParsedArgs {
     password_file: Option<OsString>,
     protocol: Option<OsString>,
     timeout: Option<OsString>,
+    out_format: Option<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -268,6 +447,14 @@ fn clap_command() -> ClapCommand {
                 .long("msgs2stderr")
                 .help("Route informational messages to standard error.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("out-format")
+                .long("out-format")
+                .value_name("FORMAT")
+                .help("Customise transfer output using FORMAT for each processed entry.")
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("version")
@@ -900,6 +1087,7 @@ where
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
+    let out_format = matches.remove_one::<OsString>("out-format");
     let no_motd = matches.get_flag("no-motd");
 
     Ok(ParsedArgs {
@@ -949,6 +1137,7 @@ where
         password_file,
         protocol,
         timeout,
+        out_format,
     })
 }
 
@@ -1107,6 +1296,7 @@ where
         password_file,
         protocol,
         timeout,
+        out_format,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -1136,6 +1326,20 @@ where
             }
         },
         None => TransferTimeout::Default,
+    };
+
+    let out_format_template = match out_format.as_ref() {
+        Some(value) => match parse_out_format(value.as_os_str()) {
+            Ok(template) => Some(template),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => None,
     };
 
     if show_help {
@@ -1382,6 +1586,7 @@ where
             password_file: password_file.clone(),
             protocol: desired_protocol,
             timeout: timeout_setting,
+            out_format: out_format.clone(),
             no_motd,
             remainder,
             #[cfg(feature = "acl")]
@@ -1472,6 +1677,8 @@ where
     {
         builder = builder.xattrs(xattrs.unwrap_or(false));
     }
+
+    builder = builder.force_event_collection(out_format_template.is_some());
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -1573,6 +1780,7 @@ where
                     stats,
                     progress_rendered_live,
                     list_only,
+                    out_format_template.as_ref(),
                     writer,
                 )
             }) {
@@ -1714,6 +1922,7 @@ fn emit_transfer_summary(
     stats: bool,
     progress_already_rendered: bool,
     list_only: bool,
+    out_format: Option<&OutFormat>,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -1740,6 +1949,17 @@ fn emit_transfer_summary(
         return Ok(());
     }
 
+    let formatted_rendered = if let Some(format) = out_format {
+        if events.is_empty() {
+            false
+        } else {
+            emit_out_format(events, format, writer)?;
+            true
+        }
+    } else {
+        false
+    };
+
     let progress_rendered = if progress_already_rendered {
         true
     } else if progress && !events.is_empty() {
@@ -1748,8 +1968,14 @@ fn emit_transfer_summary(
         false
     };
 
-    let emit_verbose_listing =
-        verbosity > 0 && !events.is_empty() && (!progress_rendered || verbosity > 1);
+    let emit_verbose_listing = out_format.is_none()
+        && verbosity > 0
+        && !events.is_empty()
+        && (!progress_rendered || verbosity > 1);
+
+    if formatted_rendered && (emit_verbose_listing || stats || verbosity > 0) {
+        writeln!(writer)?;
+    }
 
     if progress_rendered && (emit_verbose_listing || stats || verbosity > 0) {
         writeln!(writer)?;
@@ -3097,6 +3323,7 @@ struct RemoteFallbackArgs {
     password_file: Option<PathBuf>,
     protocol: Option<ProtocolVersion>,
     timeout: TransferTimeout,
+    out_format: Option<OsString>,
     no_motd: bool,
     remainder: Vec<OsString>,
     #[cfg(feature = "acl")]
@@ -3167,6 +3394,7 @@ where
         password_file,
         protocol,
         timeout,
+        out_format,
         no_motd,
         mut remainder,
         #[cfg(feature = "acl")]
@@ -3261,6 +3489,11 @@ where
     if let Some(limit) = bwlimit {
         command_args.push(OsString::from("--bwlimit"));
         command_args.push(limit);
+    }
+
+    if let Some(format) = out_format {
+        command_args.push(OsString::from("--out-format"));
+        command_args.push(format);
     }
 
     for exclude in excludes {
@@ -4373,6 +4606,34 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_out_format_renders_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir(&dest_dir).expect("create dest dir");
+        std::fs::write(&source, b"format").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--out-format=%f %b"),
+            source.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(String::from_utf8(stdout).expect("utf8"), "source.txt 6\n");
+
+        let destination = dest_dir.join("source.txt");
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"format"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_ignore_existing_leaves_destination_unchanged() {
         use tempfile::tempdir;
 
@@ -5069,6 +5330,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_out_format_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--out-format=%f %b"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.out_format, Some(OsString::from("%f %b")));
+    }
+
+    #[test]
     fn parse_args_recognises_list_only_flag() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -5229,6 +5503,18 @@ mod tests {
     fn timeout_argument_negative_reports_error() {
         let error = parse_timeout_argument(OsStr::new("-1")).unwrap_err();
         assert!(error.to_string().contains("timeout must be non-negative"));
+    }
+
+    #[test]
+    fn out_format_argument_accepts_supported_placeholders() {
+        let format = parse_out_format(OsStr::new("%f %b %l %o %M %%")).expect("parse out-format");
+        assert!(!format.tokens.is_empty());
+    }
+
+    #[test]
+    fn out_format_argument_rejects_unknown_placeholders() {
+        let error = parse_out_format(OsStr::new("%z")).unwrap_err();
+        assert!(error.to_string().contains("unsupported --out-format"));
     }
 
     #[test]
