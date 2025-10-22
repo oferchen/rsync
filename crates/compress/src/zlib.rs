@@ -31,6 +31,8 @@
 //! ```
 
 use std::{
+    io::{self, Write},
+    num::NonZeroU8,
     fmt,
     io::{self, Write},
 };
@@ -46,6 +48,8 @@ pub enum CompressionLevel {
     Default,
     /// Favour the best possible compression ratio.
     Best,
+    /// Use an explicit zlib compression level in the range `1..=9`.
+    Precise(NonZeroU8),
     /// Use an explicit numeric compression level between 1 and 9 (inclusive).
     Precise(u32),
 }
@@ -71,6 +75,19 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
+            CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
+        }
+    }
+}
+
+impl CompressionLevel {
+    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
+    #[must_use]
+    pub const fn precise(level: NonZeroU8) -> Self {
+        Self::Precise(level)
+    }
+}
+
             CompressionLevel::Precise(value) => Compression::new(value),
         }
     }
@@ -227,6 +244,10 @@ mod tests {
     }
 
     #[test]
+    fn precise_level_converts_to_requested_value() {
+        let level = NonZeroU8::new(7).expect("non-zero");
+        let compression = Compression::from(CompressionLevel::precise(level));
+        assert_eq!(compression.level(), u32::from(level.get()));
     fn numeric_level_constructor_accepts_valid_range() {
         for level in 1..=9 {
             let precise = CompressionLevel::from_numeric(level).expect("valid level");
