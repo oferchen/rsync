@@ -15,7 +15,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     are absent from the source. The client can contact an `rsync://` daemon to
     list available modules, but remote transfers, ACLs, and compression remain
     unavailable. Filter handling via `--exclude`/`--exclude-from`/`--include`/
-    `--include-from` and `--filter` with `+`/`-` actions and `merge FILE`
+    `--include-from` and `--filter` with `+`/`-` actions, `exclude-if-present=FILE`, and `merge FILE`
     directives mirrors rsync's glob semantics for local copies, but the
     broader filter/merge language is still missing. Progress reporting now
     emits streaming, carriage-return updates akin to upstream `rsync` while the

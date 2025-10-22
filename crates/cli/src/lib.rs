@@ -123,7 +123,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
@@ -170,7 +170,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -1916,6 +1916,34 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return Ok(FilterDirective::Clear);
     }
 
+    const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
+
+    if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
+        && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
+            .eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
+    {
+        let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..].trim_start();
+        if let Some(rest) = remainder.strip_prefix('=') {
+            remainder = rest.trim_start();
+        }
+
+        let pattern_text = remainder.trim();
+        if pattern_text.is_empty() {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "filter rule '{trimmed}' is missing a marker file after 'exclude-if-present'"
+                )
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+
+        return Ok(FilterDirective::Rule(FilterRuleSpec::exclude_if_present(
+            pattern_text.to_string(),
+        )));
+    }
+
     if let Some(remainder) = trimmed.strip_prefix('+') {
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
@@ -2095,6 +2123,7 @@ fn append_filter_rules_from_files(
         destination.extend(patterns.into_iter().map(|pattern| match kind {
             FilterRuleKind::Include => FilterRuleSpec::include(pattern),
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
+            FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
             FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
             FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
         }));
@@ -3876,6 +3905,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_exclude_if_present() {
+        let directive = parse_filter_directive(OsStr::new("exclude-if-present marker"))
+            .expect("exclude-if-present with whitespace parses");
+        assert_eq!(
+            directive,
+            FilterDirective::Rule(FilterRuleSpec::exclude_if_present("marker".to_string()))
+        );
+
+        let equals_variant = parse_filter_directive(OsStr::new("exclude-if-present=.skip"))
+            .expect("exclude-if-present with equals parses");
+        assert_eq!(
+            equals_variant,
+            FilterDirective::Rule(FilterRuleSpec::exclude_if_present(".skip".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_filter_directive_rejects_exclude_if_present_without_marker() {
+        let error = parse_filter_directive(OsStr::new("exclude-if-present   "))
+            .expect_err("missing marker should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("missing a marker file"));
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_clear_directive() {
         let clear = parse_filter_directive(OsStr::new("!")).expect("clear directive parses");
         assert_eq!(clear, FilterDirective::Clear);
@@ -4395,6 +4449,7 @@ mod tests {
             FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
             FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
             FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
+            FilterRuleKind::ExcludeIfPresent => None,
             FilterRuleKind::DirMerge => None,
         });
         let filter_set = FilterSet::from_rules(engine_rules).expect("filters");
