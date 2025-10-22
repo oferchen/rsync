@@ -1710,9 +1710,10 @@ pub fn run_client_with_observer(
                     .bandwidth_limit()
                     .map(|limit| limit.bytes_per_second()),
             )
-            .with_compression_level(config.compression_setting().level_or_default())
+            .with_default_compression_level(config.compression_setting().level_or_default())
             .compress(config.compress())
             .with_compression_level_override(config.compression_level())
+            .with_compression_override(config.compression_level())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())

@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 //! # Overview
 //!
 //! Zlib compression helpers shared across the workspace. The module currently
@@ -54,10 +56,10 @@ pub enum CompressionLevel {
 impl CompressionLevel {
     /// Creates a [`CompressionLevel::Precise`] value from an explicit numeric level.
     ///
-    /// The supplied `level` must fall within the inclusive range `1..=9`. The
-    /// caller is responsible for interpreting `0` as disabled compression; this
-    /// helper mirrors zlib's accepted range and returns an error when the value
-    /// exceeds the supported bounds.
+    /// # Errors
+    ///
+    /// Returns [`CompressionLevelError`] when `level` falls outside the inclusive
+    /// range `1..=9` accepted by zlib.
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
         if (1..=9).contains(&level) {
             // SAFETY: the range check above guarantees `level` is non-zero and fits in a `u8`.
@@ -66,6 +68,21 @@ impl CompressionLevel {
         } else {
             Err(CompressionLevelError::new(level))
         }
+    }
+
+    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
+    #[must_use]
+    pub const fn precise(level: NonZeroU8) -> Self {
+        Self::Precise(level)
+    }
+}
+        if !(1..=9).contains(&level) {
+            return Err(CompressionLevelError::new(level));
+        }
+
+        let as_u8 = u8::try_from(level).map_err(|_| CompressionLevelError::new(level))?;
+        let value = NonZeroU8::new(as_u8).ok_or_else(|| CompressionLevelError::new(level))?;
+        Ok(Self::Precise(value))
     }
 
     /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
@@ -190,6 +207,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
 
     #[test]
     fn counting_encoder_tracks_bytes() {
@@ -248,6 +266,7 @@ mod tests {
         for level in 1..=9 {
             let precise = CompressionLevel::from_numeric(level).expect("valid level");
             let expected = NonZeroU8::new(level as u8).expect("validated");
+            let expected = NonZeroU8::new(level as u8).expect("range checked");
             assert_eq!(precise, CompressionLevel::Precise(expected));
         }
     }

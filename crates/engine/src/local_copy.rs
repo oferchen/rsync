@@ -1312,6 +1312,8 @@ pub struct LocalCopyOptions {
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
+    compression_level: CompressionLevel,
+    compression_override: Option<CompressionLevel>,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1345,6 +1347,8 @@ impl LocalCopyOptions {
             bandwidth_limit: None,
             compress: false,
             compression_level_override: None,
+            compression_level: CompressionLevel::Default,
+            compression_override: None,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1423,11 +1427,20 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Sets the compression level to be used when compression is enabled.
+    /// Sets the default compression level used when compression is enabled.
+    #[must_use]
+    pub const fn with_default_compression_level(mut self, level: CompressionLevel) -> Self {
+        self.compression_level = level;
+        self
+    }
+
+    /// Applies an explicit compression level override supplied by the user.
     #[must_use]
     #[doc(alias = "--compress-level")]
     pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
         self.compression_level_override = Some(level);
+    pub const fn with_compression_override(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_override = level;
         self
     }
 
@@ -1463,55 +1476,27 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Applies the supplied filter set to the copy plan.
+    /// Applies a precompiled filter set to the execution.
     #[must_use]
-    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
+    pub fn with_filters(mut self, filters: Option<FilterSet>) -> Self {
         self.filters = filters;
         self
     }
 
-    /// Applies an ordered filter program that may include per-directory merges.
+    /// Applies a filter set using the legacy builder name for compatibility.
+    #[must_use]
+    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
+        self.with_filters(filters)
+    }
+
+    /// Applies an external filter program configuration.
     #[must_use]
     pub fn with_filter_program(mut self, program: Option<FilterProgram>) -> Self {
         self.filter_program = program;
         self
     }
 
-    /// Enables or disables checksum-based change detection.
-    #[must_use]
-    #[doc(alias = "--checksum")]
-    #[doc(alias = "-c")]
-    pub const fn checksum(mut self, checksum: bool) -> Self {
-        self.checksum = checksum;
-        self
-    }
-
-    /// Enables or disables size-only change detection.
-    #[must_use]
-    #[doc(alias = "--size-only")]
-    pub const fn size_only(mut self, size_only: bool) -> Self {
-        self.size_only = size_only;
-        self
-    }
-
-    /// Requests that existing destination files be left untouched.
-    #[must_use]
-    #[doc(alias = "--ignore-existing")]
-    pub const fn ignore_existing(mut self, ignore: bool) -> Self {
-        self.ignore_existing = ignore;
-        self
-    }
-
-    /// Requests that destination files newer than the source remain untouched.
-    #[must_use]
-    #[doc(alias = "--update")]
-    #[doc(alias = "-u")]
-    pub const fn update(mut self, update: bool) -> Self {
-        self.update = update;
-        self
-    }
-
-    /// Requests that UID/GID preservation use numeric identifiers.
+    /// Requests numeric UID/GID preservation.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
     pub const fn numeric_ids(mut self, numeric: bool) -> Self {
@@ -1519,7 +1504,7 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Requests that sparse files be recreated using holes rather than literal zero writes.
+    /// Enables sparse file handling during copies.
     #[must_use]
     #[doc(alias = "--sparse")]
     pub const fn sparse(mut self, sparse: bool) -> Self {
@@ -1527,31 +1512,39 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Enables or disables copying of device nodes during the transfer.
+    /// Enables checksum-based change detection.
     #[must_use]
-    #[doc(alias = "--devices")]
-    pub const fn devices(mut self, enabled: bool) -> Self {
-        self.devices = enabled;
+    #[doc(alias = "--checksum")]
+    pub const fn checksum(mut self, checksum: bool) -> Self {
+        self.checksum = checksum;
         self
     }
 
-    /// Enables or disables copying of special files such as FIFOs.
+    /// Enables size-only change detection.
     #[must_use]
-    #[doc(alias = "--specials")]
-    pub const fn specials(mut self, enabled: bool) -> Self {
-        self.specials = enabled;
+    #[doc(alias = "--size-only")]
+    pub const fn size_only(mut self, size_only: bool) -> Self {
+        self.size_only = size_only;
         self
     }
 
-    /// Requests that source-relative path components be preserved in the destination.
+    /// Requests that existing destination files be skipped.
     #[must_use]
-    #[doc(alias = "--relative")]
-    pub const fn relative_paths(mut self, relative: bool) -> Self {
-        self.relative_paths = relative;
+    #[doc(alias = "--ignore-existing")]
+    pub const fn ignore_existing(mut self, ignore: bool) -> Self {
+        self.ignore_existing = ignore;
         self
     }
 
-    /// Requests that partial transfers write into a temporary file that is preserved on failure.
+    /// Requests that newer destination files be preserved.
+    #[must_use]
+    #[doc(alias = "--update")]
+    pub const fn update(mut self, update: bool) -> Self {
+        self.update = update;
+        self
+    }
+
+    /// Requests that partial transfers leave temporary files.
     #[must_use]
     #[doc(alias = "--partial")]
     pub const fn partial(mut self, partial: bool) -> Self {
@@ -1559,11 +1552,42 @@ impl LocalCopyOptions {
         self
     }
 
-    /// Requests that destination updates be performed in place instead of via temporary files.
+    /// Requests in-place destination updates.
     #[must_use]
     #[doc(alias = "--inplace")]
     pub const fn inplace(mut self, inplace: bool) -> Self {
         self.inplace = inplace;
+        self
+    }
+
+    /// Requests that relative source paths be preserved in the destination.
+    #[must_use]
+    #[doc(alias = "--relative")]
+    pub const fn relative_paths(mut self, relative: bool) -> Self {
+        self.relative_paths = relative;
+        self
+    }
+
+    /// Requests that device nodes be copied.
+    #[must_use]
+    #[doc(alias = "--devices")]
+    pub const fn devices(mut self, devices: bool) -> Self {
+        self.devices = devices;
+        self
+    }
+
+    /// Requests that special files such as FIFOs be copied.
+    #[must_use]
+    #[doc(alias = "--specials")]
+    pub const fn specials(mut self, specials: bool) -> Self {
+        self.specials = specials;
+        self
+    }
+
+    /// Enables collection of transfer events that describe work performed by the engine.
+    #[must_use]
+    pub const fn collect_events(mut self, collect: bool) -> Self {
+        self.collect_events = collect;
         self
     }
 
@@ -1574,13 +1598,6 @@ impl LocalCopyOptions {
     #[doc(alias = "-X")]
     pub const fn xattrs(mut self, preserve: bool) -> Self {
         self.preserve_xattrs = preserve;
-        self
-    }
-
-    /// Enables collection of transfer events that describe the work performed by the engine.
-    #[must_use]
-    pub const fn collect_events(mut self, collect: bool) -> Self {
-        self.collect_events = collect;
         self
     }
 
@@ -1626,6 +1643,32 @@ impl LocalCopyOptions {
         match self.compression_level_override {
             Some(level) => level,
             None => CompressionLevel::Default,
+    /// Returns the explicit compression override when compression is enabled.
+    #[must_use]
+    pub const fn compression_override(&self) -> Option<CompressionLevel> {
+        if self.compress {
+            self.compression_override
+        } else {
+            None
+        }
+    }
+
+    /// Returns the compression level that should be used for the transfer.
+    #[must_use]
+    pub const fn compression_level(&self) -> CompressionLevel {
+        match self.compression_override {
+            Some(level) => level,
+            None => self.compression_level,
+        }
+    }
+
+    /// Returns the effective compression level when compression is enabled.
+    #[must_use]
+    pub const fn effective_compression_level(&self) -> Option<CompressionLevel> {
+        if self.compress {
+            Some(self.compression_level())
+        } else {
+            None
         }
     }
 
@@ -1665,14 +1708,7 @@ impl LocalCopyOptions {
         self.filter_program.as_ref()
     }
 
-    /// Reports whether extended attribute preservation has been requested.
-    #[cfg(feature = "xattr")]
-    #[must_use]
-    pub const fn preserve_xattrs(&self) -> bool {
-        self.preserve_xattrs
-    }
-
-    /// Reports whether numeric UID/GID preservation should be used.
+    /// Reports whether numeric UID/GID preservation has been requested.
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
@@ -1742,6 +1778,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn events_enabled(&self) -> bool {
         self.collect_events
+    }
+
+    /// Reports whether extended attribute preservation has been requested.
+    #[cfg(feature = "xattr")]
+    #[must_use]
+    pub const fn preserve_xattrs(&self) -> bool {
+        self.preserve_xattrs
     }
 }
 
@@ -2375,9 +2418,9 @@ impl<'a> CopyContext<'a> {
         start: Instant,
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
-        let level = self.compression_level();
         let mut compressor = if compress {
             Some(CountingZlibEncoder::new(level))
+            Some(CountingZlibEncoder::new(self.compression_level()))
         } else {
             None
         };
@@ -4978,8 +5021,9 @@ mod tests {
     }
 
     #[test]
-    fn local_copy_options_compress_level_round_trip() {
+    fn local_copy_options_compression_override_round_trip() {
         let level = NonZeroU8::new(5).expect("level");
+        let override_level = CompressionLevel::precise(level);
         let options = LocalCopyOptions::default()
             .compress(true)
             .with_compression_level_override(Some(CompressionLevel::precise(level)));
@@ -4997,11 +5041,21 @@ mod tests {
             .compress(false);
         assert_eq!(disabled.compression_level_override(), None);
         assert_eq!(disabled.compression_level(), CompressionLevel::Default);
+            .with_compression_override(Some(override_level));
+        assert_eq!(options.compression_override(), Some(override_level));
+        assert_eq!(options.effective_compression_level(), Some(override_level));
+
+        let disabled = LocalCopyOptions::default()
+            .with_compression_override(Some(override_level))
+            .compress(false);
+        assert_eq!(disabled.compression_override(), None);
+        assert_eq!(disabled.effective_compression_level(), None);
     }
 
     #[test]
     fn local_copy_options_compression_level_round_trip() {
-        let options = LocalCopyOptions::default().with_compression_level(CompressionLevel::Best);
+        let options =
+            LocalCopyOptions::default().with_default_compression_level(CompressionLevel::Best);
         assert_eq!(options.compression_level(), CompressionLevel::Best);
         assert_eq!(
             LocalCopyOptions::default().compression_level(),
