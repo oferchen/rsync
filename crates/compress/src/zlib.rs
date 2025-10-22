@@ -31,10 +31,9 @@
 //! ```
 
 use std::{
-    io::{self, Write},
-    num::NonZeroU8,
     fmt,
     io::{self, Write},
+    num::NonZeroU8,
 };
 
 use flate2::{Compression, read::ZlibDecoder as FlateDecoder, write::ZlibEncoder as FlateEncoder};
@@ -50,8 +49,6 @@ pub enum CompressionLevel {
     Best,
     /// Use an explicit zlib compression level in the range `1..=9`.
     Precise(NonZeroU8),
-    /// Use an explicit numeric compression level between 1 and 9 (inclusive).
-    Precise(u32),
 }
 
 impl CompressionLevel {
@@ -62,10 +59,19 @@ impl CompressionLevel {
     /// helper mirrors zlib's accepted range and returns an error when the value
     /// exceeds the supported bounds.
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
-        match level {
-            1..=9 => Ok(Self::Precise(level)),
-            _ => Err(CompressionLevelError::new(level)),
+        if (1..=9).contains(&level) {
+            // SAFETY: the range check above guarantees `level` is non-zero and fits in a `u8`.
+            let precise = NonZeroU8::new(level as u8).expect("validated non-zero level");
+            Ok(Self::Precise(precise))
+        } else {
+            Err(CompressionLevelError::new(level))
         }
+    }
+
+    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
+    #[must_use]
+    pub const fn precise(level: NonZeroU8) -> Self {
+        Self::Precise(level)
     }
 }
 
@@ -76,19 +82,6 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
             CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
-        }
-    }
-}
-
-impl CompressionLevel {
-    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
-    #[must_use]
-    pub const fn precise(level: NonZeroU8) -> Self {
-        Self::Precise(level)
-    }
-}
-
-            CompressionLevel::Precise(value) => Compression::new(value),
         }
     }
 }
@@ -248,10 +241,14 @@ mod tests {
         let level = NonZeroU8::new(7).expect("non-zero");
         let compression = Compression::from(CompressionLevel::precise(level));
         assert_eq!(compression.level(), u32::from(level.get()));
+    }
+
+    #[test]
     fn numeric_level_constructor_accepts_valid_range() {
         for level in 1..=9 {
             let precise = CompressionLevel::from_numeric(level).expect("valid level");
-            assert_eq!(precise, CompressionLevel::Precise(level));
+            let expected = NonZeroU8::new(level as u8).expect("validated");
+            assert_eq!(precise, CompressionLevel::Precise(expected));
         }
     }
 

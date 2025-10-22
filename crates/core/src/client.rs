@@ -92,7 +92,6 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
-use rsync_compress::zlib::CompressionLevel;
 use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
@@ -399,6 +398,8 @@ impl ClientConfig {
     #[doc(alias = "--compress-level")]
     pub const fn compression_level(&self) -> Option<CompressionLevel> {
         self.compression_level
+    }
+
     /// Returns the compression setting that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]
@@ -679,6 +680,9 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_level(mut self, level: Option<CompressionLevel>) -> Self {
         self.compression_level = level;
+        self
+    }
+
     /// Sets the compression level that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]
@@ -1708,7 +1712,7 @@ pub fn run_client_with_observer(
             )
             .with_compression_level(config.compression_setting().level_or_default())
             .compress(config.compress())
-            .with_compression_level(config.compression_level())
+            .with_compression_level_override(config.compression_level())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
