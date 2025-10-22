@@ -27,7 +27,7 @@ binary so documentation never overstates parity.
 | Workspace | Core transfer orchestration plus engine/meta/filter/compress crates | Partial | `core::client::run_client` now delegates to [`LocalCopyPlan`](../crates/engine/src/local_copy.rs) for deterministic local filesystem copies preserving permissions, timestamps, optional owner/group metadata, and extended attributes when enabled, and, when requested, deletes destination entries that are absent from the source. Delta-transfer logic, ACL handling, comprehensive filter merging, compression, and remote transport orchestration remain pending. | `crates/core/src/client.rs`, `crates/engine/src/local_copy.rs`, `crates/meta/src/lib.rs` |
 | Workspace | Deterministic filesystem walker | Implemented | `rsync_walk` provides a depth-first iterator that yields lexicographically ordered entries, enforces root-relative paths, and optionally follows directory symlinks while preventing cycles. | `crates/walk/src/lib.rs` |
 | Quality | Golden parity harness & interop tests | Missing | The repository does not yet build or execute the upstream rsync comparison matrix. | _n/a_ |
-| Quality | Packaging (deb/rpm), SBOM, systemd unit | Missing | Packaging artifacts are absent pending higher-layer implementation. | _n/a_ |
+| Quality | Packaging (deb/rpm), SBOM, systemd unit | Partial | `cargo-deb`/`cargo-rpm` metadata install both binaries together with a hardened systemd unit, environment defaults, and a sample configuration; SBOM automation remains pending. | `bin/oc-rsync/Cargo.toml`, `packaging/systemd/oc-rsyncd.service` |
 
 Status legend: **Implemented** — behavior is present and backed by tests in this
 repository. **Partial** — functionality exists but key capabilities are
