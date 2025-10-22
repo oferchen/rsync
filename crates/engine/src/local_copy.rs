@@ -2293,6 +2293,7 @@ impl<'a> CopyContext<'a> {
         } else {
             None
         };
+        let mut compressed_progress: u64 = 0;
 
         loop {
             let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
@@ -2308,10 +2309,6 @@ impl<'a> CopyContext<'a> {
                 break;
             }
 
-            if let Some(limiter) = self.limiter.as_mut() {
-                limiter.register(read);
-            }
-
             if sparse {
                 write_sparse_chunk(writer, &buffer[..read], destination)?;
             } else {
@@ -2320,10 +2317,26 @@ impl<'a> CopyContext<'a> {
                 })?;
             }
 
+            let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
                 encoder.write(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("compress file", source.to_path_buf(), error)
                 })?;
+                let total = encoder.bytes_written();
+                let delta = total.saturating_sub(compressed_progress);
+                compressed_progress = total;
+                compressed_delta = Some(delta);
+            }
+
+            if let Some(limiter) = self.limiter.as_mut() {
+                if let Some(delta) = compressed_delta {
+                    if delta > 0 {
+                        let bounded = delta.min(usize::MAX as u64) as usize;
+                        limiter.register(bounded);
+                    }
+                } else {
+                    limiter.register(read);
+                }
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
@@ -2344,6 +2357,13 @@ impl<'a> CopyContext<'a> {
             let compressed_total = encoder.finish().map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
+            if let Some(limiter) = self.limiter.as_mut() {
+                let delta = compressed_total.saturating_sub(compressed_progress);
+                if delta > 0 {
+                    let bounded = delta.min(usize::MAX as u64) as usize;
+                    limiter.register(bounded);
+                }
+            }
             Ok(Some(compressed_total))
         } else {
             Ok(None)
@@ -6199,6 +6219,68 @@ mod tests {
         let compressed = summary.compressed_bytes();
         assert!(compressed > 0);
         assert!(compressed <= summary.bytes_copied());
+    }
+
+    #[test]
+    fn execute_with_compression_limits_post_compress_bandwidth() {
+        rsync_bandwidth::take_recorded_sleeps();
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        let mut content = Vec::new();
+        for _ in 0..4096 {
+            content
+                .extend_from_slice(b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. \n");
+        }
+        fs::write(&source, &content).expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let limit = NonZeroU64::new(2 * 1024).expect("limit");
+        let options = LocalCopyOptions::default()
+            .compress(true)
+            .bandwidth_limit(Some(limit));
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), content);
+        assert!(summary.compression_used());
+
+        let compressed = summary.compressed_bytes();
+        assert!(compressed > 0);
+        let transferred = summary.bytes_copied();
+
+        let sleeps = rsync_bandwidth::take_recorded_sleeps();
+        assert!(
+            !sleeps.is_empty(),
+            "bandwidth limiter did not record sleeps"
+        );
+        let total_sleep_secs: f64 = sleeps.iter().map(|duration| duration.as_secs_f64()).sum();
+
+        let expected_compressed = compressed as f64 / limit.get() as f64;
+        let expected_uncompressed = transferred as f64 / limit.get() as f64;
+
+        let tolerance = expected_compressed * 0.2 + 0.2;
+        assert!(
+            (total_sleep_secs - expected_compressed).abs() <= tolerance,
+            "sleep {:?}s deviates too far from compressed expectation {:?}s",
+            total_sleep_secs,
+            expected_compressed,
+        );
+        assert!(
+            (total_sleep_secs - expected_compressed).abs()
+                < (total_sleep_secs - expected_uncompressed).abs(),
+            "sleep {:?}s should align with compressed bytes ({:?}s) rather than uncompressed ({:?}s)",
+            total_sleep_secs,
+            expected_compressed,
+            expected_uncompressed,
+        );
     }
 
     #[test]
