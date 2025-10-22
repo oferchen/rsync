@@ -1346,26 +1346,49 @@ fn emit_progress<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Result
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
 fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
     let files = summary.files_copied();
+    let files_total = summary.regular_files_total();
+    let matched = summary.regular_files_matched();
     let directories = summary.directories_created();
+    let directories_total = summary.directories_total();
     let symlinks = summary.symlinks_copied();
+    let symlinks_total = summary.symlinks_total();
     let hard_links = summary.hard_links_created();
     let devices = summary.devices_created();
+    let devices_total = summary.devices_total();
     let fifos = summary.fifos_created();
+    let fifos_total = summary.fifos_total();
     let deleted = summary.items_deleted();
     let transferred = summary.bytes_copied();
     let total_size = summary.total_source_bytes();
+    let matched_bytes = total_size.saturating_sub(transferred);
 
+    let total_entries = files_total
+        .saturating_add(directories_total)
+        .saturating_add(symlinks_total)
+        .saturating_add(devices_total)
+        .saturating_add(fifos_total);
+    let created_total = files
+        .saturating_add(directories)
+        .saturating_add(symlinks)
+        .saturating_add(devices)
+        .saturating_add(fifos);
+
+    writeln!(
+        stdout,
+        "Number of files: {total_entries} (reg: {files_total}, dir: {directories_total}, link: {symlinks_total}, dev: {devices_total}, fifo: {fifos_total})"
+    )?;
+    writeln!(
+        stdout,
+        "Number of created files: {created_total} (reg: {files}, dir: {directories}, link: {symlinks}, dev: {devices}, fifo: {fifos})"
+    )?;
+    writeln!(stdout, "Number of deleted files: {deleted}")?;
     writeln!(stdout, "Number of regular files transferred: {files}")?;
-    writeln!(stdout, "Number of created directories: {directories}")?;
-    writeln!(stdout, "Number of created symbolic links: {symlinks}")?;
-    writeln!(stdout, "Number of created hard links: {hard_links}")?;
-    writeln!(stdout, "Number of created device nodes: {devices}")?;
-    writeln!(stdout, "Number of created FIFOs: {fifos}")?;
-    writeln!(stdout, "Number of deleted entries: {deleted}")?;
+    writeln!(stdout, "Number of regular files matched: {matched}")?;
+    writeln!(stdout, "Number of hard links created: {hard_links}")?;
     writeln!(stdout, "Total file size: {total_size} bytes")?;
     writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
     writeln!(stdout, "Literal data: {transferred} bytes")?;
-    writeln!(stdout, "Matched data: 0 bytes")?;
+    writeln!(stdout, "Matched data: {matched_bytes} bytes")?;
     writeln!(stdout, "Total bytes sent: {transferred}")?;
     writeln!(stdout, "Total bytes received: 0")?;
     writeln!(stdout)?;
@@ -2441,9 +2464,17 @@ mod tests {
 
         let rendered = String::from_utf8(stdout).expect("stats output is UTF-8");
         let expected_size = payload.len();
+        assert!(rendered.contains("Number of files: 1 (reg: 1, dir: 0, link: 0, dev: 0, fifo: 0)"));
+        assert!(
+            rendered
+                .contains("Number of created files: 1 (reg: 1, dir: 0, link: 0, dev: 0, fifo: 0)")
+        );
         assert!(rendered.contains("Number of regular files transferred: 1"));
+        assert!(rendered.contains("Number of regular files matched: 0"));
+        assert!(rendered.contains("Number of hard links created: 0"));
         assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
         assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
+        assert!(rendered.contains("Matched data: 0 bytes"));
         assert!(rendered.contains("Total bytes received: 0"));
         assert!(rendered.contains("\n\nsent"));
         assert!(rendered.contains("total size is"));

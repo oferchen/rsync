@@ -820,16 +820,40 @@ impl ClientSummary {
         self.stats.files_copied()
     }
 
+    /// Returns the number of regular files encountered in the source set.
+    #[must_use]
+    pub fn regular_files_total(&self) -> u64 {
+        self.stats.regular_files_total()
+    }
+
+    /// Returns the number of regular files that were already up-to-date.
+    #[must_use]
+    pub fn regular_files_matched(&self) -> u64 {
+        self.stats.regular_files_matched()
+    }
+
     /// Returns the number of directories created during the transfer.
     #[must_use]
     pub fn directories_created(&self) -> u64 {
         self.stats.directories_created()
     }
 
+    /// Returns the number of directories encountered in the source set.
+    #[must_use]
+    pub fn directories_total(&self) -> u64 {
+        self.stats.directories_total()
+    }
+
     /// Returns the number of symbolic links copied during the transfer.
     #[must_use]
     pub fn symlinks_copied(&self) -> u64 {
         self.stats.symlinks_copied()
+    }
+
+    /// Returns the number of symbolic links encountered in the source set.
+    #[must_use]
+    pub fn symlinks_total(&self) -> u64 {
+        self.stats.symlinks_total()
     }
 
     /// Returns the number of hard links materialised during the transfer.
@@ -844,10 +868,22 @@ impl ClientSummary {
         self.stats.devices_created()
     }
 
+    /// Returns the number of device nodes encountered in the source set.
+    #[must_use]
+    pub fn devices_total(&self) -> u64 {
+        self.stats.devices_total()
+    }
+
     /// Returns the number of FIFOs created during the transfer.
     #[must_use]
     pub fn fifos_created(&self) -> u64 {
         self.stats.fifos_created()
+    }
+
+    /// Returns the number of FIFOs encountered in the source set.
+    #[must_use]
+    pub fn fifos_total(&self) -> u64 {
+        self.stats.fifos_total()
     }
 
     /// Returns the number of extraneous entries removed due to `--delete`.
