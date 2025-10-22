@@ -135,6 +135,11 @@
 //! - [`rsync_core::version`] for the shared `--version` banner helpers.
 //! - [`rsync_core::client`] for the analogous client-facing orchestration.
 
+use dns_lookup::lookup_addr;
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::OsString;
@@ -239,18 +244,32 @@ struct ModuleDefinition {
 }
 
 impl ModuleDefinition {
-    fn permits(&self, addr: IpAddr) -> bool {
+    fn permits(&self, addr: IpAddr, hostname: Option<&str>) -> bool {
         if !self.hosts_allow.is_empty()
-            && !self.hosts_allow.iter().any(|pattern| pattern.matches(addr))
+            && !self
+                .hosts_allow
+                .iter()
+                .any(|pattern| pattern.matches(addr, hostname))
         {
             return false;
         }
 
-        if self.hosts_deny.iter().any(|pattern| pattern.matches(addr)) {
+        if self
+            .hosts_deny
+            .iter()
+            .any(|pattern| pattern.matches(addr, hostname))
+        {
             return false;
         }
 
         true
+    }
+
+    fn requires_hostname_lookup(&self) -> bool {
+        self.hosts_allow
+            .iter()
+            .chain(self.hosts_deny.iter())
+            .any(HostPattern::requires_hostname)
     }
 
     fn requires_authentication(&self) -> bool {
@@ -301,6 +320,58 @@ impl ModuleDefinition {
     fn timeout(&self) -> Option<NonZeroU64> {
         self.timeout
     }
+}
+
+fn module_peer_hostname<'a>(
+    module: &ModuleDefinition,
+    cache: &'a mut Option<Option<String>>,
+    peer_ip: IpAddr,
+) -> Option<&'a str> {
+    if !module.requires_hostname_lookup() {
+        return None;
+    }
+
+    if cache.is_none() {
+        *cache = Some(resolve_peer_hostname(peer_ip));
+    }
+
+    cache.as_ref().and_then(|value| value.as_deref())
+}
+
+fn resolve_peer_hostname(peer_ip: IpAddr) -> Option<String> {
+    #[cfg(test)]
+    if let Some(mapped) = TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow().get(&peer_ip).cloned()) {
+        return mapped.map(normalize_hostname_owned);
+    }
+
+    lookup_addr(&peer_ip).ok().map(normalize_hostname_owned)
+}
+
+fn normalize_hostname_owned(mut name: String) -> String {
+    if name.ends_with('.') {
+        name.pop();
+    }
+    name.make_ascii_lowercase();
+    name
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_HOSTNAME_OVERRIDES: RefCell<HashMap<IpAddr, Option<String>>> =
+        RefCell::new(HashMap::new());
+}
+
+#[cfg(test)]
+fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
+    TEST_HOSTNAME_OVERRIDES.with(|map| {
+        map.borrow_mut()
+            .insert(addr, hostname.map(|value| value.to_string()));
+    });
+}
+
+#[cfg(test)]
+fn clear_test_hostname_overrides() {
+    TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow_mut().clear());
 }
 
 /// Configuration describing the requested daemon operation.
@@ -1257,6 +1328,7 @@ enum HostPattern {
     Any,
     Ipv4 { network: Ipv4Addr, prefix: u8 },
     Ipv6 { network: Ipv6Addr, prefix: u8 },
+    Hostname(HostnamePattern),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1320,7 +1392,11 @@ impl HostPattern {
             return Self::from_ipv6(ipv6, prefix.unwrap_or(128));
         }
 
-        Err("invalid host pattern; expected IPv4/IPv6 address".to_string())
+        if prefix_text.is_some() {
+            return Err("invalid host pattern; expected IPv4/IPv6 address".to_string());
+        }
+
+        HostnamePattern::parse(address_str).map(Self::Hostname)
     }
 
     fn from_ipv4(addr: Ipv4Addr, prefix: u8) -> Result<Self, String> {
@@ -1365,7 +1441,7 @@ impl HostPattern {
         })
     }
 
-    fn matches(&self, addr: IpAddr) -> bool {
+    fn matches(&self, addr: IpAddr, hostname: Option<&str>) -> bool {
         match (self, addr) {
             (Self::Any, _) => true,
             (Self::Ipv4 { network, prefix }, IpAddr::V4(candidate)) => {
@@ -1386,9 +1462,105 @@ impl HostPattern {
                     (u128::from(candidate) & mask) == u128::from(*network)
                 }
             }
+            (Self::Hostname(pattern), _) => {
+                hostname.map(|name| pattern.matches(name)).unwrap_or(false)
+            }
             _ => false,
         }
     }
+
+    fn requires_hostname(&self) -> bool {
+        matches!(self, Self::Hostname(_))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HostnamePattern {
+    kind: HostnamePatternKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum HostnamePatternKind {
+    Exact(String),
+    Suffix(String),
+    Wildcard(String),
+}
+
+impl HostnamePattern {
+    fn parse(pattern: &str) -> Result<Self, String> {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            return Err("host pattern must be non-empty".to_string());
+        }
+
+        let normalized = trimmed.trim_end_matches('.');
+        let lower = normalized.to_ascii_lowercase();
+
+        if lower.contains('*') || lower.contains('?') {
+            return Ok(Self {
+                kind: HostnamePatternKind::Wildcard(lower),
+            });
+        }
+
+        if lower.starts_with('.') {
+            let suffix = lower.trim_start_matches('.').to_string();
+            return Ok(Self {
+                kind: HostnamePatternKind::Suffix(suffix),
+            });
+        }
+
+        Ok(Self {
+            kind: HostnamePatternKind::Exact(lower),
+        })
+    }
+
+    fn matches(&self, hostname: &str) -> bool {
+        match &self.kind {
+            HostnamePatternKind::Exact(expected) => hostname == expected,
+            HostnamePatternKind::Suffix(suffix) => {
+                if suffix.is_empty() {
+                    return true;
+                }
+
+                if hostname == suffix {
+                    return true;
+                }
+
+                if hostname.len() <= suffix.len() {
+                    return false;
+                }
+
+                hostname.ends_with(suffix)
+                    && hostname
+                        .as_bytes()
+                        .get(hostname.len() - suffix.len() - 1)
+                        .is_some_and(|byte| *byte == b'.')
+            }
+            HostnamePatternKind::Wildcard(pattern) => wildcard_match(pattern, hostname),
+        }
+    }
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let pattern_bytes = pattern.as_bytes();
+    let text_bytes = text.as_bytes();
+    let mut dp = vec![vec![false; text_bytes.len() + 1]; pattern_bytes.len() + 1];
+    dp[0][0] = true;
+
+    for i in 1..=pattern_bytes.len() {
+        if pattern_bytes[i - 1] == b'*' {
+            dp[i][0] = dp[i - 1][0];
+        }
+        for j in 1..=text_bytes.len() {
+            dp[i][j] = match pattern_bytes[i - 1] {
+                b'*' => dp[i - 1][j] || dp[i][j - 1],
+                b'?' => dp[i - 1][j - 1],
+                byte => dp[i - 1][j - 1] && byte == text_bytes[j - 1],
+            };
+        }
+    }
+
+    dp[pattern_bytes.len()][text_bytes.len()]
 }
 
 fn parse_host_list(
@@ -1799,7 +1971,13 @@ fn respond_with_module_list(
     let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
     stream.write_all(ok.as_bytes())?;
 
-    for module in modules.iter().filter(|module| module.permits(peer_ip)) {
+    let mut hostname_cache: Option<Option<String>> = None;
+    for module in modules {
+        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        if !module.permits(peer_ip, peer_host) {
+            continue;
+        }
+
         let mut line = module.name.clone();
         if let Some(comment) = &module.comment {
             if !comment.is_empty() {
@@ -1955,7 +2133,9 @@ fn respond_with_module_request(
     options: &[String],
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
-        if module.permits(peer_ip) {
+        let mut hostname_cache: Option<Option<String>> = None;
+        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        if module.permits(peer_ip, peer_host) {
             if let Some(refused) = refused_option(module, options) {
                 let payload = format!("@ERROR: The server is configured to refuse {}", refused);
                 let stream = reader.get_mut();
@@ -2310,6 +2490,31 @@ mod tests {
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
 
+    fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> ModuleDefinition {
+        ModuleDefinition {
+            name: String::from("module"),
+            path: PathBuf::from("/srv/module"),
+            comment: None,
+            hosts_allow: allow
+                .iter()
+                .map(|pattern| HostPattern::parse(pattern).expect("parse allow pattern"))
+                .collect(),
+            hosts_deny: deny
+                .iter()
+                .map(|pattern| HostPattern::parse(pattern).expect("parse deny pattern"))
+                .collect(),
+            auth_users: Vec::new(),
+            secrets_file: None,
+            bandwidth_limit: None,
+            refuse_options: Vec::new(),
+            read_only: false,
+            numeric_ids: false,
+            uid: None,
+            gid: None,
+            timeout: None,
+        }
+    }
+
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
         I: IntoIterator<Item = S>,
@@ -2319,6 +2524,68 @@ mod tests {
         let mut stderr = Vec::new();
         let code = run(args, &mut stdout, &mut stderr);
         (code, stdout, stderr)
+    }
+
+    #[test]
+    fn module_definition_hostname_allow_matches_exact() {
+        let module = module_with_host_patterns(&["trusted.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("trusted.example.com")));
+        assert!(!module.permits(peer, Some("other.example.com")));
+        assert!(!module.permits(peer, None));
+    }
+
+    #[test]
+    fn module_definition_hostname_suffix_matches() {
+        let module = module_with_host_patterns(&[".example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("node.example.com")));
+        assert!(module.permits(peer, Some("example.com")));
+        assert!(!module.permits(peer, Some("example.net")));
+        assert!(!module.permits(peer, Some("sampleexample.com")));
+    }
+
+    #[test]
+    fn module_definition_hostname_wildcard_matches() {
+        let module = module_with_host_patterns(&["build?.example.*"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("build1.example.net")));
+        assert!(module.permits(peer, Some("builda.example.org")));
+        assert!(!module.permits(peer, Some("build12.example.net")));
+    }
+
+    #[test]
+    fn module_definition_hostname_deny_takes_precedence() {
+        let module = module_with_host_patterns(&["*"], &["bad.example.com"]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(!module.permits(peer, Some("bad.example.com")));
+        assert!(module.permits(peer, Some("good.example.com")));
+    }
+
+    #[test]
+    fn module_peer_hostname_uses_override() {
+        clear_test_hostname_overrides();
+        let module = module_with_host_patterns(&["trusted.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        set_test_hostname_override(peer, Some("Trusted.Example.Com"));
+        let mut cache = None;
+        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        assert_eq!(resolved, Some("trusted.example.com"));
+        assert!(module.permits(peer, resolved));
+        clear_test_hostname_overrides();
+    }
+
+    #[test]
+    fn module_peer_hostname_missing_resolution_denies_hostname_only_rules() {
+        clear_test_hostname_overrides();
+        let module = module_with_host_patterns(&["trusted.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let mut cache = None;
+        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        if let Some(host) = resolved {
+            assert_ne!(host, "trusted.example.com");
+        }
+        assert!(!module.permits(peer, resolved));
     }
 
     #[test]
@@ -2799,6 +3066,32 @@ mod tests {
             module.hosts_deny[0],
             HostPattern::Ipv4 { prefix: 32, .. }
         ));
+    }
+
+    #[test]
+    fn runtime_options_parse_hostname_patterns() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nhosts allow = trusted.example.com,.example.org\nhosts deny = bad?.example.net\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse hostname hosts directives");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+
+        let module = &modules[0];
+        assert_eq!(module.hosts_allow.len(), 2);
+        assert!(matches!(module.hosts_allow[0], HostPattern::Hostname(_)));
+        assert!(matches!(module.hosts_allow[1], HostPattern::Hostname(_)));
+        assert_eq!(module.hosts_deny.len(), 1);
+        assert!(matches!(module.hosts_deny[0], HostPattern::Hostname(_)));
     }
 
     #[test]

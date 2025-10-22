@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
 base64 = "0.22"
+dns-lookup = "1.0"
 rsync-core = { path = "../core" }
 rsync-protocol = { path = "../protocol" }
 rsync-logging = { path = "../logging" }
