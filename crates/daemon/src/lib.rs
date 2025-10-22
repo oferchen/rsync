@@ -4122,7 +4122,8 @@ mod tests {
 
     #[test]
     fn run_daemon_enforces_bwlimit_during_module_list() {
-        rsync_bandwidth::take_recorded_sleeps();
+        let mut recorder = rsync_bandwidth::recorded_sleep_session();
+        recorder.clear();
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -4187,7 +4188,7 @@ mod tests {
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
 
-        let recorded = rsync_bandwidth::take_recorded_sleeps();
+        let recorded = recorder.take();
         assert!(
             !recorded.is_empty(),
             "expected bandwidth limiter to record sleep intervals"

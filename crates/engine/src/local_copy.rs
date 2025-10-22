@@ -6362,7 +6362,8 @@ mod tests {
 
     #[test]
     fn execute_with_bandwidth_limit_records_sleep() {
-        rsync_bandwidth::take_recorded_sleeps();
+        let mut recorder = rsync_bandwidth::recorded_sleep_session();
+        recorder.clear();
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.bin");
@@ -6383,7 +6384,7 @@ mod tests {
 
         assert_eq!(fs::read(&destination).expect("read dest").len(), 4 * 1024);
 
-        let recorded = rsync_bandwidth::take_recorded_sleeps();
+        let recorded = recorder.take();
         assert!(
             !recorded.is_empty(),
             "expected bandwidth limiter to schedule sleeps"
@@ -6424,7 +6425,8 @@ mod tests {
 
     #[test]
     fn execute_without_bandwidth_limit_does_not_sleep() {
-        rsync_bandwidth::take_recorded_sleeps();
+        let mut recorder = rsync_bandwidth::recorded_sleep_session();
+        recorder.clear();
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
@@ -6439,8 +6441,7 @@ mod tests {
         let summary = plan.execute().expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
-        let recorded = rsync_bandwidth::take_recorded_sleeps();
-        assert!(recorded.is_empty(), "unexpected sleep durations recorded");
+        assert!(recorder.take().is_empty(), "unexpected sleep durations recorded");
         assert_eq!(summary.files_copied(), 1);
     }
 
@@ -6474,7 +6475,8 @@ mod tests {
 
     #[test]
     fn execute_with_compression_limits_post_compress_bandwidth() {
-        rsync_bandwidth::take_recorded_sleeps();
+        let mut recorder = rsync_bandwidth::recorded_sleep_session();
+        recorder.clear();
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.bin");
@@ -6507,7 +6509,7 @@ mod tests {
         assert!(compressed > 0);
         let transferred = summary.bytes_copied();
 
-        let sleeps = rsync_bandwidth::take_recorded_sleeps();
+        let sleeps = recorder.take();
         assert!(
             !sleeps.is_empty(),
             "bandwidth limiter did not record sleeps"
