@@ -404,6 +404,8 @@ impl ClientConfig {
     #[doc(alias = "--compress-level")]
     pub const fn compression_setting(&self) -> CompressionSetting {
         self.compression_setting
+    }
+
     /// Reports whether whole-file transfers should be used.
     #[must_use]
     #[doc(alias = "--whole-file")]
@@ -682,6 +684,9 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_setting(mut self, setting: CompressionSetting) -> Self {
         self.compression_setting = setting;
+        self
+    }
+
     /// Requests that whole-file transfers be used instead of the delta algorithm.
     #[must_use]
     #[doc(alias = "--whole-file")]
