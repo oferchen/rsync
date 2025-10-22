@@ -1991,7 +1991,7 @@ fn read_filter_patterns<R: BufRead>(reader: &mut R) -> io::Result<Vec<String>> {
 
         let line = String::from_utf8_lossy(&buffer);
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             continue;
         }
 
@@ -4071,6 +4071,21 @@ mod tests {
             patterns,
             vec![" include ".to_string(), "pattern".to_string()]
         );
+    }
+
+    #[test]
+    fn load_filter_file_patterns_skip_semicolon_comments() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("filters-semicolon.txt");
+        std::fs::write(&path, b"; leading comment\n  ; spaced comment\nkeep\n")
+            .expect("write filters");
+
+        let patterns =
+            load_filter_file_patterns(path.as_os_str()).expect("load filter patterns succeeds");
+
+        assert_eq!(patterns, vec!["keep".to_string()]);
     }
 
     #[test]
