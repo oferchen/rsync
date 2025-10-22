@@ -664,6 +664,8 @@ pub struct FilterRuleSpec {
     kind: FilterRuleKind,
     pattern: String,
     dir_merge_options: Option<DirMergeOptions>,
+    applies_to_sender: bool,
+    applies_to_receiver: bool,
 }
 
 impl FilterRuleSpec {
@@ -675,6 +677,8 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::Include,
             pattern: pattern.into(),
             dir_merge_options: None,
+            applies_to_sender: true,
+            applies_to_receiver: true,
         }
     }
 
@@ -686,6 +690,8 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::Exclude,
             pattern: pattern.into(),
             dir_merge_options: None,
+            applies_to_sender: true,
+            applies_to_receiver: true,
         }
     }
 
@@ -696,6 +702,8 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::Protect,
             pattern: pattern.into(),
             dir_merge_options: None,
+            applies_to_sender: false,
+            applies_to_receiver: true,
         }
     }
 
@@ -706,6 +714,32 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::DirMerge,
             pattern: pattern.into(),
             dir_merge_options: Some(options),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+        }
+    }
+
+    /// Creates an include rule that only affects the sending side.
+    #[must_use]
+    pub fn show(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Include,
+            pattern: pattern.into(),
+            dir_merge_options: None,
+            applies_to_sender: true,
+            applies_to_receiver: false,
+        }
+    }
+
+    /// Creates an exclude rule that only affects the sending side.
+    #[must_use]
+    pub fn hide(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Exclude,
+            pattern: pattern.into(),
+            dir_merge_options: None,
+            applies_to_sender: true,
+            applies_to_receiver: false,
         }
     }
 
@@ -725,6 +759,18 @@ impl FilterRuleSpec {
     #[must_use]
     pub fn dir_merge_options(&self) -> Option<&DirMergeOptions> {
         self.dir_merge_options.as_ref()
+    }
+
+    /// Reports whether the rule applies to the sending side.
+    #[must_use]
+    pub const fn applies_to_sender(&self) -> bool {
+        self.applies_to_sender
+    }
+
+    /// Reports whether the rule applies to the receiving side.
+    #[must_use]
+    pub const fn applies_to_receiver(&self) -> bool {
+        self.applies_to_receiver
     }
 }
 
@@ -2573,13 +2619,16 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
     for rule in rules {
         match rule.kind() {
             FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::include(rule.pattern()),
+                EngineFilterRule::include(rule.pattern().to_string())
+                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
             FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::exclude(rule.pattern()),
+                EngineFilterRule::exclude(rule.pattern().to_string())
+                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::protect(rule.pattern()),
+                EngineFilterRule::protect(rule.pattern().to_string())
+                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
             FilterRuleKind::DirMerge => {
                 entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
