@@ -323,6 +323,7 @@ const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 pub struct FilterProgram {
     instructions: Vec<FilterInstruction>,
     dir_merge_rules: Vec<DirMergeRule>,
+    exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
 }
 
 impl FilterProgram {
@@ -333,6 +334,7 @@ impl FilterProgram {
     {
         let mut instructions = Vec::new();
         let mut dir_merge_rules = Vec::new();
+        let mut exclude_if_present_rules = Vec::new();
         let mut current_segment = FilterSegment::default();
 
         for entry in entries {
@@ -349,6 +351,15 @@ impl FilterProgram {
                     dir_merge_rules.push(rule);
                     instructions.push(FilterInstruction::DirMerge { index });
                 }
+                FilterProgramEntry::ExcludeIfPresent(rule) => {
+                    if !current_segment.is_empty() || instructions.is_empty() {
+                        instructions.push(FilterInstruction::Segment(current_segment));
+                        current_segment = FilterSegment::default();
+                    }
+                    let index = exclude_if_present_rules.len();
+                    exclude_if_present_rules.push(rule);
+                    instructions.push(FilterInstruction::ExcludeIfPresent { index });
+                }
             }
         }
 
@@ -359,6 +370,7 @@ impl FilterProgram {
         Ok(Self {
             instructions,
             dir_merge_rules,
+            exclude_if_present_rules,
         })
     }
 
@@ -373,7 +385,12 @@ impl FilterProgram {
     pub fn is_empty(&self) -> bool {
         self.instructions
             .iter()
-            .all(|instruction| matches!(instruction, FilterInstruction::Segment(segment) if segment.is_empty()))
+            .all(|instruction| match instruction {
+                FilterInstruction::Segment(segment) => segment.is_empty(),
+                FilterInstruction::DirMerge { .. } | FilterInstruction::ExcludeIfPresent { .. } => {
+                    false
+                }
+            })
     }
 
     /// Evaluates the program for the provided path.
@@ -406,10 +423,33 @@ impl FilterProgram {
                         }
                     }
                 }
+                FilterInstruction::ExcludeIfPresent { .. } => {}
             }
         }
 
         outcome
+    }
+
+    fn should_exclude_directory(&self, directory: &Path) -> Result<bool, LocalCopyError> {
+        for instruction in &self.instructions {
+            if let FilterInstruction::ExcludeIfPresent { index } = instruction {
+                let rule = &self.exclude_if_present_rules[*index];
+                match rule.marker_exists(directory) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => continue,
+                    Err(error) => {
+                        let path = rule.marker_path(directory);
+                        return Err(LocalCopyError::io(
+                            "inspect exclude-if-present marker",
+                            path,
+                            error,
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     }
 }
 
@@ -426,6 +466,8 @@ pub enum FilterProgramEntry {
     Rule(FilterRule),
     /// Per-directory merge directive.
     DirMerge(DirMergeRule),
+    /// Exclude a directory when the marker file is present.
+    ExcludeIfPresent(ExcludeIfPresentRule),
 }
 
 /// Error produced when compiling filter patterns into matchers fails.
@@ -493,10 +535,48 @@ impl DirMergeRule {
     }
 }
 
+/// Excludes directories that contain a particular marker file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExcludeIfPresentRule {
+    raw_pattern: String,
+    pattern: PathBuf,
+}
+
+impl ExcludeIfPresentRule {
+    /// Creates a new rule that checks for the provided marker file.
+    #[must_use]
+    pub fn new(pattern: impl Into<String>) -> Self {
+        let raw_pattern = pattern.into();
+        let pattern = PathBuf::from(&raw_pattern);
+        Self {
+            raw_pattern,
+            pattern,
+        }
+    }
+
+    fn marker_path(&self, directory: &Path) -> PathBuf {
+        if self.pattern.is_absolute() {
+            self.pattern.clone()
+        } else {
+            directory.join(&self.pattern)
+        }
+    }
+
+    fn marker_exists(&self, directory: &Path) -> io::Result<bool> {
+        let target = self.marker_path(directory);
+        match fs::symlink_metadata(&target) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum FilterInstruction {
     Segment(FilterSegment),
     DirMerge { index: usize },
+    ExcludeIfPresent { index: usize },
 }
 
 /// Compiled list of rules evaluated sequentially.
@@ -1887,6 +1967,7 @@ impl<'a> CopyContext<'a> {
                 Rc::clone(&self.dir_merge_ephemeral),
                 Vec::new(),
                 false,
+                false,
             ));
         };
 
@@ -1959,11 +2040,14 @@ impl<'a> CopyContext<'a> {
         drop(layers);
         drop(ephemeral_stack);
 
+        let excluded = program.should_exclude_directory(source)?;
+
         Ok(DirectoryFilterGuard::new(
             Rc::clone(&self.dir_merge_layers),
             Rc::clone(&self.dir_merge_ephemeral),
             added_indices,
             true,
+            excluded,
         ))
     }
 
@@ -2101,6 +2185,7 @@ struct DirectoryFilterGuard {
     ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
     indices: Vec<usize>,
     ephemeral_active: bool,
+    excluded: bool,
 }
 
 impl DirectoryFilterGuard {
@@ -2109,13 +2194,19 @@ impl DirectoryFilterGuard {
         ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
         indices: Vec<usize>,
         ephemeral_active: bool,
+        excluded: bool,
     ) -> Self {
         Self {
             layers,
             ephemeral,
             indices,
             ephemeral_active,
+            excluded,
         }
+    }
+
+    fn is_excluded(&self) -> bool {
+        self.excluded
     }
 }
 
@@ -3287,7 +3378,11 @@ fn copy_directory_recursive(
 
     let entries = read_directory_entries_sorted(source)?;
 
-    let _dir_merge_guard = context.enter_directory(source)?;
+    let dir_merge_guard = context.enter_directory(source)?;
+    if dir_merge_guard.is_excluded() {
+        return Ok(());
+    }
+    let _dir_merge_guard = dir_merge_guard;
 
     if destination_missing {
         if relative.is_some() {
@@ -6029,6 +6124,41 @@ mod tests {
         assert!(target_root.join("keep.tmp").exists());
         assert!(!target_root.join("skip.tmp").exists());
         assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
+    fn execute_skips_directories_with_exclude_if_present_marker() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&destination_root).expect("create dest root");
+
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        let marker_dir = source_root.join("skip");
+        fs::create_dir_all(&marker_dir).expect("create marker dir");
+        fs::write(marker_dir.join(".rsyncignore"), b"marker").expect("write marker");
+        fs::write(marker_dir.join("data.txt"), b"ignored").expect("write data");
+
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
+            ExcludeIfPresentRule::new(".rsyncignore"),
+        )])
+        .expect("compile filter program");
+
+        let options = LocalCopyOptions::default().with_filter_program(Some(program));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = destination_root.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("skip").exists());
     }
 
     #[test]

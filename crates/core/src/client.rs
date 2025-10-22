@@ -92,9 +92,9 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
-    DirMergeRule, FilterProgram, FilterProgramEntry, LocalCopyAction, LocalCopyError,
-    LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
-    LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
+    LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -674,6 +674,8 @@ pub enum FilterRuleKind {
     Protect,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
+    /// Exclude directories containing a specific marker file.
+    ExcludeIfPresent,
 }
 
 /// Filter rule supplied by the caller.
@@ -732,6 +734,19 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::DirMerge,
             pattern: pattern.into(),
             dir_merge_options: Some(options),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+        }
+    }
+
+    /// Excludes directories that contain the named marker file.
+    #[must_use]
+    #[doc(alias = "exclude-if-present")]
+    pub fn exclude_if_present(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::ExcludeIfPresent,
+            pattern: pattern.into(),
+            dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
         }
@@ -2796,6 +2811,9 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
                     rule.dir_merge_options().cloned().unwrap_or_default(),
                 )))
             }
+            FilterRuleKind::ExcludeIfPresent => entries.push(FilterProgramEntry::ExcludeIfPresent(
+                ExcludeIfPresentRule::new(rule.pattern().to_string()),
+            )),
         }
     }
 
