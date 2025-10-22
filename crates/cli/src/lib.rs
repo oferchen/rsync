@@ -70,18 +70,19 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[cfg(unix)]
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
         BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientSummary, FilterRuleKind,
-        FilterRuleSpec, ModuleListRequest, run_client as run_core_client, run_module_list,
+        FilterRuleSpec, ModuleListRequest, run_client as run_core_client,
+        run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
@@ -115,6 +116,7 @@ const HELP_TEXT: &str = concat!(
     "      --include-from=FILE  Read include patterns from FILE.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', and 'merge FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
+    "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
@@ -156,7 +158,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -193,6 +195,7 @@ struct ParsedArgs {
     files_from: Vec<OsString>,
     from0: bool,
     xattrs: Option<bool>,
+    password_file: Option<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -422,6 +425,14 @@ fn clap_command() -> Command {
                 .help("Read additional source operands from FILE.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("password-file")
+                .long("password-file")
+                .value_name("FILE")
+                .help("Read daemon passwords from FILE when contacting rsync:// daemons.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Set),
         )
         .arg(
             Arg::new("from0")
@@ -708,6 +719,7 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
+    let password_file = matches.remove_one::<OsString>("password-file");
 
     Ok(ParsedArgs {
         show_help,
@@ -742,6 +754,7 @@ where
         files_from,
         from0,
         xattrs,
+        password_file,
     })
 }
 
@@ -820,7 +833,10 @@ where
         partial,
         inplace,
         xattrs,
+        password_file,
     } = parsed;
+
+    let password_file = password_file.map(PathBuf::from);
 
     if show_help {
         let help = render_help();
@@ -894,7 +910,18 @@ where
     if file_list_operands.is_empty() {
         match ModuleListRequest::from_operands(&remainder) {
             Ok(Some(request)) => {
-                return match run_module_list(request) {
+                let password_override = match load_optional_password(password_file.as_deref()) {
+                    Ok(secret) => secret,
+                    Err(message) => {
+                        if write_message(&message, stderr).is_err() {
+                            let fallback = message.to_string();
+                            let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+                        }
+                        return 1;
+                    }
+                };
+
+                return match run_module_list_with_password(request, password_override) {
                     Ok(list) => {
                         if render_module_list(stdout, stderr.writer_mut(), &list).is_err() {
                             1
@@ -922,6 +949,21 @@ where
                 return error.exit_code();
             }
         }
+    }
+
+    if password_file.is_some() {
+        let message = rsync_error!(
+            1,
+            "the --password-file option may only be used when accessing an rsync daemon"
+        )
+        .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(
+                stderr.writer_mut(),
+                "the --password-file option may only be used when accessing an rsync daemon"
+            );
+        }
+        return 1;
     }
 
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
@@ -1707,6 +1749,63 @@ fn set_filter_stdin_input(data: Vec<u8>) {
     FILTER_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
 }
 
+fn load_optional_password(path: Option<&Path>) -> Result<Option<Vec<u8>>, Message> {
+    match path {
+        Some(path) => load_password_file(path).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
+    let display = path.display();
+    let metadata = fs::metadata(path).map_err(|error| {
+        rsync_error!(
+            1,
+            format!("failed to access password file '{}': {}", display, error)
+        )
+        .with_role(Role::Client)
+    })?;
+
+    if !metadata.is_file() {
+        return Err(rsync_error!(
+            1,
+            format!("password file '{}' must be a regular file", display)
+        )
+        .with_role(Role::Client));
+    }
+
+    #[cfg(unix)]
+    {
+        let mode = metadata.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(
+                rsync_error!(
+                    1,
+                    format!(
+                        "password file '{}' must not be accessible to group or others (expected permissions 0600)",
+                        display
+                    )
+                )
+                .with_role(Role::Client),
+            );
+        }
+    }
+
+    let mut bytes = fs::read(path).map_err(|error| {
+        rsync_error!(
+            1,
+            format!("failed to read password file '{}': {}", display, error)
+        )
+        .with_role(Role::Client)
+    })?;
+
+    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
+        bytes.pop();
+    }
+
+    Ok(bytes)
+}
+
 /// Loads operands referenced by `--files-from` arguments.
 ///
 /// When `zero_terminated` is `false`, the reader treats lines beginning with `#`
@@ -2459,7 +2558,10 @@ mod tests {
         assert!(stderr.is_empty());
 
         let copied = dest_dir.join(comment_named.file_name().expect("file name"));
-        assert_eq!(std::fs::read(&copied).expect("read copied"), b"from0-comment");
+        assert_eq!(
+            std::fs::read(&copied).expect("read copied"),
+            b"from0-comment"
+        );
     }
 
     #[test]
@@ -2918,6 +3020,30 @@ mod tests {
         .expect("parse");
 
         assert!(parsed.from0);
+    }
+
+    #[test]
+    fn parse_args_recognises_password_file() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--password-file"),
+            OsString::from("secret.txt"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.password_file, Some(OsString::from("secret.txt")));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--password-file=secrets.d"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.password_file, Some(OsString::from("secrets.d")));
     }
 
     #[test]
@@ -3626,6 +3752,169 @@ mod tests {
         assert!(rendered.contains("module"));
 
         handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn module_list_uses_password_file_for_authentication() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
+        use rsync_checksums::strong::Md5;
+        use tempfile::tempdir;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
+        let addr = listener.local_addr().expect("local addr");
+        let challenge = "pw-test";
+        let secret = b"cli-secret";
+        let expected_digest = {
+            let mut hasher = Md5::new();
+            hasher.update(secret);
+            hasher.update(challenge.as_bytes());
+            let digest = hasher.finalize();
+            STANDARD_NO_PAD.encode(digest)
+        };
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("set read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("set write timeout");
+
+                stream
+                    .write_all(b"@RSYNCD: 32.0\n")
+                    .expect("write greeting");
+                stream.flush().expect("flush greeting");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read client greeting");
+                assert_eq!(line, "@RSYNCD: 32.0\n");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read request");
+                assert_eq!(line, "#list\n");
+
+                reader
+                    .get_mut()
+                    .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
+                    .expect("write challenge");
+                reader.get_mut().flush().expect("flush challenge");
+
+                line.clear();
+                reader.read_line(&mut line).expect("read credentials");
+                let received = line.trim_end_matches(['\n', '\r']);
+                assert_eq!(received, format!("user {expected_digest}"));
+
+                for response in ["@RSYNCD: OK\n", "secure\n", "@RSYNCD: EXIT\n"] {
+                    reader
+                        .get_mut()
+                        .write_all(response.as_bytes())
+                        .expect("write response");
+                }
+                reader.get_mut().flush().expect("flush response");
+            }
+        });
+
+        let temp = tempdir().expect("tempdir");
+        let password_path = temp.path().join("daemon.pw");
+        std::fs::write(&password_path, b"cli-secret\n").expect("write password");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&password_path)
+                .expect("metadata")
+                .permissions();
+            permissions.set_mode(0o600);
+            std::fs::set_permissions(&password_path, permissions).expect("set permissions");
+        }
+
+        let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--password-file={}", password_path.display())),
+            OsString::from(url),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("module listing is UTF-8");
+        assert!(rendered.contains("secure"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn module_list_rejects_world_readable_password_file() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let password_path = temp.path().join("insecure.pw");
+        std::fs::write(&password_path, b"secret\n").expect("write password");
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&password_path)
+                .expect("metadata")
+                .permissions();
+            permissions.set_mode(0o644);
+            std::fs::set_permissions(&password_path, permissions).expect("set perms");
+        }
+
+        let url = String::from("rsync://user@127.0.0.1:873/");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--password-file={}", password_path.display())),
+            OsString::from(url),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("password file"));
+        assert!(rendered.contains("0600"));
+
+        // No server was contacted: the permission error occurs before negotiation.
+    }
+
+    #[test]
+    fn password_file_requires_daemon_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let password_path = temp.path().join("local.pw");
+        std::fs::write(&password_path, b"secret\n").expect("write password");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&password_path)
+                .expect("metadata")
+                .permissions();
+            permissions.set_mode(0o600);
+            std::fs::set_permissions(&password_path, permissions).expect("set permissions");
+        }
+
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--password-file={}", password_path.display())),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("--password-file"));
+        assert!(rendered.contains("rsync daemon"));
+        assert!(!destination.exists());
     }
 
     #[test]
