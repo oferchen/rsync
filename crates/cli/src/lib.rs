@@ -75,7 +75,7 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
@@ -84,9 +84,9 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientProgressObserver,
-        ClientProgressUpdate, ClientSummary, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
-        FilterRuleSpec, ModuleListRequest,
+        BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
+        ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
+        DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
         run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
     },
     message::{Message, Role},
@@ -95,6 +95,7 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
+use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
@@ -171,6 +172,11 @@ const HELP_TEXT: &str = concat!(
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+
+/// Timestamp format used for `--list-only` output.
+const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
+    "[year]/[month padding:zero]/[day padding:zero] [hour padding:zero]:[minute padding:zero]:[second padding:zero]"
+);
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -1443,14 +1449,29 @@ fn emit_list_only<W: Write>(events: &[ClientEvent], stdout: &mut W) -> io::Resul
             continue;
         }
 
-        if matches!(event.kind(), ClientEventKind::DirectoryCreated) {
+        if let Some(metadata) = event.metadata() {
+            let permissions = format_list_permissions(metadata);
+            let links = metadata.nlink().unwrap_or(1);
+            let owner = format_numeric_identifier(metadata.uid());
+            let group = format_numeric_identifier(metadata.gid());
+            let size = metadata.length();
+            let timestamp = format_list_timestamp(metadata.modified());
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if !rendered.ends_with('/') {
+            if metadata.kind().is_directory() && !rendered.ends_with('/') {
+                rendered.push('/');
+            }
+
+            writeln!(
+                stdout,
+                "{permissions} {links:>3} {owner:>8} {group:>8} {size:>12} {timestamp} {rendered}",
+            )?;
+        } else {
+            let mut rendered = event.relative_path().to_string_lossy().into_owned();
+            if matches!(event.kind(), ClientEventKind::DirectoryCreated) && !rendered.ends_with('/')
+            {
                 rendered.push('/');
             }
             writeln!(stdout, "{rendered}")?;
-        } else {
-            writeln!(stdout, "{}", event.relative_path().display())?;
         }
     }
 
@@ -1468,6 +1489,56 @@ fn list_only_event(kind: &ClientEventKind) -> bool {
             | ClientEventKind::DeviceCopied
             | ClientEventKind::DirectoryCreated
     )
+}
+
+fn format_numeric_identifier(value: Option<u32>) -> String {
+    value
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn format_list_permissions(metadata: &ClientEntryMetadata) -> String {
+    let type_char = match metadata.kind() {
+        ClientEntryKind::File => '-',
+        ClientEntryKind::Directory => 'd',
+        ClientEntryKind::Symlink => 'l',
+        ClientEntryKind::Fifo => 'p',
+        ClientEntryKind::CharDevice => 'c',
+        ClientEntryKind::BlockDevice => 'b',
+        ClientEntryKind::Socket => 's',
+        ClientEntryKind::Other => '?',
+    };
+
+    let mut output = String::with_capacity(10);
+    output.push(type_char);
+
+    if let Some(mode) = metadata.mode() {
+        const MASKS: [u32; 9] = [
+            0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001,
+        ];
+        const SYMBOLS: [char; 3] = ['r', 'w', 'x'];
+        for (index, mask) in MASKS.iter().enumerate() {
+            let bit = if mode & mask != 0 {
+                SYMBOLS[index % 3]
+            } else {
+                '-'
+            };
+            output.push(bit);
+        }
+    } else {
+        output.push_str("---------");
+    }
+
+    output
+}
+
+fn format_list_timestamp(modified: Option<SystemTime>) -> String {
+    if let Some(time) = modified {
+        if let Ok(datetime) = OffsetDateTime::from(time).format(LIST_TIMESTAMP_FORMAT) {
+            return datetime;
+        }
+    }
+    "1970/01/01 00:00:00".to_string()
 }
 
 /// Returns whether the provided event kind should be reflected in progress output.

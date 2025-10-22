@@ -16,6 +16,7 @@ rsync-core = { path = "../core" }
 rsync-logging = { path = "../logging" }
 rsync-daemon = { path = "../daemon" }
 rsync-protocol = { path = "../protocol" }
+time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
 
 [dev-dependencies]
 filetime = "0.2"
