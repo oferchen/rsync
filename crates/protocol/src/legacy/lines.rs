@@ -39,6 +39,18 @@ pub enum LegacyDaemonMessage<'a> {
         /// Optional module name provided by the daemon.
         module: Option<&'a str>,
     },
+    /// Authentication challenge emitted after [`LegacyDaemonMessage::AuthRequired`].
+    ///
+    /// Some deployments stage authentication across two banners: the
+    /// `AUTHREQD` keyword advertises that credentials are required and a
+    /// follow-up `@RSYNCD: AUTH <challenge>` supplies the base64 challenge.
+    /// Modern rsync versions typically inline the challenge inside the
+    /// `AUTHREQD` response, but tolerating both styles ensures parity with
+    /// legacy daemons still using the split handshake.
+    AuthChallenge {
+        /// Base64-encoded challenge supplied by the daemon.
+        challenge: &'a str,
+    },
     /// Any other keyword line the daemon may send. This variant is intentionally
     /// permissive to avoid guessing the full matrix of legacy extensions while
     /// still allowing higher layers to perform equality checks if needed.
@@ -106,6 +118,25 @@ pub fn parse_legacy_daemon_message(
                     Some(module)
                 };
                 return Ok(LegacyDaemonMessage::AuthRequired { module });
+            }
+
+            const AUTH_KEYWORD: &str = "AUTH";
+            if let Some(rest) = payload.strip_prefix(AUTH_KEYWORD) {
+                if rest.is_empty()
+                    || !rest
+                        .as_bytes()
+                        .first()
+                        .is_some_and(|byte| byte.is_ascii_whitespace())
+                {
+                    return Ok(LegacyDaemonMessage::Other(payload));
+                }
+
+                let challenge = rest.trim();
+                if challenge.is_empty() {
+                    return Ok(LegacyDaemonMessage::Other(payload));
+                }
+
+                return Ok(LegacyDaemonMessage::AuthChallenge { challenge });
             }
 
             const CAP_KEYWORD: &str = "CAP";
@@ -255,6 +286,9 @@ pub fn write_legacy_daemon_message<W: FmtWrite>(
         LegacyDaemonMessage::AuthRequired { module } => {
             write_prefixed_keyword(writer, "AUTHREQD", module)
         }
+        LegacyDaemonMessage::AuthChallenge { challenge } => {
+            write_prefixed_keyword(writer, "AUTH", Some(challenge))
+        }
         LegacyDaemonMessage::Other(payload) => {
             let normalized = payload.trim_end_matches(|ch: char| ch.is_ascii_whitespace());
             write_prefixed_payload(writer, normalized)
@@ -323,6 +357,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_legacy_daemon_message_accepts_auth_challenge_keyword() {
+        let message = parse_legacy_daemon_message("@RSYNCD: AUTH abc123\n").expect("keyword");
+        assert_eq!(
+            message,
+            LegacyDaemonMessage::AuthChallenge {
+                challenge: "abc123",
+            }
+        );
+    }
+
+    #[test]
+    fn parse_legacy_daemon_message_rejects_auth_without_payload() {
+        let message = parse_legacy_daemon_message("@RSYNCD: AUTH\n").expect("keyword");
+        assert_eq!(message, LegacyDaemonMessage::Other("AUTH"));
+    }
+
+    #[test]
     fn parse_legacy_daemon_message_rejects_lowercase_prefix() {
         let err = parse_legacy_daemon_message("@rsyncd: OK\n").unwrap_err();
         match err {
@@ -349,6 +400,12 @@ mod tests {
         assert_eq!(
             format_legacy_daemon_message(LegacyDaemonMessage::Exit),
             "@RSYNCD: EXIT\n"
+        );
+        assert_eq!(
+            format_legacy_daemon_message(LegacyDaemonMessage::AuthChallenge {
+                challenge: "abc123",
+            }),
+            "@RSYNCD: AUTH abc123\n"
         );
     }
 

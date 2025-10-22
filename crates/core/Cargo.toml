@@ -15,6 +15,8 @@ rsync-engine = { path = "../engine", default-features = false }
 rsync-transport = { path = "../transport" }
 rsync-filters = { path = "../filters" }
 libc = "0.2"
+base64 = "0.22"
+rsync-checksums = { path = "../checksums" }
 
 [features]
 default = []
