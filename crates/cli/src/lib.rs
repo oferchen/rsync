@@ -766,18 +766,14 @@ where
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
-    } else if matches.get_flag("devices") {
-        Some(true)
-    } else if archive_devices {
+    } else if matches.get_flag("devices") || archive_devices {
         Some(true)
     } else {
         None
     };
     let specials = if matches.get_flag("no-specials") {
         Some(false)
-    } else if matches.get_flag("specials") {
-        Some(true)
-    } else if archive_devices {
+    } else if matches.get_flag("specials") || archive_devices {
         Some(true)
     } else {
         None
@@ -820,9 +816,7 @@ where
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
 
-    let bwlimit = matches
-        .remove_one::<OsString>("bwlimit")
-        .map(|value| value.into());
+    let bwlimit = matches.remove_one::<OsString>("bwlimit");
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(|values| values.collect())
@@ -1407,7 +1401,7 @@ where
     match result {
         Ok(summary) => {
             let progress_rendered_live =
-                live_progress.as_ref().map_or(false, LiveProgress::rendered);
+                live_progress.as_ref().is_some_and(LiveProgress::rendered);
 
             if let Some(observer) = live_progress {
                 if let Err(error) = observer.finish() {
@@ -1504,10 +1498,7 @@ impl<'a, W: Write> ClientProgressObserver for LiveProgress<'a, W> {
 
         let write_result = (|| -> io::Result<()> {
             let relative = event.relative_path();
-            let path_changed = self
-                .active_path
-                .as_deref()
-                .map_or(true, |path| path != relative);
+            let path_changed = self.active_path.as_deref() != Some(relative);
 
             if path_changed {
                 if self.line_active {
@@ -3352,25 +3343,22 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         end -= 1;
     }
 
-    if end == 0 {
-        return;
-    }
+    if end > 0 {
+        let trimmed = &bytes[..end];
 
-    let trimmed = &bytes[..end];
-
-    #[cfg(unix)]
-    {
-        if !trimmed.is_empty() {
-            entries.push(OsString::from_vec(trimmed.to_vec()));
+        #[cfg(unix)]
+        {
+            if !trimmed.is_empty() {
+                entries.push(OsString::from_vec(trimmed.to_vec()));
+            }
         }
-        return;
-    }
 
-    #[cfg(not(unix))]
-    {
-        let text = String::from_utf8_lossy(trimmed).into_owned();
-        if !text.is_empty() {
-            entries.push(OsString::from(text));
+        #[cfg(not(unix))]
+        {
+            let text = String::from_utf8_lossy(trimmed).into_owned();
+            if !text.is_empty() {
+                entries.push(OsString::from(text));
+            }
         }
     }
 }
