@@ -1692,16 +1692,37 @@ fn handle_legacy_session(
     reader.get_mut().flush()?;
 
     let mut request = None;
+    let mut refused_options = Vec::new();
 
-    if let Some(line) = read_trimmed_line(&mut reader)? {
-        if let Ok(LegacyDaemonMessage::Version(_)) = parse_legacy_daemon_message(&line) {
-            let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-            reader.get_mut().write_all(ok.as_bytes())?;
-            reader.get_mut().flush()?;
-            request = read_trimmed_line(&mut reader)?;
-        } else {
-            request = Some(line);
+    while let Some(line) = read_trimmed_line(&mut reader)? {
+        match parse_legacy_daemon_message(&line) {
+            Ok(LegacyDaemonMessage::Version(_)) => {
+                let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
+                reader.get_mut().write_all(ok.as_bytes())?;
+                reader.get_mut().flush()?;
+                continue;
+            }
+            Ok(LegacyDaemonMessage::Other(payload)) => {
+                if let Some(option) = parse_daemon_option(&payload) {
+                    refused_options.push(option.to_string());
+                    continue;
+                }
+            }
+            Ok(LegacyDaemonMessage::Exit) => return Ok(()),
+            Ok(
+                LegacyDaemonMessage::Ok
+                | LegacyDaemonMessage::Capabilities { .. }
+                | LegacyDaemonMessage::AuthRequired { .. }
+                | LegacyDaemonMessage::AuthChallenge { .. },
+            ) => {
+                request = Some(line);
+                break;
+            }
+            Err(_) => {}
         }
+
+        request = Some(line);
+        break;
     }
 
     let request = request.unwrap_or_default();
@@ -1717,7 +1738,13 @@ fn handle_legacy_session(
         reader.get_mut().write_all(exit.as_bytes())?;
         reader.get_mut().flush()?;
     } else {
-        respond_with_module_request(&mut reader, modules, &request, peer_addr.ip())?;
+        respond_with_module_request(
+            &mut reader,
+            modules,
+            &request,
+            peer_addr.ip(),
+            &refused_options,
+        )?;
     }
 
     Ok(())
@@ -1925,9 +1952,21 @@ fn respond_with_module_request(
     modules: &[ModuleDefinition],
     request: &str,
     peer_ip: IpAddr,
+    options: &[String],
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         if module.permits(peer_ip) {
+            if let Some(refused) = refused_option(module, options) {
+                let payload = format!("@ERROR: The server is configured to refuse {}", refused);
+                let stream = reader.get_mut();
+                stream.write_all(payload.as_bytes())?;
+                stream.write_all(b"\n")?;
+                let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+                stream.write_all(exit.as_bytes())?;
+                stream.flush()?;
+                return Ok(());
+            }
+
             apply_module_timeout(reader.get_mut(), module)?;
             if module.requires_authentication() {
                 match perform_module_authentication(reader, module, peer_ip)? {
@@ -1955,6 +1994,42 @@ fn respond_with_module_request(
     let stream = reader.get_mut();
     stream.write_all(exit.as_bytes())?;
     stream.flush()
+}
+
+fn parse_daemon_option(payload: &str) -> Option<&str> {
+    let (keyword, remainder) = payload.split_once(char::is_whitespace)?;
+    if !keyword.eq_ignore_ascii_case("OPTION") {
+        return None;
+    }
+
+    let option = remainder.trim();
+    if option.is_empty() {
+        None
+    } else {
+        Some(option)
+    }
+}
+
+fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
+    options.iter().find_map(|candidate| {
+        let canonical_candidate = canonical_option(candidate);
+        module
+            .refuse_options
+            .iter()
+            .map(String::as_str)
+            .any(|refused| canonical_option(refused) == canonical_candidate)
+            .then_some(candidate.as_str())
+    })
+}
+
+fn canonical_option(text: &str) -> String {
+    let token = text
+        .trim()
+        .trim_start_matches('-')
+        .split(|ch| matches!(ch, ' ' | '\t' | '='))
+        .next()
+        .unwrap_or("");
+    token.to_ascii_lowercase()
 }
 
 fn apply_module_timeout(stream: &TcpStream, module: &ModuleDefinition) -> io::Result<()> {
@@ -3252,6 +3327,72 @@ mod tests {
 
         line.clear();
         reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_refuses_disallowed_module_options() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[docs]\npath = /srv/docs\nrefuse options = compress\n",
+        )
+        .expect("write config");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--config"),
+                file.path().as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        stream
+            .write_all(b"@RSYNCD: OPTION --compress\n")
+            .expect("send refused option");
+        stream.flush().expect("flush refused option");
+
+        stream.write_all(b"docs\n").expect("send module request");
+        stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("refusal message");
+        assert_eq!(
+            line.trim_end(),
+            "@ERROR: The server is configured to refuse --compress",
+        );
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit message");
         assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
