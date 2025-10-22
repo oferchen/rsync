@@ -120,8 +120,53 @@ const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 /// Exit code returned when a daemon violates the protocol.
 const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
-/// Timeout applied to daemon sockets to avoid hanging handshakes.
+/// Timeout applied to daemon sockets to avoid hanging handshakes when the caller
+/// does not provide an override.
 const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Describes the timeout configuration applied to network operations.
+///
+/// The variant captures whether the caller requested a custom timeout, disabled
+/// socket timeouts entirely, or asked to rely on the default for the current
+/// operation.  Higher layers convert the setting into concrete [`Duration`]
+/// values depending on the transport in use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferTimeout {
+    /// Use the default timeout for the current operation.
+    Default,
+    /// Disable socket timeouts entirely.
+    Disabled,
+    /// Apply a caller-provided timeout expressed in seconds.
+    Seconds(NonZeroU64),
+}
+
+impl TransferTimeout {
+    /// Returns the timeout expressed as a [`Duration`] using the provided
+    /// default when the setting is [`TransferTimeout::Default`].
+    #[must_use]
+    pub fn effective(self, default: Duration) -> Option<Duration> {
+        match self {
+            TransferTimeout::Default => Some(default),
+            TransferTimeout::Disabled => None,
+            TransferTimeout::Seconds(seconds) => Some(Duration::from_secs(seconds.get())),
+        }
+    }
+
+    /// Convenience helper returning the raw seconds value when specified.
+    #[must_use]
+    pub const fn as_seconds(self) -> Option<NonZeroU64> {
+        match self {
+            TransferTimeout::Seconds(value) => Some(value),
+            TransferTimeout::Default | TransferTimeout::Disabled => None,
+        }
+    }
+}
+
+impl Default for TransferTimeout {
+    fn default() -> Self {
+        Self::Default
+    }
+}
 
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -151,6 +196,7 @@ pub struct ClientConfig {
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
+    timeout: TransferTimeout,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -185,6 +231,13 @@ impl ClientConfig {
     #[must_use]
     pub fn filter_rules(&self) -> &[FilterRuleSpec] {
         &self.filter_rules
+    }
+
+    /// Returns the configured transfer timeout.
+    #[must_use]
+    #[doc(alias = "--timeout")]
+    pub const fn timeout(&self) -> TransferTimeout {
+        self.timeout
     }
 
     /// Returns whether the run should avoid mutating the destination filesystem.
@@ -390,6 +443,7 @@ pub struct ClientConfigBuilder {
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
+    timeout: TransferTimeout,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -629,6 +683,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the timeout configuration that should apply to network transfers.
+    #[must_use]
+    #[doc(alias = "--timeout")]
+    pub const fn timeout(mut self, timeout: TransferTimeout) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -658,6 +720,7 @@ impl ClientConfigBuilder {
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
+            timeout: self.timeout,
             #[cfg(feature = "xattr")]
             preserve_xattrs: self.preserve_xattrs,
         }
@@ -1611,6 +1674,18 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_sets_timeout() {
+        let timeout = TransferTimeout::Seconds(NonZeroU64::new(30).unwrap());
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .timeout(timeout)
+            .build();
+
+        assert_eq!(config.timeout(), timeout);
+        assert_eq!(ClientConfig::default().timeout(), TransferTimeout::Default);
     }
 
     #[test]
@@ -2656,8 +2731,12 @@ mod tests {
 
         let _guard = env_lock().lock().unwrap();
         super::set_test_daemon_password(Some(b"wrong".to_vec()));
-        let list = run_module_list_with_password(request, Some(b"override-secret".to_vec()))
-            .expect("module list succeeds");
+        let list = run_module_list_with_password(
+            request,
+            Some(b"override-secret".to_vec()),
+            TransferTimeout::Default,
+        )
+        .expect("module list succeeds");
         super::set_test_daemon_password(None);
 
         assert_eq!(list.entries().len(), 1);
@@ -3421,7 +3500,7 @@ impl ModuleListEntry {
 
 /// Performs a daemon module listing by connecting to the supplied address.
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
-    run_module_list_with_password(request, None)
+    run_module_list_with_password(request, None, TransferTimeout::Default)
 }
 
 /// Performs a daemon module listing using an optional password override.
@@ -3432,6 +3511,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 pub fn run_module_list_with_password(
     request: ModuleListRequest,
     password_override: Option<Vec<u8>>,
+    timeout: TransferTimeout,
 ) -> Result<ModuleList, ClientError> {
     let addr = request.address();
     let username = request.username().map(str::to_owned);
@@ -3441,11 +3521,12 @@ pub fn run_module_list_with_password(
 
     let stream = TcpStream::connect((addr.host.as_str(), addr.port))
         .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
+    let effective_timeout = timeout.effective(DAEMON_SOCKET_TIMEOUT);
     stream
-        .set_read_timeout(Some(DAEMON_SOCKET_TIMEOUT))
+        .set_read_timeout(effective_timeout)
         .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
     stream
-        .set_write_timeout(Some(DAEMON_SOCKET_TIMEOUT))
+        .set_write_timeout(effective_timeout)
         .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())

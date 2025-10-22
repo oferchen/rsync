@@ -74,6 +74,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::num::{IntErrorKind, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime};
@@ -88,7 +89,8 @@ use rsync_core::{
         BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
         ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
         DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
-        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
+        TransferTimeout, run_client_with_observer as run_core_client_with_observer,
+        run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
@@ -130,6 +132,7 @@ const HELP_TEXT: &str = concat!(
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "      --timeout=SECS  Set I/O timeout to SECS seconds (0 disables the timeout).\n",
     "      --protocol=NUM  Force protocol version NUM when accessing rsync daemons.\n",
     "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
     "      --no-compress  Disable compression.\n",
@@ -172,7 +175,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -219,6 +222,7 @@ struct ParsedArgs {
     xattrs: Option<bool>,
     password_file: Option<OsString>,
     protocol: Option<OsString>,
+    timeout: Option<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -581,6 +585,15 @@ fn clap_command() -> Command {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("timeout")
+                .long("timeout")
+                .value_name("SECS")
+                .help("Set I/O timeout in seconds (0 disables the timeout).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("protocol")
                 .long("protocol")
                 .value_name("NUM")
@@ -781,6 +794,7 @@ where
     let from0 = matches.get_flag("from0");
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
+    let timeout = matches.remove_one::<OsString>("timeout");
 
     Ok(ParsedArgs {
         show_help,
@@ -820,6 +834,7 @@ where
         xattrs,
         password_file,
         protocol,
+        timeout,
     })
 }
 
@@ -951,6 +966,7 @@ where
         xattrs,
         password_file,
         protocol,
+        timeout,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -966,6 +982,20 @@ where
             }
         },
         None => None,
+    };
+
+    let timeout_setting = match timeout {
+        Some(value) => match parse_timeout_argument(value.as_os_str()) {
+            Ok(setting) => setting,
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => TransferTimeout::Default,
     };
 
     if show_help {
@@ -1056,7 +1086,11 @@ where
                     }
                 };
 
-                return match run_module_list_with_password(request, password_override) {
+                return match run_module_list_with_password(
+                    request,
+                    password_override,
+                    timeout_setting,
+                ) {
                     Ok(list) => {
                         if render_module_list(stdout, stderr.writer_mut(), &list).is_err() {
                             1
@@ -1153,7 +1187,8 @@ where
         .stats(stats)
         .partial(partial)
         .remove_source_files(remove_source_files)
-        .inplace(inplace.unwrap_or(false));
+        .inplace(inplace.unwrap_or(false))
+        .timeout(timeout_setting);
     #[cfg(feature = "xattr")]
     {
         builder = builder.xattrs(xattrs.unwrap_or(false));
@@ -1874,6 +1909,54 @@ fn supported_protocols_list() -> String {
         .map(|value| value.to_string())
         .collect();
     values.join(", ")
+}
+
+fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(rsync_error!(1, "timeout value must not be empty").with_role(Role::Client));
+    }
+
+    if trimmed.starts_with('-') {
+        return Err(rsync_error!(
+            1,
+            format!(
+                "invalid timeout '{}': timeout must be non-negative",
+                display
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
+
+    match normalized.parse::<u64>() {
+        Ok(0) => Ok(TransferTimeout::Disabled),
+        Ok(value) => Ok(TransferTimeout::Seconds(
+            NonZeroU64::new(value).expect("non-zero ensured"),
+        )),
+        Err(error) => {
+            let detail = match error.kind() {
+                IntErrorKind::InvalidDigit => "timeout must be an unsigned integer",
+                IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
+                    "timeout value exceeds the supported range"
+                }
+                IntErrorKind::Empty => "timeout value must not be empty",
+                _ => "timeout value is invalid",
+            };
+            Err(
+                rsync_error!(1, format!("invalid timeout '{}': {}", display, detail))
+                    .with_role(Role::Client),
+            )
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -3929,6 +4012,37 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.protocol, Some(OsString::from("30")));
+    }
+
+    #[test]
+    fn parse_args_collects_timeout_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--timeout=90"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.timeout, Some(OsString::from("90")));
+    }
+
+    #[test]
+    fn timeout_argument_zero_disables_timeout() {
+        let timeout = parse_timeout_argument(OsStr::new("0")).expect("parse timeout");
+        assert_eq!(timeout, TransferTimeout::Disabled);
+    }
+
+    #[test]
+    fn timeout_argument_positive_sets_seconds() {
+        let timeout = parse_timeout_argument(OsStr::new("15")).expect("parse timeout");
+        assert_eq!(timeout.as_seconds(), NonZeroU64::new(15));
+    }
+
+    #[test]
+    fn timeout_argument_negative_reports_error() {
+        let error = parse_timeout_argument(OsStr::new("-1")).unwrap_err();
+        assert!(error.to_string().contains("timeout must be non-negative"));
     }
 
     #[test]
