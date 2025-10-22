@@ -92,6 +92,7 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
+use rsync_compress::zlib::CompressionLevel;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
@@ -184,6 +185,7 @@ pub struct ClientConfig {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -314,6 +316,13 @@ impl ClientConfig {
     #[doc(alias = "-z")]
     pub const fn compress(&self) -> bool {
         self.compress
+    }
+
+    /// Returns the configured compression level override, if any.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_level(&self) -> Option<CompressionLevel> {
+        self.compression_level
     }
 
     /// Reports whether extended attributes should be preserved.
@@ -447,6 +456,7 @@ pub struct ClientConfigBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -569,6 +579,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        self
+    }
+
+    /// Applies an explicit compression level override when building the configuration.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_level(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_level = level;
         self
     }
 
@@ -743,6 +761,7 @@ impl ClientConfigBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             compress: self.compress,
+            compression_level: self.compression_level,
             checksum: self.checksum,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
@@ -1579,6 +1598,7 @@ pub fn run_client_with_observer(
                     .map(|limit| limit.bytes_per_second()),
             )
             .compress(config.compress())
+            .with_compression_level(config.compression_level())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
@@ -1644,7 +1664,7 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::num::NonZeroU64;
+    use std::num::{NonZeroU8, NonZeroU64};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -1732,6 +1752,23 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_sets_compression_level() {
+        let level = NonZeroU8::new(7).unwrap();
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compress(true)
+            .compression_level(Some(CompressionLevel::precise(level)))
+            .build();
+
+        assert!(config.compress());
+        assert_eq!(
+            config.compression_level(),
+            Some(CompressionLevel::precise(level))
+        );
+        assert_eq!(ClientConfig::default().compression_level(), None);
     }
 
     #[test]
@@ -3422,7 +3459,9 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
                 previous_colon = None;
             }
             ':' if !in_brackets => {
-                if let Some(prev) = previous_colon && prev + 1 == idx {
+                if let Some(prev) = previous_colon
+                    && prev + 1 == idx
+                {
                     let host = &input[..prev];
                     let module = &input[idx + 1..];
                     return Some((host, module));

@@ -30,7 +30,10 @@
 //! assert_eq!(decoded, data);
 //! ```
 
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    num::NonZeroU8,
+};
 
 use flate2::{Compression, read::ZlibDecoder as FlateDecoder, write::ZlibEncoder as FlateEncoder};
 
@@ -43,6 +46,8 @@ pub enum CompressionLevel {
     Default,
     /// Favour the best possible compression ratio.
     Best,
+    /// Use an explicit zlib compression level in the range `1..=9`.
+    Precise(NonZeroU8),
 }
 
 impl From<CompressionLevel> for Compression {
@@ -51,7 +56,16 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
+            CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
         }
+    }
+}
+
+impl CompressionLevel {
+    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
+    #[must_use]
+    pub const fn precise(level: NonZeroU8) -> Self {
+        Self::Precise(level)
     }
 }
 
@@ -171,5 +185,12 @@ mod tests {
         let compressed = compress_to_vec(payload, CompressionLevel::Best).expect("compress");
         let decoded = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn precise_level_converts_to_requested_value() {
+        let level = NonZeroU8::new(7).expect("non-zero");
+        let compression = Compression::from(CompressionLevel::precise(level));
+        assert_eq!(compression.level(), u32::from(level.get()));
     }
 }

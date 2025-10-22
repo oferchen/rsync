@@ -1311,6 +1311,7 @@ pub struct LocalCopyOptions {
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
+    compression_level: Option<CompressionLevel>,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1343,6 +1344,7 @@ impl LocalCopyOptions {
             remove_source_files: false,
             bandwidth_limit: None,
             compress: false,
+            compression_level: None,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1404,6 +1406,17 @@ impl LocalCopyOptions {
     #[doc(alias = "--compress")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        if !compress {
+            self.compression_level = None;
+        }
+        self
+    }
+
+    /// Applies an explicit compression level for payload processing.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_level = level;
         self
     }
 
@@ -1588,6 +1601,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn compress_enabled(&self) -> bool {
         self.compress
+    }
+
+    /// Returns the configured compression level, if any.
+    #[must_use]
+    pub const fn compression_level(&self) -> Option<CompressionLevel> {
+        self.compression_level
     }
 
     /// Reports whether ownership preservation has been requested.
@@ -2333,7 +2352,11 @@ impl<'a> CopyContext<'a> {
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut compressor = if compress {
-            Some(CountingZlibEncoder::new(CompressionLevel::Default))
+            let level = self
+                .options
+                .compression_level()
+                .unwrap_or(CompressionLevel::Default);
+            Some(CountingZlibEncoder::new(level))
         } else {
             None
         };
@@ -4883,7 +4906,7 @@ mod tests {
     use filetime::{FileTime, set_file_mtime, set_file_times};
     use std::ffi::OsString;
     use std::io::{Seek, SeekFrom, Write};
-    use std::num::NonZeroU64;
+    use std::num::{NonZeroU8, NonZeroU64};
     use std::path::Path;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -4931,6 +4954,23 @@ mod tests {
         let options = LocalCopyOptions::default().compress(true);
         assert!(options.compress_enabled());
         assert!(!LocalCopyOptions::default().compress_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_compress_level_round_trip() {
+        let level = NonZeroU8::new(5).expect("level");
+        let options = LocalCopyOptions::default()
+            .compress(true)
+            .with_compression_level(Some(CompressionLevel::precise(level)));
+        assert_eq!(
+            options.compression_level(),
+            Some(CompressionLevel::precise(level))
+        );
+
+        let disabled = LocalCopyOptions::default()
+            .with_compression_level(Some(CompressionLevel::precise(level)))
+            .compress(false);
+        assert_eq!(disabled.compression_level(), None);
     }
 
     #[test]
