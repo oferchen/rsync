@@ -131,6 +131,7 @@ const HELP_TEXT: &str = concat!(
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
+    "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
     "      --timeout=SECS  Set I/O timeout to SECS seconds (0 disables the timeout).\n",
@@ -176,7 +177,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -222,6 +223,7 @@ struct ParsedArgs {
     files_from: Vec<OsString>,
     from0: bool,
     xattrs: Option<bool>,
+    no_motd: bool,
     password_file: Option<OsString>,
     protocol: Option<OsString>,
     timeout: Option<OsString>,
@@ -487,6 +489,12 @@ fn clap_command() -> Command {
                 .help("Read daemon passwords from FILE when contacting rsync:// daemons.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("no-motd")
+                .long("no-motd")
+                .help("Suppress daemon MOTD lines when listing rsync:// modules.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("from0")
@@ -804,6 +812,7 @@ where
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
+    let no_motd = matches.get_flag("no-motd");
 
     Ok(ParsedArgs {
         show_help,
@@ -842,6 +851,7 @@ where
         files_from,
         from0,
         xattrs,
+        no_motd,
         password_file,
         protocol,
         timeout,
@@ -975,6 +985,7 @@ where
         remove_source_files,
         inplace,
         xattrs,
+        no_motd,
         password_file,
         protocol,
         timeout,
@@ -1103,7 +1114,8 @@ where
                     timeout_setting,
                 ) {
                     Ok(list) => {
-                        if render_module_list(stdout, stderr.writer_mut(), &list).is_err() {
+                        if render_module_list(stdout, stderr.writer_mut(), &list, no_motd).is_err()
+                        {
                             1
                         } else {
                             0
@@ -2758,13 +2770,16 @@ fn render_module_list<W: Write, E: Write>(
     stdout: &mut W,
     stderr: &mut E,
     list: &rsync_core::client::ModuleList,
+    suppress_motd: bool,
 ) -> io::Result<()> {
     for warning in list.warnings() {
         writeln!(stderr, "@WARNING: {}", warning)?;
     }
 
-    for line in list.motd_lines() {
-        writeln!(stdout, "{}", line)?;
+    if !suppress_motd {
+        for line in list.motd_lines() {
+            writeln!(stdout, "{}", line)?;
+        }
     }
 
     for entry in list.entries() {
@@ -4050,6 +4065,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_no_motd_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-motd"),
+            OsString::from("rsync://example/"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.no_motd);
+    }
+
+    #[test]
     fn parse_args_collects_protocol_value() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -5039,6 +5066,32 @@ mod tests {
         assert!(rendered.contains("Welcome to the test daemon"));
         assert!(rendered.contains("first\tFirst module"));
         assert!(rendered.contains("second"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn remote_daemon_listing_suppresses_motd_with_flag() {
+        let (addr, handle) = spawn_stub_daemon(vec![
+            "@RSYNCD: MOTD Welcome to the test daemon\n",
+            "@RSYNCD: OK\n",
+            "module\n",
+            "@RSYNCD: EXIT\n",
+        ]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-motd"),
+            OsString::from(url),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(!rendered.contains("Welcome to the test daemon"));
+        assert!(rendered.contains("module"));
 
         handle.join().expect("server thread");
     }
