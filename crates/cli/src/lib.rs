@@ -76,13 +76,18 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::num::{IntErrorKind, NonZeroU64};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::str::FromStr;
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
-use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
+use std::os::unix::{
+    ffi::{OsStrExt, OsStringExt},
+    fs::PermissionsExt,
+};
 
-use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
+use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
@@ -98,6 +103,7 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
+use tempfile::NamedTempFile;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 
 /// Maximum exit code representable by a Unix process.
@@ -236,8 +242,8 @@ struct ParsedArgs {
 }
 
 /// Builds the `clap` command used for parsing.
-fn clap_command() -> Command {
-    Command::new("oc-rsync")
+fn clap_command() -> ClapCommand {
+    ClapCommand::new("oc-rsync")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -1103,7 +1109,7 @@ where
         None => None,
     };
 
-    let numeric_ids = numeric_ids.unwrap_or(false);
+    let numeric_ids_option = numeric_ids;
 
     #[allow(unused_variables)]
     let preserve_acls = acls.unwrap_or(false);
@@ -1198,6 +1204,55 @@ where
             }
         }
     }
+
+    let files_from_used = !files_from.is_empty();
+    if transfer_requires_remote(&remainder, &file_list_operands) {
+        let fallback_args = RemoteFallbackArgs {
+            dry_run,
+            list_only,
+            archive,
+            delete,
+            delete_excluded,
+            checksum,
+            size_only,
+            ignore_existing,
+            compress,
+            owner,
+            group,
+            perms,
+            times,
+            numeric_ids: numeric_ids_option,
+            sparse,
+            devices,
+            specials,
+            relative,
+            verbosity,
+            progress,
+            stats,
+            partial,
+            remove_source_files,
+            inplace,
+            bwlimit,
+            excludes,
+            includes,
+            exclude_from,
+            include_from,
+            filters,
+            files_from_used,
+            file_list_entries: file_list_operands,
+            from0,
+            password_file: password_file.clone(),
+            protocol: desired_protocol,
+            timeout: timeout_setting,
+            no_motd,
+            remainder,
+            #[cfg(feature = "xattr")]
+            xattrs,
+        };
+        return run_remote_transfer_fallback(stdout, stderr, fallback_args);
+    }
+
+    let numeric_ids = numeric_ids_option.unwrap_or(false);
 
     if desired_protocol.is_some() {
         let message = rsync_error!(
@@ -2806,6 +2861,488 @@ fn read_file_list_from_reader<R: BufRead>(
     Ok(())
 }
 
+fn transfer_requires_remote(remainder: &[OsString], file_list_operands: &[OsString]) -> bool {
+    remainder
+        .iter()
+        .chain(file_list_operands.iter())
+        .any(|operand| operand_is_remote(operand.as_os_str()))
+}
+
+fn operand_is_remote(path: &OsStr) -> bool {
+    let text = path.to_string_lossy();
+
+    if text.starts_with("rsync://") {
+        return true;
+    }
+
+    if text.contains("::") {
+        return true;
+    }
+
+    if let Some(colon_index) = text.find(':') {
+        let after = &text[colon_index + 1..];
+        if after.starts_with(':') {
+            return true;
+        }
+
+        let before = &text[..colon_index];
+        if before.contains('/') || before.contains('\\') {
+            return false;
+        }
+
+        if colon_index == 1 && before.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    false
+}
+
+struct RemoteFallbackArgs {
+    dry_run: bool,
+    list_only: bool,
+    archive: bool,
+    delete: bool,
+    delete_excluded: bool,
+    checksum: bool,
+    size_only: bool,
+    ignore_existing: bool,
+    compress: bool,
+    owner: Option<bool>,
+    group: Option<bool>,
+    perms: Option<bool>,
+    times: Option<bool>,
+    numeric_ids: Option<bool>,
+    sparse: Option<bool>,
+    devices: Option<bool>,
+    specials: Option<bool>,
+    relative: Option<bool>,
+    verbosity: u8,
+    progress: bool,
+    stats: bool,
+    partial: bool,
+    remove_source_files: bool,
+    inplace: Option<bool>,
+    bwlimit: Option<OsString>,
+    excludes: Vec<OsString>,
+    includes: Vec<OsString>,
+    exclude_from: Vec<OsString>,
+    include_from: Vec<OsString>,
+    filters: Vec<OsString>,
+    files_from_used: bool,
+    file_list_entries: Vec<OsString>,
+    from0: bool,
+    password_file: Option<PathBuf>,
+    protocol: Option<ProtocolVersion>,
+    timeout: TransferTimeout,
+    no_motd: bool,
+    remainder: Vec<OsString>,
+    #[cfg(feature = "xattr")]
+    xattrs: Option<bool>,
+}
+
+fn run_remote_transfer_fallback<Out, Err>(
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+    args: RemoteFallbackArgs,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    let RemoteFallbackArgs {
+        dry_run,
+        list_only,
+        archive,
+        delete,
+        delete_excluded,
+        checksum,
+        size_only,
+        ignore_existing,
+        compress,
+        owner,
+        group,
+        perms,
+        times,
+        numeric_ids,
+        sparse,
+        devices,
+        specials,
+        relative,
+        verbosity,
+        progress,
+        stats,
+        partial,
+        remove_source_files,
+        inplace,
+        bwlimit,
+        excludes,
+        includes,
+        exclude_from,
+        include_from,
+        filters,
+        files_from_used,
+        file_list_entries,
+        from0,
+        password_file,
+        protocol,
+        timeout,
+        no_motd,
+        mut remainder,
+        #[cfg(feature = "xattr")]
+        xattrs,
+    } = args;
+
+    let mut command_args = Vec::new();
+    if archive {
+        command_args.push(OsString::from("-a"));
+    }
+    if dry_run {
+        command_args.push(OsString::from("--dry-run"));
+    }
+    if list_only {
+        command_args.push(OsString::from("--list-only"));
+    }
+    if delete {
+        command_args.push(OsString::from("--delete"));
+    }
+    if delete_excluded {
+        command_args.push(OsString::from("--delete-excluded"));
+    }
+    if checksum {
+        command_args.push(OsString::from("--checksum"));
+    }
+    if size_only {
+        command_args.push(OsString::from("--size-only"));
+    }
+    if ignore_existing {
+        command_args.push(OsString::from("--ignore-existing"));
+    }
+    if compress {
+        command_args.push(OsString::from("--compress"));
+    }
+
+    push_toggle(&mut command_args, "--owner", "--no-owner", owner);
+    push_toggle(&mut command_args, "--group", "--no-group", group);
+    push_toggle(&mut command_args, "--perms", "--no-perms", perms);
+    push_toggle(&mut command_args, "--times", "--no-times", times);
+    push_toggle(
+        &mut command_args,
+        "--numeric-ids",
+        "--no-numeric-ids",
+        numeric_ids,
+    );
+    push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
+    push_toggle(&mut command_args, "--devices", "--no-devices", devices);
+    push_toggle(&mut command_args, "--specials", "--no-specials", specials);
+    push_toggle(&mut command_args, "--relative", "--no-relative", relative);
+    push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
+    #[cfg(feature = "xattr")]
+    push_toggle(&mut command_args, "--xattrs", "--no-xattrs", xattrs);
+
+    for _ in 0..verbosity {
+        command_args.push(OsString::from("-v"));
+    }
+    if progress {
+        command_args.push(OsString::from("--progress"));
+    }
+    if stats {
+        command_args.push(OsString::from("--stats"));
+    }
+    if partial {
+        command_args.push(OsString::from("--partial"));
+    }
+    if remove_source_files {
+        command_args.push(OsString::from("--remove-source-files"));
+    }
+
+    if let Some(limit) = bwlimit {
+        command_args.push(OsString::from("--bwlimit"));
+        command_args.push(limit);
+    }
+
+    for exclude in excludes {
+        command_args.push(OsString::from("--exclude"));
+        command_args.push(exclude);
+    }
+    for include in includes {
+        command_args.push(OsString::from("--include"));
+        command_args.push(include);
+    }
+    for path in exclude_from {
+        command_args.push(OsString::from("--exclude-from"));
+        command_args.push(path);
+    }
+    for path in include_from {
+        command_args.push(OsString::from("--include-from"));
+        command_args.push(path);
+    }
+    for filter in filters {
+        command_args.push(OsString::from("--filter"));
+        command_args.push(filter);
+    }
+
+    let files_from_temp = match prepare_file_list(&file_list_entries, files_from_used, from0) {
+        Ok(temp) => temp,
+        Err(error) => {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "failed to prepare file list for fallback rsync invocation: {}",
+                    error
+                )
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to prepare file list for fallback rsync invocation: {}",
+                    error
+                );
+            }
+            return 1;
+        }
+    };
+
+    if let Some(temp) = files_from_temp.as_ref() {
+        command_args.push(OsString::from("--files-from"));
+        command_args.push(temp.path().as_os_str().to_os_string());
+        if from0 {
+            command_args.push(OsString::from("--from0"));
+        }
+    }
+
+    if let Some(path) = password_file {
+        command_args.push(OsString::from("--password-file"));
+        command_args.push(path.into_os_string());
+    }
+
+    if let Some(protocol) = protocol {
+        command_args.push(OsString::from("--protocol"));
+        command_args.push(OsString::from(protocol.to_string()));
+    }
+
+    match timeout {
+        TransferTimeout::Default => {}
+        TransferTimeout::Disabled => {
+            command_args.push(OsString::from("--timeout"));
+            command_args.push(OsString::from("0"));
+        }
+        TransferTimeout::Seconds(value) => {
+            command_args.push(OsString::from("--timeout"));
+            command_args.push(OsString::from(value.get().to_string()));
+        }
+    }
+
+    if no_motd {
+        command_args.push(OsString::from("--no-motd"));
+    }
+
+    command_args.append(&mut remainder);
+
+    let binary = env::var_os("OC_RSYNC_FALLBACK")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("rsync"));
+
+    let mut command = Command::new(&binary);
+    command.args(&command_args);
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "failed to launch fallback rsync binary '{}': {}",
+                    Path::new(&binary).display(),
+                    error
+                )
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to launch fallback rsync binary '{}': {}",
+                    Path::new(&binary).display(),
+                    error
+                );
+            }
+            return 1;
+        }
+    };
+
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    let stdout_thread = thread::spawn(move || -> io::Result<Vec<u8>> {
+        let mut data = Vec::new();
+        if let Some(mut handle) = stdout_handle {
+            handle.read_to_end(&mut data)?;
+        }
+        Ok(data)
+    });
+
+    let stderr_thread = thread::spawn(move || -> io::Result<Vec<u8>> {
+        let mut data = Vec::new();
+        if let Some(mut handle) = stderr_handle {
+            handle.read_to_end(&mut data)?;
+        }
+        Ok(data)
+    });
+
+    let stdout_data = match stdout_thread.join() {
+        Ok(Ok(data)) => data,
+        Ok(Err(error)) => {
+            let message = rsync_error!(
+                1,
+                format!("failed to read stdout from fallback rsync: {error}")
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to read stdout from fallback rsync: {error}"
+                );
+            }
+            return 1;
+        }
+        Err(_) => {
+            let message = rsync_error!(1, "failed to capture stdout from fallback rsync binary")
+                .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to capture stdout from fallback rsync binary"
+                );
+            }
+            return 1;
+        }
+    };
+
+    let stderr_data = match stderr_thread.join() {
+        Ok(Ok(data)) => data,
+        Ok(Err(error)) => {
+            let message = rsync_error!(
+                1,
+                format!("failed to read stderr from fallback rsync: {error}")
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to read stderr from fallback rsync: {error}"
+                );
+            }
+            return 1;
+        }
+        Err(_) => {
+            let message = rsync_error!(1, "failed to capture stderr from fallback rsync binary")
+                .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to capture stderr from fallback rsync binary"
+                );
+            }
+            return 1;
+        }
+    };
+
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            let message = rsync_error!(
+                1,
+                format!("failed to wait for fallback rsync process: {error}")
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to wait for fallback rsync process: {error}"
+                );
+            }
+            return 1;
+        }
+    };
+
+    if let Err(error) = stdout.write_all(&stdout_data) {
+        let message = rsync_error!(1, format!("failed to forward fallback stdout: {error}"))
+            .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(
+                stderr.writer_mut(),
+                "failed to forward fallback stdout: {error}"
+            );
+        }
+        return 1;
+    }
+
+    if let Err(error) = stderr.writer_mut().write_all(&stderr_data) {
+        let _ = writeln!(
+            stderr.writer_mut(),
+            "failed to forward fallback stderr: {error}"
+        );
+        return 1;
+    }
+
+    // Ensure the temporary file, if any, is kept alive until the end of the transfer.
+    drop(files_from_temp);
+
+    status.code().unwrap_or(MAX_EXIT_CODE)
+}
+
+fn prepare_file_list(
+    entries: &[OsString],
+    files_from_used: bool,
+    zero_terminated: bool,
+) -> io::Result<Option<NamedTempFile>> {
+    if !files_from_used {
+        return Ok(None);
+    }
+
+    let mut file = NamedTempFile::new()?;
+    {
+        let writer = file.as_file_mut();
+        for entry in entries {
+            write_file_list_entry(writer, entry.as_os_str())?;
+            if zero_terminated {
+                writer.write_all(&[0])?;
+            } else {
+                writer.write_all(b"\n")?;
+            }
+        }
+        writer.flush()?;
+    }
+
+    Ok(Some(file))
+}
+
+fn write_file_list_entry<W: Write>(writer: &mut W, value: &OsStr) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        writer.write_all(value.as_bytes())
+    }
+
+    #[cfg(not(unix))]
+    {
+        writer.write_all(value.to_string_lossy().as_bytes())
+    }
+}
+
+fn push_toggle(args: &mut Vec<OsString>, enable: &str, disable: &str, setting: Option<bool>) {
+    match setting {
+        Some(true) => args.push(OsString::from(enable)),
+        Some(false) => args.push(OsString::from(disable)),
+        None => {}
+    }
+}
+
 fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
     if bytes.is_empty() {
         return;
@@ -2919,16 +3456,18 @@ mod tests {
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
 
     #[cfg(unix)]
-    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
 
     #[cfg(feature = "xattr")]
     use xattr;
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
@@ -2939,6 +3478,47 @@ mod tests {
         let mut stderr = Vec::new();
         let code = run(args, &mut stdout, &mut stderr);
         (code, stdout, stderr)
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl EnvGuard {
+        fn set(key: &'static str, value: &OsStr) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, contents: &str) {
+        std::fs::write(path, contents).expect("write script");
+        let mut permissions = std::fs::metadata(path)
+            .expect("script metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("set script permissions");
     }
 
     #[test]
@@ -5188,18 +5768,22 @@ mod tests {
     }
 
     #[test]
-    fn remote_operand_reports_diagnostic() {
+    fn remote_operand_reports_launch_failure_when_fallback_missing() {
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let missing = OsString::from("rsync-missing-binary");
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", missing.as_os_str());
+
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
-            OsString::from("host::module"),
+            OsString::from("remote::module"),
             OsString::from("dest"),
         ]);
 
-        assert_eq!(code, 23);
+        assert_eq!(code, 1);
         assert!(stdout.is_empty());
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(rendered.contains("remote operands are not supported"));
+        assert!(rendered.contains("failed to launch fallback rsync binary"));
         assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 
@@ -5761,6 +6345,219 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"compressed"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_operands_invoke_fallback_binary() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+echo fallback-stdout
+echo fallback-stderr >&2
+exit 7
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--dry-run"),
+            OsString::from("remote::module/path"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 7);
+        assert_eq!(
+            String::from_utf8(stdout).expect("stdout UTF-8"),
+            "fallback-stdout\n"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).expect("stderr UTF-8"),
+            "fallback-stderr\n"
+        );
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--dry-run"));
+        assert!(recorded.contains("remote::module/path"));
+        assert!(recorded.contains("dest"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_files_from_entries() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let list_path = temp.path().join("file-list.txt");
+        std::fs::write(&list_path, b"alpha\nbeta\n").expect("write list");
+
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        let files_copy_path = temp.path().join("files.bin");
+        let dest_path = temp.path().join("dest");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+files_from=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--files-from" ]; then
+    files_from="$2"
+    break
+  fi
+  shift
+done
+if [ -n "$files_from" ]; then
+  cat "$files_from" > "$FILES_COPY"
+fi
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+        let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let dest_display = dest_path.display().to_string();
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--files-from"));
+        assert!(recorded.contains("remote::module"));
+        assert!(recorded.contains(&dest_display));
+
+        let copied = std::fs::read(&files_copy_path).expect("read copied file list");
+        assert_eq!(copied, b"alpha\nbeta\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_preserves_from0_entries() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let list_path = temp.path().join("file-list.bin");
+        std::fs::write(&list_path, b"first\0second\0").expect("write list");
+
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        let files_copy_path = temp.path().join("files.bin");
+        let dest_path = temp.path().join("dest");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+files_from=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--files-from" ]; then
+    files_from="$2"
+    break
+  fi
+  shift
+done
+if [ -n "$files_from" ]; then
+  cat "$files_from" > "$FILES_COPY"
+fi
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+        let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--from0"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let dest_display = dest_path.display().to_string();
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--files-from"));
+        assert!(recorded.contains("--from0"));
+        assert!(recorded.contains(&dest_display));
+
+        let copied = std::fs::read(&files_copy_path).expect("read copied file list");
+        assert_eq!(copied, b"first\0second\0");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_connection_options() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        let password_path = temp.path().join("password.txt");
+        std::fs::write(&password_path, b"secret\n").expect("write password");
+        let mut permissions = std::fs::metadata(&password_path)
+            .expect("password metadata")
+            .permissions();
+        permissions.set_mode(0o600);
+        std::fs::set_permissions(&password_path, permissions).expect("set password perms");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--password-file={}", password_path.display())),
+            OsString::from("--protocol=30"),
+            OsString::from("--timeout=120"),
+            OsString::from("rsync://remote/module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let password_display = password_path.display().to_string();
+        let dest_display = dest_path.display().to_string();
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--password-file"));
+        assert!(recorded.contains(&password_display));
+        assert!(recorded.contains("--protocol"));
+        assert!(recorded.contains("30"));
+        assert!(recorded.contains("--timeout"));
+        assert!(recorded.contains("120"));
+        assert!(recorded.contains("rsync://remote/module"));
+        assert!(recorded.contains(&dest_display));
     }
 
     #[test]
