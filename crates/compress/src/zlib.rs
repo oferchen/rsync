@@ -30,7 +30,10 @@
 //! assert_eq!(decoded, data);
 //! ```
 
-use std::io::{self, Write};
+use std::{
+    fmt,
+    io::{self, Write},
+};
 
 use flate2::{Compression, read::ZlibDecoder as FlateDecoder, write::ZlibEncoder as FlateEncoder};
 
@@ -43,6 +46,23 @@ pub enum CompressionLevel {
     Default,
     /// Favour the best possible compression ratio.
     Best,
+    /// Use an explicit numeric compression level between 1 and 9 (inclusive).
+    Precise(u32),
+}
+
+impl CompressionLevel {
+    /// Creates a [`CompressionLevel::Precise`] value from an explicit numeric level.
+    ///
+    /// The supplied `level` must fall within the inclusive range `1..=9`. The
+    /// caller is responsible for interpreting `0` as disabled compression; this
+    /// helper mirrors zlib's accepted range and returns an error when the value
+    /// exceeds the supported bounds.
+    pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
+        match level {
+            1..=9 => Ok(Self::Precise(level)),
+            _ => Err(CompressionLevelError::new(level)),
+        }
+    }
 }
 
 impl From<CompressionLevel> for Compression {
@@ -51,9 +71,42 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
+            CompressionLevel::Precise(value) => Compression::new(value),
         }
     }
 }
+
+/// Error returned when a requested compression level falls outside the
+/// permissible zlib range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CompressionLevelError {
+    level: u32,
+}
+
+impl CompressionLevelError {
+    /// Creates a new error capturing the unsupported compression level.
+    const fn new(level: u32) -> Self {
+        Self { level }
+    }
+
+    /// Returns the invalid compression level that triggered the error.
+    #[must_use]
+    pub const fn level(&self) -> u32 {
+        self.level
+    }
+}
+
+impl fmt::Display for CompressionLevelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "compression level {} is outside the supported range 1-9",
+            self.level
+        )
+    }
+}
+
+impl std::error::Error for CompressionLevelError {}
 
 /// Streaming encoder that records the number of compressed bytes produced.
 pub struct CountingZlibEncoder {
@@ -171,5 +224,19 @@ mod tests {
         let compressed = compress_to_vec(payload, CompressionLevel::Best).expect("compress");
         let decoded = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn numeric_level_constructor_accepts_valid_range() {
+        for level in 1..=9 {
+            let precise = CompressionLevel::from_numeric(level).expect("valid level");
+            assert_eq!(precise, CompressionLevel::Precise(level));
+        }
+    }
+
+    #[test]
+    fn numeric_level_constructor_rejects_out_of_range() {
+        let err = CompressionLevel::from_numeric(10).expect_err("level above 9 rejected");
+        assert_eq!(err.level(), 10);
     }
 }

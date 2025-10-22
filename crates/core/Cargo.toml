@@ -15,6 +15,7 @@ rsync-engine = { path = "../engine", default-features = false }
 rsync-bandwidth = { path = "../bandwidth" }
 rsync-transport = { path = "../transport" }
 rsync-filters = { path = "../filters" }
+rsync-compress = { path = "../compress" }
 libc = "0.2"
 base64 = "0.22"
 rsync-checksums = { path = "../checksums" }
