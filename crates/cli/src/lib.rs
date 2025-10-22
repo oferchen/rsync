@@ -72,7 +72,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -2018,6 +2018,23 @@ fn set_filter_stdin_input(data: Vec<u8>) {
     FILTER_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
 }
 
+#[cfg(test)]
+thread_local! {
+    static PASSWORD_STDIN_INPUT: std::cell::RefCell<Option<Vec<u8>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn take_password_stdin_input() -> Option<Vec<u8>> {
+    PASSWORD_STDIN_INPUT.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(test)]
+fn set_password_stdin_input(data: Vec<u8>) {
+    PASSWORD_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
+}
+
 fn load_optional_password(path: Option<&Path>) -> Result<Option<Vec<u8>>, Message> {
     match path {
         Some(path) => load_password_file(path).map(Some),
@@ -2026,6 +2043,16 @@ fn load_optional_password(path: Option<&Path>) -> Result<Option<Vec<u8>>, Messag
 }
 
 fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
+    if path == Path::new("-") {
+        return read_password_from_stdin().map_err(|error| {
+            rsync_error!(
+                1,
+                format!("failed to read password from standard input: {}", error)
+            )
+            .with_role(Role::Client)
+        });
+    }
+
     let display = path.display();
     let metadata = fs::metadata(path).map_err(|error| {
         rsync_error!(
@@ -2068,9 +2095,7 @@ fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
         .with_role(Role::Client)
     })?;
 
-    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
-        bytes.pop();
-    }
+    trim_trailing_newlines(&mut bytes);
 
     Ok(bytes)
 }
@@ -2212,6 +2237,30 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         if !text.is_empty() {
             entries.push(OsString::from(text));
         }
+    }
+}
+
+fn read_password_from_stdin() -> io::Result<Vec<u8>> {
+    #[cfg(test)]
+    if let Some(bytes) = take_password_stdin_input() {
+        let mut cursor = std::io::Cursor::new(bytes);
+        return read_password_from_reader(&mut cursor);
+    }
+
+    let mut stdin = io::stdin().lock();
+    read_password_from_reader(&mut stdin)
+}
+
+fn read_password_from_reader<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    trim_trailing_newlines(&mut bytes);
+    Ok(bytes)
+}
+
+fn trim_trailing_newlines(bytes: &mut Vec<u8>) {
+    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
+        bytes.pop();
     }
 }
 
@@ -4390,8 +4439,6 @@ mod tests {
         use rsync_checksums::strong::Md5;
         use tempfile::tempdir;
 
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
-        let addr = listener.local_addr().expect("local addr");
         let challenge = "pw-test";
         let secret = b"cli-secret";
         let expected_digest = {
@@ -4402,49 +4449,12 @@ mod tests {
             STANDARD_NO_PAD.encode(digest)
         };
 
-        let handle = thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .expect("set read timeout");
-                stream
-                    .set_write_timeout(Some(Duration::from_secs(5)))
-                    .expect("set write timeout");
-
-                stream
-                    .write_all(b"@RSYNCD: 32.0\n")
-                    .expect("write greeting");
-                stream.flush().expect("flush greeting");
-
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).expect("read client greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
-
-                line.clear();
-                reader.read_line(&mut line).expect("read request");
-                assert_eq!(line, "#list\n");
-
-                reader
-                    .get_mut()
-                    .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
-                    .expect("write challenge");
-                reader.get_mut().flush().expect("flush challenge");
-
-                line.clear();
-                reader.read_line(&mut line).expect("read credentials");
-                let received = line.trim_end_matches(['\n', '\r']);
-                assert_eq!(received, format!("user {expected_digest}"));
-
-                for response in ["@RSYNCD: OK\n", "secure\n", "@RSYNCD: EXIT\n"] {
-                    reader
-                        .get_mut()
-                        .write_all(response.as_bytes())
-                        .expect("write response");
-                }
-                reader.get_mut().flush().expect("flush response");
-            }
-        });
+        let expected_credentials = format!("user {expected_digest}");
+        let (addr, handle) = spawn_auth_stub_daemon(
+            challenge,
+            expected_credentials,
+            vec!["@RSYNCD: OK\n", "secure\n", "@RSYNCD: EXIT\n"],
+        );
 
         let temp = tempdir().expect("tempdir");
         let password_path = temp.path().join("daemon.pw");
@@ -4464,6 +4474,46 @@ mod tests {
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from(format!("--password-file={}", password_path.display())),
+            OsString::from(url),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("module listing is UTF-8");
+        assert!(rendered.contains("secure"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn module_list_reads_password_from_stdin() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
+        use rsync_checksums::strong::Md5;
+
+        let challenge = "stdin-test";
+        let secret = b"stdin-secret";
+        let expected_digest = {
+            let mut hasher = Md5::new();
+            hasher.update(secret);
+            hasher.update(challenge.as_bytes());
+            let digest = hasher.finalize();
+            STANDARD_NO_PAD.encode(digest)
+        };
+
+        let expected_credentials = format!("user {expected_digest}");
+        let (addr, handle) = spawn_auth_stub_daemon(
+            challenge,
+            expected_credentials,
+            vec!["@RSYNCD: OK\n", "secure\n", "@RSYNCD: EXIT\n"],
+        );
+
+        set_password_stdin_input(b"stdin-secret\n".to_vec());
+
+        let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--password-file=-"),
             OsString::from(url),
         ]);
 
@@ -4792,6 +4842,23 @@ mod tests {
         (addr, handle)
     }
 
+    fn spawn_auth_stub_daemon(
+        challenge: &'static str,
+        expected_credentials: String,
+        responses: Vec<&'static str>,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
+        let addr = listener.local_addr().expect("local addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_auth_connection(stream, challenge, &expected_credentials, &responses);
+            }
+        });
+
+        (addr, handle)
+    }
+
     fn handle_connection(mut stream: TcpStream, responses: Vec<&'static str>) {
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -4813,6 +4880,53 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("read request");
         assert_eq!(line, "#list\n");
+
+        for response in responses {
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .expect("write response");
+        }
+        reader.get_mut().flush().expect("flush response");
+    }
+
+    fn handle_auth_connection(
+        mut stream: TcpStream,
+        challenge: &'static str,
+        expected_credentials: &str,
+        responses: &[&'static str],
+    ) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("set write timeout");
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("write greeting");
+        stream.flush().expect("flush greeting");
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read client greeting");
+        assert_eq!(line, "@RSYNCD: 32.0\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read request");
+        assert_eq!(line, "#list\n");
+
+        reader
+            .get_mut()
+            .write_all(format!("@RSYNCD: AUTHREQD {challenge}\n").as_bytes())
+            .expect("write challenge");
+        reader.get_mut().flush().expect("flush challenge");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read credentials");
+        let received = line.trim_end_matches(['\n', '\r']);
+        assert_eq!(received, expected_credentials);
 
         for response in responses {
             reader
