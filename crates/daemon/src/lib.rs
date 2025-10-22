@@ -202,6 +202,8 @@ const HELP_TEXT: &str = concat!(
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
     "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
+    "  --ipv4             Restrict the listener to IPv4 sockets.\n",
+    "  --ipv6             Restrict the listener to IPv6 sockets (defaults to ::1 when no bind address is provided).\n",
     "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
@@ -334,6 +336,8 @@ struct RuntimeOptions {
     motd_lines: Vec<String>,
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_limit_configured: bool,
+    address_family: Option<AddressFamily>,
+    bind_address_overridden: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -346,6 +350,8 @@ impl Default for RuntimeOptions {
             motd_lines: Vec::new(),
             bandwidth_limit: None,
             bandwidth_limit_configured: false,
+            address_family: None,
+            bind_address_overridden: false,
         }
     }
 }
@@ -360,9 +366,11 @@ impl RuntimeOptions {
             if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
-                options.bind_address = parse_bind_address(&value)?;
+                let addr = parse_bind_address(&value)?;
+                options.set_bind_address(addr)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
-                options.bind_address = parse_bind_address(&value)?;
+                let addr = parse_bind_address(&value)?;
+                options.set_bind_address(addr)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
                 options.load_config_modules(&value, &mut seen_modules)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
@@ -379,6 +387,10 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
+            } else if argument == "--ipv4" {
+                options.force_address_family(AddressFamily::Ipv4)?;
+            } else if argument == "--ipv6" {
+                options.force_address_family(AddressFamily::Ipv6)?;
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -415,6 +427,78 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_bind_address(&mut self, addr: IpAddr) -> Result<(), DaemonError> {
+        if let Some(family) = self.address_family {
+            if !family.matches(addr) {
+                return Err(match family {
+                    AddressFamily::Ipv4 => config_error(
+                        "cannot bind an IPv6 address when --ipv4 is specified".to_string(),
+                    ),
+                    AddressFamily::Ipv6 => config_error(
+                        "cannot bind an IPv4 address when --ipv6 is specified".to_string(),
+                    ),
+                });
+            }
+        } else {
+            self.address_family = Some(AddressFamily::from_ip(addr));
+        }
+
+        self.bind_address = addr;
+        self.bind_address_overridden = true;
+        Ok(())
+    }
+
+    fn force_address_family(&mut self, family: AddressFamily) -> Result<(), DaemonError> {
+        if let Some(existing) = self.address_family {
+            if existing != family {
+                let text = if self.bind_address_overridden {
+                    match existing {
+                        AddressFamily::Ipv4 => {
+                            "cannot use --ipv6 with an IPv4 bind address".to_string()
+                        }
+                        AddressFamily::Ipv6 => {
+                            "cannot use --ipv4 with an IPv6 bind address".to_string()
+                        }
+                    }
+                } else {
+                    "cannot combine --ipv4 with --ipv6".to_string()
+                };
+                return Err(config_error(text));
+            }
+        } else {
+            self.address_family = Some(family);
+        }
+
+        match family {
+            AddressFamily::Ipv4 => {
+                if matches!(self.bind_address, IpAddr::V6(_)) {
+                    if self.bind_address_overridden {
+                        return Err(config_error(
+                            "cannot use --ipv4 with an IPv6 bind address".to_string(),
+                        ));
+                    }
+                    self.bind_address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+                } else if !self.bind_address_overridden {
+                    self.bind_address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+                }
+            }
+            AddressFamily::Ipv6 => {
+                if matches!(self.bind_address, IpAddr::V4(_)) {
+                    if self.bind_address_overridden {
+                        return Err(config_error(
+                            "cannot use --ipv6 with an IPv4 bind address".to_string(),
+                        ));
+                    }
+                    self.bind_address = IpAddr::V6(Ipv6Addr::LOCALHOST);
+                } else if !self.bind_address_overridden {
+                    self.bind_address = IpAddr::V6(Ipv6Addr::LOCALHOST);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn load_config_modules(
         &mut self,
         value: &OsString,
@@ -446,6 +530,16 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn bandwidth_limit_configured(&self) -> bool {
         self.bandwidth_limit_configured
+    }
+
+    #[cfg(test)]
+    fn bind_address(&self) -> IpAddr {
+        self.bind_address
+    }
+
+    #[cfg(test)]
+    fn address_family(&self) -> Option<AddressFamily> {
+        self.address_family
     }
 
     #[cfg(test)]
@@ -1161,6 +1255,28 @@ enum HostPattern {
     Any,
     Ipv4 { network: Ipv4Addr, prefix: u8 },
     Ipv6 { network: Ipv6Addr, prefix: u8 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AddressFamily {
+    Ipv4,
+    Ipv6,
+}
+
+impl AddressFamily {
+    fn from_ip(addr: IpAddr) -> Self {
+        match addr {
+            IpAddr::V4(_) => Self::Ipv4,
+            IpAddr::V6(_) => Self::Ipv6,
+        }
+    }
+
+    fn matches(self, addr: IpAddr) -> bool {
+        matches!(
+            (self, addr),
+            (Self::Ipv4, IpAddr::V4(_)) | (Self::Ipv6, IpAddr::V6(_))
+        )
+    }
 }
 
 impl HostPattern {
@@ -2095,7 +2211,7 @@ mod tests {
     use std::ffi::OsStr;
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
     use std::num::NonZeroU64;
     use std::path::PathBuf;
     use std::sync::{Arc, Barrier};
@@ -2155,6 +2271,75 @@ mod tests {
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
         assert!(modules[1].refused_options().is_empty());
+    }
+
+    #[test]
+    fn runtime_options_ipv6_sets_default_bind_address() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--ipv6")]).expect("parse --ipv6 succeeds");
+
+        assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn runtime_options_ipv6_accepts_ipv6_bind_address() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--bind"),
+            OsString::from("::1"),
+            OsString::from("--ipv6"),
+        ])
+        .expect("ipv6 bind succeeds");
+
+        assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn runtime_options_ipv6_rejects_ipv4_bind_address() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--bind"),
+            OsString::from("127.0.0.1"),
+            OsString::from("--ipv6"),
+        ])
+        .expect_err("ipv4 bind with --ipv6 should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("cannot use --ipv6 with an IPv4 bind address")
+        );
+    }
+
+    #[test]
+    fn runtime_options_ipv4_rejects_ipv6_bind_address() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--bind"),
+            OsString::from("::1"),
+            OsString::from("--ipv4"),
+        ])
+        .expect_err("ipv6 bind with --ipv4 should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("cannot use --ipv4 with an IPv6 bind address")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_ipv4_ipv6_combo() {
+        let error = RuntimeOptions::parse(&[OsString::from("--ipv4"), OsString::from("--ipv6")])
+            .expect_err("conflicting address families should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("cannot combine --ipv4 with --ipv6")
+        );
     }
 
     #[test]
