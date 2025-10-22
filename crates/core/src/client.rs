@@ -3422,7 +3422,9 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
                 previous_colon = None;
             }
             ':' if !in_brackets => {
-                if let Some(prev) = previous_colon && prev + 1 == idx {
+                if let Some(prev) = previous_colon
+                    && prev + 1 == idx
+                {
                     let host = &input[..prev];
                     let module = &input[idx + 1..];
                     return Some((host, module));

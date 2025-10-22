@@ -17,9 +17,10 @@
 //! while preserving permissions and timestamps through the [`rsync_meta`]
 //! helpers. The [`delta`] module mirrors upstream rsync's signature layout
 //! heuristics so the delta-transfer pipeline can reuse byte-identical block
-//! sizing when it lands. The design keeps path parsing and copying logic in the
-//! engine layer so both the CLI and daemon facades can drive local transfers
-//! through a single interface.
+//! sizing when it lands, while [`signature`] turns those layouts into
+//! rsync-compatible rolling/strong checksum streams ready for transmission. The
+//! design keeps path parsing and copying logic in the engine layer so both the
+//! CLI and daemon facades can drive local transfers through a single interface.
 //!
 //! # Invariants
 //!
@@ -67,9 +68,13 @@
 //!   binary's local copy mode.
 //! - [`delta`] exposes block-size and checksum heuristics that will be wired into
 //!   the delta-transfer engine.
+//! - [`signature`] generates rolling and strong checksum pairs from those
+//!   layouts so forthcoming protocol layers can transmit signatures without
+//!   shelling out to upstream rsync.
 
 pub mod delta;
 pub mod local_copy;
+pub mod signature;
 
 pub use delta::{
     SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
@@ -77,4 +82,7 @@ pub use delta::{
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
     LocalCopySummary,
+};
+pub use signature::{
+    FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
