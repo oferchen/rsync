@@ -74,6 +74,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -93,6 +94,7 @@ use rsync_core::{
     version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
+use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
@@ -125,6 +127,7 @@ const HELP_TEXT: &str = concat!(
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "      --protocol=NUM  Force protocol version NUM when accessing rsync daemons.\n",
     "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
     "      --no-compress  Disable compression.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
@@ -166,7 +169,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --size-only, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --password-file, --from0, --bwlimit, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -206,6 +209,7 @@ struct ParsedArgs {
     from0: bool,
     xattrs: Option<bool>,
     password_file: Option<OsString>,
+    protocol: Option<OsString>,
 }
 
 /// Builds the `clap` command used for parsing.
@@ -562,6 +566,15 @@ fn clap_command() -> Command {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("protocol")
+                .long("protocol")
+                .value_name("NUM")
+                .help("Force protocol version NUM when accessing rsync daemons.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("compress")
                 .long("compress")
                 .short('z')
@@ -748,6 +761,7 @@ where
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
     let password_file = matches.remove_one::<OsString>("password-file");
+    let protocol = matches.remove_one::<OsString>("protocol");
 
     Ok(ParsedArgs {
         show_help,
@@ -785,6 +799,7 @@ where
         from0,
         xattrs,
         password_file,
+        protocol,
     })
 }
 
@@ -914,9 +929,23 @@ where
         inplace,
         xattrs,
         password_file,
+        protocol,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
+    let desired_protocol = match protocol {
+        Some(value) => match parse_protocol_version_arg(value.as_os_str()) {
+            Ok(version) => Some(version),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
 
     if show_help {
         let help = render_help();
@@ -990,6 +1019,11 @@ where
     if file_list_operands.is_empty() {
         match ModuleListRequest::from_operands(&remainder) {
             Ok(Some(request)) => {
+                let request = if let Some(protocol) = desired_protocol {
+                    request.with_protocol(protocol)
+                } else {
+                    request
+                };
                 let password_override = match load_optional_password(password_file.as_deref()) {
                     Ok(secret) => secret,
                     Err(message) => {
@@ -1029,6 +1063,21 @@ where
                 return error.exit_code();
             }
         }
+    }
+
+    if desired_protocol.is_some() {
+        let message = rsync_error!(
+            1,
+            "the --protocol option may only be used when accessing an rsync daemon"
+        )
+        .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(
+                stderr.writer_mut(),
+                "the --protocol option may only be used when accessing an rsync daemon"
+            );
+        }
+        return 1;
     }
 
     if password_file.is_some() {
@@ -1570,6 +1619,62 @@ fn compute_rate(bytes: u64, elapsed: Duration) -> Option<f64> {
 pub fn exit_code_from(status: i32) -> std::process::ExitCode {
     let clamped = status.clamp(0, MAX_EXIT_CODE);
     std::process::ExitCode::from(clamped as u8)
+}
+
+fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersion, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    match ProtocolVersion::from_str(text.as_ref()) {
+        Ok(version) => Ok(version),
+        Err(error) => {
+            let supported = supported_protocols_list();
+            let mut detail = match error.kind() {
+                ParseProtocolVersionErrorKind::Empty => {
+                    "protocol value must not be empty".to_string()
+                }
+                ParseProtocolVersionErrorKind::InvalidDigit => {
+                    "protocol version must be an unsigned integer".to_string()
+                }
+                ParseProtocolVersionErrorKind::Negative => {
+                    "protocol version cannot be negative".to_string()
+                }
+                ParseProtocolVersionErrorKind::Overflow => {
+                    "protocol version value exceeds 255".to_string()
+                }
+                ParseProtocolVersionErrorKind::UnsupportedRange(value) => {
+                    let (oldest, newest) = ProtocolVersion::supported_range_bounds();
+                    format!(
+                        "protocol version {} is outside the supported range {}-{}",
+                        value, oldest, newest
+                    )
+                }
+            };
+            if !detail.is_empty() {
+                detail.push_str("; ");
+            }
+            detail.push_str(&format!("supported protocols are {}", supported));
+
+            Err(rsync_error!(
+                1,
+                format!("invalid protocol version '{}': {}", display, detail)
+            )
+            .with_role(Role::Client))
+        }
+    }
+}
+
+fn supported_protocols_list() -> String {
+    let values: Vec<String> = ProtocolVersion::supported_protocol_numbers()
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+    values.join(", ")
 }
 
 #[derive(Debug)]
@@ -3463,6 +3568,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_protocol_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--protocol=30"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.protocol, Some(OsString::from("30")));
+    }
+
+    #[test]
     fn parse_args_sets_compress_flag() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -4354,6 +4472,29 @@ mod tests {
     }
 
     #[test]
+    fn remote_daemon_listing_respects_protocol_cap() {
+        let (addr, handle) = spawn_stub_daemon_with_protocol(
+            vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"],
+            "29.0",
+        );
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--protocol=29"),
+            OsString::from(url),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("module"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn remote_daemon_listing_renders_warnings() {
         let (addr, handle) = spawn_stub_daemon(vec![
             "@WARNING: Maintenance\n",
@@ -4600,6 +4741,87 @@ mod tests {
     }
 
     #[test]
+    fn protocol_option_requires_daemon_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--protocol=30"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("--protocol"));
+        assert!(rendered.contains("rsync daemon"));
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn invalid_protocol_value_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--protocol=27"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("invalid protocol version '27'"));
+        assert!(rendered.contains("outside the supported range"));
+    }
+
+    #[test]
+    fn non_numeric_protocol_value_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--protocol=abc"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("invalid protocol version 'abc'"));
+        assert!(rendered.contains("unsigned integer"));
+    }
+
+    #[test]
+    fn protocol_value_with_whitespace_and_plus_is_accepted() {
+        let version = parse_protocol_version_arg(OsStr::new(" +31 \n"))
+            .expect("whitespace-wrapped value should parse");
+        assert_eq!(version.as_u8(), 31);
+    }
+
+    #[test]
+    fn protocol_value_negative_reports_specific_diagnostic() {
+        let message = parse_protocol_version_arg(OsStr::new("-30"))
+            .expect_err("negative protocol should be rejected");
+        let rendered = message.to_string();
+        assert!(rendered.contains("invalid protocol version '-30'"));
+        assert!(rendered.contains("cannot be negative"));
+    }
+
+    #[test]
+    fn protocol_value_empty_reports_specific_diagnostic() {
+        let message = parse_protocol_version_arg(OsStr::new("   "))
+            .expect_err("empty protocol value should be rejected");
+        let rendered = message.to_string();
+        assert!(rendered.contains("invalid protocol version '   '"));
+        assert!(rendered.contains("must not be empty"));
+    }
+
+    #[test]
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
@@ -4833,12 +5055,19 @@ mod tests {
     fn spawn_stub_daemon(
         responses: Vec<&'static str>,
     ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
+        spawn_stub_daemon_with_protocol(responses, "32.0")
+    }
+
+    fn spawn_stub_daemon_with_protocol(
+        responses: Vec<&'static str>,
+        expected_protocol: &'static str,
+    ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub daemon");
         let addr = listener.local_addr().expect("local addr");
 
         let handle = thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
-                handle_connection(stream, responses);
+                handle_connection(stream, responses, expected_protocol);
             }
         });
 
@@ -4855,14 +5084,24 @@ mod tests {
 
         let handle = thread::spawn(move || {
             if let Ok((stream, _)) = listener.accept() {
-                handle_auth_connection(stream, challenge, &expected_credentials, &responses);
+                handle_auth_connection(
+                    stream,
+                    challenge,
+                    &expected_credentials,
+                    &responses,
+                    "32.0",
+                );
             }
         });
 
         (addr, handle)
     }
 
-    fn handle_connection(mut stream: TcpStream, responses: Vec<&'static str>) {
+    fn handle_connection(
+        mut stream: TcpStream,
+        responses: Vec<&'static str>,
+        expected_protocol: &str,
+    ) {
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("set read timeout");
@@ -4878,7 +5117,8 @@ mod tests {
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("read client greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        let expected_line = ["@RSYNCD: ", expected_protocol, "\n"].concat();
+        assert_eq!(line, expected_line);
 
         line.clear();
         reader.read_line(&mut line).expect("read request");
@@ -4898,6 +5138,7 @@ mod tests {
         challenge: &'static str,
         expected_credentials: &str,
         responses: &[&'static str],
+        expected_protocol: &str,
     ) {
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -4914,7 +5155,8 @@ mod tests {
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("read client greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        let expected_line = ["@RSYNCD: ", expected_protocol, "\n"].concat();
+        assert_eq!(line, expected_line);
 
         line.clear();
         reader.read_line(&mut line).expect("read request");
