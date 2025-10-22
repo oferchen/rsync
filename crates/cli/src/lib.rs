@@ -7,8 +7,8 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`, `--filter` (supporting
-//! `+`/`-` actions and `merge FILE` directives), `--files-from`,
+//! `--version`/`-V`, `--dry-run`/`-n`, `--delete`/`--delete-excluded`, `--filter` (supporting
+//! `+`/`-` actions, the `!` clear directive, and `merge FILE` directives), `--files-from`,
 //! `--from0`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
@@ -23,6 +23,7 @@
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
 //! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
+//! `--delete-excluded`,
 //! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
@@ -108,13 +109,14 @@ const HELP_TEXT: &str = concat!(
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', and 'merge FILE').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
@@ -168,6 +170,7 @@ struct ParsedArgs {
     dry_run: bool,
     archive: bool,
     delete: bool,
+    delete_excluded: bool,
     checksum: bool,
     size_only: bool,
     remainder: Vec<OsString>,
@@ -379,6 +382,12 @@ fn clap_command() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("delete-excluded")
+                .long("delete-excluded")
+                .help("Remove excluded destination files during deletion sweeps.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("exclude")
                 .long("exclude")
                 .value_name("PATTERN")
@@ -414,7 +423,7 @@ fn clap_command() -> Command {
             Arg::new("filter")
                 .long("filter")
                 .value_name("RULE")
-                .help("Apply filter RULE (supports '+' include, '-' exclude, 'protect PATTERN', and 'merge FILE').")
+                .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE').")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -581,7 +590,11 @@ where
     let show_version = matches.get_flag("version");
     let dry_run = matches.get_flag("dry-run");
     let archive = matches.get_flag("archive");
-    let delete = matches.get_flag("delete");
+    let mut delete = matches.get_flag("delete");
+    let delete_excluded = matches.get_flag("delete-excluded");
+    if delete_excluded {
+        delete = true;
+    }
     let mut compress = matches.get_flag("compress");
     if matches.get_flag("no-compress") {
         compress = false;
@@ -727,6 +740,7 @@ where
         dry_run,
         archive,
         delete,
+        delete_excluded,
         checksum,
         size_only,
         remainder,
@@ -806,6 +820,7 @@ where
         dry_run,
         archive,
         delete,
+        delete_excluded,
         checksum,
         size_only,
         remainder: raw_remainder,
@@ -983,6 +998,7 @@ where
         .transfer_args(transfer_operands)
         .dry_run(dry_run)
         .delete(delete)
+        .delete_excluded(delete_excluded)
         .bandwidth_limit(bandwidth_limit)
         .compress(compress)
         .owner(preserve_owner)
@@ -1049,6 +1065,7 @@ where
                     return 1;
                 }
             }
+            Ok(FilterDirective::Clear) => filter_rules.clear(),
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
                     let _ = writeln!(stderr.writer_mut(), "{}", message);
@@ -1431,6 +1448,7 @@ fn os_string_to_pattern(value: OsString) -> String {
 enum FilterDirective {
     Rule(FilterRuleSpec),
     Merge(OsString),
+    Clear,
 }
 
 fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
@@ -1467,9 +1485,16 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     let trimmed = trimmed_leading.trim_end();
 
     if trimmed.is_empty() {
-        let message = rsync_error!(1, "filter rule is empty: supply '+', '-', or 'merge FILE'")
-            .with_role(Role::Client);
+        let message = rsync_error!(
+            1,
+            "filter rule is empty: supply '+', '-', '!', or 'merge FILE'"
+        )
+        .with_role(Role::Client);
         return Err(message);
+    }
+
+    if trimmed == "!" {
+        return Ok(FilterDirective::Clear);
     }
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
@@ -1571,7 +1596,7 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
 
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives"
+        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives"
     )
     .with_role(Role::Client);
     Err(message)
@@ -1657,6 +1682,7 @@ fn apply_merge_directive(
                         .with_role(Role::Client)
                     })?;
                 }
+                Ok(FilterDirective::Clear) => destination.clear(),
                 Err(error) => {
                     let detail = error.to_string();
                     return Err(
@@ -3128,6 +3154,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_clear_directive() {
+        let clear = parse_filter_directive(OsStr::new("!")).expect("clear directive parses");
+        assert_eq!(clear, FilterDirective::Clear);
+
+        let clear_with_whitespace =
+            parse_filter_directive(OsStr::new("  !   ")).expect("clear with whitespace parses");
+        assert_eq!(clear_with_whitespace, FilterDirective::Clear);
+    }
+
+    #[test]
     fn parse_filter_directive_rejects_missing_pattern() {
         let error =
             parse_filter_directive(OsStr::new("+   ")).expect_err("missing pattern should error");
@@ -3242,6 +3278,37 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_filter_clear_resets_rules() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--filter"),
+            OsString::from("- *.tmp"),
+            OsString::from("--filter"),
+            OsString::from("!"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
     fn transfer_request_with_filter_merge_applies_rules() {
         use tempfile::tempdir;
 
@@ -3276,6 +3343,42 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_filter_merge_clear_resets_rules() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write tmp");
+        std::fs::write(source_root.join("skip.log"), b"log").expect("write log");
+
+        let filter_file = tmp.path().join("filters.txt");
+        std::fs::write(&filter_file, "- *.tmp\n!\n- *.log\n").expect("write filter file");
+
+        let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--filter"),
+            filter_arg,
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(copied_root.join("skip.tmp").exists());
+        assert!(!copied_root.join("skip.log").exists());
+    }
+
+    #[test]
     fn transfer_request_with_filter_protect_preserves_destination_entry() {
         use tempfile::tempdir;
 
@@ -3304,6 +3407,38 @@ mod tests {
 
         let copied_root = dest_root.join("source");
         assert!(copied_root.join("keep.txt").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_delete_excluded_prunes_filtered_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+
+        let dest_subdir = dest_root.join("source");
+        std::fs::create_dir_all(&dest_subdir).expect("create destination contents");
+        std::fs::write(dest_subdir.join("skip.log"), b"skip").expect("write excluded file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-excluded"),
+            OsString::from("--exclude=*.log"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.log").exists());
     }
 
     #[test]
@@ -3953,6 +4088,21 @@ mod tests {
         .expect("parse succeeds");
 
         assert!(parsed.delete);
+        assert!(!parsed.delete_excluded);
+    }
+
+    #[test]
+    fn delete_excluded_flag_implies_delete() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-excluded"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.delete);
+        assert!(parsed.delete_excluded);
     }
 
     #[test]
