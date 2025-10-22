@@ -154,6 +154,8 @@ const HELP_TEXT: &str = concat!(
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
+    "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
+    "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
     "      --remove-sent-files   Alias of --remove-source-files.\n",
     "      --inplace    Write updated data directly to destination files.\n",
@@ -188,6 +190,7 @@ const HELP_TEXT: &str = concat!(
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -228,6 +231,7 @@ struct ParsedArgs {
     remove_source_files: bool,
     inplace: Option<bool>,
     msgs_to_stderr: bool,
+    whole_file: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
     exclude_from: Vec<OsString>,
@@ -418,6 +422,21 @@ fn clap_command() -> ClapCommand {
                 .help("Discard partially transferred files on error.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("whole-file")
+                .long("whole-file")
+                .short('W')
+                .help("Copy files without using the delta-transfer algorithm.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-whole-file"),
+        )
+        .arg(
+            Arg::new("no-whole-file")
+                .long("no-whole-file")
+                .help("Enable the delta-transfer algorithm (disable whole-file copies).")
+                .action(ArgAction::SetTrue)
+                .overrides_with("whole-file"),
         )
         .arg(
             Arg::new("remove-source-files")
@@ -774,18 +793,14 @@ where
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
-    } else if matches.get_flag("devices") {
-        Some(true)
-    } else if archive_devices {
+    } else if matches.get_flag("devices") || archive_devices {
         Some(true)
     } else {
         None
     };
     let specials = if matches.get_flag("no-specials") {
         Some(false)
-    } else if matches.get_flag("specials") {
-        Some(true)
-    } else if archive_devices {
+    } else if matches.get_flag("specials") || archive_devices {
         Some(true)
     } else {
         None
@@ -822,6 +837,13 @@ where
         None
     };
     let msgs_to_stderr = matches.get_flag("msgs2stderr");
+    let whole_file = if matches.get_flag("whole-file") {
+        Some(true)
+    } else if matches.get_flag("no-whole-file") {
+        Some(false)
+    } else {
+        None
+    };
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -829,9 +851,7 @@ where
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
 
-    let bwlimit = matches
-        .remove_one::<OsString>("bwlimit")
-        .map(|value| value.into());
+    let bwlimit = matches.remove_one::<OsString>("bwlimit");
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(|values| values.collect())
@@ -895,6 +915,7 @@ where
         remove_source_files,
         inplace,
         msgs_to_stderr,
+        whole_file,
         excludes,
         includes,
         exclude_from,
@@ -1058,6 +1079,7 @@ where
         remove_source_files,
         inplace,
         msgs_to_stderr,
+        whole_file,
         xattrs,
         no_motd,
         password_file,
@@ -1138,6 +1160,7 @@ where
     };
 
     let numeric_ids_option = numeric_ids;
+    let whole_file_option = whole_file;
 
     #[allow(unused_variables)]
     let preserve_acls = acls.unwrap_or(false);
@@ -1261,6 +1284,7 @@ where
             remove_source_files,
             inplace,
             msgs_to_stderr,
+            whole_file: whole_file_option,
             bwlimit,
             excludes,
             includes,
@@ -1275,6 +1299,8 @@ where
             timeout: timeout_setting,
             no_motd,
             remainder,
+            #[cfg(feature = "acl")]
+            acls,
             #[cfg(feature = "xattr")]
             xattrs,
         };
@@ -1353,6 +1379,7 @@ where
         .partial(partial)
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
+        .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
     #[cfg(feature = "xattr")]
     {
@@ -1442,7 +1469,7 @@ where
     match result {
         Ok(summary) => {
             let progress_rendered_live =
-                live_progress.as_ref().map_or(false, LiveProgress::rendered);
+                live_progress.as_ref().is_some_and(LiveProgress::rendered);
 
             if let Some(observer) = live_progress {
                 if let Err(error) = observer.finish() {
@@ -1547,10 +1574,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
 
         let write_result = (|| -> io::Result<()> {
             let relative = event.relative_path();
-            let path_changed = self
-                .active_path
-                .as_deref()
-                .map_or(true, |path| path != relative);
+            let path_changed = self.active_path.as_deref() != Some(relative);
 
             if path_changed {
                 if self.line_active {
@@ -2972,6 +2996,7 @@ struct RemoteFallbackArgs {
     remove_source_files: bool,
     inplace: Option<bool>,
     msgs_to_stderr: bool,
+    whole_file: Option<bool>,
     bwlimit: Option<OsString>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
@@ -2986,6 +3011,8 @@ struct RemoteFallbackArgs {
     timeout: TransferTimeout,
     no_motd: bool,
     remainder: Vec<OsString>,
+    #[cfg(feature = "acl")]
+    acls: Option<bool>,
     #[cfg(feature = "xattr")]
     xattrs: Option<bool>,
 }
@@ -3025,6 +3052,7 @@ where
         remove_source_files,
         inplace,
         msgs_to_stderr,
+        whole_file,
         bwlimit,
         excludes,
         includes,
@@ -3039,6 +3067,8 @@ where
         timeout,
         no_motd,
         mut remainder,
+        #[cfg(feature = "acl")]
+        acls,
         #[cfg(feature = "xattr")]
         xattrs,
     } = args;
@@ -3087,6 +3117,14 @@ where
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
     push_toggle(&mut command_args, "--relative", "--no-relative", relative);
     push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
+    #[cfg(feature = "acl")]
+    push_toggle(&mut command_args, "--acls", "--no-acls", acls);
+    push_toggle(
+        &mut command_args,
+        "--whole-file",
+        "--no-whole-file",
+        whole_file,
+    );
     #[cfg(feature = "xattr")]
     push_toggle(&mut command_args, "--xattrs", "--no-xattrs", xattrs);
 
@@ -3404,25 +3442,22 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         end -= 1;
     }
 
-    if end == 0 {
-        return;
-    }
+    if end > 0 {
+        let trimmed = &bytes[..end];
 
-    let trimmed = &bytes[..end];
-
-    #[cfg(unix)]
-    {
-        if !trimmed.is_empty() {
-            entries.push(OsString::from_vec(trimmed.to_vec()));
+        #[cfg(unix)]
+        {
+            if !trimmed.is_empty() {
+                entries.push(OsString::from_vec(trimmed.to_vec()));
+            }
         }
-        return;
-    }
 
-    #[cfg(not(unix))]
-    {
-        let text = String::from_utf8_lossy(trimmed).into_owned();
-        if !text.is_empty() {
-            entries.push(OsString::from(text));
+        #[cfg(not(unix))]
+        {
+            let text = String::from_utf8_lossy(trimmed).into_owned();
+            if !text.is_empty() {
+                entries.push(OsString::from(text));
+            }
         }
     }
 }
@@ -4734,6 +4769,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.inplace, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_whole_file_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-W"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.whole_file, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-whole-file"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.whole_file, Some(false));
     }
 
     #[test]
@@ -6604,6 +6662,59 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn remote_fallback_forwards_whole_file_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-W"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--whole-file"));
+        assert!(!args.contains(&"--no-whole-file"));
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-whole-file"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn remote_fallback_forwards_connection_options() {
         use tempfile::tempdir;
 
@@ -6653,6 +6764,77 @@ exit 0
         assert!(recorded.contains("120"));
         assert!(recorded.contains("rsync://remote/module"));
         assert!(recorded.contains(&dest_display));
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    #[test]
+    fn remote_fallback_forwards_acls_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--acls"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--acls"));
+        assert!(!recorded.contains("--no-acls"));
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    #[test]
+    fn remote_fallback_forwards_no_acls_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-acls"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-acls"));
     }
 
     #[test]
