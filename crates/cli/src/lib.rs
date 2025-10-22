@@ -1424,6 +1424,7 @@ fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<(
     let fifos_total = summary.fifos_total();
     let deleted = summary.items_deleted();
     let transferred = summary.bytes_copied();
+    let compressed = summary.compressed_bytes().unwrap_or(transferred);
     let total_size = summary.total_source_bytes();
     let matched_bytes = total_size.saturating_sub(transferred);
 
@@ -1454,7 +1455,7 @@ fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<(
     writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
     writeln!(stdout, "Literal data: {transferred} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes} bytes")?;
-    writeln!(stdout, "Total bytes sent: {transferred}")?;
+    writeln!(stdout, "Total bytes sent: {compressed}")?;
     writeln!(stdout, "Total bytes received: 0")?;
     writeln!(stdout)?;
 
@@ -1463,7 +1464,9 @@ fn emit_stats<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<(
 
 /// Emits the summary lines reported by verbose transfers.
 fn emit_totals<W: Write>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
-    let sent = summary.bytes_copied();
+    let sent = summary
+        .compressed_bytes()
+        .unwrap_or_else(|| summary.bytes_copied());
     let received = 0u64;
     let total_size = summary.total_source_bytes();
     let elapsed = summary.total_elapsed();
