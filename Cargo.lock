@@ -479,8 +479,10 @@ dependencies = [
 name = "rsync-cli"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "clap",
  "filetime",
+ "rsync-checksums",
  "rsync-core",
  "rsync-filters",
  "rsync-logging",
