@@ -2639,6 +2639,7 @@ mod tests {
             uid: None,
             gid: None,
             timeout: None,
+            listable: true,
         }
     }
 
@@ -3845,14 +3846,98 @@ mod tests {
     fn run_daemon_enforces_bwlimit_during_module_list() {
         rsync_bandwidth::take_recorded_sleeps();
 
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let comment = "x".repeat(4096);
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--bwlimit"),
+                OsString::from("1K"),
+                OsString::from("--module"),
+                OsString::from(format!("docs=/srv/docs,{}", comment)),
+                OsString::from("--module"),
+                OsString::from("logs=/var/log"),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        let mut total_bytes = 0usize;
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("first module");
+        assert_eq!(line.trim_end(), format!("docs\t{}", comment));
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("second module");
+        assert_eq!(line.trim_end(), "logs");
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+        total_bytes += line.as_bytes().len();
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+
+        let recorded = rsync_bandwidth::take_recorded_sleeps();
+        assert!(
+            !recorded.is_empty(),
+            "expected bandwidth limiter to record sleep intervals"
+        );
+        let total_sleep = recorded
+            .into_iter()
+            .fold(Duration::ZERO, |acc, duration| acc + duration);
+        let expected = Duration::from_secs_f64(total_bytes as f64 / 1024.0);
+        let tolerance = Duration::from_millis(250);
+        let diff = if total_sleep > expected {
+            total_sleep - expected
+        } else {
+            expected - total_sleep
+        };
+        assert!(
+            diff <= tolerance,
+            "expected sleep around {:?}, got {:?}",
+            expected,
+            total_sleep
+        );
+    }
+
+    #[test]
     fn run_daemon_omits_unlisted_modules_from_listing() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
 
-        let module_dir = tempfile::tempdir().expect("module dir");
-        let comment = "x".repeat(4096);
-        let module_arg = format!("docs={},{}", module_dir.path().display(), comment);
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
             file,
@@ -3866,8 +3951,6 @@ mod tests {
                 OsString::from(port.to_string()),
                 OsString::from("--bwlimit"),
                 OsString::from("1K"),
-                OsString::from("--module"),
-                OsString::from(module_arg),
                 OsString::from("--config"),
                 file.path().as_os_str().to_os_string(),
                 OsString::from("--once"),
@@ -3879,8 +3962,6 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
-        let mut line = String::new();
-        reader.read_line(&mut line).expect("greeting");
         let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
@@ -3889,19 +3970,10 @@ mod tests {
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
 
-        let mut total_bytes = 0usize;
-
         line.clear();
-        reader.read_line(&mut line).expect("ok line");
-        total_bytes += line.as_bytes().len();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
 
-        line.clear();
-        reader.read_line(&mut line).expect("module line");
-        total_bytes += line.as_bytes().len();
-
-        line.clear();
-        reader.read_line(&mut line).expect("exit line");
-        total_bytes += line.as_bytes().len();
         line.clear();
         reader.read_line(&mut line).expect("ok line");
         assert_eq!(line, "@RSYNCD: OK\n");
@@ -3917,29 +3989,6 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
-
-        let recorded = rsync_bandwidth::take_recorded_sleeps();
-        assert!(
-            !recorded.is_empty(),
-            "expected bandwidth limiter to record sleep intervals"
-        );
-        let total_sleep = recorded
-            .into_iter()
-            .fold(Duration::ZERO, |acc, duration| acc + duration);
-        let expected_secs = total_bytes as f64 / 1024.0;
-        let expected = Duration::from_secs_f64(expected_secs);
-        let tolerance = Duration::from_millis(250);
-        let diff = if total_sleep > expected {
-            total_sleep - expected
-        } else {
-            expected - total_sleep
-        };
-        assert!(
-            diff <= tolerance,
-            "expected sleep around {:?}, got {:?}",
-            expected,
-            total_sleep
-        );
     }
 
     #[test]
