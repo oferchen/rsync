@@ -948,6 +948,57 @@ impl LocalCopyRecord {
     }
 }
 
+/// Snapshot describing in-flight progress for a transfer action.
+#[derive(Clone, Copy, Debug)]
+pub struct LocalCopyProgress<'a> {
+    relative_path: &'a Path,
+    bytes_transferred: u64,
+    total_bytes: Option<u64>,
+    elapsed: Duration,
+}
+
+impl<'a> LocalCopyProgress<'a> {
+    /// Creates a new [`LocalCopyProgress`] snapshot.
+    #[must_use]
+    pub const fn new(
+        relative_path: &'a Path,
+        bytes_transferred: u64,
+        total_bytes: Option<u64>,
+        elapsed: Duration,
+    ) -> Self {
+        Self {
+            relative_path,
+            bytes_transferred,
+            total_bytes,
+            elapsed,
+        }
+    }
+
+    /// Returns the path associated with the progress snapshot.
+    #[must_use]
+    pub const fn relative_path(&self) -> &'a Path {
+        self.relative_path
+    }
+
+    /// Returns the number of bytes transferred so far.
+    #[must_use]
+    pub const fn bytes_transferred(&self) -> u64 {
+        self.bytes_transferred
+    }
+
+    /// Returns the total number of bytes expected for this action, when known.
+    #[must_use]
+    pub const fn total_bytes(&self) -> Option<u64> {
+        self.total_bytes
+    }
+
+    /// Returns the elapsed time spent on this action.
+    #[must_use]
+    pub const fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+}
+
 /// Report returned after executing a [`LocalCopyPlan`] with event collection enabled.
 #[derive(Clone, Debug, Default)]
 pub struct LocalCopyReport {
@@ -989,6 +1040,9 @@ impl LocalCopyReport {
 pub trait LocalCopyRecordHandler {
     /// Handles a newly produced [`LocalCopyRecord`].
     fn handle(&mut self, record: LocalCopyRecord);
+
+    /// Handles an in-flight progress update for the current action.
+    fn handle_progress(&mut self, _progress: LocalCopyProgress<'_>) {}
 }
 
 impl<F> LocalCopyRecordHandler for F
@@ -1731,15 +1785,6 @@ impl<'a> CopyContext<'a> {
             .numeric_ids(self.options.numeric_ids_enabled())
     }
 
-    fn split_mut(&mut self) -> (&mut HardLinkTracker, Option<&mut BandwidthLimiter>) {
-        let Self {
-            hard_links,
-            limiter,
-            ..
-        } = self;
-        (hard_links, limiter.as_mut())
-    }
-
     fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
     }
@@ -1932,6 +1977,103 @@ impl<'a> CopyContext<'a> {
         }
         if let Some(events) = &mut self.events {
             events.push(record);
+        }
+    }
+
+    fn notify_progress(
+        &mut self,
+        relative: &Path,
+        total_bytes: Option<u64>,
+        transferred: u64,
+        elapsed: Duration,
+    ) {
+        if self.observer.is_none() {
+            return;
+        }
+
+        if let Some(observer) = &mut self.observer {
+            observer.handle_progress(LocalCopyProgress::new(
+                relative,
+                transferred,
+                total_bytes,
+                elapsed,
+            ));
+        }
+    }
+
+    fn copy_file_contents(
+        &mut self,
+        reader: &mut fs::File,
+        writer: &mut fs::File,
+        buffer: &mut [u8],
+        sparse: bool,
+        compress: bool,
+        source: &Path,
+        destination: &Path,
+        relative: &Path,
+        total_size: u64,
+        start: Instant,
+    ) -> Result<Option<u64>, LocalCopyError> {
+        let mut total_bytes: u64 = 0;
+        let mut compressor = if compress {
+            Some(CountingZlibEncoder::new(CompressionLevel::Default))
+        } else {
+            None
+        };
+
+        loop {
+            let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
+                limiter.recommended_read_size(buffer.len())
+            } else {
+                buffer.len()
+            };
+
+            let read = reader
+                .read(&mut buffer[..chunk_len])
+                .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            if read == 0 {
+                break;
+            }
+
+            if let Some(limiter) = self.limiter.as_mut() {
+                limiter.register(read);
+            }
+
+            if sparse {
+                write_sparse_chunk(writer, &buffer[..read], destination)?;
+            } else {
+                writer.write_all(&buffer[..read]).map_err(|error| {
+                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                })?;
+            }
+
+            if let Some(encoder) = compressor.as_mut() {
+                encoder.write(&buffer[..read]).map_err(|error| {
+                    LocalCopyError::io("compress file", source.to_path_buf(), error)
+                })?;
+            }
+
+            total_bytes = total_bytes.saturating_add(read as u64);
+            self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+        }
+
+        if sparse {
+            writer.set_len(total_bytes).map_err(|error| {
+                LocalCopyError::io(
+                    "truncate destination file",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+        }
+
+        if let Some(encoder) = compressor {
+            let compressed_total = encoder.finish().map_err(|error| {
+                LocalCopyError::io("compress file", source.to_path_buf(), error)
+            })?;
+            Ok(Some(compressed_total))
+        } else {
+            Ok(None)
         }
     }
 
@@ -3380,9 +3522,8 @@ fn copy_file(
     let checksum_enabled = context.checksum_enabled();
     let size_only_enabled = context.size_only_enabled();
     let compress_enabled = context.compress_enabled();
-    let (hard_links, limiter) = context.split_mut();
 
-    if let Some(existing_target) = hard_links.existing_target(metadata) {
+    if let Some(existing_target) = context.hard_links.existing_target(metadata) {
         match fs::hard_link(&existing_target, destination) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -3406,7 +3547,7 @@ fn copy_file(
             }
         }
 
-        hard_links.record(metadata, destination);
+        context.hard_links.record(metadata, destination);
         context.summary_mut().record_hard_link();
         context.record(LocalCopyRecord::new(
             record_path.clone(),
@@ -3432,7 +3573,7 @@ fn copy_file(
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
             sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
-            hard_links.record(metadata, destination);
+            context.hard_links.record(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             context.record(LocalCopyRecord::new(
                 record_path.clone(),
@@ -3470,15 +3611,17 @@ fn copy_file(
 
     let start = Instant::now();
 
-    let compressed = copy_file_contents(
+    let compressed = context.copy_file_contents(
         &mut reader,
         &mut writer,
         &mut buffer,
-        limiter,
         use_sparse_writes,
         compress_enabled,
         source,
         destination,
+        record_path.as_path(),
+        file_size,
+        start,
     )?;
 
     drop(writer);
@@ -3491,7 +3634,7 @@ fn copy_file(
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
-    hard_links.record(metadata, destination);
+    context.hard_links.record(metadata, destination);
     let elapsed = start.elapsed();
     context.summary_mut().record_file(file_size, compressed);
     context.summary_mut().record_elapsed(elapsed);
@@ -3630,78 +3773,6 @@ impl Drop for DestinationWriteGuard {
         if !self.committed && !self.preserve_on_error {
             let _ = fs::remove_file(&self.temp_path);
         }
-    }
-}
-
-fn copy_file_contents(
-    reader: &mut fs::File,
-    writer: &mut fs::File,
-    buffer: &mut [u8],
-    mut limiter: Option<&mut BandwidthLimiter>,
-    sparse: bool,
-    compress: bool,
-    source: &Path,
-    destination: &Path,
-) -> Result<Option<u64>, LocalCopyError> {
-    let mut total_bytes: u64 = 0;
-    let mut compressor = if compress {
-        Some(CountingZlibEncoder::new(CompressionLevel::Default))
-    } else {
-        None
-    };
-
-    loop {
-        let chunk_len = if let Some(limiter) = limiter.as_ref() {
-            limiter.recommended_read_size(buffer.len())
-        } else {
-            buffer.len()
-        };
-
-        let read = reader
-            .read(&mut buffer[..chunk_len])
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
-        if read == 0 {
-            break;
-        }
-
-        if let Some(ref mut limiter) = limiter {
-            limiter.register(read);
-        }
-
-        if sparse {
-            write_sparse_chunk(writer, &buffer[..read], destination)?;
-        } else {
-            writer.write_all(&buffer[..read]).map_err(|error| {
-                LocalCopyError::io("copy file", destination.to_path_buf(), error)
-            })?;
-        }
-
-        if let Some(encoder) = compressor.as_mut() {
-            encoder.write(&buffer[..read]).map_err(|error| {
-                LocalCopyError::io("compress file", source.to_path_buf(), error)
-            })?;
-        }
-
-        total_bytes = total_bytes.saturating_add(read as u64);
-    }
-
-    if sparse {
-        writer.set_len(total_bytes).map_err(|error| {
-            LocalCopyError::io(
-                "truncate destination file",
-                destination.to_path_buf(),
-                error,
-            )
-        })?;
-    }
-
-    if let Some(encoder) = compressor {
-        let compressed_total = encoder
-            .finish()
-            .map_err(|error| LocalCopyError::io("compress file", source.to_path_buf(), error))?;
-        Ok(Some(compressed_total))
-    } else {
-        Ok(None)
     }
 }
 
