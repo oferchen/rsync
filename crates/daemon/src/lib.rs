@@ -162,7 +162,7 @@ use std::os::unix::fs::PermissionsExt;
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_checksums::strong::Md5;
 use rsync_core::{
-    bandwidth::{BandwidthParseError, parse_bandwidth_argument},
+    bandwidth::{BandwidthLimiter, BandwidthParseError, parse_bandwidth_argument},
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
@@ -287,7 +287,6 @@ impl ModuleDefinition {
         self.secrets_file.as_deref()
     }
 
-    #[cfg(test)]
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
     }
@@ -1786,6 +1785,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         max_sessions,
         modules,
         motd_lines,
+        bandwidth_limit,
         ..
     } = options;
 
@@ -1817,6 +1817,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         peer_addr,
                         modules_vec.as_slice(),
                         motd_vec.as_slice(),
+                        bandwidth_limit,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -1888,16 +1889,37 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
 }
 
+fn write_limited(
+    stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
+    payload: &[u8],
+) -> io::Result<()> {
+    if let Some(limiter) = limiter {
+        let mut remaining = payload;
+        while !remaining.is_empty() {
+            let chunk_len = limiter.recommended_read_size(remaining.len());
+            stream.write_all(&remaining[..chunk_len])?;
+            limiter.register(chunk_len);
+            remaining = &remaining[chunk_len..];
+        }
+        Ok(())
+    } else {
+        stream.write_all(payload)
+    }
+}
+
 fn handle_legacy_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
     modules: &[ModuleDefinition],
     motd_lines: &[String],
+    daemon_limit: Option<NonZeroU64>,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
+    let mut limiter = daemon_limit.map(BandwidthLimiter::new);
 
     let greeting = legacy_daemon_greeting();
-    reader.get_mut().write_all(greeting.as_bytes())?;
+    write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
     reader.get_mut().flush()?;
 
     let mut request = None;
@@ -1907,7 +1929,7 @@ fn handle_legacy_session(
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(_)) => {
                 let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-                reader.get_mut().write_all(ok.as_bytes())?;
+                write_limited(reader.get_mut(), &mut limiter, ok.as_bytes())?;
                 reader.get_mut().flush()?;
                 continue;
             }
@@ -1939,18 +1961,27 @@ fn handle_legacy_session(
     advertise_capabilities(reader.get_mut(), modules)?;
 
     if request == "#list" {
-        respond_with_module_list(reader.get_mut(), modules, motd_lines, peer_addr.ip())?;
+        respond_with_module_list(
+            reader.get_mut(),
+            &mut limiter,
+            modules,
+            motd_lines,
+            peer_addr.ip(),
+        )?;
     } else if request.is_empty() {
-        reader
-            .get_mut()
-            .write_all(HANDSHAKE_ERROR_PAYLOAD.as_bytes())?;
-        reader.get_mut().write_all(b"\n")?;
+        write_limited(
+            reader.get_mut(),
+            &mut limiter,
+            HANDSHAKE_ERROR_PAYLOAD.as_bytes(),
+        )?;
+        write_limited(reader.get_mut(), &mut limiter, b"\n")?;
         let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-        reader.get_mut().write_all(exit.as_bytes())?;
+        write_limited(reader.get_mut(), &mut limiter, exit.as_bytes())?;
         reader.get_mut().flush()?;
     } else {
         respond_with_module_request(
             &mut reader,
+            &mut limiter,
             modules,
             &request,
             peer_addr.ip(),
@@ -2026,6 +2057,7 @@ fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
 
 fn respond_with_module_list(
     stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleDefinition],
     motd_lines: &[String],
     peer_ip: IpAddr,
@@ -2037,11 +2069,11 @@ fn respond_with_module_list(
             format!("MOTD {line}")
         };
         let message = format_legacy_daemon_message(LegacyDaemonMessage::Other(&payload));
-        stream.write_all(message.as_bytes())?;
+        write_limited(stream, limiter, message.as_bytes())?;
     }
 
     let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-    stream.write_all(ok.as_bytes())?;
+    write_limited(stream, limiter, ok.as_bytes())?;
 
     let mut hostname_cache: Option<Option<String>> = None;
     for module in modules {
@@ -2062,11 +2094,11 @@ fn respond_with_module_list(
             }
         }
         line.push('\n');
-        stream.write_all(line.as_bytes())?;
+        write_limited(stream, limiter, line.as_bytes())?;
     }
 
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-    stream.write_all(exit.as_bytes())?;
+    write_limited(stream, limiter, exit.as_bytes())?;
     stream.flush()
 }
 
@@ -2078,6 +2110,7 @@ enum AuthenticationStatus {
 
 fn perform_module_authentication(
     reader: &mut BufReader<TcpStream>,
+    limiter: &mut Option<BandwidthLimiter>,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
 ) -> io::Result<AuthenticationStatus> {
@@ -2087,14 +2120,14 @@ fn perform_module_authentication(
         let message = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired {
             module: Some(&challenge),
         });
-        stream.write_all(message.as_bytes())?;
+        write_limited(stream, limiter, message.as_bytes())?;
         stream.flush()?;
     }
 
     let response = match read_trimmed_line(reader)? {
         Some(line) => line,
         None => {
-            deny_module(reader.get_mut(), module, peer_ip)?;
+            deny_module(reader.get_mut(), module, peer_ip, limiter)?;
             return Ok(AuthenticationStatus::Denied);
         }
     };
@@ -2107,17 +2140,17 @@ fn perform_module_authentication(
         .unwrap_or("");
 
     if username.is_empty() || digest.is_empty() {
-        deny_module(reader.get_mut(), module, peer_ip)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     if !module.auth_users.iter().any(|user| user == username) {
-        deny_module(reader.get_mut(), module, peer_ip)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     if !verify_secret_response(module, username, &challenge, digest)? {
-        deny_module(reader.get_mut(), module, peer_ip)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
@@ -2190,42 +2223,65 @@ fn deny_module(
     stream: &mut TcpStream,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
+    limiter: &mut Option<BandwidthLimiter>,
 ) -> io::Result<()> {
     let payload = ACCESS_DENIED_PAYLOAD
         .replace("{module}", &module.name)
         .replace("{addr}", &peer_ip.to_string());
-    stream.write_all(payload.as_bytes())?;
-    stream.write_all(b"\n")?;
+    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, b"\n")?;
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-    stream.write_all(exit.as_bytes())?;
+    write_limited(stream, limiter, exit.as_bytes())?;
     stream.flush()
+}
+
+fn apply_module_bandwidth_limit(
+    limiter: &mut Option<BandwidthLimiter>,
+    module_limit: Option<NonZeroU64>,
+) {
+    if let Some(module_limit) = module_limit {
+        match limiter {
+            Some(existing) => {
+                let current = existing.limit_bytes();
+                if module_limit < current {
+                    *existing = BandwidthLimiter::new(module_limit);
+                }
+            }
+            None => {
+                *limiter = Some(BandwidthLimiter::new(module_limit));
+            }
+        }
+    }
 }
 
 fn respond_with_module_request(
     reader: &mut BufReader<TcpStream>,
+    limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleDefinition],
     request: &str,
     peer_ip: IpAddr,
     options: &[String],
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
+        apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
+
         let mut hostname_cache: Option<Option<String>> = None;
         let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
         if module.permits(peer_ip, peer_host) {
             if let Some(refused) = refused_option(module, options) {
                 let payload = format!("@ERROR: The server is configured to refuse {}", refused);
                 let stream = reader.get_mut();
-                stream.write_all(payload.as_bytes())?;
-                stream.write_all(b"\n")?;
+                write_limited(stream, limiter, payload.as_bytes())?;
+                write_limited(stream, limiter, b"\n")?;
                 let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-                stream.write_all(exit.as_bytes())?;
+                write_limited(stream, limiter, exit.as_bytes())?;
                 stream.flush()?;
                 return Ok(());
             }
 
             apply_module_timeout(reader.get_mut(), module)?;
             if module.requires_authentication() {
-                match perform_module_authentication(reader, module, peer_ip)? {
+                match perform_module_authentication(reader, limiter, module, peer_ip)? {
                     AuthenticationStatus::Denied => return Ok(()),
                     AuthenticationStatus::Granted => {}
                 }
@@ -2233,22 +2289,22 @@ fn respond_with_module_request(
 
             let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request);
             let stream = reader.get_mut();
-            stream.write_all(payload.as_bytes())?;
-            stream.write_all(b"\n")?;
+            write_limited(stream, limiter, payload.as_bytes())?;
+            write_limited(stream, limiter, b"\n")?;
         } else {
-            deny_module(reader.get_mut(), module, peer_ip)?;
+            deny_module(reader.get_mut(), module, peer_ip, limiter)?;
             return Ok(());
         }
     } else {
         let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", request);
         let stream = reader.get_mut();
-        stream.write_all(payload.as_bytes())?;
-        stream.write_all(b"\n")?;
+        write_limited(stream, limiter, payload.as_bytes())?;
+        write_limited(stream, limiter, b"\n")?;
     }
 
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
     let stream = reader.get_mut();
-    stream.write_all(exit.as_bytes())?;
+    write_limited(stream, limiter, exit.as_bytes())?;
     stream.flush()
 }
 
@@ -3786,11 +3842,17 @@ mod tests {
     }
 
     #[test]
+    fn run_daemon_enforces_bwlimit_during_module_list() {
+        rsync_bandwidth::take_recorded_sleeps();
+
     fn run_daemon_omits_unlisted_modules_from_listing() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
 
+        let module_dir = tempfile::tempdir().expect("module dir");
+        let comment = "x".repeat(4096);
+        let module_arg = format!("docs={},{}", module_dir.path().display(), comment);
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
             file,
@@ -3802,6 +3864,10 @@ mod tests {
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
+                OsString::from("--bwlimit"),
+                OsString::from("1K"),
+                OsString::from("--module"),
+                OsString::from(module_arg),
                 OsString::from("--config"),
                 file.path().as_os_str().to_os_string(),
                 OsString::from("--once"),
@@ -3813,6 +3879,8 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
         let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
@@ -3821,6 +3889,19 @@ mod tests {
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
 
+        let mut total_bytes = 0usize;
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("module line");
+        total_bytes += line.as_bytes().len();
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        total_bytes += line.as_bytes().len();
         line.clear();
         reader.read_line(&mut line).expect("ok line");
         assert_eq!(line, "@RSYNCD: OK\n");
@@ -3836,6 +3917,77 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+
+        let recorded = rsync_bandwidth::take_recorded_sleeps();
+        assert!(
+            !recorded.is_empty(),
+            "expected bandwidth limiter to record sleep intervals"
+        );
+        let total_sleep = recorded
+            .into_iter()
+            .fold(Duration::ZERO, |acc, duration| acc + duration);
+        let expected_secs = total_bytes as f64 / 1024.0;
+        let expected = Duration::from_secs_f64(expected_secs);
+        let tolerance = Duration::from_millis(250);
+        let diff = if total_sleep > expected {
+            total_sleep - expected
+        } else {
+            expected - total_sleep
+        };
+        assert!(
+            diff <= tolerance,
+            "expected sleep around {:?}, got {:?}",
+            expected,
+            total_sleep
+        );
+    }
+
+    #[test]
+    fn module_bwlimit_cannot_raise_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(8 * 1024 * 1024));
+
+        let limiter = limiter.expect("limiter remains configured");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
+    }
+
+    #[test]
+    fn module_bwlimit_can_lower_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(1024 * 1024));
+
+        let limiter = limiter.expect("limiter remains configured");
+        assert_eq!(limiter.limit_bytes(), NonZeroU64::new(1024 * 1024).unwrap());
+    }
+
+    #[test]
+    fn module_bwlimit_configures_unlimited_daemon() {
+        let mut limiter = None;
+
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(2 * 1024 * 1024));
+
+        let limiter = limiter.expect("limiter configured by module");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
+
+        let mut limiter = Some(limiter);
+        apply_module_bandwidth_limit(&mut limiter, None);
+        let limiter = limiter.expect("limiter preserved");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
     }
 
     #[test]
