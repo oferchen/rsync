@@ -82,10 +82,9 @@ use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
         BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientProgressObserver,
-        ClientProgressUpdate, ClientSummary, DirMergeEnforcedKind, DirMergeOptions,
-        FilterRuleKind, FilterRuleSpec, ModuleListRequest,
-        run_client_with_observer as run_core_client_with_observer,
-        run_module_list_with_password,
+        ClientProgressUpdate, ClientSummary, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
+        FilterRuleSpec, ModuleListRequest,
+        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
