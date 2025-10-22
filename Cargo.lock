@@ -493,8 +493,10 @@ dependencies = [
 name = "rsync-core"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "filetime",
  "libc",
+ "rsync-checksums",
  "rsync-engine",
  "rsync-filters",
  "rsync-meta",
