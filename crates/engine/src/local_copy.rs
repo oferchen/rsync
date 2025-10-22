@@ -58,7 +58,7 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -79,6 +79,180 @@ use rsync_meta::{
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
 static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Rule kind enforced for entries inside a dir-merge file when modifiers
+/// request include-only or exclude-only semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirMergeEnforcedKind {
+    /// All entries are treated as include rules.
+    Include,
+    /// All entries are treated as exclude rules.
+    Exclude,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DirMergeParser {
+    Lines {
+        enforce_kind: Option<DirMergeEnforcedKind>,
+        allow_comments: bool,
+    },
+    Whitespace {
+        enforce_kind: Option<DirMergeEnforcedKind>,
+    },
+}
+
+impl DirMergeParser {
+    const fn enforce_kind(&self) -> Option<DirMergeEnforcedKind> {
+        match self {
+            Self::Lines { enforce_kind, .. } | Self::Whitespace { enforce_kind } => *enforce_kind,
+        }
+    }
+
+    const fn allows_comments(&self) -> bool {
+        matches!(
+            self,
+            Self::Lines {
+                allow_comments: true,
+                ..
+            }
+        )
+    }
+
+    const fn is_whitespace(&self) -> bool {
+        matches!(self, Self::Whitespace { .. })
+    }
+}
+
+/// Behavioural modifiers applied to a per-directory filter merge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirMergeOptions {
+    inherit: bool,
+    exclude_self: bool,
+    parser: DirMergeParser,
+    allow_list_clear: bool,
+}
+
+impl DirMergeOptions {
+    /// Creates default merge options: inherited rules, line-based parsing, and
+    /// comment support.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            inherit: true,
+            exclude_self: false,
+            parser: DirMergeParser::Lines {
+                enforce_kind: None,
+                allow_comments: true,
+            },
+            allow_list_clear: false,
+        }
+    }
+
+    /// Requests that the parsed rules be inherited by subdirectories.
+    #[must_use]
+    pub const fn inherit(mut self, inherit: bool) -> Self {
+        self.inherit = inherit;
+        self
+    }
+
+    /// Requests that the filter file be excluded from the transfer.
+    #[must_use]
+    pub const fn exclude_filter_file(mut self, exclude: bool) -> Self {
+        self.exclude_self = exclude;
+        self
+    }
+
+    /// Applies an enforced rule kind to entries parsed from the file.
+    #[must_use]
+    pub fn with_enforced_kind(mut self, kind: Option<DirMergeEnforcedKind>) -> Self {
+        self.parser = match self.parser {
+            DirMergeParser::Lines { allow_comments, .. } => DirMergeParser::Lines {
+                enforce_kind: kind,
+                allow_comments,
+            },
+            DirMergeParser::Whitespace { .. } => DirMergeParser::Whitespace { enforce_kind: kind },
+        };
+        self
+    }
+
+    /// Switches parsing to whitespace-separated tokens instead of whole lines.
+    #[must_use]
+    pub fn use_whitespace(mut self) -> Self {
+        let enforce = self.parser.enforce_kind();
+        self.parser = DirMergeParser::Whitespace {
+            enforce_kind: enforce,
+        };
+        self
+    }
+
+    /// Toggles comment handling for line-based parsing.
+    #[must_use]
+    pub fn allow_comments(mut self, allow: bool) -> Self {
+        self.parser = match self.parser {
+            DirMergeParser::Lines { enforce_kind, .. } => DirMergeParser::Lines {
+                enforce_kind,
+                allow_comments: allow,
+            },
+            other => other,
+        };
+        self
+    }
+
+    /// Permits list-clearing `!` directives inside the merge file.
+    #[must_use]
+    pub const fn allow_list_clearing(mut self, allow: bool) -> Self {
+        self.allow_list_clear = allow;
+        self
+    }
+
+    /// Returns whether the parsed rules should be inherited.
+    #[must_use]
+    pub const fn inherit_rules(&self) -> bool {
+        self.inherit
+    }
+
+    /// Returns whether the filter file itself should be excluded from transfer.
+    #[must_use]
+    pub const fn excludes_self(&self) -> bool {
+        self.exclude_self
+    }
+
+    /// Returns whether list-clearing directives are permitted.
+    #[must_use]
+    pub const fn list_clear_allowed(&self) -> bool {
+        self.allow_list_clear
+    }
+
+    /// Returns the parser configuration used when reading the file.
+    #[must_use]
+    const fn parser(&self) -> &DirMergeParser {
+        &self.parser
+    }
+
+    /// Reports whether whitespace tokenisation is enabled.
+    #[must_use]
+    pub const fn uses_whitespace(&self) -> bool {
+        self.parser.is_whitespace()
+    }
+
+    /// Reports whether comment lines are honoured when parsing.
+    #[must_use]
+    pub const fn allows_comments(&self) -> bool {
+        self.parser.allows_comments()
+    }
+
+    /// Returns the enforced rule kind, if any.
+    #[must_use]
+    pub const fn enforced_kind(&self) -> Option<DirMergeEnforcedKind> {
+        self.parser.enforce_kind()
+    }
+}
+
+impl Default for DirMergeOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Exit code returned when operand validation fails.
 const INVALID_OPERAND_EXIT_CODE: i32 = 23;
@@ -149,6 +323,7 @@ impl FilterProgram {
         path: &Path,
         is_dir: bool,
         dir_merge_layers: &[Vec<FilterSegment>],
+        ephemeral_layers: Option<&[(usize, FilterSegment)]>,
     ) -> FilterOutcome {
         let mut outcome = FilterOutcome::default();
 
@@ -159,6 +334,13 @@ impl FilterProgram {
                     if let Some(layers) = dir_merge_layers.get(*index) {
                         for layer in layers {
                             layer.apply(path, is_dir, &mut outcome);
+                        }
+                    }
+                    if let Some(ephemeral) = ephemeral_layers {
+                        for (rule_index, segment) in ephemeral {
+                            if *rule_index == *index {
+                                segment.apply(path, is_dir, &mut outcome);
+                            }
                         }
                     }
                 }
@@ -217,16 +399,16 @@ impl Error for FilterProgramError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirMergeRule {
     pattern: PathBuf,
-    remove_source: bool,
+    options: DirMergeOptions,
 }
 
 impl DirMergeRule {
     /// Creates a new [`DirMergeRule`].
     #[must_use]
-    pub fn new(pattern: impl Into<PathBuf>, remove_source: bool) -> Self {
+    pub fn new(pattern: impl Into<PathBuf>, options: DirMergeOptions) -> Self {
         Self {
             pattern: pattern.into(),
-            remove_source,
+            options,
         }
     }
 
@@ -236,10 +418,10 @@ impl DirMergeRule {
         self.pattern.as_path()
     }
 
-    /// Reports whether the filter file should be removed after loading.
+    /// Returns the behavioural modifiers applied to this merge rule.
     #[must_use]
-    pub const fn remove_source(&self) -> bool {
-        self.remove_source
+    pub const fn options(&self) -> &DirMergeOptions {
+        &self.options
     }
 }
 
@@ -1274,6 +1456,7 @@ struct CopyContext<'a> {
     filter_program: Option<FilterProgram>,
     dir_merge_layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
+    dir_merge_ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
 }
 
 impl<'a> CopyContext<'a> {
@@ -1289,6 +1472,7 @@ impl<'a> CopyContext<'a> {
             .as_ref()
             .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
             .unwrap_or_default();
+        let dir_merge_ephemeral = Vec::new();
         Self {
             mode,
             options,
@@ -1303,6 +1487,7 @@ impl<'a> CopyContext<'a> {
             filter_program,
             dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
             observer,
+            dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
         }
     }
 
@@ -1372,8 +1557,10 @@ impl<'a> CopyContext<'a> {
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
         if let Some(program) = &self.filter_program {
             let layers = self.dir_merge_layers.borrow();
+            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             program
-                .evaluate(relative, is_dir, layers.as_slice())
+                .evaluate(relative, is_dir, layers.as_slice(), temp_layers)
                 .allows_transfer()
         } else if let Some(filters) = self.options.filter_set() {
             filters.allows(relative, is_dir)
@@ -1386,7 +1573,9 @@ impl<'a> CopyContext<'a> {
         let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {
             let layers = self.dir_merge_layers.borrow();
-            let outcome = program.evaluate(relative, is_dir, layers.as_slice());
+            let ephemeral = self.dir_merge_ephemeral.borrow();
+            let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
+            let outcome = program.evaluate(relative, is_dir, layers.as_slice(), temp_layers);
             if delete_excluded {
                 outcome.allows_deletion_when_excluded_removed()
             } else {
@@ -1407,12 +1596,16 @@ impl<'a> CopyContext<'a> {
         let Some(program) = &self.filter_program else {
             return Ok(DirectoryFilterGuard::new(
                 Rc::clone(&self.dir_merge_layers),
+                Rc::clone(&self.dir_merge_ephemeral),
                 Vec::new(),
+                false,
             ));
         };
 
         let mut added_indices = Vec::new();
         let mut layers = self.dir_merge_layers.borrow_mut();
+        let mut ephemeral_stack = self.dir_merge_ephemeral.borrow_mut();
+        ephemeral_stack.push(Vec::new());
 
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
@@ -1421,6 +1614,7 @@ impl<'a> CopyContext<'a> {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
+                    ephemeral_stack.pop();
                     return Err(LocalCopyError::io(
                         "inspect filter file",
                         candidate.clone(),
@@ -1434,36 +1628,54 @@ impl<'a> CopyContext<'a> {
             }
 
             let mut visited = Vec::new();
-            let rules = load_dir_merge_rules_recursive(candidate.as_path(), &mut visited)?;
-            if rules.is_empty() {
-                if rule.remove_source() && !self.mode.is_dry_run() {
-                    let _ = fs::remove_file(&candidate);
+            let rules = match load_dir_merge_rules_recursive(
+                candidate.as_path(),
+                rule.options(),
+                &mut visited,
+            ) {
+                Ok(rules) => rules,
+                Err(error) => {
+                    ephemeral_stack.pop();
+                    return Err(error);
                 }
-                continue;
-            }
+            };
 
             let mut segment = FilterSegment::default();
             for compiled in rules {
-                segment
-                    .push_rule(compiled)
-                    .map_err(|error| filter_program_local_error(&candidate, error))?;
+                if let Err(error) = segment.push_rule(compiled) {
+                    ephemeral_stack.pop();
+                    return Err(filter_program_local_error(&candidate, error));
+                }
             }
 
-            layers[index].push(segment);
-            added_indices.push(index);
+            if rule.options().excludes_self() {
+                let pattern = rule.pattern().to_string_lossy().into_owned();
+                if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
+                    ephemeral_stack.pop();
+                    return Err(filter_program_local_error(&candidate, error));
+                }
+            }
 
-            if rule.remove_source() && !self.mode.is_dry_run() {
-                fs::remove_file(&candidate).map_err(|error| {
-                    LocalCopyError::io("remove filter file", candidate.clone(), error)
-                })?;
+            if segment.is_empty() {
+                continue;
+            }
+
+            if rule.options().inherit_rules() {
+                layers[index].push(segment);
+                added_indices.push(index);
+            } else if let Some(current) = ephemeral_stack.last_mut() {
+                current.push((index, segment));
             }
         }
 
         drop(layers);
+        drop(ephemeral_stack);
 
         Ok(DirectoryFilterGuard::new(
             Rc::clone(&self.dir_merge_layers),
+            Rc::clone(&self.dir_merge_ephemeral),
             added_indices,
+            true,
         ))
     }
 
@@ -1501,17 +1713,34 @@ impl<'a> CopyContext<'a> {
 
 struct DirectoryFilterGuard {
     layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
+    ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
     indices: Vec<usize>,
+    ephemeral_active: bool,
 }
 
 impl DirectoryFilterGuard {
-    fn new(layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>, indices: Vec<usize>) -> Self {
-        Self { layers, indices }
+    fn new(
+        layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
+        ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
+        indices: Vec<usize>,
+        ephemeral_active: bool,
+    ) -> Self {
+        Self {
+            layers,
+            ephemeral,
+            indices,
+            ephemeral_active,
+        }
     }
 }
 
 impl Drop for DirectoryFilterGuard {
     fn drop(&mut self) {
+        if self.ephemeral_active {
+            let mut stack = self.ephemeral.borrow_mut();
+            stack.pop();
+        }
+
         if self.indices.is_empty() {
             return;
         }
@@ -1545,6 +1774,7 @@ fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
 
 fn load_dir_merge_rules_recursive(
     path: &Path,
+    options: &DirMergeOptions,
     visited: &mut Vec<PathBuf>,
 ) -> Result<Vec<FilterRule>, LocalCopyError> {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -1561,43 +1791,132 @@ fn load_dir_merge_rules_recursive(
 
     let file = fs::File::open(path)
         .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
-    let mut reader = io::BufReader::new(file);
-    let mut buffer = String::new();
     let mut rules = Vec::new();
 
-    loop {
-        buffer.clear();
-        let bytes = reader
-            .read_line(&mut buffer)
-            .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
-        if bytes == 0 {
-            break;
-        }
+    let map_error = |error: FilterParseError| {
+        LocalCopyError::io(
+            "parse filter file",
+            path.to_path_buf(),
+            io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
+        )
+    };
 
-        let trimmed = buffer.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
+    let mut contents = String::new();
+    io::BufReader::new(file)
+        .read_to_string(&mut contents)
+        .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
 
-        match parse_filter_directive_line(trimmed) {
-            Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
-            Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
-                let nested = if merge_path.is_absolute() {
-                    merge_path
-                } else {
-                    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-                    parent.join(merge_path)
-                };
-                let nested_rules = load_dir_merge_rules_recursive(&nested, visited)?;
-                rules.extend(nested_rules);
+    match options.parser() {
+        DirMergeParser::Whitespace { enforce_kind } => {
+            let enforce_kind = *enforce_kind;
+            let mut iter = contents.split_whitespace();
+            while let Some(token) = iter.next() {
+                if token.is_empty() {
+                    continue;
+                }
+
+                if token == "!" {
+                    if options.list_clear_allowed() {
+                        rules.clear();
+                        continue;
+                    }
+                    return Err(map_error(FilterParseError::new(
+                        "list-clearing '!' is not permitted in this filter file",
+                    )));
+                }
+
+                if let Some(kind) = enforce_kind {
+                    rules.push(match kind {
+                        DirMergeEnforcedKind::Include => FilterRule::include(token.to_string()),
+                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_string()),
+                    });
+                    continue;
+                }
+
+                let mut directive = token.to_string();
+                let lower = directive.to_ascii_lowercase();
+                if matches!(
+                    lower.as_str(),
+                    "merge" | "include" | "exclude" | "show" | "hide" | "protect"
+                ) {
+                    if let Some(next) = iter.next() {
+                        directive.push(' ');
+                        directive.push_str(next);
+                    }
+                } else if lower.starts_with("dir-merge") {
+                    if let Some(next) = iter.next() {
+                        directive.push(' ');
+                        directive.push_str(next);
+                    }
+                }
+
+                match parse_filter_directive_line(&directive) {
+                    Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
+                    Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
+                        let nested = if merge_path.is_absolute() {
+                            merge_path
+                        } else {
+                            let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                            parent.join(merge_path)
+                        };
+                        let nested_rules =
+                            load_dir_merge_rules_recursive(&nested, options, visited)?;
+                        rules.extend(nested_rules);
+                    }
+                    Ok(None) => {}
+                    Err(error) => return Err(map_error(error)),
+                }
             }
-            Ok(None) => {}
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "parse filter file",
-                    path.to_path_buf(),
-                    io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
-                ));
+        }
+        DirMergeParser::Lines {
+            enforce_kind,
+            allow_comments,
+        } => {
+            let enforce_kind = *enforce_kind;
+            let allow_comments = *allow_comments;
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if allow_comments && trimmed.starts_with('#') {
+                    continue;
+                }
+
+                if trimmed == "!" {
+                    if options.list_clear_allowed() {
+                        rules.clear();
+                        continue;
+                    }
+                    return Err(map_error(FilterParseError::new(
+                        "list-clearing '!' is not permitted in this filter file",
+                    )));
+                }
+
+                if let Some(kind) = enforce_kind {
+                    rules.push(match kind {
+                        DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_string()),
+                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_string()),
+                    });
+                    continue;
+                }
+
+                match parse_filter_directive_line(trimmed) {
+                    Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
+                    Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
+                        let nested = if merge_path.is_absolute() {
+                            merge_path
+                        } else {
+                            let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                            parent.join(merge_path)
+                        };
+                        let nested_rules =
+                            load_dir_merge_rules_recursive(&nested, options, visited)?;
+                        rules.extend(nested_rules);
+                    }
+                    Ok(None) => {}
+                    Err(error) => return Err(map_error(error)),
+                }
             }
         }
     }
