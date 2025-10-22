@@ -566,6 +566,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "rsync-bandwidth"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "rsync-bin"
 version = "0.0.0"
 dependencies = [
@@ -616,6 +623,7 @@ dependencies = [
  "base64",
  "filetime",
  "libc",
+ "rsync-bandwidth",
  "rsync-checksums",
  "rsync-engine",
  "rsync-filters",
@@ -632,6 +640,7 @@ dependencies = [
  "base64",
  "clap",
  "dns-lookup",
+ "rsync-bandwidth",
  "rsync-checksums",
  "rsync-core",
  "rsync-logging",
@@ -645,6 +654,7 @@ version = "0.0.0"
 dependencies = [
  "filetime",
  "globset",
+ "rsync-bandwidth",
  "rsync-checksums",
  "rsync-compress",
  "rsync-filters",

@@ -67,6 +67,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime};
 
 use globset::{GlobBuilder, GlobMatcher};
+use rsync_bandwidth::BandwidthLimiter;
 use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
@@ -2723,140 +2724,6 @@ fn sync_xattrs_if_requested(
         sync_xattrs(source, destination, follow_symlinks).map_err(map_metadata_error)?;
     }
     Ok(())
-}
-
-const MICROS_PER_SECOND: u128 = 1_000_000;
-const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
-const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
-
-struct BandwidthLimiter {
-    kib_per_second: NonZeroU64,
-    write_max: usize,
-    total_written: u128,
-    last_instant: Option<Instant>,
-    simulated_elapsed_us: u128,
-}
-
-impl BandwidthLimiter {
-    fn new(limit: NonZeroU64) -> Self {
-        let kib = limit
-            .get()
-            .checked_div(1024)
-            .and_then(NonZeroU64::new)
-            .expect("bandwidth limit must be at least 1024 bytes per second");
-        let mut write_max = u128::from(kib.get()).saturating_mul(128);
-        if write_max < 512 {
-            write_max = 512;
-        }
-        let write_max = write_max.min(usize::MAX as u128) as usize;
-
-        Self {
-            kib_per_second: kib,
-            write_max,
-            total_written: 0,
-            last_instant: None,
-            simulated_elapsed_us: 0,
-        }
-    }
-
-    fn recommended_read_size(&self, buffer_len: usize) -> usize {
-        let limit = self.write_max.max(1);
-        buffer_len.min(limit)
-    }
-
-    fn register(&mut self, bytes: usize) {
-        if bytes == 0 {
-            return;
-        }
-
-        self.total_written = self.total_written.saturating_add(bytes as u128);
-
-        let start = Instant::now();
-
-        let mut elapsed_us = self.simulated_elapsed_us;
-        if let Some(previous) = self.last_instant {
-            let elapsed = start.duration_since(previous);
-            let measured = elapsed.as_micros().min(u128::from(u64::MAX));
-            elapsed_us = elapsed_us.saturating_add(measured);
-        }
-        self.simulated_elapsed_us = 0;
-        if elapsed_us > 0 {
-            let allowed = elapsed_us.saturating_mul(u128::from(self.kib_per_second.get()))
-                / MICROS_PER_SECOND_DIV_1024;
-            if allowed >= self.total_written {
-                self.total_written = 0;
-            } else {
-                self.total_written -= allowed;
-            }
-        }
-
-        let sleep_us = self
-            .total_written
-            .saturating_mul(MICROS_PER_SECOND_DIV_1024)
-            / u128::from(self.kib_per_second.get());
-
-        if sleep_us < MINIMUM_SLEEP_MICROS {
-            self.last_instant = Some(start);
-            return;
-        }
-
-        let requested = duration_from_microseconds(sleep_us);
-        if !requested.is_zero() {
-            sleep_for(requested);
-        }
-
-        let end = Instant::now();
-        let elapsed_us = end
-            .checked_duration_since(start)
-            .map(|duration| duration.as_micros().min(u128::from(u64::MAX)))
-            .unwrap_or(0);
-        if sleep_us > elapsed_us {
-            self.simulated_elapsed_us = sleep_us - elapsed_us;
-        }
-        let remaining_us = sleep_us.saturating_sub(elapsed_us);
-        let leftover = remaining_us.saturating_mul(u128::from(self.kib_per_second.get()))
-            / MICROS_PER_SECOND_DIV_1024;
-
-        self.total_written = leftover;
-        self.last_instant = Some(end);
-    }
-}
-
-fn duration_from_microseconds(us: u128) -> Duration {
-    if us == 0 {
-        return Duration::ZERO;
-    }
-
-    let seconds = us / MICROS_PER_SECOND;
-    let micros = (us % MICROS_PER_SECOND) as u32;
-
-    if seconds >= u128::from(u64::MAX) {
-        Duration::MAX
-    } else {
-        Duration::new(seconds as u64, micros.saturating_mul(1_000))
-    }
-}
-
-#[cfg(not(test))]
-fn sleep_for(duration: Duration) {
-    if !duration.is_zero() {
-        std::thread::sleep(duration);
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    static RECORDED_SLEEPS: std::cell::RefCell<Vec<Duration>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-#[cfg(test)]
-fn sleep_for(duration: Duration) {
-    RECORDED_SLEEPS.with(|log| log.borrow_mut().push(duration));
-}
-
-#[cfg(test)]
-pub(super) fn take_recorded_sleeps() -> Vec<Duration> {
-    RECORDED_SLEEPS.with(|log| std::mem::take(&mut *log.borrow_mut()))
 }
 
 /// Error produced when planning or executing a local copy fails.
@@ -6224,7 +6091,7 @@ mod tests {
 
     #[test]
     fn execute_with_bandwidth_limit_records_sleep() {
-        super::take_recorded_sleeps();
+        rsync_bandwidth::take_recorded_sleeps();
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.bin");
@@ -6245,7 +6112,7 @@ mod tests {
 
         assert_eq!(fs::read(&destination).expect("read dest").len(), 4 * 1024);
 
-        let recorded = super::take_recorded_sleeps();
+        let recorded = rsync_bandwidth::take_recorded_sleeps();
         assert!(
             !recorded.is_empty(),
             "expected bandwidth limiter to schedule sleeps"
@@ -6286,7 +6153,7 @@ mod tests {
 
     #[test]
     fn execute_without_bandwidth_limit_does_not_sleep() {
-        super::take_recorded_sleeps();
+        rsync_bandwidth::take_recorded_sleeps();
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
@@ -6301,7 +6168,7 @@ mod tests {
         let summary = plan.execute().expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
-        let recorded = super::take_recorded_sleeps();
+        let recorded = rsync_bandwidth::take_recorded_sleeps();
         assert!(recorded.is_empty(), "unexpected sleep durations recorded");
         assert_eq!(summary.files_copied(), 1);
     }
