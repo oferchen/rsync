@@ -241,6 +241,7 @@ struct ModuleDefinition {
     uid: Option<u32>,
     gid: Option<u32>,
     timeout: Option<NonZeroU64>,
+    listable: bool,
 }
 
 impl ModuleDefinition {
@@ -318,6 +319,11 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn timeout(&self) -> Option<NonZeroU64> {
         self.timeout
+    }
+
+    #[cfg(test)]
+    fn listable(&self) -> bool {
+        self.listable
     }
 }
 
@@ -813,6 +819,16 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 })?;
                 builder.set_numeric_ids(parsed, path, line_number)?;
             }
+            "list" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid boolean value '{value}' for 'list'"),
+                    )
+                })?;
+                builder.set_listable(parsed, path, line_number)?;
+            }
             "uid" => {
                 let uid = parse_numeric_identifier(value).ok_or_else(|| {
                     config_parse_error(path, line_number, format!("invalid uid '{value}'"))
@@ -861,6 +877,7 @@ struct ModuleDefinitionBuilder {
     uid: Option<u32>,
     gid: Option<u32>,
     timeout: Option<Option<NonZeroU64>>,
+    listable: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -882,6 +899,7 @@ impl ModuleDefinitionBuilder {
             uid: None,
             gid: None,
             timeout: None,
+            listable: None,
         }
     }
 
@@ -1101,6 +1119,24 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_listable(
+        &mut self,
+        listable: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.listable.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'list' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.listable = Some(listable);
+        Ok(())
+    }
+
     fn set_uid(&mut self, uid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
         if self.uid.is_some() {
             return Err(config_parse_error(
@@ -1194,6 +1230,7 @@ impl ModuleDefinitionBuilder {
             uid: self.uid,
             gid: self.gid,
             timeout: self.timeout.unwrap_or(None),
+            listable: self.listable.unwrap_or(true),
         })
     }
 }
@@ -1921,6 +1958,8 @@ fn handle_legacy_session(
 
     let request = request.unwrap_or_default();
 
+    advertise_capabilities(reader.get_mut(), modules)?;
+
     if request == "#list" {
         respond_with_module_list(
             reader.get_mut(),
@@ -1983,6 +2022,39 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     Ok(Some(line))
 }
 
+fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleDefinition]) -> io::Result<()> {
+    for payload in advertised_capability_lines(modules) {
+        let message = format_legacy_daemon_message(LegacyDaemonMessage::Capabilities {
+            flags: payload.as_str(),
+        });
+        stream.write_all(message.as_bytes())?;
+    }
+
+    if modules.is_empty() {
+        Ok(())
+    } else {
+        stream.flush()
+    }
+}
+
+fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
+    if modules.is_empty() {
+        return Vec::new();
+    }
+
+    let mut features = Vec::with_capacity(2);
+    features.push(String::from("modules"));
+
+    if modules
+        .iter()
+        .any(ModuleDefinition::requires_authentication)
+    {
+        features.push(String::from("authlist"));
+    }
+
+    vec![features.join(" ")]
+}
+
 fn respond_with_module_list(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
@@ -2005,6 +2077,10 @@ fn respond_with_module_list(
 
     let mut hostname_cache: Option<Option<String>> = None;
     for module in modules {
+        if !module.listable {
+            continue;
+        }
+
         let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
         if !module.permits(peer_ip, peer_host) {
             continue;
@@ -2341,6 +2417,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         uid: None,
         gid: None,
         timeout: None,
+        listable: true,
     })
 }
 
@@ -2546,6 +2623,52 @@ mod tests {
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
 
+    fn base_module(name: &str) -> ModuleDefinition {
+        ModuleDefinition {
+            name: String::from(name),
+            path: PathBuf::from("/srv/module"),
+            comment: None,
+            hosts_allow: Vec::new(),
+            hosts_deny: Vec::new(),
+            auth_users: Vec::new(),
+            secrets_file: None,
+            bandwidth_limit: None,
+            refuse_options: Vec::new(),
+            read_only: false,
+            numeric_ids: false,
+            uid: None,
+            gid: None,
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn advertised_capability_lines_empty_without_modules() {
+        assert!(advertised_capability_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn advertised_capability_lines_report_modules_without_auth() {
+        let module = base_module("docs");
+
+        assert_eq!(
+            advertised_capability_lines(&[module]),
+            vec![String::from("modules")]
+        );
+    }
+
+    #[test]
+    fn advertised_capability_lines_include_authlist_when_required() {
+        let mut module = base_module("secure");
+        module.auth_users.push(String::from("alice"));
+        module.secrets_file = Some(PathBuf::from("secrets.txt"));
+
+        assert_eq!(
+            advertised_capability_lines(&[module]),
+            vec![String::from("modules authlist")]
+        );
+    }
+
     fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> ModuleDefinition {
         ModuleDefinition {
             name: String::from("module"),
@@ -2568,6 +2691,7 @@ mod tests {
             uid: None,
             gid: None,
             timeout: None,
+            listable: true,
         }
     }
 
@@ -2777,10 +2901,12 @@ mod tests {
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
         assert!(modules[0].bandwidth_limit().is_none());
+        assert!(modules[0].listable());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
+        assert!(modules[1].listable());
     }
 
     #[test]
@@ -2834,7 +2960,7 @@ mod tests {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
             file,
-            "[docs]\npath = /srv/docs\nread only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\n",
+            "[docs]\npath = /srv/docs\nread only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\nlist = no\n",
         )
         .expect("write config");
 
@@ -2851,6 +2977,7 @@ mod tests {
         assert!(module.numeric_ids());
         assert_eq!(module.uid(), Some(1234));
         assert_eq!(module.gid(), Some(4321));
+        assert!(!module.listable());
     }
 
     #[test]
@@ -2903,6 +3030,25 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("invalid boolean value 'maybe'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_list_directive() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nlist = maybe\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid list boolean should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid boolean value 'maybe' for 'list'")
         );
     }
 
@@ -3397,6 +3543,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules authlist\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("auth request");
         assert!(line.starts_with("@RSYNCD: AUTHREQD "));
         let challenge = line
@@ -3485,6 +3635,10 @@ mod tests {
 
         stream.write_all(b"secure\n").expect("send module request");
         stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules authlist\n");
 
         line.clear();
         reader.read_line(&mut line).expect("auth request");
@@ -3663,6 +3817,10 @@ mod tests {
         stream.flush().expect("flush list request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("ok line");
         assert_eq!(line, "@RSYNCD: OK\n");
 
@@ -3687,6 +3845,7 @@ mod tests {
     fn run_daemon_enforces_bwlimit_during_module_list() {
         rsync_bandwidth::take_recorded_sleeps();
 
+    fn run_daemon_omits_unlisted_modules_from_listing() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -3694,6 +3853,12 @@ mod tests {
         let module_dir = tempfile::tempdir().expect("module dir");
         let comment = "x".repeat(4096);
         let module_arg = format!("docs={},{}", module_dir.path().display(), comment);
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[visible]\npath = /srv/visible\n\n[hidden]\npath = /srv/hidden\nlist = no\n",
+        )
+        .expect("write config");
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -3703,6 +3868,8 @@ mod tests {
                 OsString::from("1K"),
                 OsString::from("--module"),
                 OsString::from(module_arg),
+                OsString::from("--config"),
+                file.path().as_os_str().to_os_string(),
                 OsString::from("--once"),
             ])
             .build();
@@ -3714,6 +3881,10 @@ mod tests {
 
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
@@ -3731,6 +3902,17 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("exit line");
         total_bytes += line.as_bytes().len();
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("first module");
+        assert_eq!(line.trim_end(), "visible");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
         let result = handle.join().expect("daemon thread");
@@ -3859,6 +4041,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("refusal message");
         assert_eq!(
             line.trim_end(),
@@ -3917,6 +4103,10 @@ mod tests {
         stream.flush().expect("flush module request");
 
         line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("error message");
         assert_eq!(
             line.trim_end(),
@@ -3967,6 +4157,10 @@ mod tests {
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
 
         line.clear();
         reader.read_line(&mut line).expect("ok line");
@@ -4027,6 +4221,10 @@ mod tests {
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
 
         line.clear();
         reader.read_line(&mut line).expect("motd line 1");
