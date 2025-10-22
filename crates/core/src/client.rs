@@ -84,7 +84,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{env, error::Error};
 
 use base64::Engine as _;
@@ -93,8 +93,9 @@ use rsync_checksums::strong::Md5;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
-    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
-    LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata,
+    LocalCopyOptions, LocalCopyPlan, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler,
+    LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -1064,6 +1065,7 @@ pub struct ClientEvent {
     kind: ClientEventKind,
     bytes_transferred: u64,
     elapsed: Duration,
+    metadata: Option<ClientEntryMetadata>,
 }
 
 impl ClientEvent {
@@ -1085,6 +1087,9 @@ impl ClientEvent {
             kind,
             bytes_transferred: record.bytes_transferred(),
             elapsed: record.elapsed(),
+            metadata: record
+                .metadata()
+                .map(ClientEntryMetadata::from_local_copy_metadata),
         }
     }
 
@@ -1094,6 +1099,7 @@ impl ClientEvent {
             kind: ClientEventKind::DataCopied,
             bytes_transferred,
             elapsed,
+            metadata: None,
         }
     }
 
@@ -1120,6 +1126,12 @@ impl ClientEvent {
     pub const fn elapsed(&self) -> Duration {
         self.elapsed
     }
+
+    /// Returns the metadata associated with the event, when available.
+    #[must_use]
+    pub fn metadata(&self) -> Option<&ClientEntryMetadata> {
+        self.metadata.as_ref()
+    }
 }
 
 impl ClientEventKind {
@@ -1135,6 +1147,118 @@ impl ClientEventKind {
                 | Self::FifoCopied
                 | Self::DeviceCopied
         )
+    }
+}
+
+/// Kind of entry described by [`ClientEntryMetadata`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClientEntryKind {
+    /// Regular file entry.
+    File,
+    /// Directory entry.
+    Directory,
+    /// Symbolic link entry.
+    Symlink,
+    /// FIFO entry.
+    Fifo,
+    /// Character device entry.
+    CharDevice,
+    /// Block device entry.
+    BlockDevice,
+    /// Unix domain socket entry.
+    Socket,
+    /// Entry of an unknown or platform-specific type.
+    Other,
+}
+
+impl ClientEntryKind {
+    /// Returns whether the metadata describes a directory entry.
+    #[must_use]
+    pub const fn is_directory(self) -> bool {
+        matches!(self, Self::Directory)
+    }
+
+    /// Returns whether the metadata describes a symbolic link entry.
+    #[must_use]
+    pub const fn is_symlink(self) -> bool {
+        matches!(self, Self::Symlink)
+    }
+}
+
+/// Metadata snapshot describing an entry affected by a client event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientEntryMetadata {
+    kind: ClientEntryKind,
+    length: u64,
+    modified: Option<SystemTime>,
+    mode: Option<u32>,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    nlink: Option<u64>,
+}
+
+impl ClientEntryMetadata {
+    fn from_local_copy_metadata(metadata: &LocalCopyMetadata) -> Self {
+        Self {
+            kind: match metadata.kind() {
+                LocalCopyFileKind::File => ClientEntryKind::File,
+                LocalCopyFileKind::Directory => ClientEntryKind::Directory,
+                LocalCopyFileKind::Symlink => ClientEntryKind::Symlink,
+                LocalCopyFileKind::Fifo => ClientEntryKind::Fifo,
+                LocalCopyFileKind::CharDevice => ClientEntryKind::CharDevice,
+                LocalCopyFileKind::BlockDevice => ClientEntryKind::BlockDevice,
+                LocalCopyFileKind::Socket => ClientEntryKind::Socket,
+                LocalCopyFileKind::Other => ClientEntryKind::Other,
+            },
+            length: metadata.len(),
+            modified: metadata.modified(),
+            mode: metadata.mode(),
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            nlink: metadata.nlink(),
+        }
+    }
+
+    /// Returns the kind of entry represented by this metadata snapshot.
+    #[must_use]
+    pub const fn kind(&self) -> ClientEntryKind {
+        self.kind
+    }
+
+    /// Returns the logical length of the entry in bytes.
+    #[must_use]
+    pub const fn length(&self) -> u64 {
+        self.length
+    }
+
+    /// Returns the recorded modification timestamp, when available.
+    #[must_use]
+    pub const fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+
+    /// Returns the Unix permission bits when available.
+    #[must_use]
+    pub const fn mode(&self) -> Option<u32> {
+        self.mode
+    }
+
+    /// Returns the numeric owner identifier when available.
+    #[must_use]
+    pub const fn uid(&self) -> Option<u32> {
+        self.uid
+    }
+
+    /// Returns the numeric group identifier when available.
+    #[must_use]
+    pub const fn gid(&self) -> Option<u32> {
+        self.gid
+    }
+
+    /// Returns the recorded link count when available.
+    #[must_use]
+    pub const fn nlink(&self) -> Option<u64> {
+        self.nlink
     }
 }
 

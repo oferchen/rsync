@@ -985,6 +985,7 @@ pub struct LocalCopyRecord {
     action: LocalCopyAction,
     bytes_transferred: u64,
     elapsed: Duration,
+    metadata: Option<LocalCopyMetadata>,
 }
 
 impl LocalCopyRecord {
@@ -994,12 +995,14 @@ impl LocalCopyRecord {
         action: LocalCopyAction,
         bytes_transferred: u64,
         elapsed: Duration,
+        metadata: Option<LocalCopyMetadata>,
     ) -> Self {
         Self {
             relative_path,
             action,
             bytes_transferred,
             elapsed,
+            metadata,
         }
     }
 
@@ -1025,6 +1028,158 @@ impl LocalCopyRecord {
     #[must_use]
     pub const fn elapsed(&self) -> Duration {
         self.elapsed
+    }
+
+    /// Returns the metadata snapshot associated with this record, when available.
+    #[must_use]
+    pub fn metadata(&self) -> Option<&LocalCopyMetadata> {
+        self.metadata.as_ref()
+    }
+}
+
+/// File type captured for [`LocalCopyMetadata`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalCopyFileKind {
+    /// Regular file entry.
+    File,
+    /// Directory entry.
+    Directory,
+    /// Symbolic link entry.
+    Symlink,
+    /// FIFO entry.
+    Fifo,
+    /// Character device entry.
+    CharDevice,
+    /// Block device entry.
+    BlockDevice,
+    /// Unix domain socket entry.
+    Socket,
+    /// Unknown or platform specific entry.
+    Other,
+}
+
+impl LocalCopyFileKind {
+    fn from_file_type(file_type: &fs::FileType) -> Self {
+        if file_type.is_dir() {
+            return Self::Directory;
+        }
+        if file_type.is_symlink() {
+            return Self::Symlink;
+        }
+        if file_type.is_file() {
+            return Self::File;
+        }
+        if is_fifo(file_type) {
+            return Self::Fifo;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+
+            if file_type.is_char_device() {
+                return Self::CharDevice;
+            }
+            if file_type.is_block_device() {
+                return Self::BlockDevice;
+            }
+            if file_type.is_socket() {
+                return Self::Socket;
+            }
+        }
+        Self::Other
+    }
+
+    /// Returns whether the kind represents a directory.
+    #[must_use]
+    pub const fn is_directory(self) -> bool {
+        matches!(self, Self::Directory)
+    }
+}
+
+/// Metadata snapshot recorded for events emitted by [`LocalCopyRecord`].
+#[derive(Clone, Debug)]
+pub struct LocalCopyMetadata {
+    kind: LocalCopyFileKind,
+    len: u64,
+    modified: Option<SystemTime>,
+    mode: Option<u32>,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    nlink: Option<u64>,
+}
+
+impl LocalCopyMetadata {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        let file_type = metadata.file_type();
+        let kind = LocalCopyFileKind::from_file_type(&file_type);
+        let len = metadata.len();
+        let modified = metadata.modified().ok();
+
+        #[cfg(unix)]
+        let (mode, uid, gid, nlink) = {
+            use std::os::unix::fs::MetadataExt;
+            (
+                Some(metadata.mode()),
+                Some(metadata.uid()),
+                Some(metadata.gid()),
+                Some(u64::from(metadata.nlink())),
+            )
+        };
+
+        #[cfg(not(unix))]
+        let (mode, uid, gid, nlink) = (None, None, None, None);
+
+        Self {
+            kind,
+            len,
+            modified,
+            mode,
+            uid,
+            gid,
+            nlink,
+        }
+    }
+
+    /// Returns the entry kind associated with the metadata.
+    #[must_use]
+    pub const fn kind(&self) -> LocalCopyFileKind {
+        self.kind
+    }
+
+    /// Returns the entry length in bytes.
+    #[must_use]
+    pub const fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// Returns the recorded modification time, when available.
+    #[must_use]
+    pub const fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+
+    /// Returns the Unix permission bits when available.
+    #[must_use]
+    pub const fn mode(&self) -> Option<u32> {
+        self.mode
+    }
+
+    /// Returns the numeric owner identifier when available.
+    #[must_use]
+    pub const fn uid(&self) -> Option<u32> {
+        self.uid
+    }
+
+    /// Returns the numeric group identifier when available.
+    #[must_use]
+    pub const fn gid(&self) -> Option<u32> {
+        self.gid
+    }
+
+    /// Returns the hard link count when available.
+    #[must_use]
+    pub const fn nlink(&self) -> Option<u64> {
+        self.nlink
     }
 }
 
@@ -2168,6 +2323,7 @@ impl<'a> CopyContext<'a> {
                 LocalCopyAction::SkippedNonRegular,
                 0,
                 Duration::default(),
+                None,
             ));
         }
     }
@@ -3401,6 +3557,7 @@ fn copy_directory_recursive(
                 LocalCopyAction::DirectoryCreated,
                 0,
                 Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
             ));
         }
     }
@@ -3586,6 +3743,7 @@ fn copy_file(
             LocalCopyAction::DataCopied,
             file_size,
             Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
         ));
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
@@ -3649,6 +3807,7 @@ fn copy_file(
             LocalCopyAction::HardLink,
             0,
             Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
         ));
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
@@ -3675,6 +3834,7 @@ fn copy_file(
                 LocalCopyAction::MetadataReused,
                 0,
                 Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
             ));
             remove_source_entry_if_requested(
                 context,
@@ -3738,6 +3898,7 @@ fn copy_file(
         LocalCopyAction::DataCopied,
         file_size,
         elapsed,
+        Some(LocalCopyMetadata::from_metadata(metadata)),
     ));
     remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
@@ -4082,6 +4243,7 @@ fn copy_fifo(
                 LocalCopyAction::FifoCopied,
                 0,
                 Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4126,6 +4288,7 @@ fn copy_fifo(
             LocalCopyAction::FifoCopied,
             0,
             Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4201,6 +4364,7 @@ fn copy_device(
                 LocalCopyAction::DeviceCopied,
                 0,
                 Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4245,6 +4409,7 @@ fn copy_device(
             LocalCopyAction::DeviceCopied,
             0,
             Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4306,6 +4471,7 @@ fn delete_extraneous_entries(
                 LocalCopyAction::EntryDeleted,
                 0,
                 Duration::default(),
+                None,
             ));
             continue;
         }
@@ -4317,6 +4483,7 @@ fn delete_extraneous_entries(
             LocalCopyAction::EntryDeleted,
             0,
             Duration::default(),
+            None,
         ));
     }
 
@@ -4366,6 +4533,7 @@ fn remove_source_entry_if_requested(
                     LocalCopyAction::SourceRemoved,
                     0,
                     Duration::default(),
+                    None,
                 ));
             }
             Ok(())
@@ -4462,6 +4630,7 @@ fn copy_symlink(
                 LocalCopyAction::SymlinkCopied,
                 0,
                 Duration::default(),
+                Some(LocalCopyMetadata::from_metadata(metadata)),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4484,6 +4653,7 @@ fn copy_symlink(
             LocalCopyAction::SymlinkCopied,
             0,
             Duration::default(),
+            Some(LocalCopyMetadata::from_metadata(metadata)),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
