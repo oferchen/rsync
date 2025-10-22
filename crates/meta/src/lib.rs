@@ -659,7 +659,6 @@ mod id_lookup {
     #![allow(unsafe_code)]
 
     use super::{CStr, CString, MaybeUninit, RawGid, RawUid, io, ownership};
-    use libc;
     use rustix::fs::{Gid, Uid};
     use std::ptr;
 

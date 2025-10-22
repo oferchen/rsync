@@ -18,6 +18,9 @@
 //!   data.
 //! - [`binary`] and [`daemon`] wrap the protocol helpers to perform client and
 //!   daemon handshakes.
+//! - [`ssh`] spawns a subprocess (typically the system `ssh` binary) and
+//!   exposes its standard I/O handles through a [`Read`]/[`Write`] pair so the
+//!   negotiation layer can treat remote-shell sessions like any other stream.
 //! - [`session`] builds on top of both flows to expose a high-level session
 //!   negotiation entry point.
 //!
@@ -67,6 +70,7 @@ mod daemon;
 mod handshake_util;
 mod negotiation;
 mod session;
+pub mod ssh;
 
 pub use binary::{
     BinaryHandshake, BinaryHandshakeParts, negotiate_binary_session,
@@ -86,3 +90,4 @@ pub use session::{
     negotiate_session_parts, negotiate_session_parts_from_stream,
     negotiate_session_parts_with_sniffer, negotiate_session_with_sniffer,
 };
+pub use ssh::{SshCommand, SshConnection};
