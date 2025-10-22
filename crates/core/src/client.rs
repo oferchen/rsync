@@ -90,10 +90,11 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
 use rsync_engine::local_copy::{
-    LocalCopyAction, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions,
-    LocalCopyPlan, LocalCopyRecord, LocalCopyReport, LocalCopySummary,
+    DirMergeRule, FilterProgram, FilterProgramEntry, LocalCopyAction, LocalCopyError,
+    LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
+    LocalCopyReport, LocalCopySummary,
 };
-use rsync_filters::{FilterError, FilterRule as EngineFilterRule, FilterSet};
+use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, ProtocolVersion, parse_legacy_daemon_message,
     parse_legacy_error_message, parse_legacy_warning_message,
@@ -574,6 +575,8 @@ pub enum FilterRuleKind {
     Exclude,
     /// Protect matching destination paths from deletion.
     Protect,
+    /// Merge per-directory filter rules from `.rsync-filter` style files.
+    DirMerge,
 }
 
 /// Filter rule supplied by the caller.
@@ -581,6 +584,7 @@ pub enum FilterRuleKind {
 pub struct FilterRuleSpec {
     kind: FilterRuleKind,
     pattern: String,
+    dir_merge_remove_source: bool,
 }
 
 impl FilterRuleSpec {
@@ -591,6 +595,7 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Include,
             pattern: pattern.into(),
+            dir_merge_remove_source: false,
         }
     }
 
@@ -601,6 +606,7 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Exclude,
             pattern: pattern.into(),
+            dir_merge_remove_source: false,
         }
     }
 
@@ -610,6 +616,17 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Protect,
             pattern: pattern.into(),
+            dir_merge_remove_source: false,
+        }
+    }
+
+    /// Creates a per-directory merge rule for the provided filter file pattern.
+    #[must_use]
+    pub fn dir_merge(pattern: impl Into<String>, remove_source: bool) -> Self {
+        Self {
+            kind: FilterRuleKind::DirMerge,
+            pattern: pattern.into(),
+            dir_merge_remove_source: remove_source,
         }
     }
 
@@ -623,6 +640,12 @@ impl FilterRuleSpec {
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
+    }
+
+    /// Returns whether the `.rsync-filter` file should be removed after loading.
+    #[must_use]
+    pub const fn dir_merge_remove_source(&self) -> bool {
+        self.dir_merge_remove_source
     }
 }
 
@@ -884,7 +907,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
 
-    let filter_set = compile_filter_set(config.filter_rules())?;
+    let filter_program = compile_filter_program(config.filter_rules())?;
 
     let options = {
         let options = LocalCopyOptions::default()
@@ -899,7 +922,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
             .permissions(config.preserve_permissions())
             .times(config.preserve_times())
             .checksum(config.checksum())
-            .filters(filter_set)
+            .with_filter_program(filter_program.clone())
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
             .devices(config.preserve_devices())
@@ -2136,29 +2159,38 @@ fn map_local_copy_error(error: LocalCopyError) -> ClientError {
     }
 }
 
-fn compile_filter_set(rules: &[FilterRuleSpec]) -> Result<Option<FilterSet>, ClientError> {
+fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgram>, ClientError> {
     if rules.is_empty() {
         return Ok(None);
     }
 
-    let compiled_rules = rules.iter().map(|rule| match rule.kind() {
-        FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
-        FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
-        FilterRuleKind::Protect => EngineFilterRule::protect(rule.pattern()),
-    });
+    let mut entries = Vec::new();
+    for rule in rules {
+        match rule.kind() {
+            FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
+                EngineFilterRule::include(rule.pattern()),
+            )),
+            FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
+                EngineFilterRule::exclude(rule.pattern()),
+            )),
+            FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
+                EngineFilterRule::protect(rule.pattern()),
+            )),
+            FilterRuleKind::DirMerge => entries.push(FilterProgramEntry::DirMerge(
+                DirMergeRule::new(rule.pattern().to_string(), rule.dir_merge_remove_source()),
+            )),
+        }
+    }
 
-    let set = FilterSet::from_rules(compiled_rules).map_err(filter_compile_error)?;
-    Ok(Some(set))
-}
-
-fn filter_compile_error(error: FilterError) -> ClientError {
-    let text = format!(
-        "failed to compile filter pattern '{}': {}",
-        error.pattern(),
-        error
-    );
-    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
-    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    FilterProgram::new(entries).map(Some).map_err(|error| {
+        let text = format!(
+            "failed to compile filter pattern '{}': {}",
+            error.pattern(),
+            error
+        );
+        let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
+        ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    })
 }
 
 fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {

@@ -48,6 +48,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 #[cfg(unix)]
 use std::collections::HashMap;
@@ -56,15 +57,17 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime};
 
+use globset::{GlobBuilder, GlobMatcher};
 use rsync_checksums::strong::Md5;
-use rsync_filters::FilterSet;
+use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "xattr")]
 use rsync_meta::sync_xattrs;
 use rsync_meta::{
@@ -80,6 +83,347 @@ static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 const INVALID_OPERAND_EXIT_CODE: i32 = 23;
 /// Exit code returned when no transfer operands are supplied.
 const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
+
+/// Ordered list of filter rules and per-directory merge directives.
+#[derive(Clone, Debug, Default)]
+pub struct FilterProgram {
+    instructions: Vec<FilterInstruction>,
+    dir_merge_rules: Vec<DirMergeRule>,
+}
+
+impl FilterProgram {
+    /// Builds a [`FilterProgram`] from the supplied entries.
+    pub fn new<I>(entries: I) -> Result<Self, FilterProgramError>
+    where
+        I: IntoIterator<Item = FilterProgramEntry>,
+    {
+        let mut instructions = Vec::new();
+        let mut dir_merge_rules = Vec::new();
+        let mut current_segment = FilterSegment::default();
+
+        for entry in entries {
+            match entry {
+                FilterProgramEntry::Rule(rule) => {
+                    current_segment.push_rule(rule)?;
+                }
+                FilterProgramEntry::DirMerge(rule) => {
+                    if !current_segment.is_empty() || instructions.is_empty() {
+                        instructions.push(FilterInstruction::Segment(current_segment));
+                        current_segment = FilterSegment::default();
+                    }
+                    let index = dir_merge_rules.len();
+                    dir_merge_rules.push(rule);
+                    instructions.push(FilterInstruction::DirMerge { index });
+                }
+            }
+        }
+
+        if !current_segment.is_empty() || instructions.is_empty() {
+            instructions.push(FilterInstruction::Segment(current_segment));
+        }
+
+        Ok(Self {
+            instructions,
+            dir_merge_rules,
+        })
+    }
+
+    /// Returns the per-directory merge directives referenced by the program.
+    #[must_use]
+    pub fn dir_merge_rules(&self) -> &[DirMergeRule] {
+        &self.dir_merge_rules
+    }
+
+    /// Reports whether the program contains no rules.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.instructions
+            .iter()
+            .all(|instruction| matches!(instruction, FilterInstruction::Segment(segment) if segment.is_empty()))
+    }
+
+    /// Evaluates the program for the provided path.
+    fn evaluate(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        dir_merge_layers: &[Vec<FilterSegment>],
+    ) -> FilterOutcome {
+        let mut outcome = FilterOutcome::default();
+
+        for instruction in &self.instructions {
+            match instruction {
+                FilterInstruction::Segment(segment) => segment.apply(path, is_dir, &mut outcome),
+                FilterInstruction::DirMerge { index } => {
+                    if let Some(layers) = dir_merge_layers.get(*index) {
+                        for layer in layers {
+                            layer.apply(path, is_dir, &mut outcome);
+                        }
+                    }
+                }
+            }
+        }
+
+        outcome
+    }
+}
+
+/// Entry used to construct a [`FilterProgram`].
+#[derive(Clone, Debug)]
+pub enum FilterProgramEntry {
+    /// Static include/exclude/protect rule.
+    Rule(FilterRule),
+    /// Per-directory merge directive.
+    DirMerge(DirMergeRule),
+}
+
+/// Error produced when compiling filter patterns into matchers fails.
+#[derive(Debug)]
+pub struct FilterProgramError {
+    pattern: String,
+    source: globset::Error,
+}
+
+impl FilterProgramError {
+    fn new(pattern: String, source: globset::Error) -> Self {
+        Self { pattern, source }
+    }
+
+    /// Returns the pattern that failed to compile.
+    #[must_use]
+    pub fn pattern(&self) -> &str {
+        &self.pattern
+    }
+}
+
+impl fmt::Display for FilterProgramError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to compile filter pattern '{}': {}",
+            self.pattern, self.source
+        )
+    }
+}
+
+impl Error for FilterProgramError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Description of a `.rsync-filter` style per-directory rule.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirMergeRule {
+    pattern: PathBuf,
+    remove_source: bool,
+}
+
+impl DirMergeRule {
+    /// Creates a new [`DirMergeRule`].
+    #[must_use]
+    pub fn new(pattern: impl Into<PathBuf>, remove_source: bool) -> Self {
+        Self {
+            pattern: pattern.into(),
+            remove_source,
+        }
+    }
+
+    /// Returns the configured filter file pattern.
+    #[must_use]
+    pub fn pattern(&self) -> &Path {
+        self.pattern.as_path()
+    }
+
+    /// Reports whether the filter file should be removed after loading.
+    #[must_use]
+    pub const fn remove_source(&self) -> bool {
+        self.remove_source
+    }
+}
+
+#[derive(Clone, Debug)]
+enum FilterInstruction {
+    Segment(FilterSegment),
+    DirMerge { index: usize },
+}
+
+/// Compiled list of rules evaluated sequentially.
+#[derive(Clone, Debug, Default)]
+struct FilterSegment {
+    include_exclude: Vec<CompiledRule>,
+    protect: Vec<CompiledRule>,
+}
+
+impl FilterSegment {
+    fn push_rule(&mut self, rule: FilterRule) -> Result<(), FilterProgramError> {
+        match rule.action() {
+            rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
+                self.include_exclude.push(CompiledRule::new(
+                    rule.action(),
+                    rule.pattern().to_string(),
+                )?);
+            }
+            rsync_filters::FilterAction::Protect => {
+                self.protect.push(CompiledRule::new(
+                    rule.action(),
+                    rule.pattern().to_string(),
+                )?);
+            }
+        }
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.include_exclude.is_empty() && self.protect.is_empty()
+    }
+
+    fn apply(&self, path: &Path, is_dir: bool, outcome: &mut FilterOutcome) {
+        for rule in &self.include_exclude {
+            if rule.matches(path, is_dir) {
+                outcome.set_transfer_allowed(matches!(
+                    rule.action,
+                    rsync_filters::FilterAction::Include
+                ));
+            }
+        }
+
+        for rule in &self.protect {
+            if rule.matches(path, is_dir) {
+                outcome.protect();
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FilterOutcome {
+    transfer_allowed: bool,
+    protected: bool,
+}
+
+impl FilterOutcome {
+    fn new() -> Self {
+        Self {
+            transfer_allowed: true,
+            protected: false,
+        }
+    }
+
+    fn allows_transfer(self) -> bool {
+        self.transfer_allowed
+    }
+
+    fn allows_deletion(self) -> bool {
+        self.transfer_allowed && !self.protected
+    }
+
+    fn set_transfer_allowed(&mut self, allowed: bool) {
+        self.transfer_allowed = allowed;
+    }
+
+    fn protect(&mut self) {
+        self.protected = true;
+    }
+}
+
+impl Default for FilterOutcome {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CompiledRule {
+    action: rsync_filters::FilterAction,
+    directory_only: bool,
+    direct_matchers: Vec<GlobMatcher>,
+    descendant_matchers: Vec<GlobMatcher>,
+}
+
+impl CompiledRule {
+    fn new(
+        action: rsync_filters::FilterAction,
+        pattern: String,
+    ) -> Result<Self, FilterProgramError> {
+        let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
+
+        let mut direct_patterns = HashSet::new();
+        direct_patterns.insert(core_pattern.clone());
+        if !anchored {
+            direct_patterns.insert(format!("**/{}", core_pattern));
+        }
+
+        let mut descendant_patterns = HashSet::new();
+        if directory_only
+            || matches!(
+                action,
+                rsync_filters::FilterAction::Exclude | rsync_filters::FilterAction::Protect
+            )
+        {
+            descendant_patterns.insert(format!("{}/**", core_pattern));
+            if !anchored {
+                descendant_patterns.insert(format!("**/{}/**", core_pattern));
+            }
+        }
+
+        Ok(Self {
+            action,
+            directory_only,
+            direct_matchers: compile_patterns(direct_patterns, &pattern)?,
+            descendant_matchers: compile_patterns(descendant_patterns, &pattern)?,
+        })
+    }
+
+    fn matches(&self, path: &Path, is_dir: bool) -> bool {
+        for matcher in &self.direct_matchers {
+            if matcher.is_match(path) && (!self.directory_only || is_dir) {
+                return true;
+            }
+        }
+
+        for matcher in &self.descendant_matchers {
+            if matcher.is_match(path) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+fn compile_patterns(
+    patterns: HashSet<String>,
+    original: &str,
+) -> Result<Vec<GlobMatcher>, FilterProgramError> {
+    let mut unique: Vec<_> = patterns.into_iter().collect();
+    unique.sort();
+
+    let mut matchers = Vec::with_capacity(unique.len());
+    for pattern in unique {
+        let glob = GlobBuilder::new(&pattern)
+            .literal_separator(true)
+            .backslash_escape(true)
+            .build()
+            .map_err(|error| FilterProgramError::new(original.to_string(), error))?;
+        matchers.push(glob.compile_matcher());
+    }
+
+    Ok(matchers)
+}
+
+fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
+    let anchored = pattern.starts_with('/');
+    let directory_only = pattern.ends_with('/');
+    let mut core = pattern;
+    if anchored {
+        core = &core[1..];
+    }
+    if directory_only && !core.is_empty() {
+        core = &core[..core.len() - 1];
+    }
+    (anchored, directory_only, core.to_string())
+}
 
 /// Plan describing a local filesystem copy.
 ///
@@ -349,6 +693,7 @@ pub struct LocalCopyOptions {
     preserve_permissions: bool,
     preserve_times: bool,
     filters: Option<FilterSet>,
+    filter_program: Option<FilterProgram>,
     numeric_ids: bool,
     sparse: bool,
     checksum: bool,
@@ -374,6 +719,7 @@ impl LocalCopyOptions {
             preserve_permissions: false,
             preserve_times: false,
             filters: None,
+            filter_program: None,
             numeric_ids: false,
             sparse: false,
             checksum: false,
@@ -440,6 +786,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
         self.filters = filters;
+        self
+    }
+
+    /// Applies an ordered filter program that may include per-directory merges.
+    #[must_use]
+    pub fn with_filter_program(mut self, program: Option<FilterProgram>) -> Self {
+        self.filter_program = program;
         self
     }
 
@@ -565,6 +918,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn filter_set(&self) -> Option<&FilterSet> {
         self.filters.as_ref()
+    }
+
+    /// Returns the configured filter program, if any.
+    #[must_use]
+    pub fn filter_program(&self) -> Option<&FilterProgram> {
+        self.filter_program.as_ref()
     }
 
     /// Reports whether extended attribute preservation has been requested.
@@ -834,12 +1193,19 @@ struct CopyContext {
     limiter: Option<BandwidthLimiter>,
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
+    filter_program: Option<FilterProgram>,
+    dir_merge_layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
 }
 
 impl CopyContext {
     fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
         let collect_events = options.events_enabled();
+        let filter_program = options.filter_program().cloned();
+        let dir_merge_layers = filter_program
+            .as_ref()
+            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
+            .unwrap_or_default();
         Self {
             mode,
             options,
@@ -851,6 +1217,8 @@ impl CopyContext {
             } else {
                 None
             },
+            filter_program,
+            dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
         }
     }
 
@@ -914,10 +1282,93 @@ impl CopyContext {
     }
 
     fn allows(&self, relative: &Path, is_dir: bool) -> bool {
-        match self.options.filter_set() {
-            Some(filters) => filters.allows(relative, is_dir),
-            None => true,
+        if let Some(program) = &self.filter_program {
+            let layers = self.dir_merge_layers.borrow();
+            program
+                .evaluate(relative, is_dir, layers.as_slice())
+                .allows_transfer()
+        } else if let Some(filters) = self.options.filter_set() {
+            filters.allows(relative, is_dir)
+        } else {
+            true
         }
+    }
+
+    fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
+        if let Some(program) = &self.filter_program {
+            let layers = self.dir_merge_layers.borrow();
+            program
+                .evaluate(relative, is_dir, layers.as_slice())
+                .allows_deletion()
+        } else if let Some(filters) = self.options.filter_set() {
+            filters.allows_deletion(relative, is_dir)
+        } else {
+            true
+        }
+    }
+
+    fn enter_directory(&self, source: &Path) -> Result<DirectoryFilterGuard, LocalCopyError> {
+        let Some(program) = &self.filter_program else {
+            return Ok(DirectoryFilterGuard::new(
+                Rc::clone(&self.dir_merge_layers),
+                Vec::new(),
+            ));
+        };
+
+        let mut added_indices = Vec::new();
+        let mut layers = self.dir_merge_layers.borrow_mut();
+
+        for (index, rule) in program.dir_merge_rules().iter().enumerate() {
+            let candidate = resolve_dir_merge_path(source, rule.pattern());
+
+            let metadata = match fs::metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "inspect filter file",
+                        candidate.clone(),
+                        error,
+                    ));
+                }
+            };
+
+            if !metadata.is_file() {
+                continue;
+            }
+
+            let mut visited = Vec::new();
+            let rules = load_dir_merge_rules_recursive(candidate.as_path(), &mut visited)?;
+            if rules.is_empty() {
+                if rule.remove_source() && !self.mode.is_dry_run() {
+                    let _ = fs::remove_file(&candidate);
+                }
+                continue;
+            }
+
+            let mut segment = FilterSegment::default();
+            for compiled in rules {
+                segment
+                    .push_rule(compiled)
+                    .map_err(|error| filter_program_local_error(&candidate, error))?;
+            }
+
+            layers[index].push(segment);
+            added_indices.push(index);
+
+            if rule.remove_source() && !self.mode.is_dry_run() {
+                fs::remove_file(&candidate).map_err(|error| {
+                    LocalCopyError::io("remove filter file", candidate.clone(), error)
+                })?;
+            }
+        }
+
+        drop(layers);
+
+        Ok(DirectoryFilterGuard::new(
+            Rc::clone(&self.dir_merge_layers),
+            added_indices,
+        ))
     }
 
     fn summary_mut(&mut self) -> &mut LocalCopySummary {
@@ -947,6 +1398,221 @@ impl CopyContext {
             events: self.events,
         }
     }
+}
+
+struct DirectoryFilterGuard {
+    layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
+    indices: Vec<usize>,
+}
+
+impl DirectoryFilterGuard {
+    fn new(layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>, indices: Vec<usize>) -> Self {
+        Self { layers, indices }
+    }
+}
+
+impl Drop for DirectoryFilterGuard {
+    fn drop(&mut self) {
+        if self.indices.is_empty() {
+            return;
+        }
+
+        let mut layers = self.layers.borrow_mut();
+        for index in self.indices.drain(..).rev() {
+            if let Some(layer) = layers.get_mut(index) {
+                layer.pop();
+            }
+        }
+    }
+}
+
+fn filter_program_local_error(path: &Path, error: FilterProgramError) -> LocalCopyError {
+    LocalCopyError::io(
+        "compile filter file",
+        path.to_path_buf(),
+        io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
+    )
+}
+
+fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
+    if pattern.is_absolute() {
+        if let Ok(stripped) = pattern.strip_prefix(Path::new("/")) {
+            return base.join(stripped);
+        }
+    }
+
+    base.join(pattern)
+}
+
+fn load_dir_merge_rules_recursive(
+    path: &Path,
+    visited: &mut Vec<PathBuf>,
+) -> Result<Vec<FilterRule>, LocalCopyError> {
+    let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if visited.contains(&canonical) {
+        let message = format!("recursive filter merge detected for '{}'", path.display());
+        return Err(LocalCopyError::io(
+            "parse filter file",
+            path.to_path_buf(),
+            io::Error::new(io::ErrorKind::InvalidData, message),
+        ));
+    }
+
+    visited.push(canonical);
+
+    let file = fs::File::open(path)
+        .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
+    let mut reader = io::BufReader::new(file);
+    let mut buffer = String::new();
+    let mut rules = Vec::new();
+
+    loop {
+        buffer.clear();
+        let bytes = reader
+            .read_line(&mut buffer)
+            .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
+        if bytes == 0 {
+            break;
+        }
+
+        let trimmed = buffer.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        match parse_filter_directive_line(trimmed) {
+            Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
+            Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
+                let nested = if merge_path.is_absolute() {
+                    merge_path
+                } else {
+                    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                    parent.join(merge_path)
+                };
+                let nested_rules = load_dir_merge_rules_recursive(&nested, visited)?;
+                rules.extend(nested_rules);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "parse filter file",
+                    path.to_path_buf(),
+                    io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
+                ));
+            }
+        }
+    }
+
+    visited.pop();
+    Ok(rules)
+}
+
+enum ParsedFilterDirective {
+    Rule(FilterRule),
+    Merge(PathBuf),
+}
+
+#[derive(Debug)]
+struct FilterParseError {
+    message: String,
+}
+
+impl FilterParseError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for FilterParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Error for FilterParseError {}
+
+fn parse_filter_directive_line(
+    text: &str,
+) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    if text.is_empty() || text.starts_with('#') {
+        return Ok(None);
+    }
+
+    if let Some(remainder) = text.strip_prefix('+') {
+        let pattern = remainder.trim_start();
+        if pattern.is_empty() {
+            return Err(FilterParseError::new("filter rule '+' requires a pattern"));
+        }
+        return Ok(Some(ParsedFilterDirective::Rule(FilterRule::include(
+            pattern.to_string(),
+        ))));
+    }
+
+    if let Some(remainder) = text.strip_prefix('-') {
+        let pattern = remainder.trim_start();
+        if pattern.is_empty() {
+            return Err(FilterParseError::new("filter rule '-' requires a pattern"));
+        }
+        return Ok(Some(ParsedFilterDirective::Rule(FilterRule::exclude(
+            pattern.to_string(),
+        ))));
+    }
+
+    let mut parts = text.splitn(2, char::is_whitespace);
+    let keyword = parts.next().unwrap_or("");
+    let remainder = parts.next().unwrap_or("").trim_start();
+
+    let handle_keyword = |pattern: &str,
+                          builder: fn(String) -> FilterRule|
+     -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+        if pattern.is_empty() {
+            return Err(FilterParseError::new("filter directive missing pattern"));
+        }
+        Ok(Some(ParsedFilterDirective::Rule(builder(
+            pattern.to_string(),
+        ))))
+    };
+
+    if keyword.eq_ignore_ascii_case("include") {
+        return handle_keyword(remainder, FilterRule::include);
+    }
+
+    if keyword.eq_ignore_ascii_case("exclude") {
+        return handle_keyword(remainder, FilterRule::exclude);
+    }
+
+    if keyword.eq_ignore_ascii_case("show") {
+        return handle_keyword(remainder, FilterRule::include);
+    }
+
+    if keyword.eq_ignore_ascii_case("hide") {
+        return handle_keyword(remainder, FilterRule::exclude);
+    }
+
+    if keyword.eq_ignore_ascii_case("protect") {
+        return handle_keyword(remainder, FilterRule::protect);
+    }
+
+    if keyword.eq_ignore_ascii_case("merge") {
+        if remainder.is_empty() {
+            return Err(FilterParseError::new(
+                "merge directive requires a file path",
+            ));
+        }
+        if remainder == "-" {
+            return Err(FilterParseError::new(
+                "merge from standard input is not supported in .rsync-filter files",
+            ));
+        }
+        return Ok(Some(ParsedFilterDirective::Merge(PathBuf::from(remainder))));
+    }
+
+    Err(FilterParseError::new(format!(
+        "unsupported filter directive '{}'",
+        text
+    )))
 }
 
 #[cfg(feature = "xattr")]
@@ -1802,6 +2468,8 @@ fn copy_directory_recursive(
 
     let entries = read_directory_entries_sorted(source)?;
 
+    let _dir_merge_guard = context.enter_directory(source)?;
+
     if destination_missing {
         if relative.is_some() {
             context.summary_mut().record_directory();
@@ -1906,14 +2574,7 @@ fn copy_directory_recursive(
     }
 
     if context.options().delete_extraneous() {
-        let filters = context.options().filter_set().cloned();
-        delete_extraneous_entries(
-            context,
-            destination,
-            relative,
-            &keep_names,
-            filters.as_ref(),
-        )?;
+        delete_extraneous_entries(context, destination, relative, &keep_names)?;
     }
 
     if !context.mode().is_dry_run() {
@@ -2704,7 +3365,6 @@ fn delete_extraneous_entries(
     destination: &Path,
     relative: Option<&Path>,
     source_entries: &[OsString],
-    filters: Option<&FilterSet>,
 ) -> Result<(), LocalCopyError> {
     let mut keep = HashSet::with_capacity(source_entries.len());
     for name in source_entries {
@@ -2744,10 +3404,8 @@ fn delete_extraneous_entries(
             LocalCopyError::io("inspect extraneous destination entry", path.clone(), error)
         })?;
 
-        if let Some(filters) = filters {
-            if !filters.allows_deletion(entry_relative.as_path(), file_type.is_dir()) {
-                continue;
-            }
+        if !context.allows_deletion(entry_relative.as_path(), file_type.is_dir()) {
+            continue;
         }
 
         if context.mode().is_dry_run() {

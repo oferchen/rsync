@@ -1417,6 +1417,43 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         )));
     }
 
+    const DIR_MERGE_PREFIX: &str = "dir-merge";
+
+    if trimmed.len() >= DIR_MERGE_PREFIX.len()
+        && trimmed[..DIR_MERGE_PREFIX.len()].eq_ignore_ascii_case(DIR_MERGE_PREFIX)
+    {
+        let mut remainder = trimmed[DIR_MERGE_PREFIX.len()..].trim_start();
+        let mut modifiers = "";
+        if let Some(rest) = remainder.strip_prefix(',') {
+            let mut split = rest.splitn(2, char::is_whitespace);
+            modifiers = split.next().unwrap_or("");
+            remainder = split.next().unwrap_or("").trim_start();
+        }
+
+        if remainder.is_empty() {
+            let text = format!("filter rule '{trimmed}' is missing a file name after 'dir-merge'");
+            return Err(rsync_error!(1, text).with_role(Role::Client));
+        }
+
+        let mut remove_source = false;
+        for modifier in modifiers.chars() {
+            match modifier {
+                '-' => remove_source = true,
+                _ => {
+                    let text = format!(
+                        "filter rule '{trimmed}' uses unsupported dir-merge modifier '{modifier}'"
+                    );
+                    return Err(rsync_error!(1, text).with_role(Role::Client));
+                }
+            }
+        }
+
+        return Ok(FilterDirective::Rule(FilterRuleSpec::dir_merge(
+            remainder.to_string(),
+            remove_source,
+        )));
+    }
+
     let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
@@ -1455,7 +1492,7 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
 
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', and 'merge FILE' directives"
+        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives"
     )
     .with_role(Role::Client);
     Err(message)
@@ -1466,12 +1503,22 @@ fn append_filter_rules_from_files(
     files: &[OsString],
     kind: FilterRuleKind,
 ) -> Result<(), Message> {
+    if matches!(kind, FilterRuleKind::DirMerge) {
+        let message = rsync_error!(
+            1,
+            "dir-merge directives cannot be loaded via --include-from/--exclude-from in this build"
+        )
+        .with_role(Role::Client);
+        return Err(message);
+    }
+
     for path in files {
         let patterns = load_filter_file_patterns(path.as_os_str())?;
         destination.extend(patterns.into_iter().map(|pattern| match kind {
             FilterRuleKind::Include => FilterRuleSpec::include(pattern),
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
             FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
+            FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
         }));
     }
     Ok(())
@@ -2844,6 +2891,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_dir_merge_without_modifiers() {
+        let directive = parse_filter_directive(OsStr::new("dir-merge .rsync-filter"))
+            .expect("dir-merge without modifiers parses");
+        assert_eq!(
+            directive,
+            FilterDirective::Rule(FilterRuleSpec::dir_merge(
+                ".rsync-filter".to_string(),
+                false,
+            )),
+        );
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_dir_merge_with_remove_modifier() {
+        let directive = parse_filter_directive(OsStr::new("dir-merge,- .rsync-filter"))
+            .expect("dir-merge with '-' modifier parses");
+        assert_eq!(
+            directive,
+            FilterDirective::Rule(FilterRuleSpec::dir_merge(".rsync-filter".to_string(), true))
+        );
+    }
+
+    #[test]
     fn transfer_request_with_times_preserves_timestamp() {
         use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
@@ -3052,10 +3122,11 @@ mod tests {
         )
         .expect("load include patterns");
 
-        let engine_rules = expected_rules.iter().map(|rule| match rule.kind() {
-            FilterRuleKind::Include => EngineFilterRule::include(rule.pattern()),
-            FilterRuleKind::Exclude => EngineFilterRule::exclude(rule.pattern()),
-            FilterRuleKind::Protect => EngineFilterRule::protect(rule.pattern()),
+        let engine_rules = expected_rules.iter().filter_map(|rule| match rule.kind() {
+            FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
+            FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
+            FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
+            FilterRuleKind::DirMerge => None,
         });
         let filter_set = FilterSet::from_rules(engine_rules).expect("filters");
         assert!(filter_set.allows(std::path::Path::new("keep"), true));
