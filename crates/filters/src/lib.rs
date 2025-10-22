@@ -424,10 +424,8 @@ impl CompiledRule {
 
     fn matches(&self, path: &Path, is_dir: bool) -> bool {
         for matcher in &self.direct_matchers {
-            if matcher.is_match(path) {
-                if !self.directory_only || is_dir {
-                    return true;
-                }
+            if matcher.is_match(path) && (!self.directory_only || is_dir) {
+                return true;
             }
         }
 

@@ -253,10 +253,7 @@ impl Iterator for Walker {
 
         loop {
             let (full_path, relative_path, depth) = {
-                let state = match self.stack.last_mut() {
-                    Some(state) => state,
-                    None => return None,
-                };
+                let state = self.stack.last_mut()?;
 
                 if let Some(name) = state.next_name() {
                     let full_path = state.fs_path.join(&name);
