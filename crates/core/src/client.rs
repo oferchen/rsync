@@ -90,6 +90,7 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
+pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, FilterProgram, FilterProgramEntry, LocalCopyAction, LocalCopyError,
     LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
@@ -642,7 +643,7 @@ pub enum FilterRuleKind {
 pub struct FilterRuleSpec {
     kind: FilterRuleKind,
     pattern: String,
-    dir_merge_remove_source: bool,
+    dir_merge_options: Option<DirMergeOptions>,
 }
 
 impl FilterRuleSpec {
@@ -653,7 +654,7 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Include,
             pattern: pattern.into(),
-            dir_merge_remove_source: false,
+            dir_merge_options: None,
         }
     }
 
@@ -664,7 +665,7 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Exclude,
             pattern: pattern.into(),
-            dir_merge_remove_source: false,
+            dir_merge_options: None,
         }
     }
 
@@ -674,17 +675,17 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Protect,
             pattern: pattern.into(),
-            dir_merge_remove_source: false,
+            dir_merge_options: None,
         }
     }
 
     /// Creates a per-directory merge rule for the provided filter file pattern.
     #[must_use]
-    pub fn dir_merge(pattern: impl Into<String>, remove_source: bool) -> Self {
+    pub fn dir_merge(pattern: impl Into<String>, options: DirMergeOptions) -> Self {
         Self {
             kind: FilterRuleKind::DirMerge,
             pattern: pattern.into(),
-            dir_merge_remove_source: remove_source,
+            dir_merge_options: Some(options),
         }
     }
 
@@ -700,10 +701,10 @@ impl FilterRuleSpec {
         &self.pattern
     }
 
-    /// Returns whether the `.rsync-filter` file should be removed after loading.
+    /// Returns the options associated with a dir-merge rule, if any.
     #[must_use]
-    pub const fn dir_merge_remove_source(&self) -> bool {
-        self.dir_merge_remove_source
+    pub fn dir_merge_options(&self) -> Option<&DirMergeOptions> {
+        self.dir_merge_options.as_ref()
     }
 }
 
@@ -2326,9 +2327,12 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern()),
             )),
-            FilterRuleKind::DirMerge => entries.push(FilterProgramEntry::DirMerge(
-                DirMergeRule::new(rule.pattern().to_string(), rule.dir_merge_remove_source()),
-            )),
+            FilterRuleKind::DirMerge => {
+                entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
+                    rule.pattern().to_string(),
+                    rule.dir_merge_options().cloned().unwrap_or_default(),
+                )))
+            }
         }
     }
 
