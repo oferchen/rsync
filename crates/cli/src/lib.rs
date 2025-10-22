@@ -129,7 +129,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
@@ -167,6 +167,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
     "      --no-times   Disable modification time preservation.\n",
+    "  -A, --acls      Preserve POSIX ACLs when supported.\n",
+    "      --no-acls   Disable POSIX ACL preservation.\n",
     "  -X, --xattrs     Preserve extended attributes when supported.\n",
     "      --no-xattrs  Disable extended attribute preservation.\n",
     "      --numeric-ids      Preserve numeric UID/GID values.\n",
@@ -179,6 +181,7 @@ const HELP_TEXT: &str = concat!(
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --update/-u, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -206,6 +209,7 @@ struct ParsedArgs {
     group: Option<bool>,
     perms: Option<bool>,
     times: Option<bool>,
+    acls: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
     devices: Option<bool>,
@@ -572,6 +576,21 @@ fn clap_command() -> Command {
                 .overrides_with("times"),
         )
         .arg(
+            Arg::new("acls")
+                .long("acls")
+                .short('A')
+                .help("Preserve POSIX ACLs when supported.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-acls"),
+        )
+        .arg(
+            Arg::new("no-acls")
+                .long("no-acls")
+                .help("Disable POSIX ACL preservation.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("acls"),
+        )
+        .arg(
             Arg::new("xattrs")
                 .long("xattrs")
                 .short('X')
@@ -707,6 +726,13 @@ where
     let times = if matches.get_flag("times") {
         Some(true)
     } else if matches.get_flag("no-times") {
+        Some(false)
+    } else {
+        None
+    };
+    let acls = if matches.get_flag("acls") {
+        Some(true)
+    } else if matches.get_flag("no-acls") {
         Some(false)
     } else {
         None
@@ -861,6 +887,7 @@ where
         filters,
         files_from,
         from0,
+        acls,
         xattrs,
         no_motd,
         password_file,
@@ -978,6 +1005,7 @@ where
         group,
         perms,
         times,
+        acls,
         excludes,
         includes,
         exclude_from,
@@ -1076,6 +1104,22 @@ where
     };
 
     let numeric_ids = numeric_ids.unwrap_or(false);
+
+    #[allow(unused_variables)]
+    let preserve_acls = acls.unwrap_or(false);
+
+    #[cfg(not(feature = "acl"))]
+    if preserve_acls {
+        let message =
+            rsync_error!(1, "POSIX ACLs are not supported on this client").with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(
+                stderr.writer_mut(),
+                "POSIX ACLs are not supported on this client"
+            );
+        }
+        return 1;
+    }
 
     #[cfg(not(feature = "xattr"))]
     if xattrs.unwrap_or(false) {
@@ -2087,6 +2131,43 @@ enum FilterDirective {
     Clear,
 }
 
+fn parse_filter_shorthand(
+    trimmed: &str,
+    short: char,
+    label: &str,
+    builder: fn(String) -> FilterRuleSpec,
+) -> Option<Result<FilterDirective, Message>> {
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    if !first.eq_ignore_ascii_case(&short) {
+        return None;
+    }
+
+    let remainder = chars.as_str();
+    if remainder.is_empty() {
+        let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
+        let message = rsync_error!(1, text).with_role(Role::Client);
+        return Some(Err(message));
+    }
+
+    if !remainder
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
+        return None;
+    }
+
+    let pattern = remainder.trim_start();
+    if pattern.is_empty() {
+        let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
+        let message = rsync_error!(1, text).with_role(Role::Client);
+        return Some(Err(message));
+    }
+
+    Some(Ok(FilterDirective::Rule(builder(pattern.to_string()))))
+}
+
 fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
     let trimmed_leading = text.trim_start();
@@ -2134,6 +2215,18 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     }
 
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'P', "P", FilterRuleSpec::protect) {
+        return result;
+    }
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'H', "H", FilterRuleSpec::hide) {
+        return result;
+    }
+
+    if let Some(result) = parse_filter_shorthand(trimmed, 'S', "S", FilterRuleSpec::show) {
+        return result;
+    }
 
     if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
         && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
@@ -4239,6 +4332,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
+        let protect =
+            parse_filter_directive(OsStr::new("P backups/**")).expect("shorthand protect parses");
+        assert_eq!(
+            protect,
+            FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        );
+
+        let hide = parse_filter_directive(OsStr::new("H *.tmp")).expect("shorthand hide parses");
+        assert_eq!(
+            hide,
+            FilterDirective::Rule(FilterRuleSpec::hide("*.tmp".to_string()))
+        );
+
+        let show =
+            parse_filter_directive(OsStr::new("S public/**")).expect("shorthand show parses");
+        assert_eq!(
+            show,
+            FilterDirective::Rule(FilterRuleSpec::show("public/**".to_string()))
+        );
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_exclude_if_present() {
         let directive = parse_filter_directive(OsStr::new("exclude-if-present marker"))
             .expect("exclude-if-present with whitespace parses");
@@ -4278,6 +4394,11 @@ mod tests {
         let error =
             parse_filter_directive(OsStr::new("+   ")).expect_err("missing pattern should error");
         let rendered = error.to_string();
+        assert!(rendered.contains("missing a pattern"));
+
+        let shorthand_error = parse_filter_directive(OsStr::new("P   "))
+            .expect_err("shorthand protect requires pattern");
+        let rendered = shorthand_error.to_string();
         assert!(rendered.contains("missing a pattern"));
     }
 
@@ -5877,6 +5998,30 @@ mod tests {
                 .expect("write response");
         }
         reader.get_mut().flush().expect("flush response");
+    }
+
+    #[cfg(not(feature = "acl"))]
+    #[test]
+    fn acls_option_reports_unsupported_when_feature_disabled() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--acls"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("UTF-8 error");
+        assert!(rendered.contains("POSIX ACLs are not supported on this client"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 
     #[cfg(not(feature = "xattr"))]

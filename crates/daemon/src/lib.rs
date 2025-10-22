@@ -11,6 +11,11 @@
 //! authenticating `auth users` entries via the upstream challenge/response
 //! exchange backed by the configured secrets file, and replying with
 //! explanatory `@ERROR` messages when module transfers are not yet available.
+//! Clients that initiate the newer binary negotiation (protocols ≥ 30) are
+//! recognised automatically: the daemon responds with the negotiated protocol
+//! advertisement and emits multiplexed error frames describing the current
+//! feature gap so modern clients observe a graceful failure rather than
+//! stalling on the ASCII greeting.
 //! The number of connections can be capped via
 //! command-line flags, allowing integration tests to exercise the handshake
 //! without leaving background threads running indefinitely while keeping the
@@ -24,10 +29,11 @@
 //!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
 //!   full daemon support lands.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
-//!   serves one or more legacy connections using deterministic handshake
-//!   semantics. Requests for `#list` reuse the configured module table, while
-//!   module transfers continue to emit availability diagnostics until the full
-//!   engine lands.
+//!   serves one or more connections. It recognises both the legacy ASCII
+//!   prologue and the binary negotiation used by modern clients, ensuring
+//!   graceful diagnostics regardless of the handshake style. Requests for
+//!   `#list` reuse the configured module table, while module transfers continue
+//!   to emit availability diagnostics until the full engine lands.
 //! - Authentication mirrors upstream rsync: the daemon issues a base64-encoded
 //!   challenge, verifies the client's response against the configured secrets
 //!   file using MD5, and only then reports that transfers are unavailable while
@@ -145,7 +151,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
@@ -169,7 +175,8 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{
-    LegacyDaemonMessage, ProtocolVersion, format_legacy_daemon_message, parse_legacy_daemon_message,
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
+    format_legacy_daemon_message, parse_legacy_daemon_message,
 };
 
 /// Exit code used when daemon functionality is unavailable.
@@ -1855,14 +1862,12 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
         match listener.accept() {
             Ok((stream, peer_addr)) => {
-                configure_stream(&stream)
-                    .map_err(|error| stream_error(Some(peer_addr), "configure socket", error))?;
                 let modules = Arc::clone(&modules);
                 let motd_lines = Arc::clone(&motd_lines);
                 let handle = thread::spawn(move || {
                     let modules_vec = modules.as_ref();
                     let motd_vec = motd_lines.as_ref();
-                    handle_legacy_session(
+                    handle_session(
                         stream,
                         peer_addr,
                         modules_vec.as_slice(),
@@ -1937,6 +1942,57 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
 fn configure_stream(stream: &TcpStream) -> io::Result<()> {
     stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
+}
+
+fn handle_session(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    modules: &[ModuleDefinition],
+    motd_lines: &[String],
+    daemon_limit: Option<NonZeroU64>,
+) -> io::Result<()> {
+    let style = detect_session_style(&stream)?;
+    configure_stream(&stream)?;
+
+    match style {
+        SessionStyle::Binary => handle_binary_session(stream, daemon_limit),
+        SessionStyle::Legacy => {
+            handle_legacy_session(stream, peer_addr, modules, motd_lines, daemon_limit)
+        }
+    }
+}
+
+fn detect_session_style(stream: &TcpStream) -> io::Result<SessionStyle> {
+    stream.set_nonblocking(true)?;
+    let mut peek_buf = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+    let decision = match stream.peek(&mut peek_buf) {
+        Ok(0) => Ok(SessionStyle::Legacy),
+        Ok(_) => {
+            if peek_buf[0] == b'@' {
+                Ok(SessionStyle::Legacy)
+            } else {
+                Ok(SessionStyle::Binary)
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(SessionStyle::Legacy),
+        Err(error) => Err(error),
+    };
+    let restore_result = stream.set_nonblocking(false);
+    match (decision, restore_result) {
+        (Ok(style), Ok(())) => Ok(style),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Ok(())) => Err(error),
+        (Err(primary), Err(restore)) => Err(io::Error::new(
+            primary.kind(),
+            format!("{primary}; also failed to restore blocking mode: {restore}",),
+        )),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionStyle {
+    Legacy,
+    Binary,
 }
 
 fn write_limited(
@@ -2040,6 +2096,38 @@ fn handle_legacy_session(
     }
 
     Ok(())
+}
+
+fn handle_binary_session(
+    mut stream: TcpStream,
+    daemon_limit: Option<NonZeroU64>,
+) -> io::Result<()> {
+    let mut limiter = daemon_limit.map(BandwidthLimiter::new);
+
+    let mut client_bytes = [0u8; 4];
+    stream.read_exact(&mut client_bytes)?;
+    let client_raw = u32::from_be_bytes(client_bytes);
+    let client_byte = client_raw.min(u32::from(u8::MAX)) as u8;
+    ProtocolVersion::from_peer_advertisement(client_byte).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "binary negotiation protocol identifier outside supported range",
+        )
+    })?;
+
+    let server_bytes = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    stream.write_all(&server_bytes)?;
+    stream.flush()?;
+
+    let mut frames = Vec::new();
+    MessageFrame::new(
+        MessageCode::Error,
+        HANDSHAKE_ERROR_PAYLOAD.as_bytes().to_vec(),
+    )?
+    .encode_into_writer(&mut frames)?;
+    MessageFrame::new(MessageCode::ErrorExit, Vec::new())?.encode_into_writer(&mut frames)?;
+    write_limited(&mut stream, &mut limiter, &frames)?;
+    stream.flush()
 }
 
 fn legacy_daemon_greeting() -> String {
@@ -2673,7 +2761,7 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
     use std::fs;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
     use std::num::NonZeroU64;
     use std::path::PathBuf;
@@ -3615,6 +3703,59 @@ mod tests {
         assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_handles_binary_negotiation() {
+        use rsync_protocol::{BorrowedMessageFrames, MessageCode};
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("set write timeout");
+
+        let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+        stream
+            .write_all(&advertisement)
+            .expect("send client advertisement");
+        stream.flush().expect("flush advertisement");
+
+        let mut response = [0u8; 4];
+        stream
+            .read_exact(&mut response)
+            .expect("read server advertisement");
+        assert_eq!(response, advertisement);
+
+        let mut frames = Vec::new();
+        stream.read_to_end(&mut frames).expect("read frames");
+
+        let mut iter = BorrowedMessageFrames::new(&frames);
+        let first = iter.next().expect("first frame").expect("decode frame");
+        assert_eq!(first.code(), MessageCode::Error);
+        assert_eq!(first.payload(), HANDSHAKE_ERROR_PAYLOAD.as_bytes());
+        let second = iter.next().expect("second frame").expect("decode frame");
+        assert_eq!(second.code(), MessageCode::ErrorExit);
+        assert!(iter.next().is_none());
+
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
     }
