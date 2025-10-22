@@ -68,6 +68,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_checksums::strong::Md5;
+use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "xattr")]
 use rsync_meta::sync_xattrs;
@@ -1006,6 +1007,7 @@ pub struct LocalCopyOptions {
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
+    compress: bool,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1035,6 +1037,7 @@ impl LocalCopyOptions {
             delete_excluded: false,
             remove_source_files: false,
             bandwidth_limit: None,
+            compress: false,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1086,6 +1089,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--bwlimit")]
     pub const fn bandwidth_limit(mut self, limit: Option<NonZeroU64>) -> Self {
         self.bandwidth_limit = limit;
+        self
+    }
+
+    /// Enables or disables compression during payload processing.
+    #[must_use]
+    #[doc(alias = "--compress")]
+    pub const fn compress(mut self, compress: bool) -> Self {
+        self.compress = compress;
         self
     }
 
@@ -1247,6 +1258,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    /// Returns whether compression is enabled for payload handling.
+    #[must_use]
+    pub const fn compress_enabled(&self) -> bool {
+        self.compress
     }
 
     /// Reports whether ownership preservation has been requested.
@@ -1444,6 +1461,8 @@ pub struct LocalCopySummary {
     items_deleted: u64,
     sources_removed: u64,
     bytes_copied: u64,
+    compressed_bytes: u64,
+    compression_used: bool,
     total_source_bytes: u64,
     total_elapsed: Duration,
 }
@@ -1539,6 +1558,18 @@ impl LocalCopySummary {
         self.bytes_copied
     }
 
+    /// Returns the aggregate number of compressed bytes that would be sent when compression is enabled.
+    #[must_use]
+    pub const fn compressed_bytes(&self) -> u64 {
+        self.compressed_bytes
+    }
+
+    /// Reports whether compression was applied during the transfer.
+    #[must_use]
+    pub const fn compression_used(&self) -> bool {
+        self.compression_used
+    }
+
     /// Returns the aggregate size of all source files considered during the transfer.
     #[must_use]
     pub const fn total_source_bytes(&self) -> u64 {
@@ -1551,9 +1582,13 @@ impl LocalCopySummary {
         self.total_elapsed
     }
 
-    fn record_file(&mut self, bytes: u64) {
+    fn record_file(&mut self, bytes: u64, compressed: Option<u64>) {
         self.files_copied = self.files_copied.saturating_add(1);
         self.bytes_copied = self.bytes_copied.saturating_add(bytes);
+        if let Some(compressed_bytes) = compressed {
+            self.compression_used = true;
+            self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
+        }
     }
 
     fn record_regular_file_total(&mut self) {
@@ -1723,6 +1758,10 @@ impl<'a> CopyContext<'a> {
 
     fn remove_source_files_enabled(&self) -> bool {
         self.options.remove_source_files_enabled()
+    }
+
+    fn compress_enabled(&self) -> bool {
+        self.options.compress_enabled()
     }
 
     fn checksum_enabled(&self) -> bool {
@@ -3304,7 +3343,7 @@ fn copy_file(
             ));
         }
 
-        context.summary_mut().record_file(file_size);
+        context.summary_mut().record_file(file_size, None);
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::DataCopied,
@@ -3340,6 +3379,7 @@ fn copy_file(
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();
     let size_only_enabled = context.size_only_enabled();
+    let compress_enabled = context.compress_enabled();
     let (hard_links, limiter) = context.split_mut();
 
     if let Some(existing_target) = hard_links.existing_target(metadata) {
@@ -3430,12 +3470,13 @@ fn copy_file(
 
     let start = Instant::now();
 
-    copy_file_contents(
+    let compressed = copy_file_contents(
         &mut reader,
         &mut writer,
         &mut buffer,
         limiter,
         use_sparse_writes,
+        compress_enabled,
         source,
         destination,
     )?;
@@ -3452,7 +3493,7 @@ fn copy_file(
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     hard_links.record(metadata, destination);
     let elapsed = start.elapsed();
-    context.summary_mut().record_file(file_size);
+    context.summary_mut().record_file(file_size, compressed);
     context.summary_mut().record_elapsed(elapsed);
     context.record(LocalCopyRecord::new(
         record_path.clone(),
@@ -3598,10 +3639,16 @@ fn copy_file_contents(
     buffer: &mut [u8],
     mut limiter: Option<&mut BandwidthLimiter>,
     sparse: bool,
+    compress: bool,
     source: &Path,
     destination: &Path,
-) -> Result<(), LocalCopyError> {
+) -> Result<Option<u64>, LocalCopyError> {
     let mut total_bytes: u64 = 0;
+    let mut compressor = if compress {
+        Some(CountingZlibEncoder::new(CompressionLevel::Default))
+    } else {
+        None
+    };
 
     loop {
         let chunk_len = if let Some(limiter) = limiter.as_ref() {
@@ -3629,6 +3676,12 @@ fn copy_file_contents(
             })?;
         }
 
+        if let Some(encoder) = compressor.as_mut() {
+            encoder.write(&buffer[..read]).map_err(|error| {
+                LocalCopyError::io("compress file", source.to_path_buf(), error)
+            })?;
+        }
+
         total_bytes = total_bytes.saturating_add(read as u64);
     }
 
@@ -3642,7 +3695,14 @@ fn copy_file_contents(
         })?;
     }
 
-    Ok(())
+    if let Some(encoder) = compressor {
+        let compressed_total = encoder
+            .finish()
+            .map_err(|error| LocalCopyError::io("compress file", source.to_path_buf(), error))?;
+        Ok(Some(compressed_total))
+    } else {
+        Ok(None)
+    }
 }
 
 fn write_sparse_chunk(
@@ -4501,6 +4561,13 @@ mod tests {
         let options = LocalCopyOptions::default().sparse(true);
         assert!(options.sparse_enabled());
         assert!(!LocalCopyOptions::default().sparse_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_compress_round_trip() {
+        let options = LocalCopyOptions::default().compress(true);
+        assert!(options.compress_enabled());
+        assert!(!LocalCopyOptions::default().compress_enabled());
     }
 
     #[test]
@@ -5802,6 +5869,34 @@ mod tests {
         let recorded = super::take_recorded_sleeps();
         assert!(recorded.is_empty(), "unexpected sleep durations recorded");
         assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[test]
+    fn execute_with_compression_records_compressed_bytes() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        let content = vec![b'A'; 16 * 1024];
+        fs::write(&source, &content).expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().compress(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), content);
+        assert!(summary.compression_used());
+        let compressed = summary.compressed_bytes();
+        assert!(compressed > 0);
+        assert!(compressed <= summary.bytes_copied());
     }
 
     #[test]

@@ -9,6 +9,7 @@ members = [
     "crates/engine",
     "crates/filters",
     "crates/logging",
+    "crates/compress",
     "crates/meta",
     "crates/protocol",
     "crates/walk",

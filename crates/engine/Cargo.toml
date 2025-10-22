@@ -12,6 +12,7 @@ repository = "https://github.com/oferchen/rsync"
 rsync-meta = { path = "../meta", default-features = false }
 rsync-filters = { path = "../filters" }
 rsync-checksums = { path = "../checksums" }
+rsync-compress = { path = "../compress" }
 globset = "0.4"
 
 [features]

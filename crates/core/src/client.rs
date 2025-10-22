@@ -964,6 +964,22 @@ impl ClientSummary {
         self.stats.bytes_copied()
     }
 
+    /// Returns the number of bytes that would be sent after applying compression.
+    #[must_use]
+    pub fn compressed_bytes(&self) -> Option<u64> {
+        if self.stats.compression_used() {
+            Some(self.stats.compressed_bytes())
+        } else {
+            None
+        }
+    }
+
+    /// Reports whether compression participated in the transfer.
+    #[must_use]
+    pub fn compression_used(&self) -> bool {
+        self.stats.compression_used()
+    }
+
     /// Returns the number of source entries removed due to `--remove-source-files`.
     #[must_use]
     pub fn sources_removed(&self) -> u64 {
@@ -1226,6 +1242,7 @@ pub fn run_client_with_observer(
                     .bandwidth_limit()
                     .map(|limit| limit.bytes_per_second()),
             )
+            .compress(config.compress())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
@@ -1558,6 +1575,32 @@ mod tests {
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.bytes_copied(), b"example".len() as u64);
+        assert!(!summary.compression_used());
+        assert!(summary.compressed_bytes().is_none());
+    }
+
+    #[test]
+    fn run_client_with_compress_records_compressed_bytes() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let destination = tmp.path().join("dest.bin");
+        let payload = vec![b'Z'; 32 * 1024];
+        fs::write(&source, &payload).expect("write source");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .compress(true)
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), payload);
+        assert!(summary.compression_used());
+        let compressed = summary
+            .compressed_bytes()
+            .expect("compressed bytes recorded");
+        assert!(compressed > 0);
+        assert!(compressed <= summary.bytes_copied());
     }
 
     #[test]
