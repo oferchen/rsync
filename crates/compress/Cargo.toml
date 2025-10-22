@@ -1,0 +1,12 @@
+[package]
+name = "rsync-compress"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Compression primitives for the Rust rsync implementation"
+repository = "https://github.com/oferchen/rsync"
+
+[dependencies]
+flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
