@@ -105,7 +105,7 @@
 //! let mut reader = BufReader::new(stream.try_clone()?);
 //! let mut line = String::new();
 //! reader.read_line(&mut line)?;
-//! assert_eq!(line, "@RSYNCD: 32.0\n");
+//! assert_eq!(line, "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n");
 //! stream.write_all(b"@RSYNCD: 32.0\n")?;
 //! stream.flush()?;
 //! line.clear();
@@ -190,6 +190,8 @@ const MODULE_UNAVAILABLE_PAYLOAD: &str =
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
+/// Digest algorithms advertised during the legacy daemon greeting.
+const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
@@ -1685,8 +1687,7 @@ fn handle_legacy_session(
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
 
-    let greeting =
-        format_legacy_daemon_message(LegacyDaemonMessage::Version(ProtocolVersion::NEWEST));
+    let greeting = legacy_daemon_greeting();
     reader.get_mut().write_all(greeting.as_bytes())?;
     reader.get_mut().flush()?;
 
@@ -1720,6 +1721,21 @@ fn handle_legacy_session(
     }
 
     Ok(())
+}
+
+fn legacy_daemon_greeting() -> String {
+    let mut greeting =
+        format_legacy_daemon_message(LegacyDaemonMessage::Version(ProtocolVersion::NEWEST));
+    debug_assert!(greeting.ends_with('\n'));
+    greeting.pop();
+
+    for digest in LEGACY_HANDSHAKE_DIGESTS {
+        greeting.push(' ');
+        greeting.push_str(digest);
+    }
+
+    greeting.push('\n');
+    greeting
 }
 
 fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
@@ -2864,9 +2880,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream
             .write_all(b"@RSYNCD: 32.0\n")
@@ -2938,9 +2955,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream
             .write_all(b"@RSYNCD: 32.0\n")
@@ -3027,9 +3045,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream
             .write_all(b"@RSYNCD: 32.0\n")
@@ -3093,13 +3112,14 @@ mod tests {
 
         let handle = thread::spawn(move || run_daemon(config));
 
+        let expected_greeting = legacy_daemon_greeting();
         for _ in 0..2 {
             let mut stream = connect_with_retries(port);
             let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
             let mut line = String::new();
             reader.read_line(&mut line).expect("greeting");
-            assert_eq!(line, "@RSYNCD: 32.0\n");
+            assert_eq!(line, expected_greeting);
 
             stream
                 .write_all(b"@RSYNCD: 32.0\n")
@@ -3155,7 +3175,7 @@ mod tests {
 
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
+                assert_eq!(line, legacy_daemon_greeting());
 
                 stream
                     .write_all(b"@RSYNCD: 32.0\n")
@@ -3210,9 +3230,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
@@ -3263,9 +3284,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream
             .write_all(b"@RSYNCD: 32.0\n")
@@ -3323,9 +3345,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");
@@ -3382,9 +3405,10 @@ mod tests {
         let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
+        let expected_greeting = legacy_daemon_greeting();
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, expected_greeting);
 
         stream.write_all(b"#list\n").expect("send list request");
         stream.flush().expect("flush list request");

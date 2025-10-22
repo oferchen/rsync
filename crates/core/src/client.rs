@@ -1529,6 +1529,8 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+
     static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn env_lock() -> &'static Mutex<()> {
@@ -2544,14 +2546,14 @@ mod tests {
                     .expect("write timeout");
 
                 stream
-                    .write_all(b"@RSYNCD: 32.0\n")
+                    .write_all(LEGACY_DAEMON_GREETING.as_bytes())
                     .expect("write greeting");
                 stream.flush().expect("flush greeting");
 
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("read client greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
+                assert_eq!(line, LEGACY_DAEMON_GREETING);
 
                 line.clear();
                 reader.read_line(&mut line).expect("read request");
@@ -2612,14 +2614,14 @@ mod tests {
                     .expect("write timeout");
 
                 stream
-                    .write_all(b"@RSYNCD: 32.0\n")
+                    .write_all(LEGACY_DAEMON_GREETING.as_bytes())
                     .expect("write greeting");
                 stream.flush().expect("flush greeting");
 
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("read client greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
+                assert_eq!(line, LEGACY_DAEMON_GREETING);
 
                 line.clear();
                 reader.read_line(&mut line).expect("read request");
@@ -2681,14 +2683,14 @@ mod tests {
                     .expect("write timeout");
 
                 stream
-                    .write_all(b"@RSYNCD: 32.0\n")
+                    .write_all(LEGACY_DAEMON_GREETING.as_bytes())
                     .expect("write greeting");
                 stream.flush().expect("flush greeting");
 
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("read client greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
+                assert_eq!(line, LEGACY_DAEMON_GREETING);
 
                 line.clear();
                 reader.read_line(&mut line).expect("read request");
@@ -2755,14 +2757,14 @@ mod tests {
                     .expect("write timeout");
 
                 stream
-                    .write_all(b"@RSYNCD: 32.0\n")
+                    .write_all(LEGACY_DAEMON_GREETING.as_bytes())
                     .expect("write greeting");
                 stream.flush().expect("flush greeting");
 
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
                 reader.read_line(&mut line).expect("read client greeting");
-                assert_eq!(line, "@RSYNCD: 32.0\n");
+                assert_eq!(line, LEGACY_DAEMON_GREETING);
 
                 line.clear();
                 reader.read_line(&mut line).expect("read request");
@@ -2857,14 +2859,14 @@ mod tests {
             .expect("set write timeout");
 
         stream
-            .write_all(b"@RSYNCD: 32.0\n")
+            .write_all(LEGACY_DAEMON_GREETING.as_bytes())
             .expect("write greeting");
         stream.flush().expect("flush greeting");
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("read client greeting");
-        assert_eq!(line, "@RSYNCD: 32.0\n");
+        assert_eq!(line, LEGACY_DAEMON_GREETING);
 
         line.clear();
         reader.read_line(&mut line).expect("read request");

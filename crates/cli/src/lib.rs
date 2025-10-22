@@ -2691,6 +2691,8 @@ mod tests {
     #[cfg(feature = "xattr")]
     use xattr;
 
+    const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
     where
         I: IntoIterator<Item = S>,
@@ -5545,15 +5547,19 @@ mod tests {
             .expect("set write timeout");
 
         stream
-            .write_all(b"@RSYNCD: 32.0\n")
+            .write_all(LEGACY_DAEMON_GREETING.as_bytes())
             .expect("write greeting");
         stream.flush().expect("flush greeting");
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("read client greeting");
-        let expected_line = ["@RSYNCD: ", expected_protocol, "\n"].concat();
-        assert_eq!(line, expected_line);
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        let expected_prefix = ["@RSYNCD: ", expected_protocol].concat();
+        assert!(
+            trimmed.starts_with(&expected_prefix),
+            "client greeting {trimmed:?} did not begin with {expected_prefix:?}"
+        );
 
         line.clear();
         reader.read_line(&mut line).expect("read request");
@@ -5583,15 +5589,19 @@ mod tests {
             .expect("set write timeout");
 
         stream
-            .write_all(b"@RSYNCD: 32.0\n")
+            .write_all(LEGACY_DAEMON_GREETING.as_bytes())
             .expect("write greeting");
         stream.flush().expect("flush greeting");
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("read client greeting");
-        let expected_line = ["@RSYNCD: ", expected_protocol, "\n"].concat();
-        assert_eq!(line, expected_line);
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        let expected_prefix = ["@RSYNCD: ", expected_protocol].concat();
+        assert!(
+            trimmed.starts_with(&expected_prefix),
+            "client greeting {trimmed:?} did not begin with {expected_prefix:?}"
+        );
 
         line.clear();
         reader.read_line(&mut line).expect("read request");

@@ -587,7 +587,7 @@ fn parse_ascii_digits_to_u32(digits: &str) -> u32 {
 
 /// Writes the legacy ASCII daemon greeting into the supplied [`fmt::Write`] sink.
 ///
-/// Upstream daemons send a line such as `@RSYNCD: 32.0\n` when speaking to
+/// Upstream daemons send a line such as `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n` when speaking to
 /// older clients. The helper mirrors that layout without allocating, enabling
 /// callers to render the greeting directly into stack buffers or
 /// pre-allocated `String`s. The newline terminator is appended automatically to
