@@ -1245,6 +1245,8 @@ where
             timeout: timeout_setting,
             no_motd,
             remainder,
+            #[cfg(feature = "acl")]
+            acls,
             #[cfg(feature = "xattr")]
             xattrs,
         };
@@ -2938,6 +2940,8 @@ struct RemoteFallbackArgs {
     timeout: TransferTimeout,
     no_motd: bool,
     remainder: Vec<OsString>,
+    #[cfg(feature = "acl")]
+    acls: Option<bool>,
     #[cfg(feature = "xattr")]
     xattrs: Option<bool>,
 }
@@ -2990,6 +2994,8 @@ where
         timeout,
         no_motd,
         mut remainder,
+        #[cfg(feature = "acl")]
+        acls,
         #[cfg(feature = "xattr")]
         xattrs,
     } = args;
@@ -3038,6 +3044,8 @@ where
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
     push_toggle(&mut command_args, "--relative", "--no-relative", relative);
     push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
+    #[cfg(feature = "acl")]
+    push_toggle(&mut command_args, "--acls", "--no-acls", acls);
     #[cfg(feature = "xattr")]
     push_toggle(&mut command_args, "--xattrs", "--no-xattrs", xattrs);
 
@@ -6557,6 +6565,77 @@ exit 0
         assert!(recorded.contains("120"));
         assert!(recorded.contains("rsync://remote/module"));
         assert!(recorded.contains(&dest_display));
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    #[test]
+    fn remote_fallback_forwards_acls_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--acls"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--acls"));
+        assert!(!recorded.contains("--no-acls"));
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    #[test]
+    fn remote_fallback_forwards_no_acls_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-acls"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-acls"));
     }
 
     #[test]
