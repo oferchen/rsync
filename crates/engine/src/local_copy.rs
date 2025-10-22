@@ -1467,7 +1467,7 @@ impl LocalCopyOptions {
 
     /// Applies a filter set using the legacy builder name for compatibility.
     #[must_use]
-    pub fn filters(mut self, filters: Option<FilterSet>) -> Self {
+    pub fn filters(self, filters: Option<FilterSet>) -> Self {
         self.with_filters(filters)
     }
 

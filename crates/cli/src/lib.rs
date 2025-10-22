@@ -192,10 +192,6 @@ const HELP_TEXT: &str = concat!(
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --compress-level, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -745,17 +741,19 @@ where
     if delete_excluded {
         delete = true;
     }
-    let compress_flag = matches.get_flag("compress");
     let no_compress = matches.get_flag("no-compress");
-    let compress = if no_compress { false } else { compress_flag };
     let mut compress = matches.get_flag("compress");
-    if matches.get_flag("no-compress") {
+    if no_compress {
         compress = false;
     }
     let compress_level = matches.remove_one::<OsString>("compress-level");
     if let Some(ref value) = compress_level {
         if let Ok(setting) = parse_compress_level_argument(value.as_os_str()) {
-            compress = !setting.is_disabled();
+            if setting.is_disabled() {
+                compress = false;
+            } else if !no_compress {
+                compress = true;
+            }
         }
     }
     let owner = if matches.get_flag("owner") {
@@ -875,7 +873,6 @@ where
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
 
-    let compress_level = matches.remove_one::<OsString>("compress-level");
     let bwlimit = matches.remove_one::<OsString>("bwlimit");
     let excludes = matches
         .remove_many::<OsString>("exclude")
@@ -1081,9 +1078,8 @@ where
         update,
         remainder: raw_remainder,
         bwlimit,
-        compress: compress_flag,
+        compress,
         no_compress,
-        mut compress,
         compress_level,
         owner,
         group,
@@ -1176,7 +1172,7 @@ where
         }
     };
 
-    let mut compress = compress_flag;
+    let mut compress = compress;
 
     let bandwidth_limit = match bwlimit {
         Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
@@ -1191,8 +1187,8 @@ where
         None => None,
     };
 
-    let compress_level_setting = match compress_level {
-        Some(ref value) => match parse_compress_level(value.as_os_str()) {
+    let compress_level_setting = match compress_level.as_ref() {
+        Some(value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -1221,11 +1217,12 @@ where
 
     let compress_disabled =
         no_compress || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
-    let compress_level_cli = match (compress_level_setting, compress_disabled) {
-        (Some(CompressLevelArg::Level(level)), false) => {
+    let compress_level_cli = match compress_level_setting {
+        Some(CompressLevelArg::Level(level)) if !compress_disabled => {
             Some(OsString::from(level.get().to_string()))
         }
-        (Some(CompressLevelArg::Disable), _) => Some(OsString::from("0")),
+        Some(CompressLevelArg::Disable) => Some(OsString::from("0")),
+        _ if compress_disabled || !compress => Some(OsString::from("0")),
         _ => None,
     };
 
@@ -1251,7 +1248,10 @@ where
     }
 
     let numeric_ids_option = numeric_ids;
-    let whole_file_option = whole_file;
+    let mut whole_file_option = whole_file;
+    if whole_file_option.is_none() && (compress_disabled || !compress) {
+        whole_file_option = Some(false);
+    }
 
     #[allow(unused_variables)]
     let preserve_acls = acls.unwrap_or(false);
@@ -1361,7 +1361,6 @@ where
             compress,
             compress_disabled,
             compress_level: compress_level_cli.clone(),
-            compress_level: compress_level.clone(),
             owner,
             group,
             perms,
@@ -3202,11 +3201,6 @@ where
     } else if compress_disabled {
         command_args.push(OsString::from("--no-compress"));
     }
-    if let Some(level) = compress_level {
-        command_args.push(OsString::from("--compress-level"));
-        command_args.push(level);
-    }
-
     if let Some(level) = compress_level {
         command_args.push(OsString::from("--compress-level"));
         command_args.push(level);
@@ -7060,43 +7054,6 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn remote_fallback_forwards_compress_level() {
-        use tempfile::tempdir;
-
-        let _env_lock = ENV_LOCK.lock().expect("env lock");
-        let temp = tempdir().expect("tempdir");
-        let script_path = temp.path().join("fallback.sh");
-        let args_path = temp.path().join("args.txt");
-
-        let script = r#"#!/bin/sh
-printf "%s\n" "$@" > "$ARGS_FILE"
-exit 0
-"#;
-        write_executable_script(&script_path, script);
-
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
-        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
-
-        let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
-            OsString::from("--compress-level=7"),
-            OsString::from("remote::module"),
-            OsString::from("dest"),
-        ]);
-
-        assert_eq!(code, 0);
-        assert!(stdout.is_empty());
-        assert!(stderr.is_empty());
-
-        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        let args: Vec<&str> = recorded.lines().collect();
-        assert!(args.contains(&"--compress"));
-        assert!(args.contains(&"--compress-level"));
-        assert!(args.contains(&"7"));
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn remote_fallback_forwards_whole_file_flags() {
         use tempfile::tempdir;
 
@@ -7114,7 +7071,6 @@ exit 0
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
-        let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("-W"),
@@ -7131,66 +7087,6 @@ exit 0
         assert!(!args.iter().any(|arg| *arg == "--compress"));
         assert!(args.contains(&"--compress-level"));
         assert!(args.contains(&"0"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn remote_fallback_forwards_whole_file_flags() {
-        use tempfile::tempdir;
-
-        let _env_lock = ENV_LOCK.lock().expect("env lock");
-        let temp = tempdir().expect("tempdir");
-        let script_path = temp.path().join("fallback.sh");
-        let args_path = temp.path().join("args.txt");
-
-        let script = r#"#!/bin/sh
-printf "%s\n" "$@" > "$ARGS_FILE"
-exit 0
-"#;
-        write_executable_script(&script_path, script);
-
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
-        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
-
-        let dest_path = temp.path().join("dest");
-
-        let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
-            OsString::from("-W"),
-            OsString::from("remote::module"),
-            dest_path.clone().into_os_string(),
-        ]);
-
-        assert_eq!(code, 0);
-        assert!(stdout.is_empty());
-        assert!(stderr.is_empty());
-
-        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        let args: Vec<&str> = recorded.lines().collect();
-        assert!(args.contains(&"--whole-file"));
-        assert!(!args.iter().any(|arg| *arg == "--no-whole-file"));
-        let dest_string = dest_path.display().to_string();
-        assert!(args.contains(&"--whole-file"));
-        assert!(!args.contains(&"--no-whole-file"));
-        assert!(args.iter().any(|arg| *arg == dest_string.as_str()));
-
-        std::fs::write(&args_path, b"").expect("truncate args file");
-
-        let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
-            OsString::from("--no-whole-file"),
-            OsString::from("remote::module"),
-            dest_path.into_os_string(),
-        ]);
-
-        assert_eq!(code, 0);
-        assert!(stdout.is_empty());
-        assert!(stderr.is_empty());
-
-        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        let args: Vec<&str> = recorded.lines().collect();
-        assert!(args.contains(&"--no-whole-file"));
-        assert!(!args.iter().any(|arg| *arg == "--whole-file"));
     }
 
     #[cfg(unix)]
