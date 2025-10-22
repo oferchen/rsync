@@ -13,7 +13,8 @@
 //! - [`LocalCopyError`] mirrors upstream exit codes so higher layers can render
 //!   canonical diagnostics.
 //! - [`LocalCopyOptions`] configures behaviours such as deleting destination
-//!   entries that are absent from the source when `--delete` is requested or
+//!   entries that are absent from the source when `--delete` is requested,
+//!   pruning excluded entries when `--delete-excluded` is enabled, or
 //!   preserving ownership/group metadata when `--owner`/`--group` are supplied.
 //! - Helper functions preserve metadata after content writes, matching upstream
 //!   rsync's ordering and covering regular files, directories, symbolic links,
@@ -316,6 +317,10 @@ impl FilterOutcome {
 
     fn allows_deletion(self) -> bool {
         self.transfer_allowed && !self.protected
+    }
+
+    fn allows_deletion_when_excluded_removed(self) -> bool {
+        !self.protected
     }
 
     fn set_transfer_allowed(&mut self, allowed: bool) {
@@ -684,9 +689,10 @@ impl LocalCopyReport {
 }
 
 /// Options that influence how a [`LocalCopyPlan`] is executed.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LocalCopyOptions {
     delete: bool,
+    delete_excluded: bool,
     bandwidth_limit: Option<NonZeroU64>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -714,6 +720,7 @@ impl LocalCopyOptions {
     pub const fn new() -> Self {
         Self {
             delete: false,
+            delete_excluded: false,
             bandwidth_limit: None,
             preserve_owner: false,
             preserve_group: false,
@@ -741,6 +748,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete = delete;
+        self
+    }
+
+    /// Requests that excluded destination entries be removed during deletion sweeps.
+    #[must_use]
+    #[doc(alias = "--delete-excluded")]
+    pub const fn delete_excluded(mut self, delete: bool) -> Self {
+        self.delete_excluded = delete;
         self
     }
 
@@ -894,6 +909,12 @@ impl LocalCopyOptions {
         self.delete
     }
 
+    /// Reports whether excluded paths should also be removed during deletion sweeps.
+    #[must_use]
+    pub const fn delete_excluded_enabled(&self) -> bool {
+        self.delete_excluded
+    }
+
     /// Returns the configured bandwidth limit, if any, in bytes per second.
     #[must_use]
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
@@ -1001,6 +1022,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn events_enabled(&self) -> bool {
         self.collect_events
+    }
+}
+
+impl Default for LocalCopyOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1315,13 +1342,21 @@ impl CopyContext {
     }
 
     fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
+        let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {
             let layers = self.dir_merge_layers.borrow();
-            program
-                .evaluate(relative, is_dir, layers.as_slice())
-                .allows_deletion()
+            let outcome = program.evaluate(relative, is_dir, layers.as_slice());
+            if delete_excluded {
+                outcome.allows_deletion_when_excluded_removed()
+            } else {
+                outcome.allows_deletion()
+            }
         } else if let Some(filters) = self.options.filter_set() {
-            filters.allows_deletion(relative, is_dir)
+            if delete_excluded {
+                filters.allows_deletion_when_excluded_removed(relative, is_dir)
+            } else {
+                filters.allows_deletion(relative, is_dir)
+            }
         } else {
             true
         }
@@ -3798,6 +3833,13 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_delete_excluded_round_trip() {
+        let options = LocalCopyOptions::default().delete_excluded(true);
+        assert!(options.delete_excluded_enabled());
+        assert!(!LocalCopyOptions::default().delete_excluded_enabled());
+    }
+
+    #[test]
     fn local_copy_options_checksum_round_trip() {
         let options = LocalCopyOptions::default().checksum(true);
         assert!(options.checksum_enabled());
@@ -5183,6 +5225,41 @@ mod tests {
         assert!(skip_path.exists());
         assert_eq!(fs::read(skip_path).expect("read skip"), b"dest skip");
         assert!(summary.files_copied() >= 1);
+        assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn delete_excluded_removes_excluded_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+
+        let target_root = dest.join("source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .delete_excluded(true)
+            .filters(Some(filters));
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("skip.tmp").exists());
         assert_eq!(summary.items_deleted(), 1);
     }
 

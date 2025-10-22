@@ -23,9 +23,10 @@
 //!   ownership/group metadata, and sparse regions when requested. Delta
 //!   compression and advanced metadata such as
 //!   ACLs or extended attributes remain out of scope for this snapshot. When
-//!   deletion is requested, the helper removes
-//!   destination entries that are absent from the source tree before applying
-//!   metadata.
+//!   deletion is requested (including [`--delete-excluded`](crate::client::ClientConfig::delete_excluded)),
+//!   the helper removes destination entries that are absent from the source tree
+//!   before applying metadata and prunes excluded entries when explicitly
+//!   requested.
 //! - [`ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
 //!   `host::`) and [`run_module_list`] connects to the remote daemon using the
 //!   legacy `@RSYNCD:` negotiation to retrieve the advertised module table.
@@ -126,6 +127,7 @@ pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    delete_excluded: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -187,6 +189,13 @@ impl ClientConfig {
     #[doc(alias = "--delete")]
     pub const fn delete(&self) -> bool {
         self.delete
+    }
+
+    /// Returns whether excluded destination entries should also be deleted.
+    #[must_use]
+    #[doc(alias = "--delete-excluded")]
+    pub const fn delete_excluded(&self) -> bool {
+        self.delete_excluded
     }
 
     /// Returns the requested bandwidth limit, if any.
@@ -340,6 +349,7 @@ pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    delete_excluded: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -389,6 +399,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete = delete;
+        self
+    }
+
+    /// Enables or disables deletion of excluded destination entries.
+    #[must_use]
+    #[doc(alias = "--delete-excluded")]
+    pub const fn delete_excluded(mut self, delete: bool) -> Self {
+        self.delete_excluded = delete;
         self
     }
 
@@ -580,6 +598,7 @@ impl ClientConfigBuilder {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
             delete: self.delete,
+            delete_excluded: self.delete_excluded,
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
             preserve_group: self.preserve_group,
@@ -950,7 +969,8 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 
     let options = {
         let options = LocalCopyOptions::default()
-            .delete(config.delete())
+            .delete(config.delete() || config.delete_excluded())
+            .delete_excluded(config.delete_excluded())
             .bandwidth_limit(
                 config
                     .bandwidth_limit()
@@ -1043,6 +1063,17 @@ mod tests {
             .build();
 
         assert!(config.delete());
+    }
+
+    #[test]
+    fn builder_enables_delete_excluded() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete_excluded(true)
+            .build();
+
+        assert!(config.delete_excluded());
+        assert!(!ClientConfig::default().delete_excluded());
     }
 
     #[test]

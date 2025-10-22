@@ -231,6 +231,14 @@ impl FilterSet {
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
         self.inner.decision(path, is_dir).allows_deletion()
     }
+
+    /// Determines whether the path may be removed when excluded entries are purged.
+    #[must_use]
+    pub fn allows_deletion_when_excluded_removed(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .decision(path, is_dir)
+            .allows_deletion_when_excluded_removed()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -272,6 +280,10 @@ impl FilterDecision {
 
     const fn allows_deletion(self) -> bool {
         self.transfer_allowed && !self.protected
+    }
+
+    const fn allows_deletion_when_excluded_removed(self) -> bool {
+        !self.protected
     }
 }
 
