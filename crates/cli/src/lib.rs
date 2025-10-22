@@ -76,8 +76,9 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -3104,6 +3105,18 @@ struct RemoteFallbackArgs {
     xattrs: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FallbackStreamKind {
+    Stdout,
+    Stderr,
+}
+
+enum FallbackStreamMessage {
+    Data(FallbackStreamKind, Vec<u8>),
+    Error(FallbackStreamKind, io::Error),
+    Finished(FallbackStreamKind),
+}
+
 fn run_remote_transfer_fallback<Out, Err>(
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
@@ -3363,82 +3376,117 @@ where
         }
     };
 
-    let stdout_handle = child.stdout.take();
-    let stderr_handle = child.stderr.take();
+    let (sender, receiver) = mpsc::channel();
+    let mut stdout_thread = child
+        .stdout
+        .take()
+        .map(|handle| spawn_fallback_reader(handle, FallbackStreamKind::Stdout, sender.clone()));
+    let mut stderr_thread = child
+        .stderr
+        .take()
+        .map(|handle| spawn_fallback_reader(handle, FallbackStreamKind::Stderr, sender.clone()));
+    drop(sender);
 
-    let stdout_thread = thread::spawn(move || -> io::Result<Vec<u8>> {
-        let mut data = Vec::new();
-        if let Some(mut handle) = stdout_handle {
-            handle.read_to_end(&mut data)?;
-        }
-        Ok(data)
-    });
+    let mut stdout_open = stdout_thread.is_some();
+    let mut stderr_open = stderr_thread.is_some();
 
-    let stderr_thread = thread::spawn(move || -> io::Result<Vec<u8>> {
-        let mut data = Vec::new();
-        if let Some(mut handle) = stderr_handle {
-            handle.read_to_end(&mut data)?;
-        }
-        Ok(data)
-    });
-
-    let stdout_data = match stdout_thread.join() {
-        Ok(Ok(data)) => data,
-        Ok(Err(error)) => {
-            let message = rsync_error!(
-                1,
-                format!("failed to read stdout from fallback rsync: {error}")
-            )
-            .with_role(Role::Client);
-            if write_message(&message, stderr).is_err() {
-                let _ = writeln!(
-                    stderr.writer_mut(),
-                    "failed to read stdout from fallback rsync: {error}"
-                );
+    while stdout_open || stderr_open {
+        match receiver.recv() {
+            Ok(FallbackStreamMessage::Data(FallbackStreamKind::Stdout, data)) => {
+                if let Err(error) = stdout.write_all(&data) {
+                    let message =
+                        rsync_error!(1, format!("failed to forward fallback stdout: {error}"))
+                            .with_role(Role::Client);
+                    if write_message(&message, stderr).is_err() {
+                        let _ = writeln!(
+                            stderr.writer_mut(),
+                            "failed to forward fallback stdout: {error}"
+                        );
+                    }
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return 1;
+                }
             }
-            return 1;
-        }
-        Err(_) => {
-            let message = rsync_error!(1, "failed to capture stdout from fallback rsync binary")
+            Ok(FallbackStreamMessage::Data(FallbackStreamKind::Stderr, data)) => {
+                if let Err(error) = stderr.writer_mut().write_all(&data) {
+                    let _ = writeln!(
+                        stderr.writer_mut(),
+                        "failed to forward fallback stderr: {error}"
+                    );
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return 1;
+                }
+            }
+            Ok(FallbackStreamMessage::Error(FallbackStreamKind::Stdout, error)) => {
+                let message = rsync_error!(
+                    1,
+                    format!("failed to read stdout from fallback rsync: {error}")
+                )
                 .with_role(Role::Client);
-            if write_message(&message, stderr).is_err() {
-                let _ = writeln!(
-                    stderr.writer_mut(),
-                    "failed to capture stdout from fallback rsync binary"
-                );
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(
+                        stderr.writer_mut(),
+                        "failed to read stdout from fallback rsync: {error}"
+                    );
+                }
+                terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                return 1;
             }
-            return 1;
-        }
-    };
-
-    let stderr_data = match stderr_thread.join() {
-        Ok(Ok(data)) => data,
-        Ok(Err(error)) => {
-            let message = rsync_error!(
-                1,
-                format!("failed to read stderr from fallback rsync: {error}")
-            )
-            .with_role(Role::Client);
-            if write_message(&message, stderr).is_err() {
-                let _ = writeln!(
-                    stderr.writer_mut(),
-                    "failed to read stderr from fallback rsync: {error}"
-                );
-            }
-            return 1;
-        }
-        Err(_) => {
-            let message = rsync_error!(1, "failed to capture stderr from fallback rsync binary")
+            Ok(FallbackStreamMessage::Error(FallbackStreamKind::Stderr, error)) => {
+                let message = rsync_error!(
+                    1,
+                    format!("failed to read stderr from fallback rsync: {error}")
+                )
                 .with_role(Role::Client);
-            if write_message(&message, stderr).is_err() {
-                let _ = writeln!(
-                    stderr.writer_mut(),
-                    "failed to capture stderr from fallback rsync binary"
-                );
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(
+                        stderr.writer_mut(),
+                        "failed to read stderr from fallback rsync: {error}"
+                    );
+                }
+                terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                return 1;
             }
-            return 1;
+            Ok(FallbackStreamMessage::Finished(FallbackStreamKind::Stdout)) => {
+                stdout_open = false;
+            }
+            Ok(FallbackStreamMessage::Finished(FallbackStreamKind::Stderr)) => {
+                stderr_open = false;
+            }
+            Err(_) => {
+                if stdout_open {
+                    let message =
+                        rsync_error!(1, "failed to capture stdout from fallback rsync binary")
+                            .with_role(Role::Client);
+                    if write_message(&message, stderr).is_err() {
+                        let _ = writeln!(
+                            stderr.writer_mut(),
+                            "failed to capture stdout from fallback rsync binary"
+                        );
+                    }
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return 1;
+                }
+                if stderr_open {
+                    let message =
+                        rsync_error!(1, "failed to capture stderr from fallback rsync binary")
+                            .with_role(Role::Client);
+                    if write_message(&message, stderr).is_err() {
+                        let _ = writeln!(
+                            stderr.writer_mut(),
+                            "failed to capture stderr from fallback rsync binary"
+                        );
+                    }
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return 1;
+                }
+                break;
+            }
         }
-    };
+    }
+
+    join_fallback_thread(&mut stdout_thread);
+    join_fallback_thread(&mut stderr_thread);
 
     let status = match child.wait() {
         Ok(status) => status,
@@ -3458,30 +3506,60 @@ where
         }
     };
 
-    if let Err(error) = stdout.write_all(&stdout_data) {
-        let message = rsync_error!(1, format!("failed to forward fallback stdout: {error}"))
-            .with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(
-                stderr.writer_mut(),
-                "failed to forward fallback stdout: {error}"
-            );
-        }
-        return 1;
-    }
-
-    if let Err(error) = stderr.writer_mut().write_all(&stderr_data) {
-        let _ = writeln!(
-            stderr.writer_mut(),
-            "failed to forward fallback stderr: {error}"
-        );
-        return 1;
-    }
-
     // Ensure the temporary file, if any, is kept alive until the end of the transfer.
     drop(files_from_temp);
 
     status.code().unwrap_or(MAX_EXIT_CODE)
+}
+
+fn spawn_fallback_reader<R>(
+    mut reader: R,
+    kind: FallbackStreamKind,
+    sender: Sender<FallbackStreamMessage>,
+) -> thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(FallbackStreamMessage::Finished(kind));
+                    break;
+                }
+                Ok(n) => {
+                    if sender
+                        .send(FallbackStreamMessage::Data(kind, Vec::from(&buffer[..n])))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(FallbackStreamMessage::Error(kind, error));
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn join_fallback_thread(handle: &mut Option<thread::JoinHandle<()>>) {
+    if let Some(join_handle) = handle.take() {
+        let _ = join_handle.join();
+    }
+}
+
+fn terminate_fallback_process(
+    child: &mut Child,
+    stdout_thread: &mut Option<thread::JoinHandle<()>>,
+    stderr_thread: &mut Option<thread::JoinHandle<()>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    join_fallback_thread(stdout_thread);
+    join_fallback_thread(stderr_thread);
 }
 
 fn prepare_file_list(
@@ -6986,6 +7064,35 @@ exit 0
         assert!(recorded.contains("--no-compress"));
         assert!(recorded.contains("--compress-level"));
         assert!(recorded.contains("0"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_streams_process_output() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+
+        let script = r#"#!/bin/sh
+echo "fallback stdout"
+echo "fallback stderr" 1>&2
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert_eq!(stdout, b"fallback stdout\n");
+        assert_eq!(stderr, b"fallback stderr\n");
     }
 
     #[cfg(unix)]
