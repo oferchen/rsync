@@ -17,10 +17,10 @@ referenced functionality ships and parity is verified by tests or goldens.
     unavailable. Filter handling via `--exclude`/`--exclude-from`/`--include`/
     `--include-from` and `--filter` with `+`/`-` actions and `merge FILE`
     directives mirrors rsync's glob semantics for local copies, but the
-    broader filter/merge language is still missing. Progress reporting is
-    limited to per-file summaries and aggregate totals instead of the streaming
-    progress meter shown by upstream `rsync`. The `--stats` flag emits a
-    deterministic summary covering the counters implemented by the local copy
+    broader filter/merge language is still missing. Progress reporting now
+    emits streaming, carriage-return updates akin to upstream `rsync` while the
+    richer statistics and delta-transfer metrics remain pending. The `--stats`
+    flag emits a deterministic summary covering the counters implemented by the local copy
     engine while the richer upstream metrics remain pending delta-transfer
     support.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
