@@ -49,6 +49,54 @@
 
 use std::num::NonZeroU64;
 
+fn parse_decimal_components(text: &str) -> Result<(u128, u128, u128), BandwidthParseError> {
+    let mut integer = 0u128;
+    let mut fraction = 0u128;
+    let mut denominator = 1u128;
+    let mut saw_decimal = false;
+
+    for ch in text.chars() {
+        match ch {
+            '0'..='9' => {
+                let digit = u128::from(ch as u8 - b'0');
+                if saw_decimal {
+                    denominator = denominator
+                        .checked_mul(10)
+                        .ok_or(BandwidthParseError::TooLarge)?;
+                    fraction = fraction
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or(BandwidthParseError::TooLarge)?;
+                } else {
+                    integer = integer
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or(BandwidthParseError::TooLarge)?;
+                }
+            }
+            '.' | ',' => {
+                if saw_decimal {
+                    return Err(BandwidthParseError::Invalid);
+                }
+                saw_decimal = true;
+            }
+            _ => return Err(BandwidthParseError::Invalid),
+        }
+    }
+
+    Ok((integer, fraction, denominator))
+}
+
+fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
+    let mut acc = 1u128;
+    for _ in 0..exponent {
+        acc = acc
+            .checked_mul(u128::from(base))
+            .ok_or(BandwidthParseError::TooLarge)?;
+    }
+    Ok(acc)
+}
+
 /// Errors returned when parsing a bandwidth limit fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BandwidthParseError {
@@ -96,10 +144,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::Invalid);
     }
 
-    let normalized_numeric = numeric_part.replace(',', ".");
-    let numeric_value: f64 = normalized_numeric
-        .parse()
-        .map_err(|_| BandwidthParseError::Invalid)?;
+    let (integer_part, fractional_part, denominator) = parse_decimal_components(numeric_part)?;
 
     let (suffix, mut remainder_after_suffix) =
         if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
@@ -120,13 +165,13 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         _ => return Err(BandwidthParseError::Invalid),
     };
 
-    let mut base: f64 = 1024.0;
+    let mut base: u32 = 1024;
 
     if !remainder_after_suffix.is_empty() {
         let bytes = remainder_after_suffix.as_bytes();
         match bytes[0] {
             b'b' | b'B' => {
-                base = 1000.0;
+                base = 1000;
                 remainder_after_suffix = &remainder_after_suffix[1..];
             }
             b'i' | b'I' => {
@@ -134,7 +179,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
                     return Err(BandwidthParseError::Invalid);
                 }
                 if matches!(bytes[1], b'b' | b'B') {
-                    base = 1024.0;
+                    base = 1024;
                     remainder_after_suffix = &remainder_after_suffix[2..];
                 } else {
                     return Err(BandwidthParseError::Invalid);
@@ -145,13 +190,13 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         }
     }
 
-    let mut adjust = 0.0f64;
+    let mut adjust = 0i8;
     if !remainder_after_suffix.is_empty() {
         if remainder_after_suffix == "+1" && numeric_end > 0 {
-            adjust = 1.0;
+            adjust = 1;
             remainder_after_suffix = "";
         } else if remainder_after_suffix == "-1" && numeric_end > 0 {
-            adjust = -1.0;
+            adjust = -1;
             remainder_after_suffix = "";
         }
     }
@@ -160,26 +205,27 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::Invalid);
     }
 
-    let scale = match repetitions {
-        0 => 1.0,
-        reps => base.powi(reps as i32),
-    };
+    let scale = pow_u128(base, repetitions)?;
 
-    let mut size = numeric_value * scale;
-    if !size.is_finite() {
-        return Err(BandwidthParseError::TooLarge);
-    }
-    size += adjust;
-    if !size.is_finite() {
-        return Err(BandwidthParseError::TooLarge);
-    }
+    let numerator = integer_part
+        .checked_mul(denominator)
+        .and_then(|value| value.checked_add(fractional_part))
+        .ok_or(BandwidthParseError::TooLarge)?;
+    let product = numerator
+        .checked_mul(scale)
+        .ok_or(BandwidthParseError::TooLarge)?;
 
-    let truncated = size.trunc();
-    if truncated < 0.0 || truncated > u128::MAX as f64 {
-        return Err(BandwidthParseError::TooLarge);
-    }
+    let mut bytes = product / denominator;
 
-    let bytes = truncated as u128;
+    if adjust == -1 {
+        if product >= denominator {
+            bytes = bytes.checked_sub(1).ok_or(BandwidthParseError::TooLarge)?;
+        } else {
+            bytes = 0;
+        }
+    } else if adjust == 1 {
+        bytes = bytes.checked_add(1).ok_or(BandwidthParseError::TooLarge)?;
+    }
 
     if bytes == 0 {
         return Ok(None);
@@ -221,6 +267,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_bandwidth_accepts_iec_suffixes() {
+        let limit = parse_bandwidth_argument("1MiB").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(1_048_576));
+    }
+
+    #[test]
+    fn parse_bandwidth_accepts_trailing_decimal_point() {
+        let limit = parse_bandwidth_argument("1.").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(1024));
+    }
+
+    #[test]
     fn parse_bandwidth_accepts_zero_for_unlimited() {
         assert_eq!(parse_bandwidth_argument("0").expect("parse"), None);
     }
@@ -241,6 +299,30 @@ mod tests {
     fn parse_bandwidth_handles_fractional_values() {
         let limit = parse_bandwidth_argument("0.5M").expect("parse succeeds");
         assert_eq!(limit, NonZeroU64::new(512 * 1024));
+    }
+
+    #[test]
+    fn parse_bandwidth_accepts_comma_fraction_separator() {
+        let limit = parse_bandwidth_argument("0,5M").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(512 * 1024));
+    }
+
+    #[test]
+    fn parse_bandwidth_accepts_positive_adjustment() {
+        let limit = parse_bandwidth_argument("1K+1").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(1024));
+    }
+
+    #[test]
+    fn parse_bandwidth_honours_negative_adjustment_for_small_values() {
+        let limit = parse_bandwidth_argument("0.001M-1").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(0x400));
+    }
+
+    #[test]
+    fn parse_bandwidth_negative_adjustment_can_trigger_too_small() {
+        let error = parse_bandwidth_argument("0.0001M-1").unwrap_err();
+        assert_eq!(error, BandwidthParseError::TooSmall);
     }
 
     #[test]
