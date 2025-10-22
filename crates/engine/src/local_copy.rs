@@ -1311,6 +1311,7 @@ pub struct LocalCopyOptions {
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
+    compression_level_override: Option<CompressionLevel>,
     compression_level: CompressionLevel,
     compression_override: Option<CompressionLevel>,
     preserve_owner: bool,
@@ -1345,6 +1346,7 @@ impl LocalCopyOptions {
             remove_source_files: false,
             bandwidth_limit: None,
             compress: false,
+            compression_level_override: None,
             compression_level: CompressionLevel::Default,
             compression_override: None,
             preserve_owner: false,
@@ -1408,6 +1410,20 @@ impl LocalCopyOptions {
     #[doc(alias = "--compress")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        if !compress {
+            self.compression_level_override = None;
+        }
+        self
+    }
+
+    /// Applies an explicit compression level override for payload processing.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level_override(
+        mut self,
+        level: Option<CompressionLevel>,
+    ) -> Self {
+        self.compression_level_override = level;
         self
     }
 
@@ -1421,6 +1437,8 @@ impl LocalCopyOptions {
     /// Applies an explicit compression level override supplied by the user.
     #[must_use]
     #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
+        self.compression_level_override = Some(level);
     pub const fn with_compression_override(mut self, level: Option<CompressionLevel>) -> Self {
         self.compression_override = level;
         self
@@ -1613,6 +1631,18 @@ impl LocalCopyOptions {
         self.compress
     }
 
+    /// Returns the configured compression level override, if any.
+    #[must_use]
+    pub const fn compression_level_override(&self) -> Option<CompressionLevel> {
+        self.compression_level_override
+    }
+
+    /// Returns the compression level that should be used when compression is enabled.
+    #[must_use]
+    pub const fn compression_level(&self) -> CompressionLevel {
+        match self.compression_level_override {
+            Some(level) => level,
+            None => CompressionLevel::Default,
     /// Returns the explicit compression override when compression is enabled.
     #[must_use]
     pub const fn compression_override(&self) -> Option<CompressionLevel> {
@@ -2389,6 +2419,7 @@ impl<'a> CopyContext<'a> {
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut compressor = if compress {
+            Some(CountingZlibEncoder::new(level))
             Some(CountingZlibEncoder::new(self.compression_level()))
         } else {
             None
@@ -4995,6 +5026,21 @@ mod tests {
         let override_level = CompressionLevel::precise(level);
         let options = LocalCopyOptions::default()
             .compress(true)
+            .with_compression_level_override(Some(CompressionLevel::precise(level)));
+        assert_eq!(
+            options.compression_level_override(),
+            Some(CompressionLevel::precise(level))
+        );
+        assert_eq!(
+            options.compression_level(),
+            CompressionLevel::precise(level)
+        );
+
+        let disabled = LocalCopyOptions::default()
+            .with_compression_level_override(Some(CompressionLevel::precise(level)))
+            .compress(false);
+        assert_eq!(disabled.compression_level_override(), None);
+        assert_eq!(disabled.compression_level(), CompressionLevel::Default);
             .with_compression_override(Some(override_level));
         assert_eq!(options.compression_override(), Some(override_level));
         assert_eq!(options.effective_compression_level(), Some(override_level));
