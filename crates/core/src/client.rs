@@ -129,6 +129,7 @@ pub struct ClientConfig {
     dry_run: bool,
     delete: bool,
     delete_excluded: bool,
+    remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -197,6 +198,14 @@ impl ClientConfig {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(&self) -> bool {
         self.delete_excluded
+    }
+
+    /// Returns whether the sender should remove source files after transfer.
+    #[must_use]
+    #[doc(alias = "--remove-source-files")]
+    #[doc(alias = "--remove-sent-files")]
+    pub const fn remove_source_files(&self) -> bool {
+        self.remove_source_files
     }
 
     /// Returns the requested bandwidth limit, if any.
@@ -351,6 +360,7 @@ pub struct ClientConfigBuilder {
     dry_run: bool,
     delete: bool,
     delete_excluded: bool,
+    remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -408,6 +418,15 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Enables or disables removal of source files after a successful transfer.
+    #[must_use]
+    #[doc(alias = "--remove-source-files")]
+    #[doc(alias = "--remove-sent-files")]
+    pub const fn remove_source_files(mut self, remove: bool) -> Self {
+        self.remove_source_files = remove;
         self
     }
 
@@ -600,6 +619,7 @@ impl ClientConfigBuilder {
             dry_run: self.dry_run,
             delete: self.delete,
             delete_excluded: self.delete_excluded,
+            remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
             preserve_group: self.preserve_group,
@@ -898,6 +918,12 @@ impl ClientSummary {
         self.stats.bytes_copied()
     }
 
+    /// Returns the number of source entries removed due to `--remove-source-files`.
+    #[must_use]
+    pub fn sources_removed(&self) -> u64 {
+        self.stats.sources_removed()
+    }
+
     /// Returns the aggregate size of all source files considered during the transfer.
     #[must_use]
     pub fn total_source_bytes(&self) -> u64 {
@@ -932,6 +958,8 @@ pub enum ClientEventKind {
     SkippedNonRegular,
     /// An entry was deleted due to `--delete`.
     EntryDeleted,
+    /// A source entry was removed after a successful transfer.
+    SourceRemoved,
 }
 
 /// Event describing a single action performed during a client transfer.
@@ -955,6 +983,7 @@ impl ClientEvent {
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
+            LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
         Self {
             relative_path: record.relative_path().to_path_buf(),
@@ -1145,6 +1174,7 @@ pub fn run_client_with_observer(
         let options = LocalCopyOptions::default()
             .delete(config.delete() || config.delete_excluded())
             .delete_excluded(config.delete_excluded())
+            .remove_source_files(config.remove_source_files())
             .bandwidth_limit(
                 config
                     .bandwidth_limit()
@@ -1387,6 +1417,17 @@ mod tests {
     }
 
     #[test]
+    fn builder_preserves_remove_source_files_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .remove_source_files(true)
+            .build();
+
+        assert!(config.remove_source_files());
+        assert!(!ClientConfig::default().remove_source_files());
+    }
+
+    #[test]
     fn builder_enables_sparse() {
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -1471,6 +1512,25 @@ mod tests {
         assert_eq!(fs::read(&destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.bytes_copied(), b"example".len() as u64);
+    }
+
+    #[test]
+    fn run_client_remove_source_files_deletes_source() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("dest.txt");
+        fs::write(&source, b"move me").expect("write source");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .remove_source_files(true)
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        assert_eq!(summary.sources_removed(), 1);
+        assert!(!source.exists(), "source should be removed after transfer");
+        assert_eq!(fs::read(&destination).expect("read dest"), b"move me");
     }
 
     #[test]

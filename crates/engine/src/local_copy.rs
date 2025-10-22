@@ -801,6 +801,8 @@ pub enum LocalCopyAction {
     SkippedNonRegular,
     /// An entry was removed due to `--delete`.
     EntryDeleted,
+    /// A source entry was removed after a successful transfer.
+    SourceRemoved,
 }
 
 /// Record describing a single filesystem action performed during local copy execution.
@@ -910,6 +912,7 @@ where
 pub struct LocalCopyOptions {
     delete: bool,
     delete_excluded: bool,
+    remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
     preserve_owner: bool,
     preserve_group: bool,
@@ -938,6 +941,7 @@ impl LocalCopyOptions {
         Self {
             delete: false,
             delete_excluded: false,
+            remove_source_files: false,
             bandwidth_limit: None,
             preserve_owner: false,
             preserve_group: false,
@@ -973,6 +977,15 @@ impl LocalCopyOptions {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Requests that source files be removed after successful transfer.
+    #[must_use]
+    #[doc(alias = "--remove-source-files")]
+    #[doc(alias = "--remove-sent-files")]
+    pub const fn remove_source_files(mut self, remove: bool) -> Self {
+        self.remove_source_files = remove;
         self
     }
 
@@ -1130,6 +1143,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn delete_excluded_enabled(&self) -> bool {
         self.delete_excluded
+    }
+
+    /// Reports whether source files should be removed after transfer.
+    #[must_use]
+    pub const fn remove_source_files_enabled(&self) -> bool {
+        self.remove_source_files
     }
 
     /// Returns the configured bandwidth limit, if any, in bytes per second.
@@ -1331,6 +1350,7 @@ pub struct LocalCopySummary {
     devices_created: u64,
     fifos_created: u64,
     items_deleted: u64,
+    sources_removed: u64,
     bytes_copied: u64,
     total_source_bytes: u64,
     total_elapsed: Duration,
@@ -1415,6 +1435,12 @@ impl LocalCopySummary {
         self.items_deleted
     }
 
+    /// Returns the number of source entries removed due to `--remove-source-files`.
+    #[must_use]
+    pub const fn sources_removed(&self) -> u64 {
+        self.sources_removed
+    }
+
     /// Returns the aggregate number of bytes written for copied files.
     #[must_use]
     pub const fn bytes_copied(&self) -> u64 {
@@ -1492,6 +1518,10 @@ impl LocalCopySummary {
 
     fn record_deletion(&mut self) {
         self.items_deleted = self.items_deleted.saturating_add(1);
+    }
+
+    fn record_source_removed(&mut self) {
+        self.sources_removed = self.sources_removed.saturating_add(1);
     }
 }
 
@@ -1597,6 +1627,10 @@ impl<'a> CopyContext<'a> {
 
     fn relative_paths_enabled(&self) -> bool {
         self.options.relative_paths_enabled()
+    }
+
+    fn remove_source_files_enabled(&self) -> bool {
+        self.options.remove_source_files_enabled()
     }
 
     fn checksum_enabled(&self) -> bool {
@@ -3084,6 +3118,7 @@ fn copy_file(
 ) -> Result<(), LocalCopyError> {
     let metadata_options = context.metadata_options();
     let mode = context.mode();
+    let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
@@ -3154,11 +3189,12 @@ fn copy_file(
 
         context.summary_mut().record_file(file_size);
         context.record(LocalCopyRecord::new(
-            record_path,
+            record_path.clone(),
             LocalCopyAction::DataCopied,
             file_size,
             Duration::default(),
         ));
+        remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
     }
 
@@ -3216,11 +3252,12 @@ fn copy_file(
         hard_links.record(metadata, destination);
         context.summary_mut().record_hard_link();
         context.record(LocalCopyRecord::new(
-            record_path,
+            record_path.clone(),
             LocalCopyAction::HardLink,
             0,
             Duration::default(),
         ));
+        remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
     }
 
@@ -3246,6 +3283,12 @@ fn copy_file(
                 0,
                 Duration::default(),
             ));
+            remove_source_entry_if_requested(
+                context,
+                source,
+                Some(record_path.as_path()),
+                file_type,
+            )?;
             return Ok(());
         }
     }
@@ -3295,11 +3338,12 @@ fn copy_file(
     context.summary_mut().record_file(file_size);
     context.summary_mut().record_elapsed(elapsed);
     context.record(LocalCopyRecord::new(
-        record_path,
+        record_path.clone(),
         LocalCopyAction::DataCopied,
         file_size,
         elapsed,
     ));
+    remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
 }
 
@@ -3628,13 +3672,14 @@ fn files_checksum_match(source: &Path, destination: &Path) -> io::Result<bool> {
 
 fn copy_fifo(
     context: &mut CopyContext,
-    _source: &Path,
+    source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
@@ -3688,14 +3733,15 @@ fn copy_fifo(
         }
 
         context.summary_mut().record_fifo();
-        if let Some(path) = record_path {
+        if let Some(path) = &record_path {
             context.record(LocalCopyRecord::new(
-                path,
+                path.clone(),
                 LocalCopyAction::FifoCopied,
                 0,
                 Duration::default(),
             ));
         }
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
 
@@ -3729,28 +3775,30 @@ fn copy_fifo(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
-    sync_xattrs_if_requested(preserve_xattrs, mode, _source, destination, true)?;
+    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     context.summary_mut().record_fifo();
-    if let Some(path) = record_path {
+    if let Some(path) = &record_path {
         context.record(LocalCopyRecord::new(
-            path,
+            path.clone(),
             LocalCopyAction::FifoCopied,
             0,
             Duration::default(),
         ));
     }
+    remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
 
 fn copy_device(
     context: &mut CopyContext,
-    _source: &Path,
+    source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
@@ -3804,14 +3852,15 @@ fn copy_device(
         }
 
         context.summary_mut().record_device();
-        if let Some(path) = record_path {
+        if let Some(path) = &record_path {
             context.record(LocalCopyRecord::new(
-                path,
+                path.clone(),
                 LocalCopyAction::DeviceCopied,
                 0,
                 Duration::default(),
             ));
         }
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
 
@@ -3845,16 +3894,17 @@ fn copy_device(
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
-    sync_xattrs_if_requested(preserve_xattrs, mode, _source, destination, true)?;
+    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     context.summary_mut().record_device();
-    if let Some(path) = record_path {
+    if let Some(path) = &record_path {
         context.record(LocalCopyRecord::new(
-            path,
+            path.clone(),
             LocalCopyAction::DeviceCopied,
             0,
             Duration::default(),
         ));
     }
+    remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
 
@@ -3950,6 +4000,42 @@ fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), 
     }
 }
 
+fn remove_source_entry_if_requested(
+    context: &mut CopyContext,
+    source: &Path,
+    record_path: Option<&Path>,
+    file_type: fs::FileType,
+) -> Result<(), LocalCopyError> {
+    if !context.remove_source_files_enabled() || context.mode().is_dry_run() {
+        return Ok(());
+    }
+
+    if file_type.is_dir() {
+        return Ok(());
+    }
+
+    match fs::remove_file(source) {
+        Ok(()) => {
+            context.summary_mut().record_source_removed();
+            if let Some(path) = record_path {
+                context.record(LocalCopyRecord::new(
+                    path.to_path_buf(),
+                    LocalCopyAction::SourceRemoved,
+                    0,
+                    Duration::default(),
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(LocalCopyError::io(
+            "remove source entry",
+            source.to_path_buf(),
+            error,
+        )),
+    }
+}
+
 fn copy_symlink(
     context: &mut CopyContext,
     source: &Path,
@@ -3959,6 +4045,7 @@ fn copy_symlink(
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     let mode = context.mode();
+    let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
     let record_path = relative
@@ -4026,14 +4113,15 @@ fn copy_symlink(
 
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
-        if let Some(path) = record_path {
+        if let Some(path) = &record_path {
             context.record(LocalCopyRecord::new(
-                path,
+                path.clone(),
                 LocalCopyAction::SymlinkCopied,
                 0,
                 Duration::default(),
             ));
         }
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
 
@@ -4047,14 +4135,15 @@ fn copy_symlink(
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
 
     context.summary_mut().record_symlink();
-    if let Some(path) = record_path {
+    if let Some(path) = &record_path {
         context.record(LocalCopyRecord::new(
-            path,
+            path.clone(),
             LocalCopyAction::SymlinkCopied,
             0,
             Duration::default(),
         ));
     }
+    remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
 
@@ -4513,6 +4602,31 @@ mod tests {
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.regular_files_total(), 1);
         assert_eq!(summary.regular_files_matched(), 0);
+    }
+
+    #[test]
+    fn execute_with_remove_source_files_deletes_source() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"move me").expect("write source");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().remove_source_files(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.sources_removed(), 1);
+        assert!(!source.exists(), "source should be removed");
+        assert_eq!(fs::read(destination).expect("read dest"), b"move me");
     }
 
     #[test]
