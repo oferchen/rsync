@@ -3817,7 +3817,6 @@ fn copy_file(
 
     if context.ignore_existing_enabled() && existing_metadata.is_some() {
         context.summary_mut().record_regular_file_ignored_existing();
-        context.hard_links.record(metadata, destination);
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::SkippedExisting,
