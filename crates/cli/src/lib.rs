@@ -74,7 +74,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::{IntErrorKind, NonZeroU64};
+use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
@@ -88,6 +88,7 @@ use std::os::unix::{
 };
 
 use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
+use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
@@ -191,6 +192,10 @@ const HELP_TEXT: &str = concat!(
 
 /// Human-readable list of the options recognised by this development build.
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --compress-level, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --msgs2stderr, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -214,6 +219,7 @@ struct ParsedArgs {
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     compress: bool,
+    no_compress: bool,
     compress_level: Option<OsString>,
     owner: Option<bool>,
     group: Option<bool>,
@@ -698,6 +704,7 @@ fn clap_command() -> ClapCommand {
             Arg::new("compress-level")
                 .long("compress-level")
                 .value_name("LEVEL")
+                .help("Set compression level (0 disables compression).")
                 .help("Set compression level (0-9). 0 disables compression.")
                 .value_parser(OsStringValueParser::new()),
         )
@@ -738,6 +745,9 @@ where
     if delete_excluded {
         delete = true;
     }
+    let compress_flag = matches.get_flag("compress");
+    let no_compress = matches.get_flag("no-compress");
+    let compress = if no_compress { false } else { compress_flag };
     let mut compress = matches.get_flag("compress");
     if matches.get_flag("no-compress") {
         compress = false;
@@ -865,6 +875,7 @@ where
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
 
+    let compress_level = matches.remove_one::<OsString>("compress-level");
     let bwlimit = matches.remove_one::<OsString>("bwlimit");
     let excludes = matches
         .remove_many::<OsString>("exclude")
@@ -913,6 +924,7 @@ where
         remainder,
         bwlimit,
         compress,
+        no_compress,
         compress_level,
         owner,
         group,
@@ -1069,6 +1081,8 @@ where
         update,
         remainder: raw_remainder,
         bwlimit,
+        compress: compress_flag,
+        no_compress,
         mut compress,
         compress_level,
         owner,
@@ -1162,6 +1176,8 @@ where
         }
     };
 
+    let mut compress = compress_flag;
+
     let bandwidth_limit = match bwlimit {
         Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
             Ok(limit) => limit,
@@ -1173,6 +1189,44 @@ where
             }
         },
         None => None,
+    };
+
+    let compress_level_setting = match compress_level {
+        Some(ref value) => match parse_compress_level(value.as_os_str()) {
+            Ok(setting) => Some(setting),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    let mut compression_level_override = None;
+    if let Some(setting) = compress_level_setting {
+        match setting {
+            CompressLevelArg::Disable => {
+                compress = false;
+            }
+            CompressLevelArg::Level(level) => {
+                if !no_compress {
+                    compress = true;
+                    compression_level_override = Some(CompressionLevel::precise(level));
+                }
+            }
+        }
+    }
+
+    let compress_disabled =
+        no_compress || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
+    let compress_level_cli = match (compress_level_setting, compress_disabled) {
+        (Some(CompressLevelArg::Level(level)), false) => {
+            Some(OsString::from(level.get().to_string()))
+        }
+        (Some(CompressLevelArg::Disable), _) => Some(OsString::from("0")),
+        _ => None,
     };
 
     let mut compression_setting = CompressionSetting::default();
@@ -1305,6 +1359,8 @@ where
             size_only,
             ignore_existing,
             compress,
+            compress_disabled,
+            compress_level: compress_level_cli.clone(),
             compress_level: compress_level.clone(),
             owner,
             group,
@@ -1399,6 +1455,7 @@ where
         .bandwidth_limit(bandwidth_limit)
         .compression_setting(compression_setting)
         .compress(compress)
+        .compression_level(compression_level_override)
         .owner(preserve_owner)
         .group(preserve_group)
         .permissions(preserve_permissions)
@@ -3018,6 +3075,7 @@ struct RemoteFallbackArgs {
     size_only: bool,
     ignore_existing: bool,
     compress: bool,
+    compress_disabled: bool,
     compress_level: Option<OsString>,
     owner: Option<bool>,
     group: Option<bool>,
@@ -3075,6 +3133,7 @@ where
         size_only,
         ignore_existing,
         compress,
+        compress_disabled,
         compress_level,
         owner,
         group,
@@ -3140,6 +3199,12 @@ where
     }
     if compress {
         command_args.push(OsString::from("--compress"));
+    } else if compress_disabled {
+        command_args.push(OsString::from("--no-compress"));
+    }
+    if let Some(level) = compress_level {
+        command_args.push(OsString::from("--compress-level"));
+        command_args.push(level);
     }
 
     if let Some(level) = compress_level {
@@ -3528,6 +3593,35 @@ fn read_password_from_reader<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
 fn trim_trailing_newlines(bytes: &mut Vec<u8>) {
     while matches!(bytes.last(), Some(b'\n' | b'\r')) {
         bytes.pop();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompressLevelArg {
+    Disable,
+    Level(NonZeroU8),
+}
+
+fn parse_compress_level(argument: &OsStr) -> Result<CompressLevelArg, Message> {
+    let text = argument.to_string_lossy();
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        return Err(rsync_error!(1, "--compress-level={} is invalid", text).with_role(Role::Client));
+    }
+
+    match trimmed.parse::<i32>() {
+        Ok(0) => Ok(CompressLevelArg::Disable),
+        Ok(value @ 1..=9) => Ok(CompressLevelArg::Level(
+            NonZeroU8::new(value as u8).expect("range guarantees non-zero"),
+        )),
+        Ok(_) => Err(
+            rsync_error!(1, "--compress-level={} must be between 0 and 9", trimmed)
+                .with_role(Role::Client),
+        ),
+        Err(_) => {
+            Err(rsync_error!(1, "--compress-level={} is invalid", text).with_role(Role::Client))
+        }
     }
 }
 
@@ -5096,6 +5190,33 @@ mod tests {
         .expect("parse");
 
         assert!(!parsed.compress);
+        assert!(parsed.no_compress);
+    }
+
+    #[test]
+    fn parse_args_records_compress_level_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=5"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compress_level, Some(OsString::from("5")));
+    }
+
+    #[test]
+    fn parse_args_compress_level_zero_records_disable() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=0"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compress_level, Some(OsString::from("0")));
     }
 
     #[test]
@@ -6049,6 +6170,32 @@ mod tests {
     }
 
     #[test]
+    fn compress_level_invalid_value_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=fast"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("--compress-level=fast is invalid"));
+    }
+
+    #[test]
+    fn compress_level_out_of_range_reports_error() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=12"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("--compress-level=12 must be between 0 and 9"));
+    }
+
+    #[test]
     fn remote_operand_reports_launch_failure_when_fallback_missing() {
         let _env_lock = ENV_LOCK.lock().expect("env lock");
         let missing = OsString::from("rsync-missing-binary");
@@ -6628,6 +6775,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compress_level_flag_is_accepted_for_local_copies() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("compress.txt");
+        let destination = tmp.path().join("compress.out");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=6"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"payload"
+        );
+    }
+
+    #[test]
+    fn compress_level_zero_disables_local_compression() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("compress.txt");
+        let destination = tmp.path().join("compress.out");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=0"),
+            OsString::from("-z"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"payload"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn remote_operands_invoke_fallback_binary() {
@@ -6728,6 +6926,78 @@ exit 0
 
         let copied = std::fs::read(&files_copy_path).expect("read copied file list");
         assert_eq!(copied, b"alpha\nbeta\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_compress_level() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=7"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--compress"));
+        assert!(recorded.contains("--compress-level"));
+        assert!(recorded.contains("7"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_no_compress_when_level_zero() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compress-level=0"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-compress"));
+        assert!(recorded.contains("--compress-level"));
+        assert!(recorded.contains("0"));
     }
 
     #[cfg(unix)]
@@ -6849,6 +7119,45 @@ exit 0
             OsString::from("oc-rsync"),
             OsString::from("-W"),
             OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(!args.iter().any(|arg| *arg == "--compress"));
+        assert!(args.contains(&"--compress-level"));
+        assert!(args.contains(&"0"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_whole_file_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-W"),
+            OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
         ]);
 
@@ -6860,6 +7169,12 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--whole-file"));
         assert!(!args.iter().any(|arg| *arg == "--no-whole-file"));
+        let dest_string = dest_path.display().to_string();
+        assert!(args.contains(&"--whole-file"));
+        assert!(!args.contains(&"--no-whole-file"));
+        assert!(args.iter().any(|arg| *arg == dest_string.as_str()));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
@@ -6913,6 +7228,8 @@ exit 0
         assert!(!args.iter().any(|arg| *arg == "--compress"));
         assert!(args.contains(&"--compress-level"));
         assert!(args.contains(&"0"));
+        assert!(!args.contains(&"--whole-file"));
+        assert!(args.contains(&"--no-whole-file"));
     }
 
     #[cfg(unix)]
