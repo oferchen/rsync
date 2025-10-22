@@ -1318,6 +1318,12 @@ impl HardLinkTracker {
 /// transferred. Counts increase even in dry-run mode to reflect the actions
 /// that would have been taken.
 pub struct LocalCopySummary {
+    regular_files_total: u64,
+    regular_files_matched: u64,
+    directories_total: u64,
+    symlinks_total: u64,
+    devices_total: u64,
+    fifos_total: u64,
     files_copied: u64,
     directories_created: u64,
     symlinks_copied: u64,
@@ -1337,16 +1343,40 @@ impl LocalCopySummary {
         self.files_copied
     }
 
+    /// Returns the number of regular files encountered during the transfer.
+    #[must_use]
+    pub const fn regular_files_total(&self) -> u64 {
+        self.regular_files_total
+    }
+
+    /// Returns the number of regular files that already matched the destination state.
+    #[must_use]
+    pub const fn regular_files_matched(&self) -> u64 {
+        self.regular_files_matched
+    }
+
     /// Returns the number of directories created during the transfer.
     #[must_use]
     pub const fn directories_created(&self) -> u64 {
         self.directories_created
     }
 
+    /// Returns the number of directories encountered in the source set.
+    #[must_use]
+    pub const fn directories_total(&self) -> u64 {
+        self.directories_total
+    }
+
     /// Returns the number of symbolic links copied.
     #[must_use]
     pub const fn symlinks_copied(&self) -> u64 {
         self.symlinks_copied
+    }
+
+    /// Returns the number of symbolic links encountered in the source set.
+    #[must_use]
+    pub const fn symlinks_total(&self) -> u64 {
+        self.symlinks_total
     }
 
     /// Returns the number of hard links materialised.
@@ -1361,10 +1391,22 @@ impl LocalCopySummary {
         self.devices_created
     }
 
+    /// Returns the number of device nodes encountered in the source set.
+    #[must_use]
+    pub const fn devices_total(&self) -> u64 {
+        self.devices_total
+    }
+
     /// Returns the number of FIFOs created.
     #[must_use]
     pub const fn fifos_created(&self) -> u64 {
         self.fifos_created
+    }
+
+    /// Returns the number of FIFOs encountered in the source set.
+    #[must_use]
+    pub const fn fifos_total(&self) -> u64 {
+        self.fifos_total
     }
 
     /// Returns the number of entries removed because of `--delete`.
@@ -1396,6 +1438,14 @@ impl LocalCopySummary {
         self.bytes_copied = self.bytes_copied.saturating_add(bytes);
     }
 
+    fn record_regular_file_total(&mut self) {
+        self.regular_files_total = self.regular_files_total.saturating_add(1);
+    }
+
+    fn record_regular_file_matched(&mut self) {
+        self.regular_files_matched = self.regular_files_matched.saturating_add(1);
+    }
+
     fn record_total_bytes(&mut self, bytes: u64) {
         self.total_source_bytes = self.total_source_bytes.saturating_add(bytes);
     }
@@ -1408,8 +1458,16 @@ impl LocalCopySummary {
         self.directories_created = self.directories_created.saturating_add(1);
     }
 
+    fn record_directory_total(&mut self) {
+        self.directories_total = self.directories_total.saturating_add(1);
+    }
+
     fn record_symlink(&mut self) {
         self.symlinks_copied = self.symlinks_copied.saturating_add(1);
+    }
+
+    fn record_symlink_total(&mut self) {
+        self.symlinks_total = self.symlinks_total.saturating_add(1);
     }
 
     fn record_hard_link(&mut self) {
@@ -1420,8 +1478,16 @@ impl LocalCopySummary {
         self.devices_created = self.devices_created.saturating_add(1);
     }
 
+    fn record_device_total(&mut self) {
+        self.devices_total = self.devices_total.saturating_add(1);
+    }
+
     fn record_fifo(&mut self) {
         self.fifos_created = self.fifos_created.saturating_add(1);
+    }
+
+    fn record_fifo_total(&mut self) {
+        self.fifos_total = self.fifos_total.saturating_add(1);
     }
 
     fn record_deletion(&mut self) {
@@ -2885,6 +2951,8 @@ fn copy_directory_recursive(
         }
     }
 
+    context.summary_mut().record_directory_total();
+
     let entries = read_directory_entries_sorted(source)?;
 
     let _dir_merge_guard = context.enter_directory(source)?;
@@ -3028,6 +3096,7 @@ fn copy_file(
                 .unwrap_or_else(PathBuf::new)
         });
     let file_size = metadata.len();
+    context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -3170,6 +3239,7 @@ fn copy_file(
             #[cfg(feature = "xattr")]
             sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
             hard_links.record(metadata, destination);
+            context.summary_mut().record_regular_file_matched();
             context.record(LocalCopyRecord::new(
                 record_path.clone(),
                 LocalCopyAction::MetadataReused,
@@ -3570,6 +3640,7 @@ fn copy_fifo(
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
+    context.summary_mut().record_fifo_total();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -3685,6 +3756,7 @@ fn copy_device(
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
+    context.summary_mut().record_device_total();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -3892,6 +3964,7 @@ fn copy_symlink(
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
+    context.summary_mut().record_symlink_total();
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -4438,6 +4511,8 @@ mod tests {
 
         assert_eq!(fs::read(destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.regular_files_matched(), 0);
     }
 
     #[test]
@@ -4603,6 +4678,8 @@ mod tests {
             b"identical"
         );
         assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.regular_files_matched(), 1);
     }
 
     #[test]
@@ -4628,6 +4705,8 @@ mod tests {
             .expect("copy succeeds");
 
         assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.regular_files_matched(), 0);
         let metadata = fs::metadata(&destination).expect("dest metadata");
         let new_mtime = FileTime::from_last_modification_time(&metadata);
         assert_ne!(new_mtime, original_mtime);
@@ -4659,6 +4738,8 @@ mod tests {
             .expect("copy succeeds");
 
         assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.regular_files_matched(), 1);
         let metadata = fs::metadata(&destination).expect("dest metadata");
         let final_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(final_mtime, preserved_mtime);
