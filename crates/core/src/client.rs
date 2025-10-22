@@ -135,6 +135,8 @@ pub struct ClientConfig {
     stats: bool,
     partial: bool,
     inplace: bool,
+    preserve_devices: bool,
+    preserve_specials: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -243,6 +245,20 @@ impl ClientConfig {
         self.sparse
     }
 
+    /// Reports whether device nodes should be preserved during the transfer.
+    #[must_use]
+    #[doc(alias = "--devices")]
+    pub const fn preserve_devices(&self) -> bool {
+        self.preserve_devices
+    }
+
+    /// Reports whether special files such as FIFOs should be preserved.
+    #[must_use]
+    #[doc(alias = "--specials")]
+    pub const fn preserve_specials(&self) -> bool {
+        self.preserve_specials
+    }
+
     /// Reports whether relative path preservation was requested.
     #[must_use]
     #[doc(alias = "--relative")]
@@ -316,6 +332,8 @@ pub struct ClientConfigBuilder {
     stats: bool,
     partial: bool,
     inplace: bool,
+    preserve_devices: bool,
+    preserve_specials: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -412,6 +430,22 @@ impl ClientConfigBuilder {
     #[doc(alias = "-S")]
     pub const fn sparse(mut self, sparse: bool) -> Self {
         self.sparse = sparse;
+        self
+    }
+
+    /// Enables or disables copying of device nodes during the transfer.
+    #[must_use]
+    #[doc(alias = "--devices")]
+    pub const fn devices(mut self, preserve: bool) -> Self {
+        self.preserve_devices = preserve;
+        self
+    }
+
+    /// Enables or disables copying of special files during the transfer.
+    #[must_use]
+    #[doc(alias = "--specials")]
+    pub const fn specials(mut self, preserve: bool) -> Self {
+        self.preserve_specials = preserve;
         self
     }
 
@@ -518,6 +552,8 @@ impl ClientConfigBuilder {
             stats: self.stats,
             partial: self.partial,
             inplace: self.inplace,
+            preserve_devices: self.preserve_devices,
+            preserve_specials: self.preserve_specials,
             #[cfg(feature = "xattr")]
             preserve_xattrs: self.preserve_xattrs,
         }
@@ -769,6 +805,8 @@ pub enum ClientEventKind {
     DeviceCopied,
     /// A directory was created during traversal.
     DirectoryCreated,
+    /// A non-regular entry was skipped because support was disabled.
+    SkippedNonRegular,
     /// An entry was deleted due to `--delete`.
     EntryDeleted,
 }
@@ -792,6 +830,7 @@ impl ClientEvent {
             LocalCopyAction::FifoCopied => ClientEventKind::FifoCopied,
             LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
+            LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
         };
         Self {
@@ -858,6 +897,8 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
             .filters(filter_set)
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
+            .devices(config.preserve_devices())
+            .specials(config.preserve_specials())
             .relative_paths(config.relative_paths())
             .inplace(config.inplace())
             .partial(config.partial());
@@ -1008,6 +1049,28 @@ mod tests {
 
         assert!(config.preserve_times());
         assert!(!config.preserve_permissions());
+    }
+
+    #[test]
+    fn builder_preserves_devices_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .devices(true)
+            .build();
+
+        assert!(config.preserve_devices());
+        assert!(!config.preserve_specials());
+    }
+
+    #[test]
+    fn builder_preserves_specials_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .specials(true)
+            .build();
+
+        assert!(config.preserve_specials());
+        assert!(!config.preserve_devices());
     }
 
     #[cfg(feature = "xattr")]

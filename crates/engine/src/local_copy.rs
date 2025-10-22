@@ -17,10 +17,11 @@
 //!   preserving ownership/group metadata when `--owner`/`--group` are supplied.
 //! - Helper functions preserve metadata after content writes, matching upstream
 //!   rsync's ordering and covering regular files, directories, symbolic links,
-//!   FIFOs, and device nodes. Hard linked files are reproduced as hard links in
-//!   the destination when the platform exposes inode identifiers, and optional
-//!   sparse handling skips zero-filled regions when requested so destination
-//!   files retain holes present in the source.
+//!   FIFOs, and device nodes when the caller enables the corresponding options.
+//!   Hard linked files are reproduced as hard links in the destination when the
+//!   platform exposes inode identifiers, and optional sparse handling skips
+//!   zero-filled regions when requested so destination files retain holes present
+//!   in the source.
 //!
 //! # Invariants
 //!
@@ -245,6 +246,8 @@ pub enum LocalCopyAction {
     DeviceCopied,
     /// A directory was created.
     DirectoryCreated,
+    /// A non-regular file was skipped because support was disabled.
+    SkippedNonRegular,
     /// An entry was removed due to `--delete`.
     EntryDeleted,
 }
@@ -353,6 +356,8 @@ pub struct LocalCopyOptions {
     inplace: bool,
     collect_events: bool,
     relative_paths: bool,
+    devices: bool,
+    specials: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -376,6 +381,8 @@ impl LocalCopyOptions {
             inplace: false,
             collect_events: false,
             relative_paths: false,
+            devices: false,
+            specials: false,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
         }
@@ -458,6 +465,22 @@ impl LocalCopyOptions {
     #[doc(alias = "--sparse")]
     pub const fn sparse(mut self, sparse: bool) -> Self {
         self.sparse = sparse;
+        self
+    }
+
+    /// Enables or disables copying of device nodes during the transfer.
+    #[must_use]
+    #[doc(alias = "--devices")]
+    pub const fn devices(mut self, enabled: bool) -> Self {
+        self.devices = enabled;
+        self
+    }
+
+    /// Enables or disables copying of special files such as FIFOs.
+    #[must_use]
+    #[doc(alias = "--specials")]
+    pub const fn specials(mut self, enabled: bool) -> Self {
+        self.specials = enabled;
         self
     }
 
@@ -567,6 +590,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn sparse_enabled(&self) -> bool {
         self.sparse
+    }
+
+    /// Reports whether copying of device nodes has been requested.
+    #[must_use]
+    pub const fn devices_enabled(&self) -> bool {
+        self.devices
+    }
+
+    /// Reports whether copying of special files has been requested.
+    #[must_use]
+    pub const fn specials_enabled(&self) -> bool {
+        self.specials
     }
 
     /// Reports whether relative path preservation has been requested.
@@ -849,6 +884,14 @@ impl CopyContext {
         self.options.sparse_enabled()
     }
 
+    fn devices_enabled(&self) -> bool {
+        self.options.devices_enabled()
+    }
+
+    fn specials_enabled(&self) -> bool {
+        self.options.specials_enabled()
+    }
+
     fn relative_paths_enabled(&self) -> bool {
         self.options.relative_paths_enabled()
     }
@@ -884,6 +927,17 @@ impl CopyContext {
     fn record(&mut self, record: LocalCopyRecord) {
         if let Some(events) = &mut self.events {
             events.push(record);
+        }
+    }
+
+    fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {
+        if let Some(path) = relative {
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedNonRegular,
+                0,
+                Duration::default(),
+            ));
         }
     }
 
@@ -1660,6 +1714,10 @@ fn copy_sources(
                     record_path,
                 )?;
             } else if is_fifo(&file_type) {
+                if !context.specials_enabled() {
+                    context.record_skipped_non_regular(record_path);
+                    continue;
+                }
                 copy_fifo(
                     &mut context,
                     source_path,
@@ -1669,6 +1727,10 @@ fn copy_sources(
                     record_path,
                 )?;
             } else if is_device(&file_type) {
+                if !context.devices_enabled() {
+                    context.record_skipped_non_regular(record_path);
+                    continue;
+                }
                 copy_device(
                     &mut context,
                     source_path,
@@ -1809,6 +1871,11 @@ fn copy_directory_recursive(
                 Some(entry_relative.as_path()),
             )?;
         } else if is_fifo(&entry_type) {
+            if !context.specials_enabled() {
+                context.record_skipped_non_regular(Some(entry_relative.as_path()));
+                keep_names.pop();
+                continue;
+            }
             copy_fifo(
                 context,
                 entry_path,
@@ -1818,6 +1885,11 @@ fn copy_directory_recursive(
                 Some(entry_relative.as_path()),
             )?;
         } else if is_device(&entry_type) {
+            if !context.devices_enabled() {
+                context.record_skipped_non_regular(Some(entry_relative.as_path()));
+                keep_names.pop();
+                continue;
+            }
             copy_device(
                 context,
                 entry_path,
@@ -3061,6 +3133,20 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_devices_round_trip() {
+        let options = LocalCopyOptions::default().devices(true);
+        assert!(options.devices_enabled());
+        assert!(!LocalCopyOptions::default().devices_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_specials_round_trip() {
+        let options = LocalCopyOptions::default().specials(true);
+        assert!(options.specials_enabled());
+        assert!(!LocalCopyOptions::default().specials_enabled());
+    }
+
+    #[test]
     fn local_copy_options_relative_round_trip() {
         let options = LocalCopyOptions::default().relative_paths(true);
         assert!(options.relative_paths_enabled());
@@ -3711,7 +3797,10 @@ mod tests {
         let summary = plan
             .execute_with_options(
                 LocalCopyExecution::Apply,
-                LocalCopyOptions::default().permissions(true).times(true),
+                LocalCopyOptions::default()
+                    .permissions(true)
+                    .times(true)
+                    .specials(true),
             )
             .expect("fifo copy succeeds");
 
@@ -3770,7 +3859,10 @@ mod tests {
         let summary = plan
             .execute_with_options(
                 LocalCopyExecution::Apply,
-                LocalCopyOptions::default().permissions(true).times(true),
+                LocalCopyOptions::default()
+                    .permissions(true)
+                    .times(true)
+                    .specials(true),
             )
             .expect("fifo copy succeeds");
 
@@ -3783,6 +3875,74 @@ mod tests {
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
         assert_eq!(summary.fifos_created(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_without_specials_skips_fifo() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+
+        let temp = tempdir().expect("tempdir");
+        let source_fifo = temp.path().join("source.pipe");
+        mknodat(
+            CWD,
+            &source_fifo,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let destination_fifo = temp.path().join("dest.pipe");
+        let operands = vec![
+            source_fifo.into_os_string(),
+            destination_fifo.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+            .expect("copy succeeds without specials");
+
+        assert_eq!(summary.fifos_created(), 0);
+        assert!(fs::symlink_metadata(&destination_fifo).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_without_specials_records_skip_event() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+
+        let temp = tempdir().expect("tempdir");
+        let source_fifo = temp.path().join("skip.pipe");
+        mknodat(
+            CWD,
+            &source_fifo,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let destination = temp.path().join("dest.pipe");
+        let operands = vec![
+            source_fifo.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let report = plan
+            .execute_with_report(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().collect_events(true),
+            )
+            .expect("copy executes");
+
+        assert!(fs::symlink_metadata(&destination).is_err());
+        assert!(report.records().iter().any(|record| {
+            record.action() == &LocalCopyAction::SkippedNonRegular
+                && record.relative_path() == Path::new("skip.pipe")
+        }));
     }
 
     #[test]
