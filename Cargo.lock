@@ -625,6 +625,7 @@ dependencies = [
  "libc",
  "rsync-bandwidth",
  "rsync-checksums",
+ "rsync-compress",
  "rsync-engine",
  "rsync-filters",
  "rsync-meta",

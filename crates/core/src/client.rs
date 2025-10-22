@@ -92,6 +92,7 @@ use std::{env, error::Error};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rsync_checksums::strong::Md5;
+use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
@@ -170,6 +171,79 @@ impl Default for TransferTimeout {
     }
 }
 
+/// Compression configuration propagated from the CLI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompressionSetting {
+    /// Compression has been explicitly disabled (e.g. `--compress-level=0`).
+    Disabled,
+    /// Compression is enabled with the provided [`CompressionLevel`].
+    Level(CompressionLevel),
+}
+
+impl CompressionSetting {
+    /// Returns a setting that disables compression.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self::Disabled
+    }
+
+    /// Returns a setting that enables compression using `level`.
+    #[must_use]
+    pub const fn level(level: CompressionLevel) -> Self {
+        Self::Level(level)
+    }
+
+    /// Parses a numeric compression level into a [`CompressionSetting`].
+    ///
+    /// Values `1` through `9` map to [`CompressionLevel::Precise`]. A value of
+    /// `0` disables compression, mirroring upstream rsync's interpretation of
+    /// `--compress-level=0`. Values outside the supported range return
+    /// [`CompressionLevelError`].
+    pub fn try_from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
+        if level == 0 {
+            Ok(Self::Disabled)
+        } else {
+            CompressionLevel::from_numeric(level).map(Self::Level)
+        }
+    }
+
+    /// Reports whether compression should be enabled.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Level(_))
+    }
+
+    /// Reports whether compression has been explicitly disabled.
+    #[must_use]
+    pub const fn is_disabled(self) -> bool {
+        !self.is_enabled()
+    }
+
+    /// Returns the compression level that should be used when compression is
+    /// enabled. When compression is disabled the default zlib level is
+    /// returned, mirroring upstream rsync's behaviour when the caller toggles
+    /// compression without specifying an explicit level.
+    #[must_use]
+    pub const fn level_or_default(self) -> CompressionLevel {
+        match self {
+            Self::Level(level) => level,
+            Self::Disabled => CompressionLevel::Default,
+        }
+    }
+}
+
+impl Default for CompressionSetting {
+    fn default() -> Self {
+        Self::Level(CompressionLevel::Default)
+    }
+}
+
+impl From<CompressionLevel> for CompressionSetting {
+    fn from(level: CompressionLevel) -> Self {
+        Self::Level(level)
+    }
+}
+
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClientConfig {
@@ -184,6 +258,7 @@ pub struct ClientConfig {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_setting: CompressionSetting,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -314,6 +389,13 @@ impl ClientConfig {
     #[doc(alias = "-z")]
     pub const fn compress(&self) -> bool {
         self.compress
+    }
+
+    /// Returns the compression setting that should apply when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_setting(&self) -> CompressionSetting {
+        self.compression_setting
     }
 
     /// Reports whether extended attributes should be preserved.
@@ -447,6 +529,7 @@ pub struct ClientConfigBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    compression_setting: CompressionSetting,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -569,6 +652,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        self
+    }
+
+    /// Sets the compression level that should apply when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn compression_setting(mut self, setting: CompressionSetting) -> Self {
+        self.compression_setting = setting;
         self
     }
 
@@ -743,6 +834,7 @@ impl ClientConfigBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             compress: self.compress,
+            compression_setting: self.compression_setting,
             checksum: self.checksum,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
@@ -1579,6 +1671,7 @@ pub fn run_client_with_observer(
                     .bandwidth_limit()
                     .map(|limit| limit.bytes_per_second()),
             )
+            .with_compression_level(config.compression_setting().level_or_default())
             .compress(config.compress())
             .owner(config.preserve_owner())
             .group(config.preserve_group())
@@ -1643,6 +1736,7 @@ pub fn run_client_with_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsync_compress::zlib::CompressionLevel;
     use std::fs;
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
@@ -1692,6 +1786,19 @@ mod tests {
             .build();
 
         assert!(config.list_only());
+    }
+
+    #[test]
+    fn builder_sets_compression_setting() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compression_setting(CompressionSetting::level(CompressionLevel::Best))
+            .build();
+
+        assert_eq!(
+            config.compression_setting(),
+            CompressionSetting::level(CompressionLevel::Best)
+        );
     }
 
     #[test]
