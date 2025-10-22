@@ -219,6 +219,7 @@ enum OutFormatPlaceholder {
     BytesTransferred,
     Operation,
     Permissions,
+    PermissionBits,
 }
 
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
@@ -283,6 +284,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::Permissions,
+                        ));
+                    }
+                    'B' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::PermissionBits,
                         ));
                     }
                     other => {
@@ -351,6 +361,14 @@ impl OutFormat {
                             buffer.push_str(&format_list_permissions(metadata));
                         } else {
                             buffer.push_str("??????????");
+                        }
+                    }
+                    OutFormatPlaceholder::PermissionBits => {
+                        if let Some(mode) = event.metadata().and_then(ClientEntryMetadata::mode) {
+                            let masked = mode & 0o7777;
+                            let _ = write!(&mut buffer, "{:04o}", masked);
+                        } else {
+                            buffer.push_str("????");
                         }
                     }
                 },
@@ -5507,7 +5525,8 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format = parse_out_format(OsStr::new("%f %b %l %o %M %%")).expect("parse out-format");
+        let format =
+            parse_out_format(OsStr::new("%f %b %l %o %M %B %%")).expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
 
@@ -5515,6 +5534,57 @@ mod tests {
     fn out_format_argument_rejects_unknown_placeholders() {
         let error = parse_out_format(OsStr::new("%z")).unwrap_err();
         assert!(error.to_string().contains("unsupported --out-format"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn out_format_renders_permission_bits() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        fs::create_dir(&src_dir).expect("create src");
+        fs::create_dir(&dst_dir).expect("create dst");
+        let source = src_dir.join("script.sh");
+        fs::write(&source, b"echo ok\n").expect("write source");
+
+        let mut permissions = fs::metadata(&source)
+            .expect("source metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&source, permissions).expect("set permissions");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                dst_dir.as_os_str().to_os_string(),
+            ])
+            .permissions(true)
+            .force_event_collection(true)
+            .build();
+
+        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| {
+                event
+                    .relative_path()
+                    .to_string_lossy()
+                    .contains("script.sh")
+            })
+            .expect("event present");
+
+        let format = parse_out_format(OsStr::new("%B")).expect("parse out-format");
+        let mut output = Vec::new();
+        format
+            .render(event, &mut output)
+            .expect("render out-format");
+
+        assert_eq!(output, b"0755\n");
     }
 
     #[test]
