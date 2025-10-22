@@ -187,6 +187,7 @@ pub struct ClientConfig {
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
+    update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -344,6 +345,14 @@ impl ClientConfig {
         self.ignore_existing
     }
 
+    /// Reports whether files newer on the destination should be preserved.
+    #[must_use]
+    #[doc(alias = "--update")]
+    #[doc(alias = "-u")]
+    pub const fn update(&self) -> bool {
+        self.update
+    }
+
     /// Reports whether numeric UID/GID values should be preserved.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
@@ -441,6 +450,7 @@ pub struct ClientConfigBuilder {
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
+    update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -587,6 +597,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables preservation of newer destination files.
+    #[must_use]
+    #[doc(alias = "--update")]
+    #[doc(alias = "-u")]
+    pub const fn update(mut self, update: bool) -> Self {
+        self.update = update;
+        self
+    }
+
     /// Requests that numeric UID/GID values be preserved instead of names.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
@@ -727,6 +746,7 @@ impl ClientConfigBuilder {
             checksum: self.checksum,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
+            update: self.update,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
@@ -1020,6 +1040,12 @@ impl ClientSummary {
         self.stats.regular_files_ignored_existing()
     }
 
+    /// Returns the number of regular files skipped because the destination was newer.
+    #[must_use]
+    pub fn regular_files_skipped_newer(&self) -> u64 {
+        self.stats.regular_files_skipped_newer()
+    }
+
     /// Returns the number of directories created during the transfer.
     #[must_use]
     pub fn directories_created(&self) -> u64 {
@@ -1140,6 +1166,8 @@ pub enum ClientEventKind {
     DirectoryCreated,
     /// An existing destination file was left untouched due to `--ignore-existing`.
     SkippedExisting,
+    /// An existing destination file was left untouched because it is newer.
+    SkippedNewerDestination,
     /// A non-regular entry was skipped because support was disabled.
     SkippedNonRegular,
     /// An entry was deleted due to `--delete`.
@@ -1169,6 +1197,7 @@ impl ClientEvent {
             LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
             LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
+            LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
@@ -1558,6 +1587,7 @@ pub fn run_client_with_observer(
             .checksum(config.checksum())
             .size_only(config.size_only())
             .ignore_existing(config.ignore_existing())
+            .update(config.update())
             .with_filter_program(filter_program.clone())
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
@@ -1704,6 +1734,17 @@ mod tests {
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn builder_enables_update() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .update(true)
+            .build();
+
+        assert!(config.update());
+        assert!(!ClientConfig::default().update());
     }
 
     #[test]
@@ -2034,6 +2075,40 @@ mod tests {
         assert!(dest_root.join("extra.txt").exists());
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn run_client_update_skips_newer_destination() {
+        use filetime::{FileTime, set_file_times};
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source-update.txt");
+        let destination = tmp.path().join("dest-update.txt");
+        fs::write(&source, b"fresh").expect("write source");
+        fs::write(&destination, b"existing").expect("write destination");
+
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let newer = FileTime::from_unix_time(1_700_000_100, 0);
+        set_file_times(&source, older, older).expect("set source times");
+        set_file_times(&destination, newer, newer).expect("set dest times");
+
+        let summary = run_client(
+            ClientConfig::builder()
+                .transfer_args([
+                    source.clone().into_os_string(),
+                    destination.clone().into_os_string(),
+                ])
+                .update(true)
+                .build(),
+        )
+        .expect("run client");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_skipped_newer(), 1);
+        assert_eq!(
+            fs::read(destination).expect("read destination"),
+            b"existing"
+        );
     }
 
     #[test]
