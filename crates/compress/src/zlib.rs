@@ -1,3 +1,5 @@
+#![allow(clippy::module_name_repetitions)]
+
 //! # Overview
 //!
 //! Zlib compression helpers shared across the workspace. The module currently
@@ -31,10 +33,9 @@
 //! ```
 
 use std::{
-    io::{self, Write},
-    num::NonZeroU8,
     fmt,
     io::{self, Write},
+    num::NonZeroU8,
 };
 
 use flate2::{Compression, read::ZlibDecoder as FlateDecoder, write::ZlibEncoder as FlateEncoder};
@@ -50,22 +51,29 @@ pub enum CompressionLevel {
     Best,
     /// Use an explicit zlib compression level in the range `1..=9`.
     Precise(NonZeroU8),
-    /// Use an explicit numeric compression level between 1 and 9 (inclusive).
-    Precise(u32),
 }
 
 impl CompressionLevel {
     /// Creates a [`CompressionLevel::Precise`] value from an explicit numeric level.
     ///
-    /// The supplied `level` must fall within the inclusive range `1..=9`. The
-    /// caller is responsible for interpreting `0` as disabled compression; this
-    /// helper mirrors zlib's accepted range and returns an error when the value
-    /// exceeds the supported bounds.
+    /// # Errors
+    ///
+    /// Returns [`CompressionLevelError`] when `level` falls outside the inclusive
+    /// range `1..=9` accepted by zlib.
     pub fn from_numeric(level: u32) -> Result<Self, CompressionLevelError> {
-        match level {
-            1..=9 => Ok(Self::Precise(level)),
-            _ => Err(CompressionLevelError::new(level)),
+        if !(1..=9).contains(&level) {
+            return Err(CompressionLevelError::new(level));
         }
+
+        let as_u8 = u8::try_from(level).map_err(|_| CompressionLevelError::new(level))?;
+        let value = NonZeroU8::new(as_u8).ok_or_else(|| CompressionLevelError::new(level))?;
+        Ok(Self::Precise(value))
+    }
+
+    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
+    #[must_use]
+    pub const fn precise(level: NonZeroU8) -> Self {
+        Self::Precise(level)
     }
 }
 
@@ -76,19 +84,6 @@ impl From<CompressionLevel> for Compression {
             CompressionLevel::Default => Compression::default(),
             CompressionLevel::Best => Compression::best(),
             CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
-        }
-    }
-}
-
-impl CompressionLevel {
-    /// Constructs a [`CompressionLevel::Precise`] variant from the provided zlib level.
-    #[must_use]
-    pub const fn precise(level: NonZeroU8) -> Self {
-        Self::Precise(level)
-    }
-}
-
-            CompressionLevel::Precise(value) => Compression::new(value),
         }
     }
 }
@@ -197,6 +192,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
 
     #[test]
     fn counting_encoder_tracks_bytes() {
@@ -248,10 +244,14 @@ mod tests {
         let level = NonZeroU8::new(7).expect("non-zero");
         let compression = Compression::from(CompressionLevel::precise(level));
         assert_eq!(compression.level(), u32::from(level.get()));
+    }
+
+    #[test]
     fn numeric_level_constructor_accepts_valid_range() {
         for level in 1..=9 {
             let precise = CompressionLevel::from_numeric(level).expect("valid level");
-            assert_eq!(precise, CompressionLevel::Precise(level));
+            let expected = NonZeroU8::new(level as u8).expect("range checked");
+            assert_eq!(precise, CompressionLevel::Precise(expected));
         }
     }
 
