@@ -1312,6 +1312,7 @@ pub struct LocalCopyOptions {
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
     compression_level: Option<CompressionLevel>,
+    compression_level: CompressionLevel,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1345,6 +1346,7 @@ impl LocalCopyOptions {
             bandwidth_limit: None,
             compress: false,
             compression_level: None,
+            compression_level: CompressionLevel::Default,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1416,6 +1418,14 @@ impl LocalCopyOptions {
     #[must_use]
     #[doc(alias = "--compress-level")]
     pub const fn with_compression_level(mut self, level: Option<CompressionLevel>) -> Self {
+        self.compression_level = level;
+        self
+    }
+
+    /// Sets the compression level to be used when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-level")]
+    pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
         self.compression_level = level;
         self
     }
@@ -1606,6 +1616,9 @@ impl LocalCopyOptions {
     /// Returns the configured compression level, if any.
     #[must_use]
     pub const fn compression_level(&self) -> Option<CompressionLevel> {
+    /// Returns the compression level that should be used when compression is enabled.
+    #[must_use]
+    pub const fn compression_level(&self) -> CompressionLevel {
         self.compression_level
     }
 
@@ -2132,6 +2145,10 @@ impl<'a> CopyContext<'a> {
         self.options.compress_enabled()
     }
 
+    fn compression_level(&self) -> CompressionLevel {
+        self.options.compression_level()
+    }
+
     fn checksum_enabled(&self) -> bool {
         self.options.checksum_enabled()
     }
@@ -2351,6 +2368,7 @@ impl<'a> CopyContext<'a> {
         start: Instant,
     ) -> Result<Option<u64>, LocalCopyError> {
         let mut total_bytes: u64 = 0;
+        let level = self.compression_level();
         let mut compressor = if compress {
             let level = self
                 .options
@@ -4971,6 +4989,13 @@ mod tests {
             .with_compression_level(Some(CompressionLevel::precise(level)))
             .compress(false);
         assert_eq!(disabled.compression_level(), None);
+    fn local_copy_options_compression_level_round_trip() {
+        let options = LocalCopyOptions::default().with_compression_level(CompressionLevel::Best);
+        assert_eq!(options.compression_level(), CompressionLevel::Best);
+        assert_eq!(
+            LocalCopyOptions::default().compression_level(),
+            CompressionLevel::Default
+        );
     }
 
     #[test]
