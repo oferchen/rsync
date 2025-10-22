@@ -74,6 +74,12 @@ impl CountingZlibEncoder {
         self.inner.write_all(input)
     }
 
+    /// Returns the number of compressed bytes produced so far without finalising the stream.
+    #[must_use]
+    pub fn bytes_written(&self) -> u64 {
+        self.inner.get_ref().bytes()
+    }
+
     /// Completes the stream and returns the total number of compressed bytes generated.
     pub fn finish(self) -> io::Result<u64> {
         let writer = self.inner.finish()?;
@@ -87,7 +93,7 @@ struct CountingWriter {
 }
 
 impl CountingWriter {
-    fn bytes(self) -> u64 {
+    fn bytes(&self) -> u64 {
         self.bytes
     }
 }
@@ -128,6 +134,19 @@ mod tests {
         encoder.write(b"payload").expect("compress payload");
         let compressed = encoder.finish().expect("finish stream");
         assert!(compressed > 0);
+    }
+
+    #[test]
+    fn counting_encoder_reports_incremental_bytes() {
+        let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
+        assert_eq!(encoder.bytes_written(), 0);
+        encoder.write(b"payload").expect("compress payload");
+        let after_first = encoder.bytes_written();
+        encoder.write(b"more payload").expect("compress payload");
+        let after_second = encoder.bytes_written();
+        assert!(after_second >= after_first);
+        let final_len = encoder.finish().expect("finish stream");
+        assert!(final_len >= after_second);
     }
 
     #[test]
