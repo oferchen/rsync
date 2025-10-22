@@ -21,3 +21,5 @@ tempfile = "3.10"
 rsync-filters = { path = "../filters" }
 xattr = "1.6"
 rustix = { version = "0.38", features = ["fs"] }
+rsync-checksums = { path = "../checksums" }
+base64 = "0.22"
