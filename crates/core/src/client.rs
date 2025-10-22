@@ -1983,6 +1983,16 @@ mod tests {
     }
 
     #[test]
+    fn module_list_request_accepts_mixed_case_scheme() {
+        let operands = vec![OsString::from("RSyNc://Example.COM/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "Example.COM");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
     fn module_list_request_rejects_remote_transfer() {
         let operands = vec![OsString::from("rsync://example.com/module")];
         let error = ModuleListRequest::from_operands(&operands)
@@ -2030,6 +2040,14 @@ mod tests {
             .expect("request detected");
         assert_eq!(request.address().host(), "fe80::1");
         assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn daemon_address_trims_host_whitespace() {
+        let address =
+            DaemonAddress::new("  example.com  ".to_string(), 873).expect("address trims host");
+        assert_eq!(address.host(), "example.com");
+        assert_eq!(address.port(), 873);
     }
 
     #[test]
@@ -2742,13 +2760,17 @@ pub struct DaemonAddress {
 impl DaemonAddress {
     /// Creates a new daemon address from the supplied host and port.
     pub fn new(host: String, port: u16) -> Result<Self, ClientError> {
-        if host.trim().is_empty() {
+        let trimmed = host.trim();
+        if trimmed.is_empty() {
             return Err(daemon_error(
                 "daemon host must be non-empty",
                 FEATURE_UNAVAILABLE_EXIT_CODE,
             ));
         }
-        Ok(Self { host, port })
+        Ok(Self {
+            host: trimmed.to_string(),
+            port,
+        })
     }
 
     /// Returns the daemon host name or address.
@@ -2810,7 +2832,7 @@ impl ModuleListRequest {
     fn from_operand(operand: &OsString) -> Result<Option<Self>, ClientError> {
         let text = operand.to_string_lossy();
 
-        if let Some(rest) = text.strip_prefix("rsync://") {
+        if let Some(rest) = strip_prefix_ignore_ascii_case(&text, "rsync://") {
             return parse_rsync_url(rest).map(Some);
         }
 
@@ -2932,6 +2954,19 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
     }
 
     None
+}
+
+fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    if text.len() < prefix.len() {
+        return None;
+    }
+
+    let (candidate, remainder) = text.split_at(prefix.len());
+    if candidate.eq_ignore_ascii_case(prefix) {
+        Some(remainder)
+    } else {
+        None
+    }
 }
 
 fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), ClientError> {
