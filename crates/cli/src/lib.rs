@@ -7167,6 +7167,8 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--whole-file"));
+        assert!(!args.iter().any(|arg| *arg == "--no-whole-file"));
         let dest_string = dest_path.display().to_string();
         assert!(args.contains(&"--whole-file"));
         assert!(!args.contains(&"--no-whole-file"));
@@ -7188,6 +7190,7 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
+        assert!(!args.iter().any(|arg| *arg == "--whole-file"));
     }
 
     #[cfg(unix)]
