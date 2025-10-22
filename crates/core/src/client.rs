@@ -131,6 +131,7 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    compress: bool,
     checksum: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
@@ -219,6 +220,14 @@ impl ClientConfig {
     #[doc(alias = "--times")]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether compression was requested for transfers.
+    #[must_use]
+    #[doc(alias = "--compress")]
+    #[doc(alias = "-z")]
+    pub const fn compress(&self) -> bool {
+        self.compress
     }
 
     /// Reports whether extended attributes should be preserved.
@@ -328,6 +337,7 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    compress: bool,
     checksum: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
@@ -410,6 +420,16 @@ impl ClientConfigBuilder {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    /// Enables or disables compression for the transfer.
+    #[must_use]
+    #[doc(alias = "--compress")]
+    #[doc(alias = "--no-compress")]
+    #[doc(alias = "-z")]
+    pub const fn compress(mut self, compress: bool) -> Self {
+        self.compress = compress;
         self
     }
 
@@ -548,6 +568,7 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            compress: self.compress,
             checksum: self.checksum,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
