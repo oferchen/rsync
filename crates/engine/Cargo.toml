@@ -12,6 +12,7 @@ repository = "https://github.com/oferchen/rsync"
 rsync-meta = { path = "../meta", default-features = false }
 rsync-filters = { path = "../filters" }
 rsync-checksums = { path = "../checksums" }
+globset = "0.4"
 
 [features]
 default = []
