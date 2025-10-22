@@ -547,7 +547,7 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopySummary, LocalCopyError> {
-        copy_sources(self, mode, options).map(CopyOutcome::into_summary)
+        self.execute_with_options_and_handler(mode, options, None)
     }
 
     /// Executes the planned copy and returns a detailed report of performed actions.
@@ -556,7 +556,27 @@ impl LocalCopyPlan {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
     ) -> Result<LocalCopyReport, LocalCopyError> {
-        copy_sources(self, mode, options).map(|outcome| {
+        self.execute_with_report_and_handler(mode, options, None)
+    }
+
+    /// Executes the planned copy while routing records to the supplied handler.
+    pub fn execute_with_options_and_handler(
+        &self,
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+        handler: Option<&mut dyn LocalCopyRecordHandler>,
+    ) -> Result<LocalCopySummary, LocalCopyError> {
+        copy_sources(self, mode, options, handler).map(CopyOutcome::into_summary)
+    }
+
+    /// Executes the planned copy, returning a detailed report and notifying the handler.
+    pub fn execute_with_report_and_handler(
+        &self,
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+        handler: Option<&mut dyn LocalCopyRecordHandler>,
+    ) -> Result<LocalCopyReport, LocalCopyError> {
+        copy_sources(self, mode, options, handler).map(|outcome| {
             let (_summary, report) = outcome.into_summary_and_report();
             report
         })
@@ -685,6 +705,21 @@ impl LocalCopyReport {
     #[must_use]
     pub fn into_records(self) -> Vec<LocalCopyRecord> {
         self.records
+    }
+}
+
+/// Observer invoked for each [`LocalCopyRecord`] emitted during execution.
+pub trait LocalCopyRecordHandler {
+    /// Handles a newly produced [`LocalCopyRecord`].
+    fn handle(&mut self, record: LocalCopyRecord);
+}
+
+impl<F> LocalCopyRecordHandler for F
+where
+    F: FnMut(LocalCopyRecord),
+{
+    fn handle(&mut self, record: LocalCopyRecord) {
+        self(record);
     }
 }
 
@@ -1229,7 +1264,7 @@ impl CopyOutcome {
     }
 }
 
-struct CopyContext {
+struct CopyContext<'a> {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
     hard_links: HardLinkTracker,
@@ -1238,10 +1273,15 @@ struct CopyContext {
     events: Option<Vec<LocalCopyRecord>>,
     filter_program: Option<FilterProgram>,
     dir_merge_layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
+    observer: Option<&'a mut dyn LocalCopyRecordHandler>,
 }
 
-impl CopyContext {
-    fn new(mode: LocalCopyExecution, options: LocalCopyOptions) -> Self {
+impl<'a> CopyContext<'a> {
+    fn new(
+        mode: LocalCopyExecution,
+        options: LocalCopyOptions,
+        observer: Option<&'a mut dyn LocalCopyRecordHandler>,
+    ) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
         let collect_events = options.events_enabled();
         let filter_program = options.filter_program().cloned();
@@ -1262,6 +1302,7 @@ impl CopyContext {
             },
             filter_program,
             dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
+            observer,
         }
     }
 
@@ -1431,6 +1472,9 @@ impl CopyContext {
     }
 
     fn record(&mut self, record: LocalCopyRecord) {
+        if let Some(observer) = &mut self.observer {
+            observer.handle(record.clone());
+        }
         if let Some(events) = &mut self.events {
             events.push(record);
         }
@@ -2303,8 +2347,9 @@ fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
+    handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
-    let mut context = CopyContext::new(mode, options);
+    let mut context = CopyContext::new(mode, options, handler);
 
     let multiple_sources = plan.sources.len() > 1;
     let destination_path = plan.destination.path();
@@ -3849,7 +3894,7 @@ mod tests {
     #[test]
     fn metadata_options_reflect_numeric_ids_setting() {
         let options = LocalCopyOptions::default().numeric_ids(true);
-        let context = CopyContext::new(LocalCopyExecution::Apply, options);
+        let context = CopyContext::new(LocalCopyExecution::Apply, options, None);
         assert!(context.metadata_options().numeric_ids_enabled());
     }
 

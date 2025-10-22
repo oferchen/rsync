@@ -81,9 +81,9 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientSummary, FilterRuleKind,
-        FilterRuleSpec, ModuleListRequest, run_client as run_core_client,
-        run_module_list_with_password,
+        BandwidthLimit, ClientConfig, ClientEvent, ClientEventKind, ClientProgressObserver,
+        ClientProgressUpdate, ClientSummary, FilterRuleKind, FilterRuleSpec, ModuleListRequest,
+        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
@@ -1080,10 +1080,38 @@ where
 
     let config = builder.build();
 
-    match run_core_client(config) {
+    let mut live_progress = if progress {
+        Some(LiveProgress::new(stdout))
+    } else {
+        None
+    };
+
+    let result = {
+        let observer = live_progress
+            .as_mut()
+            .map(|observer| observer as &mut dyn ClientProgressObserver);
+        run_core_client_with_observer(config, observer)
+    };
+
+    match result {
         Ok(summary) => {
-            if let Err(error) = emit_transfer_summary(&summary, verbosity, progress, stats, stdout)
-            {
+            let progress_rendered_live =
+                live_progress.as_ref().map_or(false, LiveProgress::rendered);
+
+            if let Some(observer) = live_progress {
+                if let Err(error) = observer.finish() {
+                    let _ = writeln!(stdout, "warning: failed to render progress output: {error}");
+                }
+            }
+
+            if let Err(error) = emit_transfer_summary(
+                &summary,
+                verbosity,
+                progress,
+                stats,
+                progress_rendered_live,
+                stdout,
+            ) {
                 let _ = writeln!(
                     stdout,
                     "warning: failed to render transfer summary: {error}"
@@ -1092,6 +1120,12 @@ where
             0
         }
         Err(error) => {
+            if let Some(observer) = live_progress {
+                if let Err(err) = observer.finish() {
+                    let _ = writeln!(stdout, "warning: failed to render progress output: {err}");
+                }
+            }
+
             if write_message(error.message(), stderr).is_err() {
                 let _ = writeln!(
                     stderr.writer_mut(),
@@ -1104,16 +1138,88 @@ where
 }
 
 /// Emits verbose, statistics, and progress-oriented output derived from a [`ClientSummary`].
+struct LiveProgress<'a, W: Write> {
+    writer: &'a mut W,
+    rendered: bool,
+    error: Option<io::Error>,
+}
+
+impl<'a, W: Write> LiveProgress<'a, W> {
+    fn new(writer: &'a mut W) -> Self {
+        Self {
+            writer,
+            rendered: false,
+            error: None,
+        }
+    }
+
+    fn rendered(&self) -> bool {
+        self.rendered
+    }
+
+    fn record_error(&mut self, error: io::Error) {
+        if self.error.is_none() {
+            self.error = Some(error);
+        }
+    }
+
+    fn finish(self) -> io::Result<()> {
+        if let Some(error) = self.error {
+            Err(error)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<'a, W: Write> ClientProgressObserver for LiveProgress<'a, W> {
+    fn on_progress(&mut self, update: &ClientProgressUpdate) {
+        if self.error.is_some() {
+            return;
+        }
+
+        let event = update.event();
+        let total = update.total().max(update.index());
+        let remaining = total.saturating_sub(update.index());
+
+        let write_result = (|| -> io::Result<()> {
+            writeln!(self.writer, "{}", event.relative_path().display())?;
+
+            let bytes = event.bytes_transferred();
+            let size_field = format!("{:>15}", format_progress_bytes(bytes));
+            let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
+            let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
+            let xfr_index = update.index();
+
+            writeln!(
+                self.writer,
+                "{size_field} 100% {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+            )?;
+            Ok(())
+        })();
+
+        match write_result {
+            Ok(()) => {
+                self.rendered = true;
+            }
+            Err(error) => self.record_error(error),
+        }
+    }
+}
+
 fn emit_transfer_summary<W: Write>(
     summary: &ClientSummary,
     verbosity: u8,
     progress: bool,
     stats: bool,
+    progress_already_rendered: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
     let events = summary.events();
 
-    let progress_rendered = if progress && !events.is_empty() {
+    let progress_rendered = if progress_already_rendered {
+        true
+    } else if progress && !events.is_empty() {
         emit_progress(events, stdout)?
     } else {
         false
@@ -1144,15 +1250,7 @@ fn emit_transfer_summary<W: Write>(
 
 /// Returns whether the provided event kind should be reflected in progress output.
 fn is_progress_event(kind: &ClientEventKind) -> bool {
-    matches!(
-        kind,
-        ClientEventKind::DataCopied
-            | ClientEventKind::MetadataReused
-            | ClientEventKind::HardLink
-            | ClientEventKind::SymlinkCopied
-            | ClientEventKind::FifoCopied
-            | ClientEventKind::DeviceCopied
-    )
+    kind.is_progress()
 }
 
 /// Formats a byte count using thousands separators, mirroring upstream rsync progress lines.

@@ -93,7 +93,7 @@ use rsync_checksums::strong::Md5;
 use rsync_engine::local_copy::{
     DirMergeRule, FilterProgram, FilterProgramEntry, LocalCopyAction, LocalCopyError,
     LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
-    LocalCopyReport, LocalCopySummary,
+    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -952,12 +952,149 @@ impl ClientEvent {
     }
 }
 
+impl ClientEventKind {
+    /// Returns whether the event contributes to progress reporting.
+    #[must_use]
+    pub const fn is_progress(&self) -> bool {
+        matches!(
+            self,
+            Self::DataCopied
+                | Self::MetadataReused
+                | Self::HardLink
+                | Self::SymlinkCopied
+                | Self::FifoCopied
+                | Self::DeviceCopied
+        )
+    }
+}
+
+/// Progress update emitted while executing [`run_client_with_observer`].
+#[derive(Clone, Debug)]
+pub struct ClientProgressUpdate {
+    event: ClientEvent,
+    total: usize,
+    remaining: usize,
+    index: usize,
+}
+
+impl ClientProgressUpdate {
+    /// Returns the event associated with this progress update.
+    #[must_use]
+    pub fn event(&self) -> &ClientEvent {
+        &self.event
+    }
+
+    /// Returns the number of remaining progress events after this update.
+    #[must_use]
+    pub const fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    /// Returns the total number of progress events in the transfer.
+    #[must_use]
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Returns the 1-based index of the completed progress event.
+    #[must_use]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+}
+
+/// Observer invoked for each progress update generated during client execution.
+pub trait ClientProgressObserver {
+    /// Handles a new progress update.
+    fn on_progress(&mut self, update: &ClientProgressUpdate);
+}
+
+impl<F> ClientProgressObserver for F
+where
+    F: FnMut(&ClientProgressUpdate),
+{
+    fn on_progress(&mut self, update: &ClientProgressUpdate) {
+        self(update);
+    }
+}
+
+struct ClientProgressForwarder<'a> {
+    observer: &'a mut dyn ClientProgressObserver,
+    total: usize,
+    emitted: usize,
+}
+
+impl<'a> ClientProgressForwarder<'a> {
+    fn new(
+        observer: &'a mut dyn ClientProgressObserver,
+        plan: &LocalCopyPlan,
+        mut options: LocalCopyOptions,
+    ) -> Result<Self, ClientError> {
+        if !options.events_enabled() {
+            options = options.collect_events(true);
+        }
+
+        let preview_report = plan
+            .execute_with_report(LocalCopyExecution::DryRun, options.clone())
+            .map_err(map_local_copy_error)?;
+
+        let total = preview_report
+            .records()
+            .iter()
+            .filter(|record| {
+                let event = ClientEvent::from_record(record);
+                event.kind().is_progress()
+            })
+            .count();
+
+        Ok(Self {
+            observer,
+            total,
+            emitted: 0,
+        })
+    }
+
+    fn as_handler_mut(&mut self) -> &mut dyn LocalCopyRecordHandler {
+        self
+    }
+}
+
+impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
+    fn handle(&mut self, record: LocalCopyRecord) {
+        let event = ClientEvent::from_record(&record);
+        if !event.kind().is_progress() {
+            return;
+        }
+
+        self.emitted = self.emitted.saturating_add(1);
+        let index = self.emitted;
+        let remaining = self.total.saturating_sub(index);
+
+        let update = ClientProgressUpdate {
+            event,
+            total: self.total,
+            remaining,
+            index,
+        };
+
+        self.observer.on_progress(&update);
+    }
+}
+
 /// Runs the client orchestration using the provided configuration.
 ///
 /// The current implementation offers best-effort local copies covering
 /// directories, regular files, and symbolic links. Metadata preservation, delta
 /// compression, and remote transports remain unimplemented.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
+    run_client_with_observer(config, None)
+}
+
+/// Runs the client orchestration while forwarding progress updates to the provided observer.
+pub fn run_client_with_observer(
+    config: ClientConfig,
+    mut observer: Option<&mut dyn ClientProgressObserver>,
+) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
@@ -967,7 +1104,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 
     let filter_program = compile_filter_program(config.filter_rules())?;
 
-    let options = {
+    let mut options = {
         let options = LocalCopyOptions::default()
             .delete(config.delete() || config.delete_excluded())
             .delete_excluded(config.delete_excluded())
@@ -1003,13 +1140,34 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     let collect_events = config.collect_events();
 
     if collect_events {
-        plan.execute_with_report(mode, options.collect_events(true))
-            .map(ClientSummary::from_report)
-            .map_err(map_local_copy_error)
+        options = options.collect_events(true);
+    }
+
+    let mut handler_adapter = observer
+        .as_deref_mut()
+        .map(|observer| ClientProgressForwarder::new(observer, &plan, options.clone()))
+        .transpose()?;
+
+    if collect_events {
+        plan.execute_with_report_and_handler(
+            mode,
+            options,
+            handler_adapter
+                .as_mut()
+                .map(ClientProgressForwarder::as_handler_mut),
+        )
+        .map(ClientSummary::from_report)
+        .map_err(map_local_copy_error)
     } else {
-        plan.execute_with_options(mode, options)
-            .map(ClientSummary::from_summary)
-            .map_err(map_local_copy_error)
+        plan.execute_with_options_and_handler(
+            mode,
+            options,
+            handler_adapter
+                .as_mut()
+                .map(ClientProgressForwarder::as_handler_mut),
+        )
+        .map(ClientSummary::from_summary)
+        .map_err(map_local_copy_error)
     }
 }
 
