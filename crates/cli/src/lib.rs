@@ -1695,6 +1695,11 @@ fn set_filter_stdin_input(data: Vec<u8>) {
     FILTER_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
 }
 
+/// Loads operands referenced by `--files-from` arguments.
+///
+/// When `zero_terminated` is `false`, the reader treats lines beginning with `#`
+/// or `;` as comments, matching upstream rsync. Supplying `--from0` disables the
+/// comment semantics so entries can legitimately start with those bytes.
 fn load_file_list_operands(
     files: &[OsString],
     zero_terminated: bool,
@@ -1782,6 +1787,13 @@ fn read_file_list_from_reader<R: BufRead>(
         }
         if buffer.last() == Some(&b'\r') {
             buffer.pop();
+        }
+
+        if buffer
+            .first()
+            .is_some_and(|byte| matches!(byte, b'#' | b';'))
+        {
+            continue;
         }
 
         push_file_list_entry(&buffer, entries);
@@ -2332,6 +2344,43 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_files_from_skips_comment_lines() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_a = tmp.path().join("comment-a.txt");
+        let source_b = tmp.path().join("comment-b.txt");
+        std::fs::write(&source_a, b"comment-a").expect("write source a");
+        std::fs::write(&source_b, b"comment-b").expect("write source b");
+
+        let list_path = tmp.path().join("files-from.list");
+        let contents = format!(
+            "# leading comment\n; alt comment\n{}\n{}\n",
+            source_a.display(),
+            source_b.display()
+        );
+        std::fs::write(&list_path, contents).expect("write list");
+
+        let dest_dir = tmp.path().join("files-from-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_a = dest_dir.join(source_a.file_name().expect("file name a"));
+        let copied_b = dest_dir.join(source_b.file_name().expect("file name b"));
+        assert_eq!(std::fs::read(&copied_a).expect("read a"), b"comment-a");
+        assert_eq!(std::fs::read(&copied_b).expect("read b"), b"comment-b");
+    }
+
+    #[test]
     fn transfer_request_with_from0_reads_null_separated_list() {
         use tempfile::tempdir;
 
@@ -2367,6 +2416,38 @@ mod tests {
         let copied_b = dest_dir.join(source_b.file_name().expect("file name b"));
         assert_eq!(std::fs::read(&copied_a).expect("read copied a"), b"from0-a");
         assert_eq!(std::fs::read(&copied_b).expect("read copied b"), b"from0-b");
+    }
+
+    #[test]
+    fn transfer_request_with_from0_preserves_comment_prefix_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let comment_named = tmp.path().join("#commented.txt");
+        std::fs::write(&comment_named, b"from0-comment").expect("write comment source");
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(comment_named.display().to_string().as_bytes());
+        bytes.push(0);
+        let list_path = tmp.path().join("files-from0-comments.list");
+        std::fs::write(&list_path, bytes).expect("write list");
+
+        let dest_dir = tmp.path().join("files-from0-comments-dest");
+        std::fs::create_dir(&dest_dir).expect("create dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--from0"),
+            OsString::from(format!("--files-from={}", list_path.display())),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied = dest_dir.join(comment_named.file_name().expect("file name"));
+        assert_eq!(std::fs::read(&copied).expect("read copied"), b"from0-comment");
     }
 
     #[test]
