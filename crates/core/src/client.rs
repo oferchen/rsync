@@ -21,8 +21,10 @@
 //!   behaviour by copying files, directories, and symbolic links on the local
 //!   filesystem while preserving permissions, timestamps, optional
 //!   ownership/group metadata, and sparse regions when requested. Delta
-//!   compression and advanced metadata such as
-//!   ACLs or extended attributes remain out of scope for this snapshot. When
+//!   compression and advanced metadata such as ACLs or extended attributes
+//!   remain out of scope for this snapshot. When remote operands are detected,
+//!   the client delegates to the system `rsync` binary so network transfers are
+//!   available while the native engine is completed. When
 //!   deletion is requested (including [`--delete-excluded`](crate::client::ClientConfig::delete_excluded)),
 //!   the helper removes destination entries that are absent from the source tree
 //!   before applying metadata and prunes excluded entries when explicitly
@@ -1517,8 +1519,9 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
 /// Runs the client orchestration using the provided configuration.
 ///
 /// The current implementation offers best-effort local copies covering
-/// directories, regular files, and symbolic links. Metadata preservation, delta
-/// compression, and remote transports remain unimplemented.
+/// directories, regular files, and symbolic links. Metadata preservation and
+/// delta compression remain works in progress, while remote operands delegate to
+/// the system `rsync` binary until the native network engine is available.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_with_observer(config, None)
 }
