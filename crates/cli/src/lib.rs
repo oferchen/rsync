@@ -97,7 +97,7 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [-n] [-a] [-S] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [-n] [-a] [-S] [-z] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -116,6 +116,8 @@ const HELP_TEXT: &str = concat!(
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit    Limit I/O bandwidth in KiB/s (0 disables the limit).\n",
+    "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
+    "      --no-compress  Disable compression.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
@@ -153,7 +155,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --dry-run/-n, --archive/-a, --delete, --checksum/-c, --exclude, --exclude-from, --include, --include-from, --filter, --files-from, --from0, --bwlimit, --compress/-z, --no-compress, --verbose/-v, --progress, --no-progress, --stats, --partial, --no-partial, --inplace, --no-inplace, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Parsed command produced by [`parse_args`].
 #[derive(Debug, Default)]
@@ -166,6 +168,7 @@ struct ParsedArgs {
     checksum: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
+    compress: bool,
     owner: Option<bool>,
     group: Option<bool>,
     perms: Option<bool>,
@@ -517,6 +520,21 @@ fn clap_command() -> Command {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("compress")
+                .long("compress")
+                .short('z')
+                .help("Enable compression during transfers.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-compress"),
+        )
+        .arg(
+            Arg::new("no-compress")
+                .long("no-compress")
+                .help("Disable compression.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("compress"),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -545,6 +563,10 @@ where
     let dry_run = matches.get_flag("dry-run");
     let archive = matches.get_flag("archive");
     let delete = matches.get_flag("delete");
+    let mut compress = matches.get_flag("compress");
+    if matches.get_flag("no-compress") {
+        compress = false;
+    }
     let owner = if matches.get_flag("owner") {
         Some(true)
     } else if matches.get_flag("no-owner") {
@@ -687,6 +709,7 @@ where
         checksum,
         remainder,
         bwlimit,
+        compress,
         owner,
         group,
         perms,
@@ -763,6 +786,7 @@ where
         checksum,
         remainder: raw_remainder,
         bwlimit,
+        compress,
         owner,
         group,
         perms,
@@ -907,6 +931,7 @@ where
         .dry_run(dry_run)
         .delete(delete)
         .bandwidth_limit(bandwidth_limit)
+        .compress(compress)
         .owner(preserve_owner)
         .group(preserve_group)
         .permissions(preserve_permissions)
@@ -2803,6 +2828,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_sets_compress_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-z"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.compress);
+    }
+
+    #[test]
+    fn parse_args_no_compress_overrides_compress_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-z"),
+            OsString::from("--no-compress"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.compress);
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_include_and_exclude() {
         let include =
             parse_filter_directive(OsStr::new("+ assets/**")).expect("include rule parses");
@@ -3590,23 +3642,28 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_short_option_reports_error() {
+    fn compress_flag_is_accepted_for_local_copies() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("compress.txt");
+        let destination = tmp.path().join("compress.out");
+        std::fs::write(&source, b"compressed").expect("write source");
+
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("-z"),
-            OsString::from("source"),
-            OsString::from("dest"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
         ]);
 
-        assert_eq!(code, 1);
+        assert_eq!(code, 0);
         assert!(stdout.is_empty());
-
-        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-        assert!(
-            rendered.contains("unsupported option '-z'"),
-            "stderr: {rendered}"
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"compressed"
         );
-        assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 
     #[test]
