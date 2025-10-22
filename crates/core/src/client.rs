@@ -149,6 +149,7 @@ pub struct ClientConfig {
     inplace: bool,
     preserve_devices: bool,
     preserve_specials: bool,
+    list_only: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -164,6 +165,13 @@ impl ClientConfig {
     #[must_use]
     pub fn transfer_args(&self) -> &[OsString] {
         &self.transfer_args
+    }
+
+    /// Reports whether transfers should be listed without mutating the destination.
+    #[must_use]
+    #[doc(alias = "--list-only")]
+    pub const fn list_only(&self) -> bool {
+        self.list_only
     }
 
     /// Reports whether a transfer was explicitly requested.
@@ -349,7 +357,7 @@ impl ClientConfig {
     /// Returns whether the configuration requires collection of transfer events.
     #[must_use]
     pub const fn collect_events(&self) -> bool {
-        self.verbosity > 0 || self.progress
+        self.verbosity > 0 || self.progress || self.list_only
     }
 }
 
@@ -380,6 +388,7 @@ pub struct ClientConfigBuilder {
     inplace: bool,
     preserve_devices: bool,
     preserve_specials: bool,
+    list_only: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -402,6 +411,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-n")]
     pub const fn dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
+        self
+    }
+
+    /// Enables or disables list-only mode, mirroring `--list-only`.
+    #[must_use]
+    #[doc(alias = "--list-only")]
+    pub const fn list_only(mut self, list_only: bool) -> Self {
+        self.list_only = list_only;
         self
     }
 
@@ -639,6 +656,7 @@ impl ClientConfigBuilder {
             inplace: self.inplace,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
+            list_only: self.list_only,
             #[cfg(feature = "xattr")]
             preserve_xattrs: self.preserve_xattrs,
         }
@@ -1261,7 +1279,7 @@ pub fn run_client_with_observer(
         let options = options.xattrs(config.preserve_xattrs());
         options
     };
-    let mode = if config.dry_run() {
+    let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun
     } else {
         LocalCopyExecution::Apply
@@ -1341,6 +1359,16 @@ mod tests {
             .build();
 
         assert!(config.dry_run());
+    }
+
+    #[test]
+    fn builder_enables_list_only() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .list_only(true)
+            .build();
+
+        assert!(config.list_only());
     }
 
     #[test]
