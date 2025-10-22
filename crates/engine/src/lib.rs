@@ -11,13 +11,15 @@
 //!
 //! # Design
 //!
-//! Functionality is decomposed into focused modules. The initial module,
-//! [`local_copy`], exposes [`LocalCopyPlan`](local_copy::LocalCopyPlan) which
-//! performs recursive copies of regular files, directories, symbolic links, and
-//! FIFOs while preserving permissions and timestamps through the [`rsync_meta`]
-//! helpers. The design keeps path parsing and copying logic in the engine layer
-//! so both the CLI and daemon facades can drive local transfers through a single
-//! interface.
+//! Functionality is decomposed into focused modules. The [`local_copy`] module
+//! exposes [`LocalCopyPlan`](local_copy::LocalCopyPlan) which performs
+//! recursive copies of regular files, directories, symbolic links, and FIFOs
+//! while preserving permissions and timestamps through the [`rsync_meta`]
+//! helpers. The [`delta`] module mirrors upstream rsync's signature layout
+//! heuristics so the delta-transfer pipeline can reuse byte-identical block
+//! sizing when it lands. The design keeps path parsing and copying logic in the
+//! engine layer so both the CLI and daemon facades can drive local transfers
+//! through a single interface.
 //!
 //! # Invariants
 //!
@@ -63,11 +65,15 @@
 //!
 //! - [`rsync_core::client`] integrates the plan builder to power the `oc-rsync`
 //!   binary's local copy mode.
-//! - Future modules such as `delta` and `filters` will extend this crate once
-//!   the upstream parity tests are in place.
+//! - [`delta`] exposes block-size and checksum heuristics that will be wired into
+//!   the delta-transfer engine.
 
+pub mod delta;
 pub mod local_copy;
 
+pub use delta::{
+    SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
+};
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
     LocalCopySummary,
