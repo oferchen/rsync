@@ -184,6 +184,7 @@ pub struct ClientConfig {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    whole_file: bool,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -314,6 +315,15 @@ impl ClientConfig {
     #[doc(alias = "-z")]
     pub const fn compress(&self) -> bool {
         self.compress
+    }
+
+    /// Reports whether whole-file transfers should be used.
+    #[must_use]
+    #[doc(alias = "--whole-file")]
+    #[doc(alias = "-W")]
+    #[doc(alias = "--no-whole-file")]
+    pub const fn whole_file(&self) -> bool {
+        self.whole_file
     }
 
     /// Reports whether extended attributes should be preserved.
@@ -447,6 +457,7 @@ pub struct ClientConfigBuilder {
     preserve_permissions: bool,
     preserve_times: bool,
     compress: bool,
+    whole_file: Option<bool>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -569,6 +580,16 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        self
+    }
+
+    /// Requests that whole-file transfers be used instead of the delta algorithm.
+    #[must_use]
+    #[doc(alias = "--whole-file")]
+    #[doc(alias = "-W")]
+    #[doc(alias = "--no-whole-file")]
+    pub fn whole_file(mut self, whole_file: bool) -> Self {
+        self.whole_file = Some(whole_file);
         self
     }
 
@@ -743,6 +764,7 @@ impl ClientConfigBuilder {
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
             compress: self.compress,
+            whole_file: self.whole_file.unwrap_or(true),
             checksum: self.checksum,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
