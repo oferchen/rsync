@@ -241,6 +241,7 @@ struct ModuleDefinition {
     uid: Option<u32>,
     gid: Option<u32>,
     timeout: Option<NonZeroU64>,
+    listable: bool,
 }
 
 impl ModuleDefinition {
@@ -319,6 +320,11 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn timeout(&self) -> Option<NonZeroU64> {
         self.timeout
+    }
+
+    #[cfg(test)]
+    fn listable(&self) -> bool {
+        self.listable
     }
 }
 
@@ -814,6 +820,16 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 })?;
                 builder.set_numeric_ids(parsed, path, line_number)?;
             }
+            "list" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid boolean value '{value}' for 'list'"),
+                    )
+                })?;
+                builder.set_listable(parsed, path, line_number)?;
+            }
             "uid" => {
                 let uid = parse_numeric_identifier(value).ok_or_else(|| {
                     config_parse_error(path, line_number, format!("invalid uid '{value}'"))
@@ -862,6 +878,7 @@ struct ModuleDefinitionBuilder {
     uid: Option<u32>,
     gid: Option<u32>,
     timeout: Option<Option<NonZeroU64>>,
+    listable: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -883,6 +900,7 @@ impl ModuleDefinitionBuilder {
             uid: None,
             gid: None,
             timeout: None,
+            listable: None,
         }
     }
 
@@ -1102,6 +1120,24 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_listable(
+        &mut self,
+        listable: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.listable.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'list' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.listable = Some(listable);
+        Ok(())
+    }
+
     fn set_uid(&mut self, uid: u32, config_path: &Path, line: usize) -> Result<(), DaemonError> {
         if self.uid.is_some() {
             return Err(config_parse_error(
@@ -1195,6 +1231,7 @@ impl ModuleDefinitionBuilder {
             uid: self.uid,
             gid: self.gid,
             timeout: self.timeout.unwrap_or(None),
+            listable: self.listable.unwrap_or(true),
         })
     }
 }
@@ -1973,6 +2010,10 @@ fn respond_with_module_list(
 
     let mut hostname_cache: Option<Option<String>> = None;
     for module in modules {
+        if !module.listable {
+            continue;
+        }
+
         let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
         if !module.permits(peer_ip, peer_host) {
             continue;
@@ -2285,6 +2326,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         uid: None,
         gid: None,
         timeout: None,
+        listable: true,
     })
 }
 
@@ -2512,6 +2554,7 @@ mod tests {
             uid: None,
             gid: None,
             timeout: None,
+            listable: true,
         }
     }
 
@@ -2721,10 +2764,12 @@ mod tests {
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
         assert!(modules[0].bandwidth_limit().is_none());
+        assert!(modules[0].listable());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
+        assert!(modules[1].listable());
     }
 
     #[test]
@@ -2778,7 +2823,7 @@ mod tests {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
             file,
-            "[docs]\npath = /srv/docs\nread only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\n",
+            "[docs]\npath = /srv/docs\nread only = yes\nnumeric ids = on\nuid = 1234\ngid = 4321\nlist = no\n",
         )
         .expect("write config");
 
@@ -2795,6 +2840,7 @@ mod tests {
         assert!(module.numeric_ids());
         assert_eq!(module.uid(), Some(1234));
         assert_eq!(module.gid(), Some(4321));
+        assert!(!module.listable());
     }
 
     #[test]
@@ -2847,6 +2893,25 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("invalid boolean value 'maybe'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_list_directive() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nlist = maybe\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid list boolean should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid boolean value 'maybe' for 'list'")
         );
     }
 
@@ -3617,6 +3682,59 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("second module");
         assert_eq!(line.trim_end(), "logs");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_omits_unlisted_modules_from_listing() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "[visible]\npath = /srv/visible\n\n[hidden]\npath = /srv/hidden\nlist = no\n",
+        )
+        .expect("write config");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--config"),
+                file.path().as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("first module");
+        assert_eq!(line.trim_end(), "visible");
 
         line.clear();
         reader.read_line(&mut line).expect("exit line");
