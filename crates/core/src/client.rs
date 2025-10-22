@@ -184,6 +184,7 @@ pub struct ClientConfig {
     compress: bool,
     checksum: bool,
     size_only: bool,
+    ignore_existing: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -335,6 +336,12 @@ impl ClientConfig {
         self.size_only
     }
 
+    /// Returns whether existing destination files should be skipped.
+    #[must_use]
+    pub const fn ignore_existing(&self) -> bool {
+        self.ignore_existing
+    }
+
     /// Reports whether numeric UID/GID values should be preserved.
     #[must_use]
     #[doc(alias = "--numeric-ids")]
@@ -431,6 +438,7 @@ pub struct ClientConfigBuilder {
     compress: bool,
     checksum: bool,
     size_only: bool,
+    ignore_existing: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
@@ -566,6 +574,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--size-only")]
     pub const fn size_only(mut self, size_only: bool) -> Self {
         self.size_only = size_only;
+        self
+    }
+
+    /// Enables or disables skipping of existing destination files.
+    #[must_use]
+    #[doc(alias = "--ignore-existing")]
+    pub const fn ignore_existing(mut self, ignore_existing: bool) -> Self {
+        self.ignore_existing = ignore_existing;
         self
     }
 
@@ -708,6 +724,7 @@ impl ClientConfigBuilder {
             compress: self.compress,
             checksum: self.checksum,
             size_only: self.size_only,
+            ignore_existing: self.ignore_existing,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
@@ -995,6 +1012,12 @@ impl ClientSummary {
         self.stats.regular_files_matched()
     }
 
+    /// Returns the number of regular files skipped due to `--ignore-existing`.
+    #[must_use]
+    pub fn regular_files_ignored_existing(&self) -> u64 {
+        self.stats.regular_files_ignored_existing()
+    }
+
     /// Returns the number of directories created during the transfer.
     #[must_use]
     pub fn directories_created(&self) -> u64 {
@@ -1113,6 +1136,8 @@ pub enum ClientEventKind {
     DeviceCopied,
     /// A directory was created during traversal.
     DirectoryCreated,
+    /// An existing destination file was left untouched due to `--ignore-existing`.
+    SkippedExisting,
     /// A non-regular entry was skipped because support was disabled.
     SkippedNonRegular,
     /// An entry was deleted due to `--delete`.
@@ -1141,6 +1166,7 @@ impl ClientEvent {
             LocalCopyAction::FifoCopied => ClientEventKind::FifoCopied,
             LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
+            LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
@@ -1528,6 +1554,7 @@ pub fn run_client_with_observer(
             .times(config.preserve_times())
             .checksum(config.checksum())
             .size_only(config.size_only())
+            .ignore_existing(config.ignore_existing())
             .with_filter_program(filter_program.clone())
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
