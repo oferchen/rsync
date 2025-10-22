@@ -648,6 +648,9 @@ impl FilterSegment {
     }
 }
 
+type FilterSegmentLayers = Vec<Vec<FilterSegment>>;
+type FilterSegmentStack = Vec<Vec<(usize, FilterSegment)>>;
+
 #[derive(Clone, Copy, Debug)]
 struct FilterOutcome {
     transfer_allowed: bool,
@@ -1127,7 +1130,7 @@ impl LocalCopyMetadata {
                 Some(metadata.mode()),
                 Some(metadata.uid()),
                 Some(metadata.gid()),
-                Some(u64::from(metadata.nlink())),
+                Some(metadata.nlink()),
             )
         };
 
@@ -1155,6 +1158,12 @@ impl LocalCopyMetadata {
     #[must_use]
     pub const fn len(&self) -> u64 {
         self.len
+    }
+
+    /// Returns whether the metadata describes an empty entry.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// Returns the recorded modification time, when available.
@@ -2026,9 +2035,9 @@ struct CopyContext<'a> {
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
     filter_program: Option<FilterProgram>,
-    dir_merge_layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
+    dir_merge_layers: Rc<RefCell<FilterSegmentLayers>>,
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
-    dir_merge_ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
+    dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
 }
 
 impl<'a> CopyContext<'a> {
@@ -2308,6 +2317,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn copy_file_contents(
         &mut self,
         reader: &mut fs::File,
@@ -2425,8 +2435,8 @@ impl<'a> CopyContext<'a> {
 }
 
 struct DirectoryFilterGuard {
-    layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
-    ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
+    layers: Rc<RefCell<FilterSegmentLayers>>,
+    ephemeral: Rc<RefCell<FilterSegmentStack>>,
     indices: Vec<usize>,
     ephemeral_active: bool,
     excluded: bool,
@@ -2434,8 +2444,8 @@ struct DirectoryFilterGuard {
 
 impl DirectoryFilterGuard {
     fn new(
-        layers: Rc<RefCell<Vec<Vec<FilterSegment>>>>,
-        ephemeral: Rc<RefCell<Vec<Vec<(usize, FilterSegment)>>>>,
+        layers: Rc<RefCell<FilterSegmentLayers>>,
+        ephemeral: Rc<RefCell<FilterSegmentStack>>,
         indices: Vec<usize>,
         ephemeral_active: bool,
         excluded: bool,
@@ -2563,15 +2573,12 @@ fn load_dir_merge_rules_recursive(
 
                 let mut directive = token.to_string();
                 let lower = directive.to_ascii_lowercase();
-                if matches!(
+                let needs_argument = matches!(
                     lower.as_str(),
                     "merge" | "include" | "exclude" | "show" | "hide" | "protect"
-                ) {
-                    if let Some(next) = iter.next() {
-                        directive.push(' ');
-                        directive.push_str(next);
-                    }
-                } else if lower.starts_with("dir-merge") {
+                ) || lower.starts_with("dir-merge");
+
+                if needs_argument {
                     if let Some(next) = iter.next() {
                         directive.push(' ');
                         directive.push_str(next);
@@ -3632,7 +3639,7 @@ fn copy_file(
             destination
                 .file_name()
                 .map(PathBuf::from)
-                .unwrap_or_else(PathBuf::new)
+                .unwrap_or_default()
         });
     let file_size = metadata.len();
     context.summary_mut().record_regular_file_total();
@@ -4746,7 +4753,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     {
         use std::os::unix::ffi::OsStrExt;
 
-        return left.as_bytes().cmp(right.as_bytes());
+        left.as_bytes().cmp(right.as_bytes())
     }
 
     #[cfg(windows)]
@@ -4755,12 +4762,12 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
 
         let left_wide: Vec<u16> = left.encode_wide().collect();
         let right_wide: Vec<u16> = right.encode_wide().collect();
-        return left_wide.cmp(&right_wide);
+        left_wide.cmp(&right_wide)
     }
 
     #[cfg(not(any(unix, windows)))]
     {
-        return left.to_string_lossy().cmp(&right.to_string_lossy());
+        left.to_string_lossy().cmp(&right.to_string_lossy())
     }
 }
 
@@ -4770,7 +4777,7 @@ fn has_trailing_separator(path: &OsStr) -> bool {
         use std::os::unix::ffi::OsStrExt;
 
         let bytes = path.as_bytes();
-        !bytes.is_empty() && bytes.ends_with(&[b'/'])
+        !bytes.is_empty() && bytes.ends_with(b"/")
     }
 
     #[cfg(windows)]
@@ -4795,7 +4802,7 @@ fn is_fifo(file_type: &fs::FileType) -> bool {
     {
         use std::os::unix::fs::FileTypeExt;
 
-        return file_type.is_fifo();
+        file_type.is_fifo()
     }
 
     #[cfg(not(unix))]
@@ -4810,7 +4817,7 @@ fn is_device(file_type: &fs::FileType) -> bool {
     {
         use std::os::unix::fs::FileTypeExt;
 
-        return file_type.is_char_device() || file_type.is_block_device();
+        file_type.is_char_device() || file_type.is_block_device()
     }
 
     #[cfg(not(unix))]

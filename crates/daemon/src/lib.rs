@@ -1249,7 +1249,7 @@ impl ModuleDefinitionBuilder {
             ));
         }
 
-        if self.auth_users.as_ref().map_or(false, Vec::is_empty) {
+        if self.auth_users.as_ref().is_some_and(Vec::is_empty) {
             return Err(config_parse_error(
                 config_path,
                 self.declaration_line,
@@ -1738,7 +1738,6 @@ impl DaemonError {
     }
 
     /// Returns the formatted diagnostic message that should be emitted.
-    #[must_use]
     pub fn message(&self) -> &Message {
         &self.message
     }
@@ -1933,7 +1932,7 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
                     Err(_) => "worker thread panicked".to_string(),
                 },
             };
-            let error = io::Error::new(io::ErrorKind::Other, description);
+            let error = io::Error::other(description);
             Err(stream_error(None, "serve legacy handshake", error))
         }
     }
@@ -2040,7 +2039,7 @@ fn handle_legacy_session(
                 continue;
             }
             Ok(LegacyDaemonMessage::Other(payload)) => {
-                if let Some(option) = parse_daemon_option(&payload) {
+                if let Some(option) = parse_daemon_option(payload) {
                     refused_options.push(option.to_string());
                     continue;
                 }
@@ -2476,7 +2475,7 @@ fn canonical_option(text: &str) -> String {
     let token = text
         .trim()
         .trim_start_matches('-')
-        .split(|ch| matches!(ch, ' ' | '\t' | '='))
+        .split([' ', '\t', '='])
         .next()
         .unwrap_or("");
     token.to_ascii_lowercase()

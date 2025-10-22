@@ -965,7 +965,6 @@ impl ClientError {
     }
 
     /// Returns the formatted diagnostic message that should be emitted.
-    #[must_use]
     pub fn message(&self) -> &Message {
         &self.message
     }
@@ -1558,7 +1557,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 /// Runs the client orchestration while forwarding progress updates to the provided observer.
 pub fn run_client_with_observer(
     config: ClientConfig,
-    mut observer: Option<&mut dyn ClientProgressObserver>,
+    observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
@@ -1613,7 +1612,6 @@ pub fn run_client_with_observer(
     }
 
     let mut handler_adapter = observer
-        .as_deref_mut()
         .map(|observer| ClientProgressForwarder::new(observer, &plan, options.clone()))
         .transpose()?;
 
@@ -3357,10 +3355,8 @@ fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
     let host_port = parts.next().unwrap_or("");
     let remainder = parts.next();
 
-    if let Some(path) = remainder {
-        if !path.is_empty() {
-            return Err(remote_operands_unsupported());
-        }
+    if remainder.is_some_and(|path| !path.is_empty()) {
+        return Err(remote_operands_unsupported());
     }
 
     let target = parse_host_port(host_port)?;
@@ -3426,12 +3422,10 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
                 previous_colon = None;
             }
             ':' if !in_brackets => {
-                if let Some(prev) = previous_colon {
-                    if prev + 1 == idx {
-                        let host = &input[..prev];
-                        let module = &input[idx + 1..];
-                        return Some((host, module));
-                    }
+                if let Some(prev) = previous_colon && prev + 1 == idx {
+                    let host = &input[..prev];
+                    let module = &input[idx + 1..];
+                    return Some((host, module));
                 }
                 previous_colon = Some(idx);
             }
@@ -3489,7 +3483,7 @@ fn split_host_port(input: &str) -> Option<(&str, &str)> {
     if host.contains(':') {
         return None;
     }
-    Some((&host[..], &port[1..]))
+    Some((host, &port[1..]))
 }
 
 fn split_daemon_username(input: &str) -> Result<(Option<&str>, &str), ClientError> {
@@ -3706,7 +3700,7 @@ pub fn run_module_list_with_password(
 
                     let context = DaemonAuthContext::new(username.to_owned(), secret);
                     if let Some(challenge) = module {
-                        send_daemon_auth_credentials(&mut reader, &context, challenge, &addr)?;
+                        send_daemon_auth_credentials(&mut reader, &context, challenge, addr)?;
                     }
 
                     auth_context = Some(context);
@@ -3720,7 +3714,7 @@ pub fn run_module_list_with_password(
                         )
                     })?;
 
-                    send_daemon_auth_credentials(&mut reader, context, challenge, &addr)?;
+                    send_daemon_auth_credentials(&mut reader, context, challenge, addr)?;
                     continue;
                 }
                 Ok(LegacyDaemonMessage::Other(payload)) => {
@@ -3853,7 +3847,7 @@ fn normalize_motd_payload(payload: &str) -> String {
     }
 
     let remainder = &payload[4..];
-    let remainder = remainder.trim_start_matches(&[' ', '\t', ':']);
+    let remainder = remainder.trim_start_matches([' ', '\t', ':']);
     remainder.trim_start().to_string()
 }
 
