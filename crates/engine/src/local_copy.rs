@@ -130,6 +130,9 @@ pub struct DirMergeOptions {
     exclude_self: bool,
     parser: DirMergeParser,
     allow_list_clear: bool,
+    sender_side: SideState,
+    receiver_side: SideState,
+    anchor_root: bool,
 }
 
 impl DirMergeOptions {
@@ -145,6 +148,9 @@ impl DirMergeOptions {
                 allow_comments: true,
             },
             allow_list_clear: false,
+            sender_side: SideState::Unspecified,
+            receiver_side: SideState::Unspecified,
+            anchor_root: false,
         }
     }
 
@@ -205,6 +211,33 @@ impl DirMergeOptions {
         self
     }
 
+    /// Applies the sender-side modifier to rules loaded from the filter file.
+    #[must_use]
+    pub fn sender_modifier(mut self) -> Self {
+        self.sender_side = SideState::Enabled;
+        if matches!(self.receiver_side, SideState::Unspecified) {
+            self.receiver_side = SideState::Disabled;
+        }
+        self
+    }
+
+    /// Applies the receiver-side modifier to rules loaded from the filter file.
+    #[must_use]
+    pub fn receiver_modifier(mut self) -> Self {
+        self.receiver_side = SideState::Enabled;
+        if matches!(self.sender_side, SideState::Unspecified) {
+            self.sender_side = SideState::Disabled;
+        }
+        self
+    }
+
+    /// Requests that patterns within the filter file be anchored to the transfer root.
+    #[must_use]
+    pub const fn anchor_root(mut self, anchor: bool) -> Self {
+        self.anchor_root = anchor;
+        self
+    }
+
     /// Returns whether the parsed rules should be inherited.
     #[must_use]
     pub const fn inherit_rules(&self) -> bool {
@@ -246,12 +279,37 @@ impl DirMergeOptions {
     pub const fn enforced_kind(&self) -> Option<DirMergeEnforcedKind> {
         self.parser.enforce_kind()
     }
+
+    /// Reports whether loaded rules should apply to the sending side.
+    #[must_use]
+    pub const fn applies_to_sender(&self) -> bool {
+        !matches!(self.sender_side, SideState::Disabled)
+    }
+
+    /// Reports whether loaded rules should apply to the receiving side.
+    #[must_use]
+    pub const fn applies_to_receiver(&self) -> bool {
+        !matches!(self.receiver_side, SideState::Disabled)
+    }
+
+    /// Reports whether patterns should be anchored to the transfer root.
+    #[must_use]
+    pub const fn anchor_root_enabled(&self) -> bool {
+        self.anchor_root
+    }
 }
 
 impl Default for DirMergeOptions {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SideState {
+    Unspecified,
+    Enabled,
+    Disabled,
 }
 
 /// Exit code returned when operand validation fails.
@@ -324,22 +382,25 @@ impl FilterProgram {
         is_dir: bool,
         dir_merge_layers: &[Vec<FilterSegment>],
         ephemeral_layers: Option<&[(usize, FilterSegment)]>,
+        context: FilterContext,
     ) -> FilterOutcome {
         let mut outcome = FilterOutcome::default();
 
         for instruction in &self.instructions {
             match instruction {
-                FilterInstruction::Segment(segment) => segment.apply(path, is_dir, &mut outcome),
+                FilterInstruction::Segment(segment) => {
+                    segment.apply(path, is_dir, &mut outcome, context)
+                }
                 FilterInstruction::DirMerge { index } => {
                     if let Some(layers) = dir_merge_layers.get(*index) {
                         for layer in layers {
-                            layer.apply(path, is_dir, &mut outcome);
+                            layer.apply(path, is_dir, &mut outcome, context);
                         }
                     }
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index {
-                                segment.apply(path, is_dir, &mut outcome);
+                                segment.apply(path, is_dir, &mut outcome, context);
                             }
                         }
                     }
@@ -349,6 +410,12 @@ impl FilterProgram {
 
         outcome
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FilterContext {
+    Transfer,
+    Deletion,
 }
 
 /// Entry used to construct a [`FilterProgram`].
@@ -442,16 +509,10 @@ impl FilterSegment {
     fn push_rule(&mut self, rule: FilterRule) -> Result<(), FilterProgramError> {
         match rule.action() {
             rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
-                self.include_exclude.push(CompiledRule::new(
-                    rule.action(),
-                    rule.pattern().to_string(),
-                )?);
+                self.include_exclude.push(CompiledRule::new(rule)?);
             }
             rsync_filters::FilterAction::Protect => {
-                self.protect.push(CompiledRule::new(
-                    rule.action(),
-                    rule.pattern().to_string(),
-                )?);
+                self.protect.push(CompiledRule::new(rule)?);
             }
         }
         Ok(())
@@ -461,19 +522,45 @@ impl FilterSegment {
         self.include_exclude.is_empty() && self.protect.is_empty()
     }
 
-    fn apply(&self, path: &Path, is_dir: bool, outcome: &mut FilterOutcome) {
+    fn apply(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        outcome: &mut FilterOutcome,
+        context: FilterContext,
+    ) {
         for rule in &self.include_exclude {
             if rule.matches(path, is_dir) {
-                outcome.set_transfer_allowed(matches!(
-                    rule.action,
-                    rsync_filters::FilterAction::Include
-                ));
+                match context {
+                    FilterContext::Transfer => {
+                        if rule.applies_to_sender {
+                            outcome.set_transfer_allowed(matches!(
+                                rule.action,
+                                rsync_filters::FilterAction::Include
+                            ));
+                        }
+                    }
+                    FilterContext::Deletion => {
+                        if rule.applies_to_receiver {
+                            outcome.set_transfer_allowed(matches!(
+                                rule.action,
+                                rsync_filters::FilterAction::Include
+                            ));
+                        }
+                    }
+                }
             }
         }
 
         for rule in &self.protect {
             if rule.matches(path, is_dir) {
-                outcome.protect();
+                let applies = match context {
+                    FilterContext::Transfer => rule.applies_to_sender,
+                    FilterContext::Deletion => rule.applies_to_receiver,
+                };
+                if applies {
+                    outcome.protect();
+                }
             }
         }
     }
@@ -526,13 +613,16 @@ struct CompiledRule {
     directory_only: bool,
     direct_matchers: Vec<GlobMatcher>,
     descendant_matchers: Vec<GlobMatcher>,
+    applies_to_sender: bool,
+    applies_to_receiver: bool,
 }
 
 impl CompiledRule {
-    fn new(
-        action: rsync_filters::FilterAction,
-        pattern: String,
-    ) -> Result<Self, FilterProgramError> {
+    fn new(rule: FilterRule) -> Result<Self, FilterProgramError> {
+        let action = rule.action();
+        let applies_to_sender = rule.applies_to_sender();
+        let applies_to_receiver = rule.applies_to_receiver();
+        let pattern = rule.pattern().to_string();
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
         let mut direct_patterns = HashSet::new();
@@ -559,6 +649,8 @@ impl CompiledRule {
             directory_only,
             direct_matchers: compile_patterns(direct_patterns, &pattern)?,
             descendant_matchers: compile_patterns(descendant_patterns, &pattern)?,
+            applies_to_sender,
+            applies_to_receiver,
         })
     }
 
@@ -1626,7 +1718,13 @@ impl<'a> CopyContext<'a> {
             let ephemeral = self.dir_merge_ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             program
-                .evaluate(relative, is_dir, layers.as_slice(), temp_layers)
+                .evaluate(
+                    relative,
+                    is_dir,
+                    layers.as_slice(),
+                    temp_layers,
+                    FilterContext::Transfer,
+                )
                 .allows_transfer()
         } else if let Some(filters) = self.options.filter_set() {
             filters.allows(relative, is_dir)
@@ -1641,7 +1739,13 @@ impl<'a> CopyContext<'a> {
             let layers = self.dir_merge_layers.borrow();
             let ephemeral = self.dir_merge_ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
-            let outcome = program.evaluate(relative, is_dir, layers.as_slice(), temp_layers);
+            let outcome = program.evaluate(
+                relative,
+                is_dir,
+                layers.as_slice(),
+                temp_layers,
+                FilterContext::Deletion,
+            );
             if delete_excluded {
                 outcome.allows_deletion_when_excluded_removed()
             } else {
@@ -1838,6 +1942,13 @@ fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
     base.join(pattern)
 }
 
+fn apply_dir_merge_rule_defaults(mut rule: FilterRule, options: &DirMergeOptions) -> FilterRule {
+    if options.anchor_root_enabled() {
+        rule = rule.anchor_to_root();
+    }
+    rule.with_sides(options.applies_to_sender(), options.applies_to_receiver())
+}
+
 fn load_dir_merge_rules_recursive(
     path: &Path,
     options: &DirMergeOptions,
@@ -1892,10 +2003,11 @@ fn load_dir_merge_rules_recursive(
                 }
 
                 if let Some(kind) = enforce_kind {
-                    rules.push(match kind {
+                    let rule = match kind {
                         DirMergeEnforcedKind::Include => FilterRule::include(token.to_string()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_string()),
-                    });
+                    };
+                    rules.push(apply_dir_merge_rule_defaults(rule, options));
                     continue;
                 }
 
@@ -1917,7 +2029,9 @@ fn load_dir_merge_rules_recursive(
                 }
 
                 match parse_filter_directive_line(&directive) {
-                    Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
+                    Ok(Some(ParsedFilterDirective::Rule(rule))) => {
+                        rules.push(apply_dir_merge_rule_defaults(rule, options));
+                    }
                     Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
                         let nested = if merge_path.is_absolute() {
                             merge_path
@@ -1960,15 +2074,18 @@ fn load_dir_merge_rules_recursive(
                 }
 
                 if let Some(kind) = enforce_kind {
-                    rules.push(match kind {
+                    let rule = match kind {
                         DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_string()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_string()),
-                    });
+                    };
+                    rules.push(apply_dir_merge_rule_defaults(rule, options));
                     continue;
                 }
 
                 match parse_filter_directive_line(trimmed) {
-                    Ok(Some(ParsedFilterDirective::Rule(rule))) => rules.push(rule),
+                    Ok(Some(ParsedFilterDirective::Rule(rule))) => {
+                        rules.push(apply_dir_merge_rule_defaults(rule, options));
+                    }
                     Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
                         let nested = if merge_path.is_absolute() {
                             merge_path

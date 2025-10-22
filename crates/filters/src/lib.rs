@@ -98,6 +98,8 @@ pub enum FilterAction {
 pub struct FilterRule {
     action: FilterAction,
     pattern: String,
+    applies_to_sender: bool,
+    applies_to_receiver: bool,
 }
 
 impl FilterRule {
@@ -107,6 +109,8 @@ impl FilterRule {
         Self {
             action: FilterAction::Include,
             pattern: pattern.into(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
         }
     }
 
@@ -116,6 +120,8 @@ impl FilterRule {
         Self {
             action: FilterAction::Exclude,
             pattern: pattern.into(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
         }
     }
 
@@ -125,6 +131,8 @@ impl FilterRule {
         Self {
             action: FilterAction::Protect,
             pattern: pattern.into(),
+            applies_to_sender: false,
+            applies_to_receiver: true,
         }
     }
 
@@ -138,6 +146,49 @@ impl FilterRule {
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
+    }
+
+    /// Returns whether the rule affects the sending side.
+    #[must_use]
+    pub const fn applies_to_sender(&self) -> bool {
+        self.applies_to_sender
+    }
+
+    /// Returns whether the rule affects the receiving side.
+    #[must_use]
+    pub const fn applies_to_receiver(&self) -> bool {
+        self.applies_to_receiver
+    }
+
+    /// Sets whether the rule applies on the sending side.
+    #[must_use]
+    pub const fn with_sender(mut self, applies: bool) -> Self {
+        self.applies_to_sender = applies;
+        self
+    }
+
+    /// Sets whether the rule applies on the receiving side.
+    #[must_use]
+    pub const fn with_receiver(mut self, applies: bool) -> Self {
+        self.applies_to_receiver = applies;
+        self
+    }
+
+    /// Updates both side flags at once.
+    #[must_use]
+    pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
+        self.applies_to_sender = sender;
+        self.applies_to_receiver = receiver;
+        self
+    }
+
+    /// Anchors the pattern to the root of the transfer if it is not already.
+    #[must_use]
+    pub fn anchor_to_root(mut self) -> Self {
+        if !self.pattern.starts_with('/') {
+            self.pattern.insert(0, '/');
+        }
+        self
     }
 }
 
@@ -195,10 +246,10 @@ impl FilterSet {
         for rule in rules.into_iter() {
             match rule.action {
                 FilterAction::Include | FilterAction::Exclude => {
-                    include_exclude.push(CompiledRule::new(rule.action, rule.pattern)?);
+                    include_exclude.push(CompiledRule::new(rule)?);
                 }
                 FilterAction::Protect => {
-                    protect.push(CompiledRule::new(rule.action, rule.pattern)?);
+                    protect.push(CompiledRule::new(rule)?);
                 }
             }
         }
@@ -220,7 +271,9 @@ impl FilterSet {
     /// Determines whether the provided path is allowed.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
-        self.inner.decision(path, is_dir).allows_transfer()
+        self.inner
+            .decision(path, is_dir, DecisionContext::Transfer)
+            .allows_transfer()
     }
 
     /// Determines whether deleting the provided path is permitted.
@@ -229,14 +282,16 @@ impl FilterSet {
     /// decision, matching upstream `--filter 'protect …'` semantics.
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        self.inner.decision(path, is_dir).allows_deletion()
+        self.inner
+            .decision(path, is_dir, DecisionContext::Deletion)
+            .allows_deletion()
     }
 
     /// Determines whether the path may be removed when excluded entries are purged.
     #[must_use]
     pub fn allows_deletion_when_excluded_removed(&self, path: &Path, is_dir: bool) -> bool {
         self.inner
-            .decision(path, is_dir)
+            .decision(path, is_dir, DecisionContext::Deletion)
             .allows_deletion_when_excluded_removed()
     }
 }
@@ -248,23 +303,48 @@ struct FilterSetInner {
 }
 
 impl FilterSetInner {
-    fn decision(&self, path: &Path, is_dir: bool) -> FilterDecision {
+    fn decision(&self, path: &Path, is_dir: bool, context: DecisionContext) -> FilterDecision {
         let mut decision = FilterDecision::default();
 
         for rule in &self.include_exclude {
             if rule.matches(path, is_dir) {
-                decision.transfer_allowed = matches!(rule.action, FilterAction::Include);
+                match context {
+                    DecisionContext::Transfer => {
+                        if rule.applies_to_sender {
+                            decision.transfer_allowed =
+                                matches!(rule.action, FilterAction::Include);
+                        }
+                    }
+                    DecisionContext::Deletion => {
+                        if rule.applies_to_receiver {
+                            decision.transfer_allowed =
+                                matches!(rule.action, FilterAction::Include);
+                        }
+                    }
+                }
             }
         }
 
         for rule in &self.protect {
             if rule.matches(path, is_dir) {
-                decision.protected = true;
+                let applies = match context {
+                    DecisionContext::Transfer => rule.applies_to_sender,
+                    DecisionContext::Deletion => rule.applies_to_receiver,
+                };
+                if applies {
+                    decision.protected = true;
+                }
             }
         }
 
         decision
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecisionContext {
+    Transfer,
+    Deletion,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -302,10 +382,18 @@ struct CompiledRule {
     directory_only: bool,
     direct_matchers: Vec<GlobMatcher>,
     descendant_matchers: Vec<GlobMatcher>,
+    applies_to_sender: bool,
+    applies_to_receiver: bool,
 }
 
 impl CompiledRule {
-    fn new(action: FilterAction, pattern: String) -> Result<Self, FilterError> {
+    fn new(rule: FilterRule) -> Result<Self, FilterError> {
+        let FilterRule {
+            action,
+            pattern,
+            applies_to_sender,
+            applies_to_receiver,
+        } = rule;
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         let mut direct_patterns = HashSet::new();
         direct_patterns.insert(core_pattern.clone());
@@ -329,6 +417,8 @@ impl CompiledRule {
             directory_only,
             direct_matchers,
             descendant_matchers,
+            applies_to_sender,
+            applies_to_receiver,
         })
     }
 
@@ -547,5 +637,21 @@ mod tests {
         assert!(set.allows(Path::new("secrets/data.txt"), false));
         assert!(!set.allows_deletion(Path::new("secrets/data.txt"), false));
         assert!(!set.allows_deletion(Path::new("dir/secrets/data.txt"), false));
+    }
+
+    #[test]
+    fn sender_only_rule_does_not_prevent_deletion() {
+        let rules = [FilterRule::exclude("skip.txt").with_sides(true, false)];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(!set.allows(Path::new("skip.txt"), false));
+        assert!(set.allows_deletion(Path::new("skip.txt"), false));
+    }
+
+    #[test]
+    fn receiver_only_rule_blocks_deletion_without_hiding() {
+        let rules = [FilterRule::exclude("keep.txt").with_sides(false, true)];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(set.allows(Path::new("keep.txt"), false));
+        assert!(!set.allows_deletion(Path::new("keep.txt"), false));
     }
 }

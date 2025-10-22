@@ -120,7 +120,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
@@ -1743,6 +1743,15 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
                     options = options.use_whitespace();
                     options = options.allow_comments(false);
                 }
+                's' => {
+                    options = options.sender_modifier();
+                }
+                'r' => {
+                    options = options.receiver_modifier();
+                }
+                '/' => {
+                    options = options.anchor_root(true);
+                }
                 'c' => {
                     used_cvs_default = true;
                     options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
@@ -1802,11 +1811,11 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     }
 
     if keyword.eq_ignore_ascii_case("show") {
-        return handle_keyword("show", FilterRuleSpec::include);
+        return handle_keyword("show", FilterRuleSpec::show);
     }
 
     if keyword.eq_ignore_ascii_case("hide") {
-        return handle_keyword("hide", FilterRuleSpec::exclude);
+        return handle_keyword("hide", FilterRuleSpec::hide);
     }
 
     if keyword.eq_ignore_ascii_case("protect") {
@@ -3430,14 +3439,14 @@ mod tests {
             parse_filter_directive(OsStr::new("show images/**")).expect("keyword show parses");
         assert_eq!(
             show_keyword,
-            FilterDirective::Rule(FilterRuleSpec::include("images/**".to_string()))
+            FilterDirective::Rule(FilterRuleSpec::show("images/**".to_string()))
         );
 
         let hide_keyword =
             parse_filter_directive(OsStr::new("hide *.swp")).expect("keyword hide parses");
         assert_eq!(
             hide_keyword,
-            FilterDirective::Rule(FilterRuleSpec::exclude("*.swp".to_string()))
+            FilterDirective::Rule(FilterRuleSpec::hide("*.swp".to_string()))
         );
     }
 
@@ -3606,6 +3615,47 @@ mod tests {
             .expect_err("conflicting modifiers should error");
         let rendered = error.to_string();
         assert!(rendered.contains("cannot combine '+' and '-'"));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_dir_merge_with_sender_modifier() {
+        let directive = parse_filter_directive(OsStr::new("dir-merge,s per-dir"))
+            .expect("dir-merge with 's' modifier parses");
+        let FilterDirective::Rule(rule) = directive else {
+            panic!("expected dir-merge rule");
+        };
+        let options = rule
+            .dir_merge_options()
+            .expect("dir-merge rule returns options");
+        assert!(options.applies_to_sender());
+        assert!(!options.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_dir_merge_with_receiver_modifier() {
+        let directive = parse_filter_directive(OsStr::new("dir-merge,r per-dir"))
+            .expect("dir-merge with 'r' modifier parses");
+        let FilterDirective::Rule(rule) = directive else {
+            panic!("expected dir-merge rule");
+        };
+        let options = rule
+            .dir_merge_options()
+            .expect("dir-merge rule returns options");
+        assert!(!options.applies_to_sender());
+        assert!(options.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_dir_merge_with_anchor_modifier() {
+        let directive = parse_filter_directive(OsStr::new("dir-merge,/ .rules"))
+            .expect("dir-merge with '/' modifier parses");
+        let FilterDirective::Rule(rule) = directive else {
+            panic!("expected dir-merge rule");
+        };
+        let options = rule
+            .dir_merge_options()
+            .expect("dir-merge rule returns options");
+        assert!(options.anchor_root_enabled());
     }
 
     #[test]
