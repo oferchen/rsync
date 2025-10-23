@@ -3260,9 +3260,10 @@ impl LocalCopyArgumentError {
             Self::ReplaceNonDirectoryWithDirectory => {
                 "cannot replace non-directory destination with directory"
             }
-            Self::RemoteOperandUnsupported => {
-                "remote operands are not supported: this build handles local filesystem copies only"
-            }
+            Self::RemoteOperandUnsupported => concat!(
+                "remote operands are not supported: this build handles local filesystem copies only; ",
+                "set OC_RSYNC_FALLBACK to point to an upstream rsync binary for remote transfers",
+            ),
         }
     }
 }
