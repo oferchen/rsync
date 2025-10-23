@@ -1865,6 +1865,9 @@ pub struct LocalCopySummary {
     compression_used: bool,
     total_source_bytes: u64,
     total_elapsed: Duration,
+    file_list_size: u64,
+    file_list_generation: Duration,
+    file_list_transfer: Duration,
 }
 
 impl LocalCopySummary {
@@ -1994,6 +1997,24 @@ impl LocalCopySummary {
         self.total_elapsed
     }
 
+    /// Returns the number of bytes that would be transmitted for the file list.
+    #[must_use]
+    pub const fn file_list_size(&self) -> u64 {
+        self.file_list_size
+    }
+
+    /// Returns the time spent enumerating the file list.
+    #[must_use]
+    pub const fn file_list_generation_time(&self) -> Duration {
+        self.file_list_generation
+    }
+
+    /// Returns the time spent sending the file list to a peer.
+    #[must_use]
+    pub const fn file_list_transfer_time(&self) -> Duration {
+        self.file_list_transfer
+    }
+
     fn record_file(&mut self, bytes: u64, compressed: Option<u64>) {
         self.files_copied = self.files_copied.saturating_add(1);
         self.bytes_copied = self.bytes_copied.saturating_add(bytes);
@@ -2025,6 +2046,14 @@ impl LocalCopySummary {
 
     fn record_elapsed(&mut self, elapsed: Duration) {
         self.total_elapsed = self.total_elapsed.saturating_add(elapsed);
+    }
+
+    fn record_file_list_generation(&mut self, elapsed: Duration) {
+        self.file_list_generation = self.file_list_generation.saturating_add(elapsed);
+    }
+
+    fn record_file_list_transfer(&mut self, elapsed: Duration) {
+        self.file_list_transfer = self.file_list_transfer.saturating_add(elapsed);
     }
 
     fn record_directory(&mut self) {
@@ -2489,6 +2518,19 @@ impl<'a> CopyContext<'a> {
                 Duration::default(),
                 None,
             ));
+        }
+    }
+
+    fn record_file_list_generation(&mut self, elapsed: Duration) {
+        if !elapsed.is_zero() {
+            self.summary.record_file_list_generation(elapsed);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn record_file_list_transfer(&mut self, elapsed: Duration) {
+        if !elapsed.is_zero() {
+            self.summary.record_file_list_transfer(elapsed);
         }
     }
 
@@ -3361,9 +3403,11 @@ fn copy_sources(
 
     for source in &plan.sources {
         let source_path = source.path();
+        let metadata_start = Instant::now();
         let metadata = fs::symlink_metadata(source_path).map_err(|error| {
             LocalCopyError::io("access source", source_path.to_path_buf(), error)
         })?;
+        context.record_file_list_generation(metadata_start.elapsed());
         let file_type = metadata.file_type();
         let metadata_options = context.metadata_options();
 
@@ -3559,7 +3603,9 @@ fn copy_directory_recursive(
 
     context.summary_mut().record_directory_total();
 
+    let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
+    context.record_file_list_generation(list_start.elapsed());
 
     let dir_merge_guard = context.enter_directory(source)?;
     if dir_merge_guard.is_excluded() {
@@ -6441,7 +6487,10 @@ mod tests {
         let summary = plan.execute().expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"no limit");
-        assert!(recorder.take().is_empty(), "unexpected sleep durations recorded");
+        assert!(
+            recorder.take().is_empty(),
+            "unexpected sleep durations recorded"
+        );
         assert_eq!(summary.files_copied(), 1);
     }
 

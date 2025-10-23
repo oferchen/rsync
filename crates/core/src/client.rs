@@ -1292,6 +1292,24 @@ impl ClientSummary {
     pub fn total_elapsed(&self) -> Duration {
         self.stats.total_elapsed()
     }
+
+    /// Returns the number of bytes that would be transmitted for the file list.
+    #[must_use]
+    pub fn file_list_size(&self) -> u64 {
+        self.stats.file_list_size()
+    }
+
+    /// Returns the duration spent generating the in-memory file list.
+    #[must_use]
+    pub fn file_list_generation_time(&self) -> Duration {
+        self.stats.file_list_generation_time()
+    }
+
+    /// Returns the duration spent transmitting the file list to the peer.
+    #[must_use]
+    pub fn file_list_transfer_time(&self) -> Duration {
+        self.stats.file_list_transfer_time()
+    }
 }
 
 /// Describes a transfer action performed by the local copy engine.

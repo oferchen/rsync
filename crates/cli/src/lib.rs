@@ -2242,6 +2242,9 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let compressed = summary.compressed_bytes().unwrap_or(transferred);
     let total_size = summary.total_source_bytes();
     let matched_bytes = total_size.saturating_sub(transferred);
+    let file_list_size = summary.file_list_size();
+    let file_list_generation = summary.file_list_generation_time().as_secs_f64();
+    let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
 
     let total_entries = files_total
         .saturating_add(directories_total)
@@ -2270,6 +2273,15 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
     writeln!(stdout, "Literal data: {transferred} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes} bytes")?;
+    writeln!(stdout, "File list size: {file_list_size}")?;
+    writeln!(
+        stdout,
+        "File list generation time: {file_list_generation:.3} seconds"
+    )?;
+    writeln!(
+        stdout,
+        "File list transfer time: {file_list_transfer:.3} seconds"
+    )?;
     writeln!(stdout, "Total bytes sent: {compressed}")?;
     writeln!(stdout, "Total bytes received: 0")?;
     writeln!(stdout)?;
@@ -4538,6 +4550,9 @@ mod tests {
         assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
         assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
         assert!(rendered.contains("Matched data: 0 bytes"));
+        assert!(rendered.contains("File list size: 0"));
+        assert!(rendered.contains("File list generation time:"));
+        assert!(rendered.contains("File list transfer time:"));
         assert!(rendered.contains("Total bytes received: 0"));
         assert!(rendered.contains("\n\nsent"));
         assert!(rendered.contains("total size is"));
