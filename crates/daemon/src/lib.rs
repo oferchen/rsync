@@ -3281,7 +3281,7 @@ where
         return 0;
     }
 
-    if parsed.delegate_system_rsync {
+    if parsed.delegate_system_rsync || auto_delegate_system_rsync_enabled() {
         return run_delegate_mode(parsed.remainder.as_slice(), stderr);
     }
 
@@ -3295,6 +3295,23 @@ where
             }
             error.exit_code()
         }
+    }
+}
+
+fn auto_delegate_system_rsync_enabled() -> bool {
+    matches!(env_flag("OC_RSYNC_DAEMON_AUTO_DELEGATE"), Some(true))
+}
+
+fn env_flag(name: &str) -> Option<bool> {
+    let value = env::var_os(name)?;
+    let value = value.to_string_lossy();
+    if value.trim().is_empty() {
+        return Some(true);
+    }
+
+    match value.trim().to_ascii_lowercase().as_str() {
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => Some(true),
     }
 }
 
@@ -3638,6 +3655,51 @@ mod tests {
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--port 1234"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_env_triggers_fallback() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("1"));
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--config"),
+            OsStr::new("/etc/rsyncd.conf"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let recorded = fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(recorded.contains("--daemon"));
+        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_env_false_skips_fallback() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho invoked > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("0"));
+
+        let (code, stdout, _stderr) =
+            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(!stdout.is_empty());
+        assert!(!log_path.exists());
     }
 
     #[test]
