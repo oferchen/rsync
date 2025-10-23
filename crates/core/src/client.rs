@@ -1538,7 +1538,7 @@ impl ClientSummary {
 #[derive(Debug)]
 pub enum ClientOutcome {
     /// The transfer was handled by the local copy engine.
-    Local(ClientSummary),
+    Local(Box<ClientSummary>),
     /// The transfer was delegated to an upstream `rsync` binary.
     Fallback(FallbackSummary),
 }
@@ -1547,7 +1547,7 @@ impl ClientOutcome {
     /// Returns the contained [`ClientSummary`] when the outcome represents a local execution.
     pub fn into_local(self) -> Option<ClientSummary> {
         match self {
-            Self::Local(summary) => Some(summary),
+            Self::Local(summary) => Some(*summary),
             Self::Fallback(_) => None,
         }
     }
@@ -2579,7 +2579,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
 /// the system `rsync` binary until the native network engine is available.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     match run_client_internal::<io::Sink, io::Sink>(config, None, None) {
-        Ok(ClientOutcome::Local(summary)) => Ok(summary),
+        Ok(ClientOutcome::Local(summary)) => Ok(*summary),
         Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
         Err(error) => Err(error),
     }
@@ -2591,7 +2591,7 @@ pub fn run_client_with_observer(
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     match run_client_internal::<io::Sink, io::Sink>(config, observer, None) {
-        Ok(ClientOutcome::Local(summary)) => Ok(summary),
+        Ok(ClientOutcome::Local(summary)) => Ok(*summary),
         Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
         Err(error) => Err(error),
     }
@@ -2643,10 +2643,8 @@ where
                     )
                 ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
 
-            if requires_fallback {
-                if let Some(ctx) = fallback.take() {
-                    return invoke_fallback(ctx);
-                }
+            if requires_fallback && let Some(ctx) = fallback.take() {
+                return invoke_fallback(ctx);
             }
 
             return Err(map_local_copy_error(error));
@@ -2737,7 +2735,7 @@ where
     };
 
     summary
-        .map(ClientOutcome::Local)
+        .map(|summary| ClientOutcome::Local(Box::new(summary)))
         .map_err(map_local_copy_error)
 }
 

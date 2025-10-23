@@ -1709,11 +1709,7 @@ where
         match parse_compress_level_argument(value.as_os_str()) {
             Ok(setting) => {
                 compression_setting = setting;
-                if setting.is_disabled() {
-                    compress = false;
-                } else {
-                    compress = true;
-                }
+                compress = !setting.is_disabled();
             }
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -2077,7 +2073,7 @@ where
             stdout,
             stderr,
             msgs_to_stderr,
-            |writer| LiveProgress::new(writer),
+            LiveProgress::new,
         ))
     } else {
         None
@@ -2092,6 +2088,7 @@ where
 
     match result {
         Ok(ClientOutcome::Local(summary)) => {
+            let summary = *summary;
             let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
 
             if let Some(observer) = live_progress {
@@ -2248,6 +2245,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_transfer_summary(
     summary: &ClientSummary,
     verbosity: u8,
@@ -5498,7 +5496,7 @@ mod tests {
         let outcome =
             run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
         let summary = match outcome {
-            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Local(summary) => *summary,
             ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
         };
         let event = summary
@@ -5559,7 +5557,7 @@ mod tests {
         let outcome =
             run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
         let summary = match outcome {
-            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Local(summary) => *summary,
             ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
         };
         let event = summary
@@ -8280,7 +8278,7 @@ exit 0
         let outcome =
             run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
         let summary = match outcome {
-            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Local(summary) => *summary,
             ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
         };
         let event = summary
@@ -8327,7 +8325,7 @@ exit 0
         let outcome =
             run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
         let summary = match outcome {
-            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Local(summary) => *summary,
             ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
         };
         let event = summary

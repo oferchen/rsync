@@ -193,6 +193,12 @@ impl SignatureBlock {
     pub fn len(&self) -> usize {
         self.rolling.len()
     }
+
+    /// Reports whether the block corresponds to an empty range.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Aggregated signature for a file produced by [`generate_file_signature`].
