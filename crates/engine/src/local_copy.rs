@@ -320,6 +320,8 @@ enum SideState {
 const INVALID_OPERAND_EXIT_CODE: i32 = 23;
 /// Exit code returned when no transfer operands are supplied.
 const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
+/// Exit code returned when the transfer exceeds the configured timeout.
+const TIMEOUT_EXIT_CODE: i32 = 30;
 
 /// Ordered list of filter rules and per-directory merge directives.
 #[derive(Clone, Debug, Default)]
@@ -1351,6 +1353,7 @@ pub struct LocalCopyOptions {
     devices: bool,
     specials: bool,
     implied_dirs: bool,
+    timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -1389,6 +1392,7 @@ impl LocalCopyOptions {
             devices: false,
             specials: false,
             implied_dirs: true,
+            timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
         }
@@ -1435,6 +1439,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--bwlimit")]
     pub const fn bandwidth_limit(mut self, limit: Option<NonZeroU64>) -> Self {
         self.bandwidth_limit = limit;
+        self
+    }
+
+    /// Applies an inactivity timeout to the transfer.
+    #[must_use]
+    #[doc(alias = "--timeout")]
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -1845,6 +1857,12 @@ impl LocalCopyOptions {
     pub const fn preserve_xattrs(&self) -> bool {
         self.preserve_xattrs
     }
+
+    /// Returns the configured inactivity timeout, if any.
+    #[must_use]
+    pub const fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
 }
 
 impl Default for LocalCopyOptions {
@@ -2209,6 +2227,8 @@ struct CopyContext<'a> {
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
     deferred_deletions: Vec<DeferredDeletion>,
+    timeout: Option<Duration>,
+    last_progress: Instant,
 }
 
 struct DeferredDeletion {
@@ -2231,6 +2251,7 @@ impl<'a> CopyContext<'a> {
             .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
             .unwrap_or_default();
         let dir_merge_ephemeral = Vec::new();
+        let timeout = options.timeout();
         Self {
             mode,
             options,
@@ -2247,7 +2268,22 @@ impl<'a> CopyContext<'a> {
             observer,
             dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
             deferred_deletions: Vec::new(),
+            timeout,
+            last_progress: Instant::now(),
         }
+    }
+
+    fn register_progress(&mut self) {
+        self.last_progress = Instant::now();
+    }
+
+    fn enforce_timeout(&mut self) -> Result<(), LocalCopyError> {
+        if let Some(limit) = self.timeout {
+            if self.last_progress.elapsed() > limit {
+                return Err(LocalCopyError::timeout(limit));
+            }
+        }
+        Ok(())
     }
 
     fn mode(&self) -> LocalCopyExecution {
@@ -2554,6 +2590,7 @@ impl<'a> CopyContext<'a> {
         transferred: u64,
         elapsed: Duration,
     ) {
+        self.register_progress();
         if self.observer.is_none() {
             return;
         }
@@ -2591,6 +2628,7 @@ impl<'a> CopyContext<'a> {
         let mut compressed_progress: u64 = 0;
 
         loop {
+            self.enforce_timeout()?;
             let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
                 limiter.recommended_read_size(buffer.len())
             } else {
@@ -2611,6 +2649,8 @@ impl<'a> CopyContext<'a> {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
                 })?;
             }
+
+            self.register_progress();
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
@@ -2646,12 +2686,14 @@ impl<'a> CopyContext<'a> {
                     error,
                 )
             })?;
+            self.register_progress();
         }
 
         if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
+            self.register_progress();
             if let Some(limiter) = self.limiter.as_mut() {
                 let delta = compressed_total.saturating_sub(compressed_progress);
                 if delta > 0 {
@@ -2713,6 +2755,7 @@ impl<'a> CopyContext<'a> {
     fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         let pending = std::mem::take(&mut self.deferred_deletions);
         for entry in pending {
+            self.enforce_timeout()?;
             let relative = entry.relative.as_deref();
             delete_extraneous_entries(self, entry.destination.as_path(), relative, &entry.keep)?;
         }
@@ -3120,6 +3163,12 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error representing an inactivity timeout.
+    #[must_use]
+    pub fn timeout(duration: Duration) -> Self {
+        Self::new(LocalCopyErrorKind::Timeout { duration })
+    }
+
     /// Returns the exit code that mirrors upstream rsync's behaviour.
     #[must_use]
     pub const fn exit_code(&self) -> i32 {
@@ -3128,6 +3177,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::InvalidArgument(_) | LocalCopyErrorKind::Io { .. } => {
                 INVALID_OPERAND_EXIT_CODE
             }
+            LocalCopyErrorKind::Timeout { .. } => TIMEOUT_EXIT_CODE,
         }
     }
 
@@ -3161,6 +3211,13 @@ impl fmt::Display for LocalCopyError {
             } => {
                 write!(f, "failed to {action} '{}': {source}", path.display())
             }
+            LocalCopyErrorKind::Timeout { duration } => {
+                write!(
+                    f,
+                    "transfer timed out after {:.3} seconds without progress",
+                    duration.as_secs_f64()
+                )
+            }
         }
     }
 }
@@ -3190,6 +3247,11 @@ pub enum LocalCopyErrorKind {
         /// Underlying error.
         source: io::Error,
     },
+    /// The transfer exceeded the configured inactivity timeout.
+    Timeout {
+        /// Duration of inactivity that triggered the timeout.
+        duration: Duration,
+    },
 }
 
 impl LocalCopyErrorKind {
@@ -3202,6 +3264,7 @@ impl LocalCopyErrorKind {
                 path,
                 source,
             } => Some((action, path.as_path(), source)),
+            Self::Timeout { .. } => None,
             _ => None,
         }
     }
@@ -3594,6 +3657,7 @@ fn copy_sources(
     let relative_enabled = context.relative_paths_enabled();
 
     for source in &plan.sources {
+        context.enforce_timeout()?;
         let source_path = source.path();
         let metadata_start = Instant::now();
         let metadata = fs::symlink_metadata(source_path).map_err(|error| {
@@ -3738,9 +3802,12 @@ fn copy_sources(
                 ));
             }
         }
+
+        context.enforce_timeout()?;
     }
 
     context.flush_deferred_deletions()?;
+    context.enforce_timeout()?;
     Ok(context.into_outcome())
 }
 
@@ -3801,6 +3868,7 @@ fn copy_directory_recursive(
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());
+    context.register_progress();
 
     let dir_merge_guard = context.enter_directory(source)?;
     if dir_merge_guard.is_excluded() {
@@ -3818,10 +3886,12 @@ fn copy_directory_recursive(
                 fs::create_dir_all(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
+                context.register_progress();
             } else {
                 fs::create_dir(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
+                context.register_progress();
             }
         } else if !context.implied_dirs_enabled() {
             if let Some(parent) = destination.parent() {
@@ -3843,6 +3913,8 @@ fn copy_directory_recursive(
     let mut keep_names = Vec::new();
 
     for entry in entries.iter() {
+        context.enforce_timeout()?;
+        context.register_progress();
         let file_name = &entry.file_name;
         let entry_path = &entry.path;
         let entry_metadata = &entry.metadata;
@@ -3951,6 +4023,7 @@ fn copy_file(
     metadata: &fs::Metadata,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    context.enforce_timeout()?;
     let metadata_options = context.metadata_options();
     let mode = context.mode();
     let file_type = metadata.file_type();
@@ -4516,6 +4589,7 @@ fn copy_fifo(
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
@@ -4547,6 +4621,7 @@ fn copy_fifo(
                 fs::create_dir_all(parent).map_err(|error| {
                     LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
                 })?;
+                context.register_progress();
             }
         }
     }
@@ -4580,6 +4655,7 @@ fn copy_fifo(
                 Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
         }
+        context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
@@ -4627,6 +4703,7 @@ fn copy_fifo(
             Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
     }
+    context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
@@ -4639,6 +4716,7 @@ fn copy_device(
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
@@ -4670,6 +4748,7 @@ fn copy_device(
                 fs::create_dir_all(parent).map_err(|error| {
                     LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
                 })?;
+                context.register_progress();
             }
         }
     }
@@ -4703,6 +4782,7 @@ fn copy_device(
                 Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
         }
+        context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
@@ -4750,6 +4830,7 @@ fn copy_device(
             Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
     }
+    context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
@@ -4778,6 +4859,7 @@ fn delete_extraneous_entries(
     };
 
     for entry in read_dir {
+        context.enforce_timeout()?;
         let entry = entry.map_err(|error| {
             LocalCopyError::io("read destination entry", destination.to_path_buf(), error)
         })?;
@@ -4811,6 +4893,7 @@ fn delete_extraneous_entries(
                 Duration::default(),
                 None,
             ));
+            context.register_progress();
             continue;
         }
 
@@ -4823,6 +4906,7 @@ fn delete_extraneous_entries(
             Duration::default(),
             None,
         ));
+        context.register_progress();
     }
 
     Ok(())
@@ -4874,6 +4958,7 @@ fn remove_source_entry_if_requested(
                     None,
                 ));
             }
+            context.register_progress();
             Ok(())
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -4893,6 +4978,7 @@ fn copy_symlink(
     metadata_options: MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
@@ -4924,6 +5010,7 @@ fn copy_symlink(
                 fs::create_dir_all(parent).map_err(|error| {
                     LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
                 })?;
+                context.register_progress();
             }
         }
     }
@@ -4974,6 +5061,7 @@ fn copy_symlink(
                 )),
             ));
         }
+        context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
@@ -5002,6 +5090,7 @@ fn copy_symlink(
             )),
         ));
     }
+    context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
 }
@@ -5204,6 +5293,7 @@ mod tests {
     use std::io::{Seek, SeekFrom, Write};
     use std::num::{NonZeroU8, NonZeroU64};
     use std::path::Path;
+    use std::thread;
     use std::time::Duration;
     use tempfile::tempdir;
 
@@ -5288,6 +5378,14 @@ mod tests {
         let options = LocalCopyOptions::default().compress(true);
         assert!(options.compress_enabled());
         assert!(!LocalCopyOptions::default().compress_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_timeout_round_trip() {
+        let timeout = Duration::from_secs(5);
+        let options = LocalCopyOptions::default().with_timeout(Some(timeout));
+        assert_eq!(options.timeout(), Some(timeout));
+        assert!(LocalCopyOptions::default().timeout().is_none());
     }
 
     #[test]
@@ -5562,6 +5660,54 @@ mod tests {
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.regular_files_total(), 1);
         assert_eq!(summary.regular_files_matched(), 0);
+    }
+
+    struct SleepyHandler {
+        slept: bool,
+        delay: Duration,
+    }
+
+    impl LocalCopyRecordHandler for SleepyHandler {
+        fn handle(&mut self, _record: LocalCopyRecord) {
+            if !self.slept {
+                self.slept = true;
+                thread::sleep(self.delay);
+            }
+        }
+    }
+
+    #[test]
+    fn local_copy_timeout_enforced() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        fs::write(&source, vec![0u8; 1024]).expect("write source");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let mut handler = SleepyHandler {
+            slept: false,
+            delay: Duration::from_millis(50),
+        };
+
+        let options = LocalCopyOptions::default().with_timeout(Some(Duration::from_millis(5)));
+        let error = plan
+            .execute_with_options_and_handler(
+                LocalCopyExecution::Apply,
+                options,
+                Some(&mut handler),
+            )
+            .expect_err("timeout should fail copy");
+
+        assert!(matches!(error.kind(), LocalCopyErrorKind::Timeout { .. }));
+        assert!(
+            !destination.exists(),
+            "destination should not be created on timeout"
+        );
     }
 
     #[test]

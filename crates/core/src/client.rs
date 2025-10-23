@@ -4287,6 +4287,14 @@ fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             path,
             source,
         } => io_error(action, &path, source),
+        LocalCopyErrorKind::Timeout { duration } => {
+            let text = format!(
+                "transfer timed out after {:.3} seconds without progress",
+                duration.as_secs_f64()
+            );
+            let message = rsync_error!(exit_code, text).with_role(Role::Client);
+            ClientError::new(exit_code, message)
+        }
     }
 }
 
