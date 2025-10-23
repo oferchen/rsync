@@ -3,10 +3,13 @@
 //! # Overview
 //!
 //! Zlib compression helpers shared across the workspace. The module currently
-//! exposes a [`CountingZlibEncoder`] that mirrors upstream rsync's compression
-//! pipeline by accepting incremental input while tracking the number of bytes
-//! produced by the compressor. This allows higher layers to report accurate
-//! compressed sizes without buffering the resulting payload in memory.
+//! exposes streaming encoder/decoder utilities that mirror upstream rsync's
+//! compression pipeline. [`CountingZlibEncoder`] accepts incremental input while
+//! tracking the number of bytes produced by the compressor so higher layers can
+//! report accurate compressed sizes without buffering the resulting payload in
+//! memory. The complementary [`CountingZlibDecoder`] wraps a reader that
+//! produces decompressed bytes while recording how much output has been yielded
+//! so far.
 //!
 //! # Examples
 //!
@@ -21,24 +24,40 @@
 //! assert!(compressed_len > 0);
 //! ```
 //!
-//! Obtain a compressed buffer and decompress it:
+//! Obtain a compressed buffer, stream it through
+//! [`CountingZlibDecoder`], and collect the decompressed output:
 //!
 //! ```
-//! use rsync_compress::zlib::{CompressionLevel, compress_to_vec, decompress_to_vec};
+//! use rsync_compress::zlib::{
+//!     compress_to_vec, CompressionLevel, CountingZlibDecoder, CountingZlibEncoder,
+//! };
+//! use std::io::Read;
 //!
-//! let data = b"highly compressible payload";
-//! let compressed = compress_to_vec(data, CompressionLevel::Best).unwrap();
-//! let decoded = decompress_to_vec(&compressed).unwrap();
-//! assert_eq!(decoded, data);
+//! let mut encoder = CountingZlibEncoder::new(CompressionLevel::Best);
+//! encoder.write(b"highly compressible payload").unwrap();
+//! let compressed_len = encoder.finish().unwrap();
+//!
+//! let compressed = compress_to_vec(b"highly compressible payload", CompressionLevel::Best)
+//!     .unwrap();
+//! let mut decoder = CountingZlibDecoder::new(&compressed[..]);
+//! let mut decoded = Vec::new();
+//! decoder.read_to_end(&mut decoded).unwrap();
+//! assert_eq!(decoded, b"highly compressible payload");
+//! assert_eq!(decoder.bytes_read(), decoded.len() as u64);
+//! assert!(compressed_len as usize <= compressed.len());
 //! ```
 
 use std::{
     fmt,
-    io::{self, Write},
+    io::{self, Read, Write},
     num::NonZeroU8,
 };
 
-use flate2::{Compression, read::ZlibDecoder as FlateDecoder, write::ZlibEncoder as FlateEncoder};
+use flate2::{
+    Compression,
+    read::{ZlibDecoder as FlateDecoder, ZlibDecoder},
+    write::ZlibEncoder as FlateEncoder,
+};
 
 /// Compression levels recognised by the zlib encoder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +182,55 @@ impl CountingWriter {
     }
 }
 
+/// Streaming decoder that records the number of decompressed bytes produced.
+pub struct CountingZlibDecoder<R> {
+    inner: ZlibDecoder<R>,
+    bytes: u64,
+}
+
+impl<R> CountingZlibDecoder<R>
+where
+    R: Read,
+{
+    /// Creates a new decoder that wraps the provided reader.
+    #[must_use]
+    pub fn new(reader: R) -> Self {
+        Self {
+            inner: ZlibDecoder::new(reader),
+            bytes: 0,
+        }
+    }
+
+    /// Returns the number of decompressed bytes read so far.
+    #[must_use]
+    pub const fn bytes_read(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Returns a mutable reference to the underlying reader.
+    #[must_use]
+    pub fn get_mut(&mut self) -> &mut R {
+        self.inner.get_mut()
+    }
+
+    /// Consumes the decoder and returns the wrapped reader.
+    #[must_use]
+    pub fn into_inner(self) -> R {
+        self.inner.into_inner()
+    }
+}
+
+impl<R> Read for CountingZlibDecoder<R>
+where
+    R: Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.bytes = self.bytes.saturating_add(read as u64);
+        Ok(read)
+    }
+}
+
 impl Write for CountingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.bytes = self.bytes.saturating_add(buf.len() as u64);
@@ -193,6 +261,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use flate2::Compression;
+    use std::io::{Cursor, Read};
 
     #[test]
     fn counting_encoder_tracks_bytes() {
@@ -237,6 +306,17 @@ mod tests {
         let compressed = compress_to_vec(payload, CompressionLevel::Best).expect("compress");
         let decoded = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn counting_decoder_tracks_output_bytes() {
+        let payload = b"streaming decoder payload";
+        let compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
+        let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
+        let mut output = Vec::new();
+        decoder.read_to_end(&mut output).expect("decompress");
+        assert_eq!(output, payload);
+        assert_eq!(decoder.bytes_read(), payload.len() as u64);
     }
 
     #[test]
