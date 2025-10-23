@@ -2229,12 +2229,29 @@ struct CopyContext<'a> {
     deferred_deletions: Vec<DeferredDeletion>,
     timeout: Option<Duration>,
     last_progress: Instant,
+    created_entries: Vec<CreatedEntry>,
 }
 
 struct DeferredDeletion {
     destination: PathBuf,
     relative: Option<PathBuf>,
     keep: Vec<OsString>,
+}
+
+#[derive(Clone, Debug)]
+struct CreatedEntry {
+    path: PathBuf,
+    kind: CreatedEntryKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CreatedEntryKind {
+    File,
+    Directory,
+    Symlink,
+    Fifo,
+    Device,
+    HardLink,
 }
 
 impl<'a> CopyContext<'a> {
@@ -2270,6 +2287,7 @@ impl<'a> CopyContext<'a> {
             deferred_deletions: Vec::new(),
             timeout,
             last_progress: Instant::now(),
+            created_entries: Vec::new(),
         }
     }
 
@@ -2760,6 +2778,39 @@ impl<'a> CopyContext<'a> {
             delete_extraneous_entries(self, entry.destination.as_path(), relative, &entry.keep)?;
         }
         Ok(())
+    }
+
+    fn register_created_path(&mut self, path: &Path, kind: CreatedEntryKind, existed_before: bool) {
+        if self.mode.is_dry_run() || existed_before {
+            return;
+        }
+        self.created_entries.push(CreatedEntry {
+            path: path.to_path_buf(),
+            kind,
+        });
+    }
+
+    fn rollback_on_error(&mut self, error: &LocalCopyError) {
+        if matches!(error.kind(), LocalCopyErrorKind::Timeout { .. }) {
+            self.rollback_created_entries();
+        }
+    }
+
+    fn rollback_created_entries(&mut self) {
+        while let Some(entry) = self.created_entries.pop() {
+            match entry.kind {
+                CreatedEntryKind::Directory => {
+                    let _ = fs::remove_dir(&entry.path);
+                }
+                CreatedEntryKind::File
+                | CreatedEntryKind::Symlink
+                | CreatedEntryKind::Fifo
+                | CreatedEntryKind::Device
+                | CreatedEntryKind::HardLink => {
+                    let _ = fs::remove_file(&entry.path);
+                }
+            }
+        }
     }
 }
 
@@ -3639,179 +3690,202 @@ fn copy_sources(
     handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
     let mut context = CopyContext::new(mode, options, handler);
+    let result = {
+        let context = &mut context;
+        (|| -> Result<(), LocalCopyError> {
+            let multiple_sources = plan.sources.len() > 1;
+            let destination_path = plan.destination.path();
+            let mut destination_state = query_destination_state(destination_path)?;
 
-    let multiple_sources = plan.sources.len() > 1;
-    let destination_path = plan.destination.path();
-    let mut destination_state = query_destination_state(destination_path)?;
+            if plan.destination.force_directory() {
+                ensure_destination_directory(
+                    destination_path,
+                    &mut destination_state,
+                    context.mode(),
+                )?;
+            }
 
-    if plan.destination.force_directory() {
-        ensure_destination_directory(destination_path, &mut destination_state, context.mode())?;
-    }
+            if multiple_sources {
+                ensure_destination_directory(
+                    destination_path,
+                    &mut destination_state,
+                    context.mode(),
+                )?;
+            }
 
-    if multiple_sources {
-        ensure_destination_directory(destination_path, &mut destination_state, context.mode())?;
-    }
+            let destination_behaves_like_directory =
+                destination_state.is_dir || plan.destination.force_directory();
 
-    let destination_behaves_like_directory =
-        destination_state.is_dir || plan.destination.force_directory();
+            let relative_enabled = context.relative_paths_enabled();
 
-    let relative_enabled = context.relative_paths_enabled();
+            for source in &plan.sources {
+                context.enforce_timeout()?;
+                let source_path = source.path();
+                let metadata_start = Instant::now();
+                let metadata = fs::symlink_metadata(source_path).map_err(|error| {
+                    LocalCopyError::io("access source", source_path.to_path_buf(), error)
+                })?;
+                context.record_file_list_generation(metadata_start.elapsed());
+                let file_type = metadata.file_type();
+                let metadata_options = context.metadata_options();
 
-    for source in &plan.sources {
-        context.enforce_timeout()?;
-        let source_path = source.path();
-        let metadata_start = Instant::now();
-        let metadata = fs::symlink_metadata(source_path).map_err(|error| {
-            LocalCopyError::io("access source", source_path.to_path_buf(), error)
-        })?;
-        context.record_file_list_generation(metadata_start.elapsed());
-        let file_type = metadata.file_type();
-        let metadata_options = context.metadata_options();
+                let relative_root = if relative_enabled {
+                    source.relative_root()
+                } else {
+                    None
+                };
+                let relative_root = relative_root.filter(|path| !path.as_os_str().is_empty());
+                let relative_parent = relative_root
+                    .as_ref()
+                    .and_then(|root| root.parent().map(|parent| parent.to_path_buf()))
+                    .filter(|parent| !parent.as_os_str().is_empty());
 
-        let relative_root = if relative_enabled {
-            source.relative_root()
-        } else {
-            None
-        };
-        let relative_root = relative_root.filter(|path| !path.as_os_str().is_empty());
-        let relative_parent = relative_root
-            .as_ref()
-            .and_then(|root| root.parent().map(|parent| parent.to_path_buf()))
-            .filter(|parent| !parent.as_os_str().is_empty());
+                let requires_directory_destination = relative_parent.is_some()
+                    || (relative_root.is_some() && (source.copy_contents() || file_type.is_dir()));
 
-        let requires_directory_destination = relative_parent.is_some()
-            || (relative_root.is_some() && (source.copy_contents() || file_type.is_dir()));
+                if requires_directory_destination && !destination_behaves_like_directory {
+                    return Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::DestinationMustBeDirectory,
+                    ));
+                }
 
-        if requires_directory_destination && !destination_behaves_like_directory {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::DestinationMustBeDirectory,
-            ));
-        }
+                let destination_base = if let Some(parent) = &relative_parent {
+                    destination_path.join(parent)
+                } else {
+                    destination_path.to_path_buf()
+                };
 
-        let destination_base = if let Some(parent) = &relative_parent {
-            destination_path.join(parent)
-        } else {
-            destination_path.to_path_buf()
-        };
+                if file_type.is_dir() {
+                    if source.copy_contents() {
+                        if let Some(root) = relative_root.as_ref() {
+                            if !context.allows(root.as_path(), true) {
+                                continue;
+                            }
+                        }
 
-        if file_type.is_dir() {
-            if source.copy_contents() {
-                if let Some(root) = relative_root.as_ref() {
-                    if !context.allows(root.as_path(), true) {
+                        let mut target_root = destination_path.to_path_buf();
+                        if let Some(root) = &relative_root {
+                            target_root = destination_path.join(root);
+                        }
+
+                        copy_directory_recursive(
+                            context,
+                            source_path,
+                            &target_root,
+                            &metadata,
+                            relative_root
+                                .as_ref()
+                                .and_then(|root| non_empty_path(root.as_path())),
+                        )?;
                         continue;
+                    }
+
+                    let name = source_path.file_name().ok_or_else(|| {
+                        LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::DirectoryNameUnavailable,
+                        )
+                    })?;
+                    let relative = relative_root
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from(Path::new(name)));
+                    if !context.allows(&relative, true) {
+                        continue;
+                    }
+
+                    let target = if destination_behaves_like_directory || multiple_sources {
+                        destination_base.join(name)
+                    } else {
+                        destination_path.to_path_buf()
+                    };
+
+                    copy_directory_recursive(
+                        context,
+                        source_path,
+                        &target,
+                        &metadata,
+                        non_empty_path(relative.as_path()),
+                    )?;
+                } else {
+                    let name = source_path.file_name().ok_or_else(|| {
+                        LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::FileNameUnavailable,
+                        )
+                    })?;
+                    let relative = relative_root
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from(Path::new(name)));
+                    if !context.allows(&relative, false) {
+                        continue;
+                    }
+
+                    let target = if destination_behaves_like_directory {
+                        destination_base.join(name)
+                    } else {
+                        destination_path.to_path_buf()
+                    };
+
+                    let record_path = non_empty_path(relative.as_path());
+                    if file_type.is_file() {
+                        copy_file(context, source_path, &target, &metadata, record_path)?;
+                    } else if file_type.is_symlink() {
+                        copy_symlink(
+                            context,
+                            source_path,
+                            &target,
+                            &metadata,
+                            metadata_options,
+                            record_path,
+                        )?;
+                    } else if is_fifo(&file_type) {
+                        if !context.specials_enabled() {
+                            context.record_skipped_non_regular(record_path);
+                            continue;
+                        }
+                        copy_fifo(
+                            context,
+                            source_path,
+                            &target,
+                            &metadata,
+                            metadata_options,
+                            record_path,
+                        )?;
+                    } else if is_device(&file_type) {
+                        if !context.devices_enabled() {
+                            context.record_skipped_non_regular(record_path);
+                            continue;
+                        }
+                        copy_device(
+                            context,
+                            source_path,
+                            &target,
+                            &metadata,
+                            metadata_options,
+                            record_path,
+                        )?;
+                    } else {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::UnsupportedFileType,
+                        ));
                     }
                 }
 
-                let mut target_root = destination_path.to_path_buf();
-                if let Some(root) = &relative_root {
-                    target_root = destination_path.join(root);
-                }
-
-                copy_directory_recursive(
-                    &mut context,
-                    source_path,
-                    &target_root,
-                    &metadata,
-                    relative_root
-                        .as_ref()
-                        .and_then(|root| non_empty_path(root.as_path())),
-                )?;
-                continue;
+                context.enforce_timeout()?;
             }
 
-            let name = source_path.file_name().ok_or_else(|| {
-                LocalCopyError::invalid_argument(LocalCopyArgumentError::DirectoryNameUnavailable)
-            })?;
-            let relative = relative_root
-                .clone()
-                .unwrap_or_else(|| PathBuf::from(Path::new(name)));
-            if !context.allows(&relative, true) {
-                continue;
-            }
+            context.flush_deferred_deletions()?;
+            context.enforce_timeout()?;
+            Ok(())
+        })()
+    };
 
-            let target = if destination_behaves_like_directory || multiple_sources {
-                destination_base.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            copy_directory_recursive(
-                &mut context,
-                source_path,
-                &target,
-                &metadata,
-                non_empty_path(relative.as_path()),
-            )?;
-        } else {
-            let name = source_path.file_name().ok_or_else(|| {
-                LocalCopyError::invalid_argument(LocalCopyArgumentError::FileNameUnavailable)
-            })?;
-            let relative = relative_root
-                .clone()
-                .unwrap_or_else(|| PathBuf::from(Path::new(name)));
-            if !context.allows(&relative, false) {
-                continue;
-            }
-
-            let target = if destination_behaves_like_directory {
-                destination_base.join(name)
-            } else {
-                destination_path.to_path_buf()
-            };
-
-            let record_path = non_empty_path(relative.as_path());
-            if file_type.is_file() {
-                copy_file(&mut context, source_path, &target, &metadata, record_path)?;
-            } else if file_type.is_symlink() {
-                copy_symlink(
-                    &mut context,
-                    source_path,
-                    &target,
-                    &metadata,
-                    metadata_options,
-                    record_path,
-                )?;
-            } else if is_fifo(&file_type) {
-                if !context.specials_enabled() {
-                    context.record_skipped_non_regular(record_path);
-                    continue;
-                }
-                copy_fifo(
-                    &mut context,
-                    source_path,
-                    &target,
-                    &metadata,
-                    metadata_options,
-                    record_path,
-                )?;
-            } else if is_device(&file_type) {
-                if !context.devices_enabled() {
-                    context.record_skipped_non_regular(record_path);
-                    continue;
-                }
-                copy_device(
-                    &mut context,
-                    source_path,
-                    &target,
-                    &metadata,
-                    metadata_options,
-                    record_path,
-                )?;
-            } else {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::UnsupportedFileType,
-                ));
-            }
+    match result {
+        Ok(()) => Ok(context.into_outcome()),
+        Err(error) => {
+            context.rollback_on_error(&error);
+            Err(error)
         }
-
-        context.enforce_timeout()?;
     }
-
-    context.flush_deferred_deletions()?;
-    context.enforce_timeout()?;
-    Ok(context.into_outcome())
 }
-
 fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -3894,6 +3968,7 @@ fn copy_directory_recursive(
                 })?;
                 context.register_progress();
             }
+            context.register_created_path(destination, CreatedEntryKind::Directory, false);
         } else if !context.implied_dirs_enabled() {
             if let Some(parent) = destination.parent() {
                 context.prepare_parent_directory(parent)?;
@@ -4141,6 +4216,7 @@ fn copy_file(
             ));
         }
     }
+    let destination_previously_existed = existing_metadata.is_some();
 
     if context.update_enabled() {
         if let Some(existing) = existing_metadata.as_ref() {
@@ -4212,6 +4288,11 @@ fn copy_file(
             Duration::default(),
             Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
+        context.register_created_path(
+            destination,
+            CreatedEntryKind::HardLink,
+            destination_previously_existed,
+        );
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
     }
@@ -4283,6 +4364,12 @@ fn copy_file(
     if let Some(guard) = guard {
         guard.commit()?;
     }
+
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::File,
+        destination_previously_existed,
+    );
 
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
@@ -4661,8 +4748,10 @@ fn copy_fifo(
         return Ok(());
     }
 
+    let mut destination_previously_existed = false;
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
+            destination_previously_existed = true;
             if existing.file_type().is_dir() {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
@@ -4688,6 +4777,11 @@ fn copy_fifo(
     }
 
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::Fifo,
+        destination_previously_existed,
+    );
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
@@ -4788,8 +4882,10 @@ fn copy_device(
         return Ok(());
     }
 
+    let mut destination_previously_existed = false;
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
+            destination_previously_existed = true;
             if existing.file_type().is_dir() {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
@@ -4815,6 +4911,11 @@ fn copy_device(
     }
 
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::Device,
+        destination_previously_existed,
+    );
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
@@ -5016,8 +5117,10 @@ fn copy_symlink(
         }
     }
 
+    let mut destination_previously_existed = false;
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
+            destination_previously_existed = true;
             let file_type = existing.file_type();
             if file_type.is_dir() {
                 return Err(LocalCopyError::invalid_argument(
@@ -5070,6 +5173,12 @@ fn copy_symlink(
     create_symlink(&target, source, destination).map_err(|error| {
         LocalCopyError::io("create symbolic link", destination.to_path_buf(), error)
     })?;
+
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::Symlink,
+        destination_previously_existed,
+    );
 
     apply_symlink_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
