@@ -219,6 +219,7 @@ enum OutFormatPlaceholder {
     ModifyTime,
     PermissionString,
     CurrentTime,
+    SymlinkTarget,
 }
 
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
@@ -312,6 +313,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             OutFormatPlaceholder::CurrentTime,
                         ));
                     }
+                    'L' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::SymlinkTarget,
+                        ));
+                    }
                     other => {
                         return Err(rsync_error!(
                             1,
@@ -385,6 +395,15 @@ impl OutFormat {
                     }
                     OutFormatPlaceholder::CurrentTime => {
                         buffer.push_str(&format_current_timestamp());
+                    }
+                    OutFormatPlaceholder::SymlinkTarget => {
+                        if let Some(target) = event
+                            .metadata()
+                            .and_then(ClientEntryMetadata::symlink_target)
+                        {
+                            buffer.push_str(" -> ");
+                            buffer.push_str(&target.to_string_lossy());
+                        }
                     }
                 },
             }
@@ -5215,8 +5234,8 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format =
-            parse_out_format(OsStr::new("%f %b %c %l %o %M %B %t %%")).expect("parse out-format");
+        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %t %L %%"))
+            .expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
 
@@ -5306,6 +5325,43 @@ mod tests {
             .expect("render out-format");
 
         assert!(String::from_utf8_lossy(&output).trim().contains('-'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn out_format_renders_symlink_target_placeholder() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let src_dir = tmp.path().join("src");
+        let dst_dir = tmp.path().join("dst");
+        fs::create_dir(&src_dir).expect("create src dir");
+        fs::create_dir(&dst_dir).expect("create dst dir");
+
+        let target = src_dir.join("target.txt");
+        fs::write(&target, b"payload").expect("write target");
+        let link = src_dir.join("link");
+        symlink("target.txt", &link).expect("create symlink");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--out-format=%f%L"),
+            link.into_os_string(),
+            dst_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(
+            String::from_utf8(stdout).expect("utf8"),
+            "link -> target.txt\n"
+        );
+
+        let copied = dst_dir.join("link");
+        let copied_target = fs::read_link(copied).expect("read copied symlink");
+        assert_eq!(copied_target, PathBuf::from("target.txt"));
     }
 
     #[test]
