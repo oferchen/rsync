@@ -1821,6 +1821,10 @@ pub fn run_client_with_observer(
         return Err(missing_operands_error());
     }
 
+    if !config.whole_file() {
+        return Err(delta_transfer_unsupported());
+    }
+
     let plan =
         LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
 
@@ -2262,6 +2266,21 @@ mod tests {
         assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
         let rendered = error.message().to_string();
         assert!(rendered.contains("missing source operands"));
+        assert!(rendered.contains("[client=3.4.1-rust]"));
+    }
+
+    #[test]
+    fn run_client_rejects_delta_transfer_mode() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .whole_file(false)
+            .build();
+
+        let error = run_client(config).expect_err("delta mode requires fallback");
+
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("delta-transfer (--no-whole-file) mode is not available"));
         assert!(rendered.contains("[client=3.4.1-rust]"));
     }
 
@@ -3592,6 +3611,15 @@ fn remote_operands_unsupported() -> ClientError {
         "remote operands are not supported: this build handles local filesystem copies only",
         PARTIAL_TRANSFER_EXIT_CODE,
     )
+}
+
+fn delta_transfer_unsupported() -> ClientError {
+    let message = rsync_error!(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        "delta-transfer (--no-whole-file) mode is not available in this build"
+    )
+    .with_role(Role::Client);
+    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
