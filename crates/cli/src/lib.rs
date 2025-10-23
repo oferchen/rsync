@@ -1839,9 +1839,8 @@ where
     let files_from_used = !files_from.is_empty();
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
-    let requires_delta_fallback = whole_file_option == Some(false);
     let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
-    let fallback_required = requires_delta_fallback || requires_remote_fallback;
+    let fallback_required = requires_remote_fallback;
 
     let fallback_args = if fallback_required {
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
@@ -7880,7 +7879,7 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn local_delta_transfer_uses_fallback() {
+    fn local_delta_transfer_executes_locally() {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -7898,6 +7897,8 @@ exit 0
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
+        std::fs::write(&args_path, b"untouched").expect("seed args file");
+
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
         std::fs::write(&source, b"contents").expect("write source");
@@ -7912,14 +7913,13 @@ exit 0
         assert_eq!(code, 0);
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(&destination).expect("read destination"),
+            b"contents"
+        );
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        let args: Vec<&str> = recorded.lines().collect();
-        assert!(args.contains(&"--no-whole-file"));
-        let source_str = source.display().to_string();
-        let dest_str = destination.display().to_string();
-        assert!(args.iter().any(|arg| *arg == source_str));
-        assert!(args.iter().any(|arg| *arg == dest_str));
+        assert_eq!(recorded, "untouched");
     }
 
     #[cfg(unix)]
