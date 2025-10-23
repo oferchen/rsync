@@ -2062,7 +2062,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 let handle = thread::spawn(move || {
                     let modules_vec = modules.as_ref();
                     let motd_vec = motd_lines.as_ref();
-                    handle_session_with_log(
+                    handle_session(
                         stream,
                         peer_addr,
                         modules_vec.as_slice(),
@@ -2149,16 +2149,6 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
 }
 
 fn handle_session(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
-    modules: &[ModuleRuntime],
-    motd_lines: &[String],
-    daemon_limit: Option<NonZeroU64>,
-) -> io::Result<()> {
-    handle_session_with_log(stream, peer_addr, modules, motd_lines, daemon_limit, None)
-}
-
-fn handle_session_with_log(
     stream: TcpStream,
     peer_addr: SocketAddr,
     modules: &[ModuleRuntime],
