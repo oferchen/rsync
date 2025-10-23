@@ -140,6 +140,12 @@ impl fmt::Display for CompressionLevelError {
 impl std::error::Error for CompressionLevelError {}
 
 /// Streaming encoder that records the number of compressed bytes produced.
+///
+/// The encoder implements [`std::io::Write`], enabling integration with APIs
+/// such as [`std::io::copy`], [`write!`](std::write), and
+/// [`std::io::Write::write_all`]. Compressed bytes are discarded after being
+/// counted, matching upstream rsync's bandwidth accounting path where the
+/// payload itself is forwarded separately.
 pub struct CountingZlibEncoder {
     inner: FlateEncoder<CountingWriter>,
 }
@@ -168,6 +174,28 @@ impl CountingZlibEncoder {
     pub fn finish(self) -> io::Result<u64> {
         let writer = self.inner.finish()?;
         Ok(writer.bytes())
+    }
+}
+
+impl Write for CountingZlibEncoder {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        self.inner.write_vectored(bufs)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.inner.write_all(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+
+    fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
+        self.inner.write_fmt(fmt)
     }
 }
 
@@ -298,6 +326,33 @@ mod tests {
         assert!(compressed.len() as u64 >= compressed_len);
         let decompressed = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(decompressed, input);
+    }
+
+    #[test]
+    fn counting_encoder_supports_write_trait() {
+        let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
+        write!(&mut encoder, "{}", "payload").expect("write via trait");
+        encoder.flush().expect("flush encoder");
+        let compressed = encoder.finish().expect("finish stream");
+        assert!(compressed > 0);
+    }
+
+    #[test]
+    fn counting_encoder_supports_vectored_writes() {
+        let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
+        let buffers = [IoSlice::new(b"foo"), IoSlice::new(b"bar")];
+
+        let written = encoder
+            .write_vectored(&buffers)
+            .expect("vectored write succeeds");
+        if written < 6 {
+            encoder
+                .write_all(&b"foobar"[written..])
+                .expect("write remaining data");
+        }
+
+        let compressed = encoder.finish().expect("finish stream");
+        assert!(compressed > 0);
     }
 
     #[test]
