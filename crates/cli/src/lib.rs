@@ -166,6 +166,8 @@ const HELP_TEXT: &str = concat!(
     "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
+    "  -L, --copy-links  Transform symlinks into referent files/directories.\n",
+    "      --no-copy-links  Preserve symlinks instead of following them.\n",
     "  -D              Equivalent to --devices --specials.\n",
     "      --devices   Preserve device files.\n",
     "      --no-devices  Disable device file preservation.\n",
@@ -192,7 +194,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -579,6 +581,7 @@ struct ParsedArgs {
     acls: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
+    copy_links: Option<bool>,
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
@@ -700,6 +703,21 @@ fn clap_command() -> ClapCommand {
                 .help("Disable sparse file handling.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("sparse"),
+        )
+        .arg(
+            Arg::new("copy-links")
+                .long("copy-links")
+                .short('L')
+                .help("Transform symlinks into referent files/directories.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-copy-links"),
+        )
+        .arg(
+            Arg::new("no-copy-links")
+                .long("no-copy-links")
+                .help("Preserve symlinks instead of following them.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("copy-links"),
         )
         .arg(
             Arg::new("archive-devices")
@@ -1236,6 +1254,13 @@ where
     } else {
         None
     };
+    let copy_links = if matches.get_flag("no-copy-links") {
+        Some(false)
+    } else if matches.get_flag("copy-links") {
+        Some(true)
+    } else {
+        None
+    };
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
@@ -1363,6 +1388,7 @@ where
         times,
         numeric_ids,
         sparse,
+        copy_links,
         devices,
         specials,
         relative,
@@ -1531,6 +1557,7 @@ where
         from0,
         numeric_ids,
         sparse,
+        copy_links,
         devices,
         specials,
         relative,
@@ -1905,6 +1932,7 @@ where
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
     let sparse = sparse.unwrap_or(false);
+    let copy_links = copy_links.unwrap_or(false);
     let relative = relative.unwrap_or(false);
 
     let mut builder = ClientConfig::builder()
@@ -1929,6 +1957,7 @@ where
         .update(update)
         .numeric_ids(numeric_ids)
         .sparse(sparse)
+        .copy_links(copy_links)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .verbosity(verbosity)
@@ -5017,6 +5046,39 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.sparse, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_copy_links_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--copy-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.copy_links, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-copy-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.copy_links, Some(false));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-L"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.copy_links, Some(true));
     }
 
     #[test]
