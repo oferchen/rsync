@@ -308,6 +308,7 @@ pub struct ClientConfig {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    copy_links: bool,
     relative_paths: bool,
     implied_dirs: bool,
     verbosity: u8,
@@ -350,6 +351,7 @@ impl Default for ClientConfig {
             numeric_ids: false,
             filter_rules: Vec::new(),
             sparse: false,
+            copy_links: false,
             relative_paths: false,
             implied_dirs: true,
             verbosity: 0,
@@ -394,6 +396,14 @@ impl ClientConfig {
     #[must_use]
     pub fn has_transfer_request(&self) -> bool {
         !self.transfer_args.is_empty()
+    }
+
+    /// Returns whether symlinks should be materialised as their referents.
+    #[must_use]
+    #[doc(alias = "--copy-links")]
+    #[doc(alias = "-L")]
+    pub const fn copy_links(&self) -> bool {
+        self.copy_links
     }
 
     /// Returns the ordered list of filter rules supplied by the caller.
@@ -688,6 +698,7 @@ pub struct ClientConfigBuilder {
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
+    copy_links: bool,
     relative_paths: bool,
     implied_dirs: Option<bool>,
     verbosity: u8,
@@ -949,6 +960,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables copying symlink referents.
+    #[must_use]
+    #[doc(alias = "--copy-links")]
+    #[doc(alias = "-L")]
+    pub const fn copy_links(mut self, copy_links: bool) -> Self {
+        self.copy_links = copy_links;
+        self
+    }
+
     /// Enables or disables copying of device nodes during the transfer.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -1095,6 +1115,7 @@ impl ClientConfigBuilder {
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
             sparse: self.sparse,
+            copy_links: self.copy_links,
             relative_paths: self.relative_paths,
             implied_dirs: self.implied_dirs.unwrap_or(true),
             verbosity: self.verbosity,
@@ -2666,6 +2687,7 @@ where
             .with_filter_program(filter_program.clone())
             .numeric_ids(config.numeric_ids())
             .sparse(config.sparse())
+            .copy_links(config.copy_links())
             .devices(config.preserve_devices())
             .specials(config.preserve_specials())
             .relative_paths(config.relative_paths())
