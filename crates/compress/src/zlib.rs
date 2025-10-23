@@ -9,7 +9,8 @@
 //! report accurate compressed sizes without buffering the resulting payload in
 //! memory. The complementary [`CountingZlibDecoder`] wraps a reader that
 //! produces decompressed bytes while recording how much output has been yielded
-//! so far.
+//! so far, keeping the counter accurate for both scalar and vectored reads so
+//! downstream bandwidth accounting mirrors upstream behaviour.
 //!
 //! # Examples
 //!
@@ -49,7 +50,7 @@
 
 use std::{
     fmt,
-    io::{self, IoSlice, Read, Write},
+    io::{self, IoSlice, IoSliceMut, Read, Write},
     num::NonZeroU8,
 };
 
@@ -241,6 +242,12 @@ where
         self.inner.get_mut()
     }
 
+    /// Returns an immutable reference to the wrapped reader.
+    #[must_use]
+    pub fn get_ref(&self) -> &R {
+        self.inner.get_ref()
+    }
+
     /// Consumes the decoder and returns the wrapped reader.
     #[must_use]
     pub fn into_inner(self) -> R {
@@ -254,6 +261,12 @@ where
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buf)?;
+        self.bytes = self.bytes.saturating_add(read as u64);
+        Ok(read)
+    }
+
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+        let read = self.inner.read_vectored(bufs)?;
         self.bytes = self.bytes.saturating_add(read as u64);
         Ok(read)
     }
@@ -289,7 +302,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use flate2::Compression;
-    use std::io::{Cursor, Read};
+    use std::io::{Cursor, IoSliceMut, Read};
 
     #[test]
     fn counting_encoder_tracks_bytes() {
@@ -372,6 +385,31 @@ mod tests {
         decoder.read_to_end(&mut output).expect("decompress");
         assert_eq!(output, payload);
         assert_eq!(decoder.bytes_read(), payload.len() as u64);
+    }
+
+    #[test]
+    fn counting_decoder_vectored_reads_update_byte_count() {
+        let payload = b"Vectored read payload repeated".repeat(4);
+        let compressed = compress_to_vec(&payload, CompressionLevel::Default).expect("compress");
+        let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
+        let mut first = [0u8; 13];
+        let mut second = [0u8; 21];
+        let mut buffers = [IoSliceMut::new(&mut first), IoSliceMut::new(&mut second)];
+        let read = decoder
+            .read_vectored(&mut buffers)
+            .expect("vectored read succeeds");
+        assert!(read > 0);
+
+        let mut collected = Vec::with_capacity(read);
+        let first_len = read.min(first.len());
+        collected.extend_from_slice(&first[..first_len]);
+        if read > first_len {
+            let second_len = read - first_len;
+            collected.extend_from_slice(&second[..second_len]);
+        }
+
+        assert_eq!(collected, payload[..read]);
+        assert_eq!(decoder.bytes_read(), read as u64);
     }
 
     #[test]
