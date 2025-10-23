@@ -3282,7 +3282,10 @@ where
         return 0;
     }
 
-    if parsed.delegate_system_rsync || auto_delegate_system_rsync_enabled() {
+    if parsed.delegate_system_rsync
+        || auto_delegate_system_rsync_enabled()
+        || fallback_binary_configured()
+    {
         return run_delegate_mode(parsed.remainder.as_slice(), stderr);
     }
 
@@ -3301,6 +3304,13 @@ where
 
 fn auto_delegate_system_rsync_enabled() -> bool {
     matches!(env_flag("OC_RSYNC_DAEMON_AUTO_DELEGATE"), Some(true))
+}
+
+fn fallback_binary_configured() -> bool {
+    env::var_os("OC_RSYNC_DAEMON_FALLBACK")
+        .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os("OC_RSYNC_FALLBACK").filter(|value| !value.is_empty()))
+        .is_some()
 }
 
 fn env_flag(name: &str) -> Option<bool> {
@@ -3669,6 +3679,54 @@ mod tests {
         write_executable_script(&script_path, &script);
         let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
         let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("1"));
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--config"),
+            OsStr::new("/etc/rsyncd.conf"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let recorded = fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(recorded.contains("--daemon"));
+        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_fallback_env_triggers_delegation() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _fallback = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--config"),
+            OsStr::new("/etc/rsyncd.conf"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let recorded = fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(recorded.contains("--daemon"));
+        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_daemon_fallback_env_triggers_delegation() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("oc-rsyncd"),
