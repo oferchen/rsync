@@ -2633,13 +2633,6 @@ where
 
     let mut fallback = fallback;
 
-    if !config.whole_file() {
-        if let Some(ctx) = fallback.take() {
-            return invoke_fallback(ctx);
-        }
-        return Err(delta_transfer_unsupported());
-    }
-
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
         Ok(plan) => plan,
         Err(error) => {
@@ -2680,6 +2673,7 @@ where
                     .map(|limit| limit.bytes_per_second()),
             )
             .with_default_compression_level(config.compression_setting().level_or_default())
+            .whole_file(config.whole_file())
             .compress(config.compress())
             .with_compression_level_override(config.compression_level())
             .owner(config.preserve_owner())
@@ -3349,7 +3343,7 @@ exit 42
 
     #[cfg(unix)]
     #[test]
-    fn run_client_or_fallback_uses_fallback_for_delta_mode() {
+    fn run_client_or_fallback_handles_delta_mode_locally() {
         let _lock = env_lock().lock().expect("env mutex poisoned");
         let temp = tempdir().expect("tempdir created");
         let script = write_fallback_script(temp.path());
@@ -3375,24 +3369,19 @@ exit 42
         let mut stderr = Vec::new();
         let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
 
-        let outcome = run_client_or_fallback(config, None, Some(context))
-            .expect("fallback invocation succeeds");
+        let outcome =
+            run_client_or_fallback(config, None, Some(context)).expect("local delta copy succeeds");
 
         match outcome {
-            ClientOutcome::Fallback(summary) => {
-                assert_eq!(summary.exit_code(), 42);
+            ClientOutcome::Local(summary) => {
+                assert_eq!(summary.files_copied(), 1);
             }
-            ClientOutcome::Local(_) => panic!("expected fallback outcome"),
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback execution"),
         }
 
-        assert_eq!(
-            String::from_utf8(stdout).expect("stdout utf8"),
-            "fallback stdout\n"
-        );
-        assert_eq!(
-            String::from_utf8(stderr).expect("stderr utf8"),
-            "fallback stderr\n"
-        );
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(fs::read(dest_path).expect("dest contents"), b"delta-test");
     }
 
     #[test]
@@ -3459,18 +3448,25 @@ exit 42
     }
 
     #[test]
-    fn run_client_rejects_delta_transfer_mode() {
+    fn run_client_handles_delta_transfer_mode_locally() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let destination = tmp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+
         let config = ClientConfig::builder()
-            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .transfer_args([
+                source.clone().into_os_string(),
+                destination.clone().into_os_string(),
+            ])
             .whole_file(false)
             .build();
 
-        let error = run_client(config).expect_err("delta mode requires fallback");
+        let summary = run_client(config).expect("delta mode executes locally");
 
-        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-        let rendered = error.message().to_string();
-        assert!(rendered.contains("delta-transfer (--no-whole-file) mode is not available"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_eq!(fs::read(&destination).expect("read dest"), b"payload");
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.bytes_copied(), b"payload".len() as u64);
     }
 
     #[test]
@@ -4807,15 +4803,6 @@ fn daemon_access_denied_error(reason: &str) -> ClientError {
     };
 
     daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
-}
-
-fn delta_transfer_unsupported() -> ClientError {
-    let message = rsync_error!(
-        FEATURE_UNAVAILABLE_EXIT_CODE,
-        "delta-transfer (--no-whole-file) mode is not available in this build"
-    )
-    .with_role(Role::Client);
-    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {

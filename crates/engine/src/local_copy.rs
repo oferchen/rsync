@@ -51,15 +51,13 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-#[cfg(unix)]
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::num::NonZeroU64;
+use std::num::{NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::rc::Rc;
@@ -69,6 +67,7 @@ use std::time::{Duration, Instant, SystemTime};
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::BandwidthLimiter;
 use rsync_checksums::strong::Md5;
+use rsync_checksums::{RollingChecksum, RollingDigest};
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "acl")]
@@ -79,6 +78,12 @@ use rsync_meta::{
     MetadataError, MetadataOptions, apply_directory_metadata_with_options,
     apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
     create_fifo,
+};
+use rsync_protocol::ProtocolVersion;
+
+use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
+use crate::signature::{
+    SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
@@ -1369,6 +1374,7 @@ pub struct LocalCopyOptions {
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
     compression_level: CompressionLevel,
+    whole_file: bool,
     copy_links: bool,
     preserve_owner: bool,
     preserve_group: bool,
@@ -1409,6 +1415,7 @@ impl LocalCopyOptions {
             compress: false,
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
+            whole_file: true,
             copy_links: false,
             preserve_owner: false,
             preserve_group: false,
@@ -1511,6 +1518,15 @@ impl LocalCopyOptions {
     #[doc(alias = "--bwlimit")]
     pub const fn bandwidth_limit(mut self, limit: Option<NonZeroU64>) -> Self {
         self.bandwidth_limit = limit;
+        self
+    }
+
+    /// Controls whether whole-file transfers are forced even when delta mode is requested.
+    #[must_use]
+    #[doc(alias = "--whole-file")]
+    #[doc(alias = "--no-whole-file")]
+    pub const fn whole_file(mut self, whole: bool) -> Self {
+        self.whole_file = whole;
         self
     }
 
@@ -1814,6 +1830,12 @@ impl LocalCopyOptions {
             Some(level) => level,
             None => self.compression_level,
         }
+    }
+
+    /// Reports whether whole-file transfers are requested.
+    #[must_use]
+    pub const fn whole_file_enabled(&self) -> bool {
+        self.whole_file
     }
 
     /// Returns whether symlinks should be materialised as their referents.
@@ -2438,6 +2460,10 @@ impl<'a> CopyContext<'a> {
         self.options.copy_links_enabled()
     }
 
+    fn whole_file_enabled(&self) -> bool {
+        self.options.whole_file_enabled()
+    }
+
     fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
     }
@@ -2747,9 +2773,26 @@ impl<'a> CopyContext<'a> {
         source: &Path,
         destination: &Path,
         relative: &Path,
+        delta: Option<&DeltaSignatureIndex>,
         total_size: u64,
         start: Instant,
     ) -> Result<Option<u64>, LocalCopyError> {
+        if let Some(index) = delta {
+            return self.copy_file_contents_with_delta(
+                reader,
+                writer,
+                buffer,
+                sparse,
+                compress,
+                source,
+                destination,
+                relative,
+                index,
+                total_size,
+                start,
+            );
+        }
+
         let mut total_bytes: u64 = 0;
         let mut compressor = if compress {
             Some(CountingZlibEncoder::new(self.compression_level()))
@@ -2836,6 +2879,261 @@ impl<'a> CopyContext<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn copy_file_contents_with_delta(
+        &mut self,
+        reader: &mut fs::File,
+        writer: &mut fs::File,
+        buffer: &mut [u8],
+        sparse: bool,
+        compress: bool,
+        source: &Path,
+        destination: &Path,
+        relative: &Path,
+        index: &DeltaSignatureIndex,
+        total_size: u64,
+        start: Instant,
+    ) -> Result<Option<u64>, LocalCopyError> {
+        let mut destination_reader = fs::File::open(destination).map_err(|error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        })?;
+        let mut compressor = if compress {
+            Some(CountingZlibEncoder::new(self.compression_level()))
+        } else {
+            None
+        };
+        let mut compressed_progress = 0u64;
+        let mut total_bytes = 0u64;
+        let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
+        let mut pending_literals = Vec::with_capacity(index.block_length());
+        let mut scratch = Vec::with_capacity(index.block_length());
+        let mut rolling = RollingChecksum::new();
+        let mut outgoing: Option<u8> = None;
+        let mut read_buffer = vec![0u8; buffer.len().max(index.block_length())];
+        let mut buffer_len = 0usize;
+        let mut buffer_pos = 0usize;
+
+        loop {
+            self.enforce_timeout()?;
+            if buffer_pos == buffer_len {
+                buffer_len = reader.read(&mut read_buffer).map_err(|error| {
+                    LocalCopyError::io("copy file", source.to_path_buf(), error)
+                })?;
+                buffer_pos = 0;
+                if buffer_len == 0 {
+                    break;
+                }
+            }
+
+            let byte = read_buffer[buffer_pos];
+            buffer_pos += 1;
+
+            window.push_back(byte);
+            if let Some(outgoing_byte) = outgoing.take() {
+                debug_assert!(window.len() <= index.block_length());
+                rolling.roll_many(&[outgoing_byte], &[byte]).map_err(|_| {
+                    LocalCopyError::invalid_argument(LocalCopyArgumentError::UnsupportedFileType)
+                })?;
+            } else {
+                rolling.update(&[byte]);
+            }
+
+            if window.len() < index.block_length() {
+                continue;
+            }
+
+            let digest = rolling.digest();
+            if let Some(block_index) = index.find_match(digest, &window, &mut scratch) {
+                if !pending_literals.is_empty() {
+                    let flushed_len = pending_literals.len();
+                    self.flush_literal_chunk(
+                        writer,
+                        pending_literals.as_slice(),
+                        sparse,
+                        compressor.as_mut(),
+                        &mut compressed_progress,
+                        source,
+                        destination,
+                    )?;
+                    total_bytes = total_bytes.saturating_add(flushed_len as u64);
+                    self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+                    pending_literals.clear();
+                }
+
+                let block = index.block(block_index);
+                self.copy_matched_block(
+                    &mut destination_reader,
+                    writer,
+                    buffer,
+                    destination,
+                    block,
+                    index.block_length(),
+                    sparse,
+                )?;
+                total_bytes = total_bytes.saturating_add(block.len() as u64);
+                self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+                window.clear();
+                rolling.reset();
+                outgoing = None;
+                continue;
+            }
+
+            if let Some(front) = window.pop_front() {
+                pending_literals.push(front);
+                outgoing = Some(front);
+            }
+        }
+
+        while let Some(byte) = window.pop_front() {
+            pending_literals.push(byte);
+        }
+
+        if !pending_literals.is_empty() {
+            let flushed_len = pending_literals.len();
+            self.flush_literal_chunk(
+                writer,
+                pending_literals.as_slice(),
+                sparse,
+                compressor.as_mut(),
+                &mut compressed_progress,
+                source,
+                destination,
+            )?;
+            total_bytes = total_bytes.saturating_add(flushed_len as u64);
+            self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+        }
+
+        if sparse {
+            writer.set_len(total_size).map_err(|error| {
+                LocalCopyError::io(
+                    "truncate destination file",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+            self.register_progress();
+        }
+
+        if let Some(encoder) = compressor {
+            let compressed_total = encoder.finish().map_err(|error| {
+                LocalCopyError::io("compress file", source.to_path_buf(), error)
+            })?;
+            if let Some(limiter) = self.limiter.as_mut() {
+                let delta = compressed_total.saturating_sub(compressed_progress);
+                if delta > 0 {
+                    let bounded = delta.min(usize::MAX as u64) as usize;
+                    limiter.register(bounded);
+                }
+            }
+            Ok(Some(compressed_total))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn flush_literal_chunk(
+        &mut self,
+        writer: &mut fs::File,
+        chunk: &[u8],
+        sparse: bool,
+        mut compressor: Option<&mut CountingZlibEncoder>,
+        compressed_progress: &mut u64,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        self.enforce_timeout()?;
+        if sparse {
+            write_sparse_chunk(writer, chunk, destination)?;
+        } else {
+            writer.write_all(chunk).map_err(|error| {
+                LocalCopyError::io("copy file", destination.to_path_buf(), error)
+            })?;
+        }
+
+        if let Some(encoder) = compressor.as_deref_mut() {
+            encoder.write(chunk).map_err(|error| {
+                LocalCopyError::io("compress file", source.to_path_buf(), error)
+            })?;
+            let total = encoder.bytes_written();
+            let delta = total.saturating_sub(*compressed_progress);
+            *compressed_progress = total;
+            if let Some(limiter) = self.limiter.as_mut() {
+                if delta > 0 {
+                    let bounded = delta.min(usize::MAX as u64) as usize;
+                    limiter.register(bounded);
+                }
+            }
+        } else if let Some(limiter) = self.limiter.as_mut() {
+            limiter.register(chunk.len());
+        }
+
+        Ok(())
+    }
+
+    fn copy_matched_block(
+        &mut self,
+        existing: &mut fs::File,
+        writer: &mut fs::File,
+        buffer: &mut [u8],
+        destination: &Path,
+        block: &SignatureBlock,
+        block_length: usize,
+        sparse: bool,
+    ) -> Result<(), LocalCopyError> {
+        let offset = block.index().saturating_mul(block_length as u64);
+        existing.seek(SeekFrom::Start(offset)).map_err(|error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        })?;
+
+        let mut remaining = block.len();
+        while remaining > 0 {
+            self.enforce_timeout()?;
+            let chunk_len = remaining.min(buffer.len());
+            let read = existing.read(&mut buffer[..chunk_len]).map_err(|error| {
+                LocalCopyError::io(
+                    "read existing destination",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+            if read == 0 {
+                let eof = io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "unexpected EOF while reading existing block",
+                );
+                return Err(LocalCopyError::io(
+                    "read existing destination",
+                    destination.to_path_buf(),
+                    eof,
+                ));
+            }
+
+            if sparse {
+                write_sparse_chunk(writer, &buffer[..read], destination)?;
+            } else {
+                writer.write_all(&buffer[..read]).map_err(|error| {
+                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                })?;
+            }
+
+            remaining -= read;
+        }
+
+        Ok(())
     }
 
     fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {
@@ -4590,6 +4888,15 @@ fn copy_file(
         }
     }
 
+    let delta_signature = if !context.whole_file_enabled() && !context.inplace_enabled() {
+        match existing_metadata.as_ref() {
+            Some(existing) if existing.is_file() => build_delta_signature(destination, existing)?,
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     let mut reader = fs::File::open(source)
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let mut guard = None;
@@ -4619,6 +4926,7 @@ fn copy_file(
         source,
         destination,
         record_path.as_path(),
+        delta_signature.as_ref(),
         file_size,
         start,
     );
@@ -4889,6 +5197,141 @@ fn destination_is_newer(source: &fs::Metadata, destination: &fs::Metadata) -> bo
         (Ok(src), Ok(dst)) => dst > src,
         _ => false,
     }
+}
+
+struct DeltaSignatureIndex {
+    block_length: usize,
+    strong_length: usize,
+    algorithm: SignatureAlgorithm,
+    blocks: Vec<SignatureBlock>,
+    lookup: HashMap<(u16, u16, usize), Vec<usize>>,
+}
+
+impl DeltaSignatureIndex {
+    fn new(
+        block_length: usize,
+        strong_length: usize,
+        algorithm: SignatureAlgorithm,
+        blocks: Vec<SignatureBlock>,
+        lookup: HashMap<(u16, u16, usize), Vec<usize>>,
+    ) -> Self {
+        Self {
+            block_length,
+            strong_length,
+            algorithm,
+            blocks,
+            lookup,
+        }
+    }
+
+    fn block_length(&self) -> usize {
+        self.block_length
+    }
+
+    fn block(&self, index: usize) -> &SignatureBlock {
+        &self.blocks[index]
+    }
+
+    fn find_match(
+        &self,
+        digest: RollingDigest,
+        window: &VecDeque<u8>,
+        scratch: &mut Vec<u8>,
+    ) -> Option<usize> {
+        if window.len() != self.block_length {
+            return None;
+        }
+
+        let key = (digest.sum1(), digest.sum2(), digest.len());
+        let candidates = self.lookup.get(&key)?;
+        scratch.clear();
+        let (front, back) = window.as_slices();
+        scratch.extend_from_slice(front);
+        scratch.extend_from_slice(back);
+
+        for &index in candidates {
+            let block = &self.blocks[index];
+            if block.len() != scratch.len() {
+                continue;
+            }
+            let strong = self
+                .algorithm
+                .compute_truncated(scratch.as_slice(), self.strong_length);
+            if strong.as_slice() == block.strong() {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+}
+
+fn build_delta_signature(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
+    let length = metadata.len();
+    if length == 0 {
+        return Ok(None);
+    }
+
+    let checksum_len = NonZeroU8::new(16).expect("strong checksum length must be non-zero");
+    let params = SignatureLayoutParams::new(length, None, ProtocolVersion::NEWEST, checksum_len);
+    let layout = match calculate_signature_layout(params) {
+        Ok(layout) => layout,
+        Err(_) => return Ok(None),
+    };
+
+    let signature = match generate_file_signature(
+        fs::File::open(destination).map_err(|error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        })?,
+        layout,
+        SignatureAlgorithm::Md4,
+    ) {
+        Ok(signature) => signature,
+        Err(SignatureError::Io(error)) => {
+            return Err(LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+        Err(_) => return Ok(None),
+    };
+
+    let block_length = layout.block_length().get() as usize;
+    let strong_length = usize::from(layout.strong_sum_length().get());
+    let mut lookup: HashMap<(u16, u16, usize), Vec<usize>> = HashMap::new();
+    let mut has_full_blocks = false;
+    let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
+    for (index, block) in blocks.iter().enumerate() {
+        if block.len() != block_length {
+            continue;
+        }
+        has_full_blocks = true;
+        let digest = block.rolling();
+        lookup
+            .entry((digest.sum1(), digest.sum2(), block.len()))
+            .or_insert_with(Vec::new)
+            .push(index);
+    }
+
+    if !has_full_blocks {
+        return Ok(None);
+    }
+
+    Ok(Some(DeltaSignatureIndex::new(
+        block_length,
+        strong_length,
+        SignatureAlgorithm::Md4,
+        blocks,
+        lookup,
+    )))
 }
 
 fn should_skip_copy(
@@ -5821,6 +6264,15 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_whole_file_round_trip() {
+        assert!(LocalCopyOptions::default().whole_file_enabled());
+        let delta = LocalCopyOptions::default().whole_file(false);
+        assert!(!delta.whole_file_enabled());
+        let restored = delta.whole_file(true);
+        assert!(restored.whole_file_enabled());
+    }
+
+    #[test]
     fn local_copy_options_copy_links_round_trip() {
         let options = LocalCopyOptions::default().copy_links(true);
         assert!(options.copy_links_enabled());
@@ -6622,6 +7074,48 @@ mod tests {
         assert_eq!(summary.regular_files_total(), 1);
         assert_eq!(summary.regular_files_skipped_newer(), 1);
         assert_eq!(fs::read(dest_path).expect("read destination"), b"existing");
+    }
+
+    #[test]
+    fn execute_delta_copy_reuses_existing_blocks() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let target_root = temp.path().join("target");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&target_root).expect("create target root");
+
+        let source_path = source_root.join("file.bin");
+        let dest_path = target_root.join("file.bin");
+
+        let mut prefix = vec![b'A'; 700];
+        let mut suffix = vec![b'B'; 700];
+        let mut replacement = vec![b'C'; 700];
+
+        let mut initial = Vec::new();
+        initial.append(&mut prefix.clone());
+        initial.append(&mut suffix);
+        fs::write(&dest_path, &initial).expect("write initial destination");
+
+        let mut updated = Vec::new();
+        updated.append(&mut prefix);
+        updated.append(&mut replacement);
+        fs::write(&source_path, &updated).expect("write updated source");
+
+        let operands = vec![
+            source_path.clone().into_os_string(),
+            dest_path.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().whole_file(false),
+            )
+            .expect("delta copy succeeds");
+
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(fs::read(&dest_path).expect("read destination"), updated);
     }
 
     #[test]
