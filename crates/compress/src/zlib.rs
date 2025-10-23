@@ -49,7 +49,7 @@
 
 use std::{
     fmt,
-    io::{self, Read, Write},
+    io::{self, IoSlice, Read, Write},
     num::NonZeroU8,
 };
 
