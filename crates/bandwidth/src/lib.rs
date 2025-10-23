@@ -143,14 +143,6 @@ pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-#[deprecated(note = "use `recorded_sleep_session()` to guard access during tests")]
-/// Retrieves and clears the recorded sleep durations.
-pub fn take_recorded_sleeps() -> Vec<Duration> {
-    let mut session = recorded_sleep_session();
-    session.take()
-}
-
 fn duration_from_microseconds(us: u128) -> Duration {
     if us == 0 {
         return Duration::ZERO;
