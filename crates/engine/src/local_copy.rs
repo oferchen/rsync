@@ -71,6 +71,8 @@ use rsync_bandwidth::BandwidthLimiter;
 use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
+#[cfg(feature = "acl")]
+use rsync_meta::sync_acls;
 #[cfg(feature = "xattr")]
 use rsync_meta::sync_xattrs;
 use rsync_meta::{
@@ -1332,6 +1334,8 @@ pub struct LocalCopyOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    #[cfg(feature = "acl")]
+    preserve_acls: bool,
     filters: Option<FilterSet>,
     filter_program: Option<FilterProgram>,
     numeric_ids: bool,
@@ -1368,6 +1372,8 @@ impl LocalCopyOptions {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            #[cfg(feature = "acl")]
+            preserve_acls: false,
             filters: None,
             filter_program: None,
             numeric_ids: false,
@@ -1498,6 +1504,15 @@ impl LocalCopyOptions {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    #[cfg(feature = "acl")]
+    /// Requests that POSIX ACLs be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--acls")]
+    pub const fn acls(mut self, preserve: bool) -> Self {
+        self.preserve_acls = preserve;
         self
     }
 
@@ -1720,6 +1735,13 @@ impl LocalCopyOptions {
         self.preserve_times
     }
 
+    #[cfg(feature = "acl")]
+    /// Returns whether POSIX ACLs should be preserved.
+    #[must_use]
+    pub const fn preserve_acls(&self) -> bool {
+        self.preserve_acls
+    }
+
     /// Returns the configured filter set, if any.
     #[must_use]
     pub fn filter_set(&self) -> Option<&FilterSet> {
@@ -1736,6 +1758,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
+    }
+
+    #[cfg(feature = "acl")]
+    /// Reports whether ACL preservation is enabled.
+    #[must_use]
+    pub const fn acls_enabled(&self) -> bool {
+        self.preserve_acls
     }
 
     /// Reports whether checksum-based change detection has been requested.
@@ -2252,6 +2281,11 @@ impl<'a> CopyContext<'a> {
 
     fn specials_enabled(&self) -> bool {
         self.options.specials_enabled()
+    }
+
+    #[cfg(feature = "acl")]
+    fn acls_enabled(&self) -> bool {
+        self.options.acls_enabled()
     }
 
     fn relative_paths_enabled(&self) -> bool {
@@ -3039,6 +3073,20 @@ fn sync_xattrs_if_requested(
     Ok(())
 }
 
+#[cfg(feature = "acl")]
+fn sync_acls_if_requested(
+    preserve_acls: bool,
+    mode: LocalCopyExecution,
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), LocalCopyError> {
+    if preserve_acls && !mode.is_dry_run() {
+        sync_acls(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+    }
+    Ok(())
+}
+
 /// Error produced when planning or executing a local copy fails.
 #[derive(Debug)]
 pub struct LocalCopyError {
@@ -3724,6 +3772,8 @@ fn copy_directory_recursive(
     let mode = context.mode();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
     let mut destination_missing = false;
 
     match fs::symlink_metadata(destination) {
@@ -3887,6 +3937,8 @@ fn copy_directory_recursive(
             .map_err(map_metadata_error)?;
         #[cfg(feature = "xattr")]
         sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+        #[cfg(feature = "acl")]
+        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     }
 
     Ok(())
@@ -3904,6 +3956,14 @@ fn copy_file(
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| source.file_name().map(PathBuf::from))
@@ -4096,6 +4156,8 @@ fn copy_file(
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
             sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            #[cfg(feature = "acl")]
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.hard_links.record(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             context.record(LocalCopyRecord::new(
@@ -4152,6 +4214,8 @@ fn copy_file(
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+    #[cfg(feature = "acl")]
+    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.hard_links.record(metadata, destination);
     let elapsed = start.elapsed();
     context.summary_mut().record_file(file_size, compressed);
@@ -4551,6 +4615,8 @@ fn copy_fifo(
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+    #[cfg(feature = "acl")]
+    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.summary_mut().record_fifo();
     if let Some(path) = &record_path {
         context.record(LocalCopyRecord::new(
@@ -4672,6 +4738,8 @@ fn copy_device(
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+    #[cfg(feature = "acl")]
+    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.summary_mut().record_device();
     if let Some(path) = &record_path {
         context.record(LocalCopyRecord::new(
@@ -4918,6 +4986,8 @@ fn copy_symlink(
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
+    #[cfg(feature = "acl")]
+    sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
 
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
@@ -5139,6 +5209,44 @@ mod tests {
 
     #[cfg(feature = "xattr")]
     use xattr;
+
+    #[cfg(all(unix, feature = "acl"))]
+    use std::os::unix::ffi::OsStrExt;
+
+    #[cfg(all(unix, feature = "acl"))]
+    fn acl_to_text(path: &Path, ty: libc::acl_type_t) -> Option<String> {
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("cstring");
+        let acl = unsafe { libc::acl_get_file(c_path.as_ptr(), ty) };
+        if acl.is_null() {
+            return None;
+        }
+        let mut len = 0;
+        let text_ptr = unsafe { libc::acl_to_text(acl, &mut len) };
+        if text_ptr.is_null() {
+            unsafe { libc::acl_free(acl as *mut _) };
+            return None;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(text_ptr.cast::<u8>(), len as usize) };
+        let text = String::from_utf8_lossy(slice).trim().to_string();
+        unsafe {
+            libc::acl_free(text_ptr as *mut _);
+            libc::acl_free(acl as *mut _);
+        }
+        Some(text)
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    fn set_acl_from_text(path: &Path, text: &str, ty: libc::acl_type_t) {
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("cstring");
+        let c_text = std::ffi::CString::new(text).expect("text");
+        let acl = unsafe { libc::acl_from_text(c_text.as_ptr()) };
+        assert!(!acl.is_null(), "acl_from_text");
+        let result = unsafe { libc::acl_set_file(c_path.as_ptr(), ty, acl) };
+        unsafe {
+            libc::acl_free(acl as *mut _);
+        }
+        assert_eq!(result, 0, "acl_set_file");
+    }
 
     #[test]
     fn local_copy_options_numeric_ids_round_trip() {
@@ -5610,6 +5718,34 @@ mod tests {
             .expect("read dest xattr")
             .expect("xattr present");
         assert_eq!(copied, b"value");
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    #[test]
+    fn execute_copies_file_with_acls() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"acl").expect("write source");
+        let acl_text = "user::rw-\ngroup::r--\nother::r--\n";
+        set_acl_from_text(&source, acl_text, libc::ACL_TYPE_ACCESS);
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().acls(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 1);
+        let copied = acl_to_text(&destination, libc::ACL_TYPE_ACCESS).expect("dest acl");
+        assert!(copied.contains("user::rw-"));
     }
 
     #[test]

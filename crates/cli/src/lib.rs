@@ -1815,6 +1815,10 @@ where
         .inplace(inplace.unwrap_or(false))
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
+    #[cfg(feature = "acl")]
+    {
+        builder = builder.acls(preserve_acls);
+    }
     #[cfg(feature = "xattr")]
     {
         builder = builder.xattrs(xattrs.unwrap_or(false));

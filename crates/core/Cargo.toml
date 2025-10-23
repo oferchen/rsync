@@ -23,7 +23,7 @@ tempfile = "3.10"
 
 [features]
 default = []
-acl = []
+acl = ["rsync-meta/acl", "rsync-engine/acl"]
 xattr = ["rsync-meta/xattr", "rsync-engine/xattr"]
 zstd = []
 iconv = []
