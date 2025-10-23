@@ -2396,12 +2396,10 @@ fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> i
 fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
-    let matched = summary.regular_files_matched();
     let directories = summary.directories_created();
     let directories_total = summary.directories_total();
     let symlinks = summary.symlinks_copied();
     let symlinks_total = summary.symlinks_total();
-    let hard_links = summary.hard_links_created();
     let devices = summary.devices_created();
     let devices_total = summary.devices_total();
     let fifos = summary.fifos_created();
@@ -2415,29 +2413,37 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let file_list_generation = summary.file_list_generation_time().as_secs_f64();
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
 
+    let special_total = devices_total.saturating_add(fifos_total);
+    let special_created = devices.saturating_add(fifos);
     let total_entries = files_total
         .saturating_add(directories_total)
         .saturating_add(symlinks_total)
-        .saturating_add(devices_total)
-        .saturating_add(fifos_total);
+        .saturating_add(special_total);
     let created_total = files
         .saturating_add(directories)
         .saturating_add(symlinks)
-        .saturating_add(devices)
-        .saturating_add(fifos);
+        .saturating_add(special_created);
 
+    let files_breakdown = format_stat_categories(&[
+        ("reg", files_total),
+        ("dir", directories_total),
+        ("link", symlinks_total),
+        ("special", special_total),
+    ]);
+    let created_breakdown = format_stat_categories(&[
+        ("reg", files),
+        ("dir", directories),
+        ("link", symlinks),
+        ("special", special_created),
+    ]);
+
+    writeln!(stdout, "Number of files: {total_entries}{files_breakdown}")?;
     writeln!(
         stdout,
-        "Number of files: {total_entries} (reg: {files_total}, dir: {directories_total}, link: {symlinks_total}, dev: {devices_total}, fifo: {fifos_total})"
-    )?;
-    writeln!(
-        stdout,
-        "Number of created files: {created_total} (reg: {files}, dir: {directories}, link: {symlinks}, dev: {devices}, fifo: {fifos})"
+        "Number of created files: {created_total}{created_breakdown}"
     )?;
     writeln!(stdout, "Number of deleted files: {deleted}")?;
     writeln!(stdout, "Number of regular files transferred: {files}")?;
-    writeln!(stdout, "Number of regular files matched: {matched}")?;
-    writeln!(stdout, "Number of hard links created: {hard_links}")?;
     writeln!(stdout, "Total file size: {total_size} bytes")?;
     writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
     writeln!(stdout, "Literal data: {transferred} bytes")?;
@@ -2456,6 +2462,18 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     writeln!(stdout)?;
 
     emit_totals(summary, stdout)
+}
+
+fn format_stat_categories(categories: &[(&str, u64)]) -> String {
+    let parts: Vec<String> = categories
+        .iter()
+        .filter_map(|(label, count)| (*count > 0).then(|| format!("{label}: {count}")))
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    }
 }
 
 /// Emits the summary lines reported by verbose transfers.
@@ -4152,14 +4170,11 @@ mod tests {
 
         let rendered = String::from_utf8(stdout).expect("stats output is UTF-8");
         let expected_size = payload.len();
-        assert!(rendered.contains("Number of files: 1 (reg: 1, dir: 0, link: 0, dev: 0, fifo: 0)"));
-        assert!(
-            rendered
-                .contains("Number of created files: 1 (reg: 1, dir: 0, link: 0, dev: 0, fifo: 0)")
-        );
+        assert!(rendered.contains("Number of files: 1 (reg: 1)"));
+        assert!(rendered.contains("Number of created files: 1 (reg: 1)"));
         assert!(rendered.contains("Number of regular files transferred: 1"));
-        assert!(rendered.contains("Number of regular files matched: 0"));
-        assert!(rendered.contains("Number of hard links created: 0"));
+        assert!(!rendered.contains("Number of regular files matched"));
+        assert!(!rendered.contains("Number of hard links created"));
         assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
         assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
         assert!(rendered.contains("Matched data: 0 bytes"));
