@@ -110,13 +110,14 @@ const HELP_TEXT: &str = concat!(
     "oc-rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: oc-rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
     "following options are recognised:\n",
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
+    "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
     "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --list-only  List files without performing a transfer.\n",
@@ -562,6 +563,7 @@ struct ParsedArgs {
     show_version: bool,
     dry_run: bool,
     list_only: bool,
+    remote_shell: Option<OsString>,
     archive: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
@@ -642,6 +644,16 @@ fn clap_command() -> ClapCommand {
                 .short('V')
                 .help("Output version information and exit.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("rsh")
+                .long("rsh")
+                .short('e')
+                .value_name("COMMAND")
+                .help("Use remote shell COMMAND for remote transfers.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("dry-run")
@@ -1157,6 +1169,10 @@ where
     if list_only {
         dry_run = true;
     }
+    let remote_shell = matches
+        .remove_one::<OsString>("rsh")
+        .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os("RSYNC_RSH").filter(|value| !value.is_empty()));
     let archive = matches.get_flag("archive");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
@@ -1370,6 +1386,7 @@ where
         show_version,
         dry_run,
         list_only,
+        remote_shell,
         archive,
         delete_mode,
         delete_excluded,
@@ -1531,6 +1548,7 @@ where
         show_version,
         dry_run,
         list_only,
+        remote_shell,
         archive,
         delete_mode,
         delete_excluded,
@@ -1830,6 +1848,7 @@ where
         Some(RemoteFallbackArgs {
             dry_run,
             list_only,
+            remote_shell: remote_shell.clone(),
             archive,
             delete: delete_for_fallback,
             delete_mode,
@@ -3922,6 +3941,10 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn clear_rsync_rsh() -> EnvGuard {
+        EnvGuard::set("RSYNC_RSH", OsStr::new(""))
     }
 
     #[cfg(unix)]
@@ -6608,6 +6631,7 @@ mod tests {
     #[test]
     fn remote_operand_reports_launch_failure_when_fallback_missing() {
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let missing = OsString::from("rsync-missing-binary");
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", missing.as_os_str());
 
@@ -7284,6 +7308,7 @@ mod tests {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7329,6 +7354,7 @@ exit 7
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7364,6 +7390,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let list_path = temp.path().join("file-list.txt");
         std::fs::write(&list_path, b"alpha\nbeta\n").expect("write list");
@@ -7421,6 +7448,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7457,6 +7485,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7493,6 +7522,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
 
@@ -7522,6 +7552,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let list_path = temp.path().join("file-list.bin");
         std::fs::write(&list_path, b"first\0second\0").expect("write list");
@@ -7580,6 +7611,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7640,6 +7672,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7695,6 +7728,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7732,6 +7766,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7770,6 +7805,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7808,6 +7844,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7847,6 +7884,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7890,6 +7928,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7937,12 +7976,124 @@ exit 0
         assert!(recorded.contains(&dest_display));
     }
 
+    #[test]
+    fn remote_fallback_forwards_rsh_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-e"),
+            OsString::from("ssh -p 2222"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "-e"));
+        assert!(recorded.lines().any(|line| line == "ssh -p 2222"));
+    }
+
+    #[test]
+    fn remote_fallback_reads_rsync_rsh_env() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _clear_guard = clear_rsync_rsh();
+        let _env_guard = EnvGuard::set("RSYNC_RSH", OsStr::new("ssh -p 2200"));
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "-e"));
+        assert!(recorded.lines().any(|line| line == "ssh -p 2200"));
+    }
+
+    #[test]
+    fn remote_fallback_cli_rsh_overrides_env() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _clear_guard = clear_rsync_rsh();
+        let _env_guard = EnvGuard::set("RSYNC_RSH", OsStr::new("ssh -p 2200"));
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-e"),
+            OsString::from("ssh -p 2222"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "ssh -p 2222"));
+        assert!(!recorded.lines().any(|line| line == "ssh -p 2200"));
+    }
+
     #[cfg(all(unix, feature = "acl"))]
     #[test]
     fn remote_fallback_forwards_acls_toggle() {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");
@@ -7979,6 +8130,7 @@ exit 0
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("fallback.sh");
         let args_path = temp.path().join("args.txt");

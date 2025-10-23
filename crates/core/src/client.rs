@@ -1583,6 +1583,8 @@ pub struct RemoteFallbackArgs {
     pub dry_run: bool,
     /// Enables `--list-only`.
     pub list_only: bool,
+    /// Supplies the remote shell command forwarded via `-e`/`--rsh`.
+    pub remote_shell: Option<OsString>,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Enables `--delete`.
@@ -1735,6 +1737,7 @@ where
     let RemoteFallbackArgs {
         dry_run,
         list_only,
+        remote_shell,
         archive,
         delete,
         delete_mode,
@@ -1949,6 +1952,11 @@ where
 
     if no_motd {
         command_args.push(OsString::from("--no-motd"));
+    }
+
+    if let Some(shell) = remote_shell {
+        command_args.push(OsString::from("-e"));
+        command_args.push(shell);
     }
 
     command_args.append(&mut remainder);
@@ -2819,6 +2827,7 @@ exit 42
         RemoteFallbackArgs {
             dry_run: false,
             list_only: false,
+            remote_shell: None,
             archive: false,
             delete: false,
             delete_mode: DeleteMode::Disabled,
