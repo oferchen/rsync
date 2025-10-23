@@ -354,6 +354,12 @@ impl ModuleDefinition {
     fn use_chroot(&self) -> bool {
         self.use_chroot
     }
+
+    fn inherit_refuse_options(&mut self, options: &[String]) {
+        if self.refuse_options.is_empty() {
+            self.refuse_options = options.to_vec();
+        }
+    }
 }
 
 struct ModuleRuntime {
@@ -531,6 +537,7 @@ struct RuntimeOptions {
     bind_address_overridden: bool,
     log_file: Option<PathBuf>,
     log_file_configured: bool,
+    global_refuse_options: Option<Vec<String>>,
 }
 
 impl Default for RuntimeOptions {
@@ -547,6 +554,7 @@ impl Default for RuntimeOptions {
             bind_address_overridden: false,
             log_file: None,
             log_file_configured: false,
+            global_refuse_options: None,
         }
     }
 }
@@ -592,7 +600,10 @@ impl RuntimeOptions {
                 let value = iter
                     .next()
                     .ok_or_else(|| missing_argument_value("--module"))?;
-                let module = parse_module_definition(value)?;
+                let mut module = parse_module_definition(value)?;
+                if let Some(global) = &options.global_refuse_options {
+                    module.inherit_refuse_options(global);
+                }
                 if !seen_modules.insert(module.name.clone()) {
                     return Err(duplicate_module(&module.name));
                 }
@@ -712,7 +723,18 @@ impl RuntimeOptions {
         seen_modules: &mut HashSet<String>,
     ) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
-        let modules = parse_config_modules(&path)?;
+        let parsed = parse_config_modules(&path)?;
+
+        if let Some((options, line)) = parsed.global_refuse_options {
+            self.inherit_global_refuse_options(options, &path, line)?;
+        }
+
+        let mut modules = parsed.modules;
+        if let Some(global) = &self.global_refuse_options {
+            for module in &mut modules {
+                module.inherit_refuse_options(global);
+            }
+        }
 
         for module in modules {
             if !seen_modules.insert(module.name.clone()) {
@@ -757,6 +779,31 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn log_file(&self) -> Option<&PathBuf> {
         self.log_file.as_ref()
+    }
+
+    fn inherit_global_refuse_options(
+        &mut self,
+        options: Vec<String>,
+        path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.global_refuse_options {
+            if existing != &options {
+                return Err(config_parse_error(
+                    path,
+                    line,
+                    "duplicate 'refuse options' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        for module in &mut self.modules {
+            module.inherit_refuse_options(&options);
+        }
+
+        self.global_refuse_options = Some(options);
+        Ok(())
     }
 
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
@@ -807,11 +854,17 @@ where
     Ok(None)
 }
 
-fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonError> {
+struct ParsedConfigModules {
+    modules: Vec<ModuleDefinition>,
+    global_refuse_options: Option<(Vec<String>, usize)>,
+}
+
+fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let contents =
         fs::read_to_string(path).map_err(|error| config_io_error("read", path, error))?;
     let mut modules = Vec::new();
     let mut current: Option<ModuleDefinitionBuilder> = None;
+    let mut global_refuse_options: Option<(Vec<String>, usize)> = None;
 
     for (index, raw_line) in contents.lines().enumerate() {
         let line_number = index + 1;
@@ -861,69 +914,159 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
         let key = key.trim().to_ascii_lowercase();
         let value = value.trim();
 
-        let builder = current.as_mut().ok_or_else(|| {
-            config_parse_error(path, line_number, "directive outside module section")
-        })?;
+        if let Some(builder) = current.as_mut() {
+            match key.as_str() {
+                "path" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "module path directive must not be empty",
+                        ));
+                    }
+                    builder.set_path(PathBuf::from(value), path, line_number)?;
+                }
+                "comment" => {
+                    let comment = if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.to_string())
+                    };
+                    builder.set_comment(comment, path, line_number)?;
+                }
+                "hosts allow" => {
+                    let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
+                    builder.set_hosts_allow(patterns, path, line_number)?;
+                }
+                "hosts deny" => {
+                    let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
+                    builder.set_hosts_deny(patterns, path, line_number)?;
+                }
+                "auth users" => {
+                    let users = parse_auth_user_list(value).map_err(|error| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid 'auth users' directive: {error}"),
+                        )
+                    })?;
+                    builder.set_auth_users(users, path, line_number)?;
+                }
+                "secrets file" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'secrets file' directive must not be empty",
+                        ));
+                    }
+                    builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
+                }
+                "bwlimit" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'bwlimit' directive must not be empty",
+                        ));
+                    }
+                    let limit = parse_config_bwlimit(value, path, line_number)?;
+                    builder.set_bandwidth_limit(limit, path, line_number)?;
+                }
+                "refuse options" => {
+                    let options = parse_refuse_option_list(value).map_err(|error| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid 'refuse options' directive: {error}"),
+                        )
+                    })?;
+                    builder.set_refuse_options(options, path, line_number)?;
+                }
+                "read only" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'read only'"),
+                        )
+                    })?;
+                    builder.set_read_only(parsed, path, line_number)?;
+                }
+                "use chroot" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'use chroot'"),
+                        )
+                    })?;
+                    builder.set_use_chroot(parsed, path, line_number)?;
+                }
+                "numeric ids" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'numeric ids'"),
+                        )
+                    })?;
+                    builder.set_numeric_ids(parsed, path, line_number)?;
+                }
+                "list" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{value}' for 'list'"),
+                        )
+                    })?;
+                    builder.set_listable(parsed, path, line_number)?;
+                }
+                "uid" => {
+                    let uid = parse_numeric_identifier(value).ok_or_else(|| {
+                        config_parse_error(path, line_number, format!("invalid uid '{value}'"))
+                    })?;
+                    builder.set_uid(uid, path, line_number)?;
+                }
+                "gid" => {
+                    let gid = parse_numeric_identifier(value).ok_or_else(|| {
+                        config_parse_error(path, line_number, format!("invalid gid '{value}'"))
+                    })?;
+                    builder.set_gid(gid, path, line_number)?;
+                }
+                "timeout" => {
+                    let timeout = parse_timeout_seconds(value).ok_or_else(|| {
+                        config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
+                    })?;
+                    builder.set_timeout(timeout, path, line_number)?;
+                }
+                "max connections" => {
+                    let max = parse_max_connections_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid max connections value '{value}'"),
+                        )
+                    })?;
+                    builder.set_max_connections(max, path, line_number)?;
+                }
+                _ => {
+                    // Unsupported directives are ignored for now.
+                }
+            }
+            continue;
+        }
 
         match key.as_str() {
-            "path" => {
-                if value.is_empty() {
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        "module path directive must not be empty",
-                    ));
-                }
-                builder.set_path(PathBuf::from(value), path, line_number)?;
-            }
-            "comment" => {
-                let comment = if value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                };
-                builder.set_comment(comment, path, line_number)?;
-            }
-            "hosts allow" => {
-                let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
-                builder.set_hosts_allow(patterns, path, line_number)?;
-            }
-            "hosts deny" => {
-                let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
-                builder.set_hosts_deny(patterns, path, line_number)?;
-            }
-            "auth users" => {
-                let users = parse_auth_user_list(value).map_err(|error| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid 'auth users' directive: {error}"),
-                    )
-                })?;
-                builder.set_auth_users(users, path, line_number)?;
-            }
-            "secrets file" => {
-                if value.is_empty() {
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        "'secrets file' directive must not be empty",
-                    ));
-                }
-                builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
-            }
-            "bwlimit" => {
-                if value.is_empty() {
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        "'bwlimit' directive must not be empty",
-                    ));
-                }
-                let limit = parse_config_bwlimit(value, path, line_number)?;
-                builder.set_bandwidth_limit(limit, path, line_number)?;
-            }
             "refuse options" => {
+                if value.is_empty() {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        "'refuse options' directive must not be empty",
+                    ));
+                }
                 let options = parse_refuse_option_list(value).map_err(|error| {
                     config_parse_error(
                         path,
@@ -931,78 +1074,23 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                         format!("invalid 'refuse options' directive: {error}"),
                     )
                 })?;
-                builder.set_refuse_options(options, path, line_number)?;
-            }
-            "read only" => {
-                let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_parse_error(
+
+                if global_refuse_options.is_some() {
+                    return Err(config_parse_error(
                         path,
                         line_number,
-                        format!("invalid boolean value '{value}' for 'read only'"),
-                    )
-                })?;
-                builder.set_read_only(parsed, path, line_number)?;
-            }
-            "use chroot" => {
-                let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid boolean value '{value}' for 'use chroot'"),
-                    )
-                })?;
-                builder.set_use_chroot(parsed, path, line_number)?;
-            }
-            "numeric ids" => {
-                let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid boolean value '{value}' for 'numeric ids'"),
-                    )
-                })?;
-                builder.set_numeric_ids(parsed, path, line_number)?;
-            }
-            "list" => {
-                let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid boolean value '{value}' for 'list'"),
-                    )
-                })?;
-                builder.set_listable(parsed, path, line_number)?;
-            }
-            "uid" => {
-                let uid = parse_numeric_identifier(value).ok_or_else(|| {
-                    config_parse_error(path, line_number, format!("invalid uid '{value}'"))
-                })?;
-                builder.set_uid(uid, path, line_number)?;
-            }
-            "gid" => {
-                let gid = parse_numeric_identifier(value).ok_or_else(|| {
-                    config_parse_error(path, line_number, format!("invalid gid '{value}'"))
-                })?;
-                builder.set_gid(gid, path, line_number)?;
-            }
-            "timeout" => {
-                let timeout = parse_timeout_seconds(value).ok_or_else(|| {
-                    config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
-                })?;
-                builder.set_timeout(timeout, path, line_number)?;
-            }
-            "max connections" => {
-                let max = parse_max_connections_directive(value).ok_or_else(|| {
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("invalid max connections value '{value}'"),
-                    )
-                })?;
-                builder.set_max_connections(max, path, line_number)?;
+                        "duplicate 'refuse options' directive in global section",
+                    ));
+                }
+
+                global_refuse_options = Some((options, line_number));
             }
             _ => {
-                // Unsupported directives are ignored for now.
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "directive outside module section",
+                ));
             }
         }
     }
@@ -1011,7 +1099,10 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
         modules.push(builder.finish(path)?);
     }
 
-    Ok(modules)
+    Ok(ParsedConfigModules {
+        modules,
+        global_refuse_options,
+    })
 }
 
 struct ModuleDefinitionBuilder {
@@ -3943,6 +4034,67 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("invalid boolean value 'maybe' for 'list'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_apply_global_refuse_options() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "refuse options = compress, delete\n[docs]\npath = /srv/docs\n[logs]\npath = /srv/logs\nrefuse options = stats\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config with global refuse options");
+
+        assert_eq!(
+            options.modules()[0].refused_options(),
+            ["compress", "delete"]
+        );
+        assert_eq!(options.modules()[1].refused_options(), ["stats"]);
+    }
+
+    #[test]
+    fn runtime_options_cli_modules_inherit_global_refuse_options() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "refuse options = compress\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+            OsString::from("--module"),
+            OsString::from("extra=/srv/extra"),
+        ])
+        .expect("parse config with cli module");
+
+        assert_eq!(options.modules()[0].refused_options(), ["compress"]);
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_global_refuse_options() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "refuse options = compress\nrefuse options = delete\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("duplicate global refuse options should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate 'refuse options' directive")
         );
     }
 
