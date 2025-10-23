@@ -89,14 +89,10 @@ use rsync_core::{
     client::{
         BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
         ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
-        ClientSummary, CompressionSetting, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
-        FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext,
-        TransferTimeout, run_client_or_fallback, run_module_list_with_password,
-        ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
-        CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
-        FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, TransferTimeout,
-        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
-        run_remote_transfer_fallback,
+        ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
+        FilterRuleKind, FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs,
+        RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
+        run_module_list_with_password,
     },
     message::{Message, Role},
     rsync_error,
@@ -1807,10 +1803,8 @@ where
     let fallback_required = requires_delta_fallback || requires_remote_fallback;
 
     let fallback_args = if fallback_required {
-        Some(RemoteFallbackArgs {
-    if requires_delta_fallback || transfer_requires_remote(&remainder, &file_list_operands) {
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
-        let fallback_args = RemoteFallbackArgs {
+        Some(RemoteFallbackArgs {
             dry_run,
             list_only,
             archive,
