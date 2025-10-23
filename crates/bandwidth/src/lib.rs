@@ -130,6 +130,17 @@ impl<'a> RecordedSleepSession<'a> {
         let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
         mem::take(&mut *guard)
     }
+
+    /// Consumes the session and returns the recorded durations.
+    ///
+    /// This convenience helper mirrors [`take`](Self::take) while allowing
+    /// callers to move the guard by value. It is particularly useful in tests
+    /// that wish to collect the recorded sleeps without keeping the session
+    /// borrowed mutably for the remainder of the scope.
+    #[inline]
+    pub fn into_vec(mut self) -> Vec<Duration> {
+        self.take()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -141,14 +152,6 @@ pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
             .lock()
             .expect("lock recorded sleep session"),
     }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[deprecated(note = "use `recorded_sleep_session()` to guard access during tests")]
-/// Retrieves and clears the recorded sleep durations.
-pub fn take_recorded_sleeps() -> Vec<Duration> {
-    let mut session = recorded_sleep_session();
-    session.take()
 }
 
 fn duration_from_microseconds(us: u128) -> Duration {
@@ -605,6 +608,22 @@ mod tests {
                 .iter()
                 .any(|duration| duration >= &Duration::from_micros(MINIMUM_SLEEP_MICROS as u64))
         );
+    }
+
+    #[test]
+    fn recorded_sleep_session_into_vec_consumes_guard() {
+        let mut session = crate::recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(2048);
+
+        let recorded = session.into_vec();
+        assert!(!recorded.is_empty());
+
+        let mut follow_up = crate::recorded_sleep_session();
+        assert!(follow_up.is_empty());
+        let _ = follow_up.take();
     }
 
     proptest! {
