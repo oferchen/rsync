@@ -2715,6 +2715,7 @@ fn apply_module_bandwidth_limit(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn respond_with_module_request(
     reader: &mut BufReader<TcpStream>,
     limiter: &mut Option<BandwidthLimiter>,
