@@ -150,6 +150,15 @@ impl SignatureAlgorithm {
             SignatureAlgorithm::Xxh3_128 { seed } => Xxh3_128::digest(seed, data).as_ref().to_vec(),
         }
     }
+
+    /// Computes a strong digest truncated to `len` bytes.
+    pub(crate) fn compute_truncated(self, data: &[u8], len: usize) -> Vec<u8> {
+        let mut digest = self.compute_full(data);
+        if len < digest.len() {
+            digest.truncate(len);
+        }
+        digest
+    }
 }
 
 /// Describes a single block within a file signature.
