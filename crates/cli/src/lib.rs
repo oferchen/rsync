@@ -218,6 +218,7 @@ enum OutFormatPlaceholder {
     FileName,
     FileNameWithSymlinkTarget,
     FullPath,
+    ItemizedChanges,
     FileLength,
     BytesWritten,
     BytesRead,
@@ -271,6 +272,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             literal.clear();
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FullPath));
+                    }
+                    'i' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::ItemizedChanges,
+                        ));
                     }
                     'l' => {
                         if !literal.is_empty() {
@@ -428,6 +438,9 @@ impl OutFormat {
                             buffer.push_str(&target.to_string_lossy());
                         }
                     }
+                    OutFormatPlaceholder::ItemizedChanges => {
+                        buffer.push_str(&format_itemized_changes(event));
+                    }
                     OutFormatPlaceholder::FileLength => {
                         let length = event
                             .metadata()
@@ -554,6 +567,63 @@ fn format_current_timestamp() -> String {
     now.format(LIST_TIMESTAMP_FORMAT)
         .map(|text| text.replace(' ', "-"))
         .unwrap_or_else(|_| "1970/01/01-00:00:00".to_string())
+}
+
+fn format_itemized_changes(event: &ClientEvent) -> String {
+    use ClientEventKind::*;
+
+    if matches!(event.kind(), ClientEventKind::EntryDeleted) {
+        return "*deleting".to_string();
+    }
+
+    let mut fields = ['.'; 11];
+
+    fields[0] = match event.kind() {
+        DataCopied => '>',
+        MetadataReused | SkippedExisting | SkippedNewerDestination | SkippedNonRegular => '.',
+        HardLink => 'h',
+        DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
+        _ => '.',
+    };
+
+    fields[1] = match event
+        .metadata()
+        .map(ClientEntryMetadata::kind)
+        .unwrap_or_else(|| match event.kind() {
+            DirectoryCreated => ClientEntryKind::Directory,
+            SymlinkCopied => ClientEntryKind::Symlink,
+            FifoCopied => ClientEntryKind::Fifo,
+            DeviceCopied => ClientEntryKind::CharDevice,
+            HardLink | DataCopied | MetadataReused | SkippedExisting | SkippedNewerDestination => {
+                ClientEntryKind::File
+            }
+            _ => ClientEntryKind::Other,
+        }) {
+        ClientEntryKind::File => 'f',
+        ClientEntryKind::Directory => 'd',
+        ClientEntryKind::Symlink => 'L',
+        ClientEntryKind::Fifo | ClientEntryKind::Socket | ClientEntryKind::Other => 'S',
+        ClientEntryKind::CharDevice | ClientEntryKind::BlockDevice => 'D',
+    };
+
+    let attr = &mut fields[2..];
+
+    match event.kind() {
+        DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | HardLink => {
+            attr.fill('+');
+        }
+        DataCopied => {
+            attr[0] = 'c';
+            attr[1] = 's';
+            attr[2] = 't';
+        }
+        SourceRemoved => {
+            attr[0] = 'c';
+        }
+        _ => {}
+    }
+
+    fields.iter().collect()
 }
 
 /// Parsed command produced by [`parse_args`].
@@ -5471,7 +5541,7 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %N %p %U %G %t %%"))
+        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %N %p %U %G %t %i %%"))
             .expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
@@ -5596,6 +5666,96 @@ mod tests {
             .expect("render out-format");
 
         assert!(String::from_utf8_lossy(&output).trim().contains('-'));
+    }
+
+    #[test]
+    fn out_format_renders_itemized_placeholder_for_new_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src dir");
+        std::fs::create_dir(&dst_dir).expect("create dst dir");
+
+        let source = src_dir.join("file.txt");
+        std::fs::write(&source, b"content").expect("write source");
+        let destination = dst_dir.join("file.txt");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| event.relative_path().to_string_lossy() == "file.txt")
+            .expect("event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%i"))
+            .expect("parse %i")
+            .render(event, &mut output)
+            .expect("render %i");
+
+        assert_eq!(output, b">fcst......\n");
+    }
+
+    #[test]
+    fn out_format_itemized_placeholder_reports_deletion() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src dir");
+        std::fs::create_dir(&dst_dir).expect("create dst dir");
+
+        let destination_file = dst_dir.join("obsolete.txt");
+        std::fs::write(&destination_file, b"old").expect("write obsolete");
+
+        let source_operand = OsString::from(format!("{}/", src_dir.display()));
+        let dest_operand = OsString::from(format!("{}/", dst_dir.display()));
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_operand, dest_operand])
+            .delete(true)
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let mut events = summary.events().iter();
+        let event = events
+            .find(|event| event.relative_path().to_string_lossy() == "obsolete.txt")
+            .unwrap_or_else(|| {
+                let recorded: Vec<_> = summary
+                    .events()
+                    .iter()
+                    .map(|event| event.relative_path().to_string_lossy().into_owned())
+                    .collect();
+                panic!("deletion event missing, recorded events: {recorded:?}");
+            });
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%i"))
+            .expect("parse %i")
+            .render(event, &mut output)
+            .expect("render %i");
+
+        assert_eq!(output, b"*deleting\n");
     }
 
     #[test]
