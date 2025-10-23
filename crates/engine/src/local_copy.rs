@@ -1331,6 +1331,7 @@ pub struct LocalCopyOptions {
     relative_paths: bool,
     devices: bool,
     specials: bool,
+    implied_dirs: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -1365,6 +1366,7 @@ impl LocalCopyOptions {
             relative_paths: false,
             devices: false,
             specials: false,
+            implied_dirs: true,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
         }
@@ -1564,6 +1566,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Controls whether parent directories implied by the source path are created.
+    #[must_use]
+    #[doc(alias = "--implied-dirs")]
+    #[doc(alias = "--no-implied-dirs")]
+    pub const fn implied_dirs(mut self, implied: bool) -> Self {
+        self.implied_dirs = implied;
+        self
+    }
+
     /// Requests that device nodes be copied.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -1740,6 +1751,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn relative_paths_enabled(&self) -> bool {
         self.relative_paths
+    }
+
+    /// Reports whether implied parent directories should be created automatically.
+    #[must_use]
+    pub const fn implied_dirs_enabled(&self) -> bool {
+        self.implied_dirs
     }
 
     /// Reports whether partial transfer handling has been requested.
@@ -2194,6 +2211,66 @@ impl<'a> CopyContext<'a> {
 
     fn relative_paths_enabled(&self) -> bool {
         self.options.relative_paths_enabled()
+    }
+
+    fn implied_dirs_enabled(&self) -> bool {
+        self.options.implied_dirs_enabled()
+    }
+
+    fn prepare_parent_directory(&self, parent: &Path) -> Result<(), LocalCopyError> {
+        if parent.as_os_str().is_empty() {
+            return Ok(());
+        }
+
+        if self.mode.is_dry_run() {
+            match fs::symlink_metadata(parent) {
+                Ok(existing) => {
+                    if !existing.file_type().is_dir() {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                    Ok(())
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if self.options.implied_dirs_enabled() {
+                        Ok(())
+                    } else {
+                        Err(LocalCopyError::io(
+                            "create parent directory",
+                            parent.to_path_buf(),
+                            error,
+                        ))
+                    }
+                }
+                Err(error) => Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    parent.to_path_buf(),
+                    error,
+                )),
+            }
+        } else if self.options.implied_dirs_enabled() {
+            fs::create_dir_all(parent).map_err(|error| {
+                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+            })
+        } else {
+            match fs::symlink_metadata(parent) {
+                Ok(existing) => {
+                    if !existing.file_type().is_dir() {
+                        Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+                Err(error) => Err(LocalCopyError::io(
+                    "create parent directory",
+                    parent.to_path_buf(),
+                    error,
+                )),
+            }
+        }
     }
 
     fn remove_source_files_enabled(&self) -> bool {
@@ -3619,9 +3696,19 @@ fn copy_directory_recursive(
         }
 
         if !mode.is_dry_run() {
-            fs::create_dir_all(destination).map_err(|error| {
-                LocalCopyError::io("create directory", destination.to_path_buf(), error)
-            })?;
+            if context.implied_dirs_enabled() {
+                fs::create_dir_all(destination).map_err(|error| {
+                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
+                })?;
+            } else {
+                fs::create_dir(destination).map_err(|error| {
+                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
+                })?;
+            }
+        } else if !context.implied_dirs_enabled() {
+            if let Some(parent) = destination.parent() {
+                context.prepare_parent_directory(parent)?;
+            }
         }
 
         if let Some(rel) = relative {
@@ -3757,30 +3844,7 @@ fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
     if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            if mode.is_dry_run() {
-                match fs::symlink_metadata(parent) {
-                    Ok(existing) if !existing.file_type().is_dir() => {
-                        return Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(LocalCopyError::io(
-                            "inspect existing destination",
-                            parent.to_path_buf(),
-                            error,
-                        ));
-                    }
-                }
-            } else {
-                fs::create_dir_all(parent).map_err(|error| {
-                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-                })?;
-            }
-        }
+        context.prepare_parent_directory(parent)?;
     }
 
     if mode.is_dry_run() {
@@ -5112,6 +5176,18 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_implied_dirs_round_trip() {
+        let options = LocalCopyOptions::default();
+        assert!(options.implied_dirs_enabled());
+
+        let disabled = LocalCopyOptions::default().implied_dirs(false);
+        assert!(!disabled.implied_dirs_enabled());
+
+        let reenabled = disabled.implied_dirs(true);
+        assert!(reenabled.implied_dirs_enabled());
+    }
+
+    #[test]
     fn relative_root_drops_absolute_prefix_without_marker() {
         let operand = OsString::from("/var/log/messages");
         let spec = SourceSpec::from_operand(&operand).expect("source spec");
@@ -6206,6 +6282,81 @@ mod tests {
             .expect("dry-run succeeds");
 
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_without_implied_dirs_requires_existing_parent() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("missing").join("dest.txt");
+        fs::write(&source, b"data").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().implied_dirs(false);
+
+        let error = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect_err("missing parent should error");
+
+        match error.kind() {
+            LocalCopyErrorKind::Io { action, path, .. } => {
+                assert_eq!(*action, "create parent directory");
+                assert_eq!(path, destination.parent().expect("parent"));
+            }
+            other => panic!("unexpected error kind: {other:?}"),
+        }
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_dry_run_without_implied_dirs_requires_existing_parent() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("missing").join("dest.txt");
+        fs::write(&source, b"data").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().implied_dirs(false);
+
+        let error = plan
+            .execute_with_options(LocalCopyExecution::DryRun, options)
+            .expect_err("dry-run should error");
+
+        match error.kind() {
+            LocalCopyErrorKind::Io { action, path, .. } => {
+                assert_eq!(*action, "create parent directory");
+                assert_eq!(path, destination.parent().expect("parent"));
+            }
+            other => panic!("unexpected error kind: {other:?}"),
+        }
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_with_implied_dirs_creates_missing_parents() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("missing").join("dest.txt");
+        fs::write(&source, b"data").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        plan.execute().expect("copy succeeds");
+
+        assert!(destination.exists());
+        assert_eq!(fs::read(&destination).expect("read dest"), b"data");
     }
 
     #[test]
