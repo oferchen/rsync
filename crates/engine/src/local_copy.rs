@@ -1307,6 +1307,7 @@ where
 #[derive(Clone, Debug)]
 pub struct LocalCopyOptions {
     delete: bool,
+    delete_after: bool,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
@@ -1342,6 +1343,7 @@ impl LocalCopyOptions {
     pub const fn new() -> Self {
         Self {
             delete: false,
+            delete_after: false,
             delete_excluded: false,
             remove_source_files: false,
             bandwidth_limit: None,
@@ -1377,6 +1379,17 @@ impl LocalCopyOptions {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete = delete;
+        self
+    }
+
+    /// Requests that extraneous destination files be removed after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delete-after")]
+    pub const fn delete_after(mut self, delete_after: bool) -> Self {
+        if delete_after {
+            self.delete = true;
+        }
+        self.delete_after = delete_after;
         self
     }
 
@@ -1612,6 +1625,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
         self.delete
+    }
+
+    /// Reports whether deletions should occur after transfers instead of immediately.
+    #[must_use]
+    pub const fn delete_after_enabled(&self) -> bool {
+        self.delete_after
     }
 
     /// Reports whether excluded paths should also be removed during deletion sweeps.
@@ -2146,6 +2165,13 @@ struct CopyContext<'a> {
     dir_merge_layers: Rc<RefCell<FilterSegmentLayers>>,
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
+    deferred_deletions: Vec<DeferredDeletion>,
+}
+
+struct DeferredDeletion {
+    destination: PathBuf,
+    relative: Option<PathBuf>,
+    keep: Vec<OsString>,
 }
 
 impl<'a> CopyContext<'a> {
@@ -2177,6 +2203,7 @@ impl<'a> CopyContext<'a> {
             dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
             observer,
             dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
+            deferred_deletions: Vec::new(),
         }
     }
 
@@ -2186,6 +2213,10 @@ impl<'a> CopyContext<'a> {
 
     fn options(&self) -> &LocalCopyOptions {
         &self.options
+    }
+
+    fn delete_after_enabled(&self) -> bool {
+        self.options.delete_after_enabled()
     }
 
     fn metadata_options(&self) -> MetadataOptions {
@@ -2616,6 +2647,28 @@ impl<'a> CopyContext<'a> {
             summary: self.summary,
             events: self.events,
         }
+    }
+
+    fn defer_deletion(
+        &mut self,
+        destination: PathBuf,
+        relative: Option<PathBuf>,
+        keep: Vec<OsString>,
+    ) {
+        self.deferred_deletions.push(DeferredDeletion {
+            destination,
+            relative,
+            keep,
+        });
+    }
+
+    fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
+        let pending = std::mem::take(&mut self.deferred_deletions);
+        for entry in pending {
+            let relative = entry.relative.as_deref();
+            delete_extraneous_entries(self, entry.destination.as_path(), relative, &entry.keep)?;
+        }
+        Ok(())
     }
 }
 
@@ -3625,6 +3678,7 @@ fn copy_sources(
         }
     }
 
+    context.flush_deferred_deletions()?;
     Ok(context.into_outcome())
 }
 
@@ -3805,7 +3859,12 @@ fn copy_directory_recursive(
     }
 
     if context.options().delete_extraneous() {
-        delete_extraneous_entries(context, destination, relative, &keep_names)?;
+        if context.delete_after_enabled() {
+            let relative_owned = relative.map(Path::to_path_buf);
+            context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
+        } else {
+            delete_extraneous_entries(context, destination, relative, &keep_names)?;
+        }
     }
 
     if !context.mode().is_dry_run() {
@@ -6220,6 +6279,37 @@ mod tests {
         let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let options = LocalCopyOptions::default().delete(true);
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"fresh"
+        );
+        assert!(!dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn execute_with_delete_after_removes_extraneous_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete_after(true);
 
         let summary = plan
             .execute_with_options(LocalCopyExecution::Apply, options)
