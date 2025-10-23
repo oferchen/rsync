@@ -2138,27 +2138,26 @@ fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> 
 
         if let Some(metadata) = event.metadata() {
             let permissions = format_list_permissions(metadata);
-            let links = metadata.nlink().unwrap_or(1);
-            let owner = format_numeric_identifier(metadata.uid());
-            let group = format_numeric_identifier(metadata.gid());
-            let size = metadata.length();
+            let size = format_list_size(metadata.length());
             let timestamp = format_list_timestamp(metadata.modified());
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
             if metadata.kind().is_directory() && !rendered.ends_with('/') {
                 rendered.push('/');
             }
 
-            writeln!(
-                stdout,
-                "{permissions} {links:>3} {owner:>8} {group:>8} {size:>12} {timestamp} {rendered}",
-            )?;
+            writeln!(stdout, "{permissions} {size} {timestamp} {rendered}")?;
         } else {
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
             if matches!(event.kind(), ClientEventKind::DirectoryCreated) && !rendered.ends_with('/')
             {
                 rendered.push('/');
             }
-            writeln!(stdout, "{rendered}")?;
+            writeln!(
+                stdout,
+                "?????????? {:>15} {} {rendered}",
+                "?",
+                format_list_timestamp(None),
+            )?;
         }
     }
 
@@ -2178,12 +2177,6 @@ fn list_only_event(kind: &ClientEventKind) -> bool {
     )
 }
 
-fn format_numeric_identifier(value: Option<u32>) -> String {
-    value
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "-".to_string())
-}
-
 fn format_list_permissions(metadata: &ClientEntryMetadata) -> String {
     let type_char = match metadata.kind() {
         ClientEntryKind::File => '-',
@@ -2196,27 +2189,54 @@ fn format_list_permissions(metadata: &ClientEntryMetadata) -> String {
         ClientEntryKind::Other => '?',
     };
 
-    let mut output = String::with_capacity(10);
-    output.push(type_char);
+    let mut symbols = ['-'; 10];
+    symbols[0] = type_char;
 
     if let Some(mode) = metadata.mode() {
-        const MASKS: [u32; 9] = [
-            0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001,
+        const PERMISSION_MASKS: [(usize, u32, char); 9] = [
+            (1, 0o400, 'r'),
+            (2, 0o200, 'w'),
+            (3, 0o100, 'x'),
+            (4, 0o040, 'r'),
+            (5, 0o020, 'w'),
+            (6, 0o010, 'x'),
+            (7, 0o004, 'r'),
+            (8, 0o002, 'w'),
+            (9, 0o001, 'x'),
         ];
-        const SYMBOLS: [char; 3] = ['r', 'w', 'x'];
-        for (index, mask) in MASKS.iter().enumerate() {
-            let bit = if mode & mask != 0 {
-                SYMBOLS[index % 3]
-            } else {
-                '-'
-            };
-            output.push(bit);
+
+        for &(index, mask, ch) in &PERMISSION_MASKS {
+            if mode & mask != 0 {
+                symbols[index] = ch;
+            }
         }
-    } else {
-        output.push_str("---------");
+
+        if mode & 0o4000 != 0 {
+            symbols[3] = match symbols[3] {
+                'x' => 's',
+                '-' => 'S',
+                other => other,
+            };
+        }
+
+        if mode & 0o2000 != 0 {
+            symbols[6] = match symbols[6] {
+                'x' => 's',
+                '-' => 'S',
+                other => other,
+            };
+        }
+
+        if mode & 0o1000 != 0 {
+            symbols[9] = match symbols[9] {
+                'x' => 't',
+                '-' => 'T',
+                other => other,
+            };
+        }
     }
 
-    output
+    symbols.iter().collect()
 }
 
 fn format_list_timestamp(modified: Option<SystemTime>) -> String {
@@ -2226,6 +2246,21 @@ fn format_list_timestamp(modified: Option<SystemTime>) -> String {
         }
     }
     "1970/01/01 00:00:00".to_string()
+}
+
+fn format_list_size(size: u64) -> String {
+    let mut digits = size.to_string();
+    let mut groups = Vec::new();
+
+    while digits.len() > 3 {
+        let chunk = digits.split_off(digits.len() - 3);
+        groups.push(chunk);
+    }
+
+    groups.push(digits);
+    groups.reverse();
+    let with_commas = groups.join(",");
+    format!("{with_commas:>15}")
 }
 
 /// Returns whether the provided event kind should be reflected in progress output.
@@ -8123,6 +8158,132 @@ exit 0
         let rendered = String::from_utf8(stdout).expect("utf8 stdout");
         assert!(rendered.contains("file.txt"));
         assert!(!destination_dir.join("file.txt").exists());
+    }
+
+    #[test]
+    fn list_only_matches_rsync_format_for_regular_file() {
+        use filetime::{FileTime, set_file_times};
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        let dest_dir = tmp.path().join("dst");
+        fs::create_dir(&source_dir).expect("create src dir");
+        fs::create_dir(&dest_dir).expect("create dest dir");
+
+        let file_path = source_dir.join("data.bin");
+        fs::write(&file_path, vec![0u8; 1_234]).expect("write source file");
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644))
+            .expect("set file permissions");
+
+        let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_times(&file_path, timestamp, timestamp).expect("set file times");
+
+        let mut source_arg = source_dir.clone().into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            source_arg,
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+        let file_line = rendered
+            .lines()
+            .find(|line| line.ends_with("data.bin"))
+            .expect("file entry present");
+
+        let expected_permissions = "-rw-r--r--";
+        let expected_size = format_list_size(1_234);
+        let system_time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(
+                u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
+            )
+            + Duration::from_nanos(u64::from(timestamp.nanoseconds()));
+        let expected_timestamp = format_list_timestamp(Some(system_time));
+        let expected =
+            format!("{expected_permissions} {expected_size} {expected_timestamp} data.bin");
+
+        assert_eq!(file_line, expected);
+    }
+
+    #[test]
+    fn list_only_formats_special_permission_bits_like_rsync() {
+        use filetime::{FileTime, set_file_times};
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        let dest_dir = tmp.path().join("dst");
+        fs::create_dir(&source_dir).expect("create src dir");
+        fs::create_dir(&dest_dir).expect("create dest dir");
+
+        let sticky_exec = source_dir.join("exec-special");
+        let sticky_plain = source_dir.join("plain-special");
+
+        fs::write(&sticky_exec, b"exec").expect("write exec file");
+        fs::write(&sticky_plain, b"plain").expect("write plain file");
+
+        fs::set_permissions(&sticky_exec, fs::Permissions::from_mode(0o7777))
+            .expect("set permissions with execute bits");
+        fs::set_permissions(&sticky_plain, fs::Permissions::from_mode(0o7666))
+            .expect("set permissions without execute bits");
+
+        let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_times(&sticky_exec, timestamp, timestamp).expect("set exec times");
+        set_file_times(&sticky_plain, timestamp, timestamp).expect("set plain times");
+
+        let mut source_arg = source_dir.clone().into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            source_arg,
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+        let system_time = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(
+                u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
+            )
+            + Duration::from_nanos(u64::from(timestamp.nanoseconds()));
+        let expected_timestamp = format_list_timestamp(Some(system_time));
+
+        let expected_exec = format!(
+            "-rwsrwsrwt {} {expected_timestamp} exec-special",
+            format_list_size(4)
+        );
+        let expected_plain = format!(
+            "-rwSrwSrwT {} {expected_timestamp} plain-special",
+            format_list_size(5)
+        );
+
+        let mut exec_line = None;
+        let mut plain_line = None;
+        for line in rendered.lines() {
+            if line.ends_with("exec-special") {
+                exec_line = Some(line.to_string());
+            } else if line.ends_with("plain-special") {
+                plain_line = Some(line.to_string());
+            }
+        }
+
+        assert_eq!(exec_line.expect("exec entry"), expected_exec);
+        assert_eq!(plain_line.expect("plain entry"), expected_plain);
     }
 
     #[test]
