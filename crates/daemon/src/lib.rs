@@ -147,6 +147,7 @@ use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -158,6 +159,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
@@ -210,11 +213,12 @@ const HELP_TEXT: &str = concat!(
     "oc-rsyncd 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsyncd [--help] [--version] [ARGS...]\n",
+    "Usage: oc-rsyncd [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
     "\n",
     "Daemon mode is under active development. This build recognises:\n",
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
+    "  --delegate-system-rsync  Launch the system rsync daemon with the supplied arguments.\n",
     "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
     "  --ipv4             Restrict the listener to IPv4 sockets.\n",
     "  --ipv6             Restrict the listener to IPv6 sockets (defaults to ::1 when no bind address is provided).\n",
@@ -1768,6 +1772,7 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
 struct ParsedArgs {
     show_help: bool,
     show_version: bool,
+    delegate_system_rsync: bool,
     remainder: Vec<OsString>,
 }
 
@@ -1787,6 +1792,12 @@ fn clap_command() -> Command {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("delegate-system-rsync")
+                .long("delegate-system-rsync")
+                .help("Launch the system rsync daemon with the supplied arguments.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -1814,6 +1825,7 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
+    let delegate_system_rsync = matches.get_flag("delegate-system-rsync");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -1822,6 +1834,7 @@ where
     Ok(ParsedArgs {
         show_help,
         show_version,
+        delegate_system_rsync,
         remainder,
     })
 }
@@ -2735,6 +2748,10 @@ where
         return 0;
     }
 
+    if parsed.delegate_system_rsync {
+        return run_delegate_mode(parsed.remainder.as_slice(), stderr);
+    }
+
     let config = DaemonConfig::builder().arguments(parsed.remainder).build();
 
     match run_daemon(config) {
@@ -2755,6 +2772,85 @@ pub fn exit_code_from(status: i32) -> std::process::ExitCode {
     std::process::ExitCode::from(clamped as u8)
 }
 
+fn run_delegate_mode<Err>(args: &[OsString], stderr: &mut MessageSink<Err>) -> i32
+where
+    Err: Write,
+{
+    let binary = env::var_os("OC_RSYNC_FALLBACK")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("rsync"));
+
+    let mut command = ProcessCommand::new(&binary);
+    command.arg("--daemon");
+    command.arg("--no-detach");
+    command.args(args);
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "failed to launch system rsync daemon '{}': {}",
+                    Path::new(&binary).display(),
+                    error
+                )
+            )
+            .with_role(Role::Daemon);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to launch system rsync daemon '{}': {}",
+                    Path::new(&binary).display(),
+                    error
+                );
+            }
+            return 1;
+        }
+    };
+
+    match child.wait() {
+        Ok(status) => {
+            if status.success() {
+                0
+            } else {
+                let code = status.code().unwrap_or(MAX_EXIT_CODE);
+                let message = rsync_error!(
+                    code,
+                    format!("system rsync daemon exited with status {}", status)
+                )
+                .with_role(Role::Daemon);
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(
+                        stderr.writer_mut(),
+                        "system rsync daemon exited with status {}",
+                        status
+                    );
+                }
+                code
+            }
+        }
+        Err(error) => {
+            let message = rsync_error!(
+                1,
+                format!("failed to wait for system rsync daemon: {}", error)
+            )
+            .with_role(Role::Daemon);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "failed to wait for system rsync daemon: {}",
+                    error
+                );
+            }
+            1
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2764,10 +2860,14 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
     use std::num::NonZeroU64;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn base_module(name: &str) -> ModuleDefinition {
         ModuleDefinition {
@@ -2788,6 +2888,49 @@ mod tests {
             listable: true,
             use_chroot: true,
         }
+    }
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl EnvGuard {
+        fn set(key: &'static str, value: &OsStr) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, contents: &str) {
+        std::fs::write(path, contents).expect("write script");
+        let mut permissions = std::fs::metadata(path)
+            .expect("script metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(path, permissions).expect("set script permissions");
     }
 
     #[test]
@@ -2889,6 +3032,51 @@ mod tests {
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         assert!(!module.permits(peer, Some("bad.example.com")));
         assert!(module.permits(peer, Some("good.example.com")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_invokes_fallback_binary() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--delegate-system-rsync"),
+            OsStr::new("--config"),
+            OsStr::new("/etc/rsyncd.conf"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let recorded = fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(recorded.contains("--daemon"));
+        assert!(recorded.contains("--no-detach"));
+        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_propagates_exit_code() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        write_executable_script(&script_path, "#!/bin/sh\nexit 7\n");
+        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--delegate-system-rsync"),
+        ]);
+
+        assert_eq!(code, 7);
+        let stderr_str = String::from_utf8_lossy(&stderr);
+        assert!(stderr_str.contains("system rsync daemon exited"));
     }
 
     #[test]
