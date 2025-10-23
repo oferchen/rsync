@@ -211,6 +211,7 @@ enum OutFormatToken {
 #[derive(Clone, Copy, Debug)]
 enum OutFormatPlaceholder {
     FileName,
+    FileNameWithSymlinkTarget,
     FullPath,
     FileLength,
     BytesWritten,
@@ -249,6 +250,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             literal.clear();
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FileName));
+                    }
+                    'N' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::FileNameWithSymlinkTarget,
+                        ));
                     }
                     'f' => {
                         if !literal.is_empty() {
@@ -392,12 +402,26 @@ impl OutFormat {
             match token {
                 OutFormatToken::Literal(text) => buffer.push_str(text),
                 OutFormatToken::Placeholder(placeholder) => match placeholder {
-                    OutFormatPlaceholder::FileName | OutFormatPlaceholder::FullPath => {
+                    OutFormatPlaceholder::FileName
+                    | OutFormatPlaceholder::FileNameWithSymlinkTarget
+                    | OutFormatPlaceholder::FullPath => {
                         append_rendered_path(
                             &mut buffer,
                             event,
-                            matches!(placeholder, OutFormatPlaceholder::FileName),
+                            matches!(
+                                placeholder,
+                                OutFormatPlaceholder::FileName
+                                    | OutFormatPlaceholder::FileNameWithSymlinkTarget
+                            ),
                         );
+                        if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget)
+                            && let Some(target) = event
+                                .metadata()
+                                .and_then(ClientEntryMetadata::symlink_target)
+                        {
+                            buffer.push_str(" -> ");
+                            buffer.push_str(&target.to_string_lossy());
+                        }
                     }
                     OutFormatPlaceholder::FileLength => {
                         let length = event
@@ -5301,7 +5325,7 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %p %U %G %t %%"))
+        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %N %p %U %G %t %%"))
             .expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
@@ -7994,6 +8018,48 @@ exit 0
             .expect("render %L");
 
         assert_eq!(output, b" -> file.txt\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn out_format_renders_combined_name_and_target_placeholder() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        fs::create_dir(&source_dir).expect("create src dir");
+        let file = source_dir.join("file.txt");
+        fs::write(&file, b"data").expect("write file");
+        let link_path = source_dir.join("link.txt");
+        symlink("file.txt", &link_path).expect("create symlink");
+
+        let dest_dir = tmp.path().join("dst");
+        fs::create_dir(&dest_dir).expect("create dst dir");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source_dir.as_os_str().to_os_string(),
+                dest_dir.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| event.relative_path().to_string_lossy().contains("link.txt"))
+            .expect("symlink event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%N"))
+            .expect("parse %N")
+            .render(event, &mut output)
+            .expect("render %N");
+
+        assert_eq!(output, b"src/link.txt -> file.txt\n");
     }
 
     #[test]
