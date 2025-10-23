@@ -219,6 +219,10 @@ enum OutFormatPlaceholder {
     ModifyTime,
     PermissionString,
     CurrentTime,
+    SymlinkTarget,
+    OctalPermissions,
+    OwnerUid,
+    OwnerGid,
 }
 
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
@@ -303,6 +307,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             OutFormatPlaceholder::PermissionString,
                         ));
                     }
+                    'L' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::SymlinkTarget,
+                        ));
+                    }
                     't' => {
                         if !literal.is_empty() {
                             tokens.push(OutFormatToken::Literal(literal.clone()));
@@ -311,6 +324,29 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::CurrentTime,
                         ));
+                    }
+                    'p' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::OctalPermissions,
+                        ));
+                    }
+                    'U' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerUid));
+                    }
+                    'G' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerGid));
                     }
                     other => {
                         return Err(rsync_error!(
@@ -383,8 +419,36 @@ impl OutFormat {
                     OutFormatPlaceholder::PermissionString => {
                         buffer.push_str(&format_out_format_permissions(event.metadata()));
                     }
+                    OutFormatPlaceholder::SymlinkTarget => {
+                        if let Some(target) = event
+                            .metadata()
+                            .and_then(ClientEntryMetadata::symlink_target)
+                        {
+                            buffer.push_str(" -> ");
+                            buffer.push_str(&target.to_string_lossy());
+                        }
+                    }
                     OutFormatPlaceholder::CurrentTime => {
                         buffer.push_str(&format_current_timestamp());
+                    }
+                    OutFormatPlaceholder::OctalPermissions => {
+                        buffer.push_str(&format_out_format_octal_permissions(event.metadata()));
+                    }
+                    OutFormatPlaceholder::OwnerUid => {
+                        let uid = event
+                            .metadata()
+                            .and_then(ClientEntryMetadata::uid)
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "0".to_string());
+                        buffer.push_str(&uid);
+                    }
+                    OutFormatPlaceholder::OwnerGid => {
+                        let gid = event
+                            .metadata()
+                            .and_then(ClientEntryMetadata::gid)
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "0".to_string());
+                        buffer.push_str(&gid);
                     }
                 },
             }
@@ -447,6 +511,13 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
             perms
         })
         .unwrap_or_else(|| "---------".to_string())
+}
+
+fn format_out_format_octal_permissions(metadata: Option<&ClientEntryMetadata>) -> String {
+    metadata
+        .and_then(|meta| meta.mode())
+        .map(|mode| format!("{:04o}", mode & 0o7777))
+        .unwrap_or_else(|| "0000".to_string())
 }
 
 fn format_current_timestamp() -> String {
@@ -5215,8 +5286,8 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format =
-            parse_out_format(OsStr::new("%f %b %c %l %o %M %B %t %%")).expect("parse out-format");
+        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %p %U %G %t %%"))
+            .expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
 
@@ -5228,8 +5299,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn out_format_renders_permission_string() {
+    fn out_format_renders_permission_and_identity_placeholders() {
         use std::fs;
+        use std::os::unix::fs::MetadataExt;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
 
@@ -5240,6 +5312,9 @@ mod tests {
         fs::create_dir(&dst_dir).expect("create dst");
         let source = src_dir.join("script.sh");
         fs::write(&source, b"echo ok\n").expect("write source");
+
+        let expected_uid = fs::metadata(&source).expect("source metadata").uid();
+        let expected_gid = fs::metadata(&source).expect("source metadata").gid();
 
         let mut permissions = fs::metadata(&source)
             .expect("source metadata")
@@ -5268,13 +5343,33 @@ mod tests {
             })
             .expect("event present");
 
-        let format = parse_out_format(OsStr::new("%B")).expect("parse out-format");
         let mut output = Vec::new();
-        format
+        parse_out_format(OsStr::new("%B"))
+            .expect("parse out-format")
             .render(event, &mut output)
-            .expect("render out-format");
-
+            .expect("render %B");
         assert_eq!(output, b"rwxr-xr-x\n");
+
+        output.clear();
+        parse_out_format(OsStr::new("%p"))
+            .expect("parse %p")
+            .render(event, &mut output)
+            .expect("render %p");
+        assert_eq!(output, b"0755\n");
+
+        output.clear();
+        parse_out_format(OsStr::new("%U"))
+            .expect("parse %U")
+            .render(event, &mut output)
+            .expect("render %U");
+        assert_eq!(output, format!("{expected_uid}\n").as_bytes());
+
+        output.clear();
+        parse_out_format(OsStr::new("%G"))
+            .expect("parse %G")
+            .render(event, &mut output)
+            .expect("render %G");
+        assert_eq!(output, format!("{expected_gid}\n").as_bytes());
     }
 
     #[test]
@@ -7842,6 +7937,48 @@ exit 0
         assert!(stderr.is_empty());
         let rendered = String::from_utf8(stdout).expect("utf8 stdout");
         assert!(rendered.contains("link.txt -> file.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn out_format_renders_symlink_target_placeholder() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        fs::create_dir(&source_dir).expect("create src dir");
+        let file = source_dir.join("file.txt");
+        fs::write(&file, b"data").expect("write file");
+        let link_path = source_dir.join("link.txt");
+        symlink("file.txt", &link_path).expect("create symlink");
+
+        let dest_dir = tmp.path().join("dst");
+        fs::create_dir(&dest_dir).expect("create dst dir");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source_dir.as_os_str().to_os_string(),
+                dest_dir.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| event.relative_path().to_string_lossy().contains("link.txt"))
+            .expect("symlink event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%L"))
+            .expect("parse %L")
+            .render(event, &mut output)
+            .expect("render %L");
+
+        assert_eq!(output, b" -> file.txt\n");
     }
 
     #[test]
