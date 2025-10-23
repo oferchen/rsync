@@ -250,6 +250,7 @@ pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    delete_after: bool,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
@@ -290,6 +291,7 @@ impl Default for ClientConfig {
             transfer_args: Vec::new(),
             dry_run: false,
             delete: false,
+            delete_after: false,
             delete_excluded: false,
             remove_source_files: false,
             bandwidth_limit: None,
@@ -378,6 +380,13 @@ impl ClientConfig {
     #[doc(alias = "--delete")]
     pub const fn delete(&self) -> bool {
         self.delete
+    }
+
+    /// Returns whether extraneous entries should be removed after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delete-after")]
+    pub const fn delete_after(&self) -> bool {
+        self.delete_after
     }
 
     /// Returns whether excluded destination entries should also be deleted.
@@ -597,6 +606,7 @@ pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
     dry_run: bool,
     delete: bool,
+    delete_after: bool,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
@@ -665,6 +675,17 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete = delete;
+        self
+    }
+
+    /// Enables deletion of extraneous entries after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delete-after")]
+    pub const fn delete_after(mut self, delete_after: bool) -> Self {
+        if delete_after {
+            self.delete = true;
+        }
+        self.delete_after = delete_after;
         self
     }
 
@@ -940,6 +961,7 @@ impl ClientConfigBuilder {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
             delete: self.delete,
+            delete_after: self.delete_after,
             delete_excluded: self.delete_excluded,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
@@ -1798,7 +1820,8 @@ pub fn run_client_with_observer(
 
     let mut options = {
         let options = LocalCopyOptions::default()
-            .delete(config.delete() || config.delete_excluded())
+            .delete(config.delete() || config.delete_excluded() || config.delete_after())
+            .delete_after(config.delete_after())
             .delete_excluded(config.delete_excluded())
             .remove_source_files(config.remove_source_files())
             .bandwidth_limit(
@@ -1945,6 +1968,17 @@ mod tests {
             .build();
 
         assert!(config.delete());
+    }
+
+    #[test]
+    fn builder_enables_delete_after() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete_after(true)
+            .build();
+
+        assert!(config.delete());
+        assert!(config.delete_after());
     }
 
     #[test]

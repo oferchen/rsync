@@ -128,6 +128,7 @@ const HELP_TEXT: &str = concat!(
     "      --list-only  List files without performing a transfer.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "      --delete-after  Remove destination files after transfers complete.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
@@ -195,7 +196,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -470,6 +471,7 @@ struct ParsedArgs {
     list_only: bool,
     archive: bool,
     delete: bool,
+    delete_after: bool,
     delete_excluded: bool,
     checksum: bool,
     size_only: bool,
@@ -771,6 +773,12 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("delete-after")
+                .long("delete-after")
+                .help("Remove destination files after transfers complete.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("delete-excluded")
                 .long("delete-excluded")
                 .help("Remove excluded destination files during deletion sweeps.")
@@ -1031,8 +1039,9 @@ where
     }
     let archive = matches.get_flag("archive");
     let mut delete = matches.get_flag("delete");
+    let delete_after = matches.get_flag("delete-after");
     let delete_excluded = matches.get_flag("delete-excluded");
-    if delete_excluded {
+    if delete_after || delete_excluded {
         delete = true;
     }
     let compress_flag = matches.get_flag("compress");
@@ -1211,6 +1220,7 @@ where
         list_only,
         archive,
         delete,
+        delete_after,
         delete_excluded,
         checksum,
         size_only,
@@ -1371,6 +1381,7 @@ where
         list_only,
         archive,
         delete,
+        delete_after,
         delete_excluded,
         checksum,
         size_only,
@@ -1668,6 +1679,7 @@ where
             list_only,
             archive,
             delete,
+            delete_after,
             delete_excluded,
             checksum,
             size_only,
@@ -1766,6 +1778,7 @@ where
         .dry_run(dry_run)
         .list_only(list_only)
         .delete(delete)
+        .delete_after(delete_after)
         .delete_excluded(delete_excluded)
         .bandwidth_limit(bandwidth_limit)
         .compression_setting(compression_setting)
@@ -3419,6 +3432,7 @@ struct RemoteFallbackArgs {
     list_only: bool,
     archive: bool,
     delete: bool,
+    delete_after: bool,
     delete_excluded: bool,
     checksum: bool,
     size_only: bool,
@@ -3491,6 +3505,7 @@ where
         list_only,
         archive,
         delete,
+        delete_after,
         delete_excluded,
         checksum,
         size_only,
@@ -3549,6 +3564,9 @@ where
     }
     if delete {
         command_args.push(OsString::from("--delete"));
+    }
+    if delete_after {
+        command_args.push(OsString::from("--delete-after"));
     }
     if delete_excluded {
         command_args.push(OsString::from("--delete-excluded"));
@@ -7296,6 +7314,21 @@ mod tests {
     }
 
     #[test]
+    fn delete_after_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-after"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert!(parsed.delete);
+        assert!(parsed.delete_after);
+        assert!(!parsed.delete_excluded);
+    }
+
+    #[test]
     fn delete_excluded_flag_implies_delete() {
         let parsed = super::parse_args([
             OsString::from("oc-rsync"),
@@ -7840,6 +7873,43 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--implied-dirs"));
         assert!(!args.contains(&"--no-implied-dirs"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_delete_after_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-after"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--delete"));
+        assert!(args.contains(&"--delete-after"));
     }
 
     #[cfg(unix)]
