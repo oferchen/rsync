@@ -290,10 +290,30 @@ impl DirMergeOptions {
         !matches!(self.sender_side, SideState::Disabled)
     }
 
+    /// Optional override for the sender side when explicitly requested by modifiers.
+    #[must_use]
+    const fn sender_side_override(&self) -> Option<bool> {
+        match self.sender_side {
+            SideState::Unspecified => None,
+            SideState::Enabled => Some(true),
+            SideState::Disabled => Some(false),
+        }
+    }
+
     /// Reports whether loaded rules should apply to the receiving side.
     #[must_use]
     pub const fn applies_to_receiver(&self) -> bool {
         !matches!(self.receiver_side, SideState::Disabled)
+    }
+
+    /// Optional override for the receiver side when explicitly requested by modifiers.
+    #[must_use]
+    const fn receiver_side_override(&self) -> Option<bool> {
+        match self.receiver_side {
+            SideState::Unspecified => None,
+            SideState::Enabled => Some(true),
+            SideState::Disabled => Some(false),
+        }
     }
 
     /// Reports whether patterns should be anchored to the transfer root.
@@ -2886,7 +2906,16 @@ fn apply_dir_merge_rule_defaults(mut rule: FilterRule, options: &DirMergeOptions
     if options.anchor_root_enabled() {
         rule = rule.anchor_to_root();
     }
-    rule.with_sides(options.applies_to_sender(), options.applies_to_receiver())
+
+    if let Some(sender) = options.sender_side_override() {
+        rule = rule.with_sender(sender);
+    }
+
+    if let Some(receiver) = options.receiver_side_override() {
+        rule = rule.with_receiver(receiver);
+    }
+
+    rule
 }
 
 fn load_dir_merge_rules_recursive(
@@ -3045,6 +3074,7 @@ fn load_dir_merge_rules_recursive(
     Ok(rules)
 }
 
+#[derive(Debug)]
 enum ParsedFilterDirective {
     Rule(FilterRule),
     Merge(PathBuf),
@@ -3122,11 +3152,19 @@ fn parse_filter_directive_line(
     }
 
     if keyword.eq_ignore_ascii_case("show") {
-        return handle_keyword(remainder, FilterRule::include);
+        if remainder.is_empty() {
+            return Err(FilterParseError::new("filter directive missing pattern"));
+        }
+        let rule = FilterRule::include(remainder.to_string()).with_receiver(false);
+        return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
     if keyword.eq_ignore_ascii_case("hide") {
-        return handle_keyword(remainder, FilterRule::exclude);
+        if remainder.is_empty() {
+            return Err(FilterParseError::new("filter directive missing pattern"));
+        }
+        let rule = FilterRule::exclude(remainder.to_string()).with_receiver(false);
+        return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
     if keyword.eq_ignore_ascii_case("protect") {
@@ -4346,7 +4384,7 @@ fn copy_file(
 
     let start = Instant::now();
 
-    let compressed = context.copy_file_contents(
+    let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
         &mut buffer,
@@ -4357,13 +4395,42 @@ fn copy_file(
         record_path.as_path(),
         file_size,
         start,
-    )?;
+    );
 
     drop(writer);
 
-    if let Some(guard) = guard {
-        guard.commit()?;
-    }
+    let compressed = match copy_result {
+        Ok(compressed) => {
+            if let Err(timeout_error) = context.enforce_timeout() {
+                if let Some(guard) = guard.take() {
+                    guard.discard();
+                }
+
+                if existing_metadata.is_none() {
+                    remove_incomplete_destination(destination);
+                }
+
+                return Err(timeout_error);
+            }
+
+            if let Some(guard) = guard.take() {
+                guard.commit()?;
+            }
+
+            compressed
+        }
+        Err(error) => {
+            if let Some(guard) = guard.take() {
+                guard.discard();
+            }
+
+            if existing_metadata.is_none() {
+                remove_incomplete_destination(destination);
+            }
+
+            return Err(error);
+        }
+    };
 
     context.register_created_path(
         destination,
@@ -4388,6 +4455,15 @@ fn copy_file(
         elapsed,
         Some(LocalCopyMetadata::from_metadata(metadata, None)),
     ));
+
+    if let Err(timeout_error) = context.enforce_timeout() {
+        if existing_metadata.is_none() {
+            remove_incomplete_destination(destination);
+        }
+
+        return Err(timeout_error);
+    }
+
     remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
 }
@@ -4503,6 +4579,21 @@ impl DestinationWriteGuard {
         Ok(())
     }
 
+    fn discard(mut self) {
+        if self.preserve_on_error {
+            self.committed = true;
+            return;
+        }
+
+        if let Err(error) = fs::remove_file(&self.temp_path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                // Best-effort cleanup: the file may have been removed concurrently.
+            }
+        }
+
+        self.committed = true;
+    }
+
     fn finalise_action(&self) -> &'static str {
         if self.preserve_on_error {
             "finalise partial file"
@@ -4516,6 +4607,14 @@ impl Drop for DestinationWriteGuard {
     fn drop(&mut self) {
         if !self.committed && !self.preserve_on_error {
             let _ = fs::remove_file(&self.temp_path);
+        }
+    }
+}
+
+fn remove_incomplete_destination(destination: &Path) {
+    if let Err(error) = fs::remove_file(destination) {
+        if error.kind() != io::ErrorKind::NotFound {
+            // Preserve the original error from the transfer attempt.
         }
     }
 }
@@ -5580,6 +5679,53 @@ mod tests {
 
         let reenabled = disabled.implied_dirs(true);
         assert!(reenabled.implied_dirs_enabled());
+    }
+
+    #[test]
+    fn parse_filter_directive_show_is_sender_only() {
+        let rule = match parse_filter_directive_line("show images/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_hide_is_sender_only() {
+        let rule = match parse_filter_directive_line("hide *.tmp").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn dir_merge_defaults_preserve_rule_side_overrides() {
+        let options = DirMergeOptions::default();
+        let rule = FilterRule::exclude("*.tmp").with_receiver(false);
+        let adjusted = apply_dir_merge_rule_defaults(rule, &options);
+
+        assert!(adjusted.applies_to_sender());
+        assert!(!adjusted.applies_to_receiver());
+    }
+
+    #[test]
+    fn dir_merge_modifiers_override_rule_side_overrides() {
+        let sender_only_options = DirMergeOptions::default().sender_modifier();
+        let receiver_only_options = DirMergeOptions::default().receiver_modifier();
+
+        let rule = FilterRule::include("logs/**").with_receiver(false);
+        let sender_adjusted = apply_dir_merge_rule_defaults(rule.clone(), &sender_only_options);
+        assert!(sender_adjusted.applies_to_sender());
+        assert!(!sender_adjusted.applies_to_receiver());
+
+        let receiver_adjusted = apply_dir_merge_rule_defaults(rule, &receiver_only_options);
+        assert!(!receiver_adjusted.applies_to_sender());
+        assert!(receiver_adjusted.applies_to_receiver());
     }
 
     #[test]
