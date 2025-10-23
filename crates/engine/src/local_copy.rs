@@ -1114,10 +1114,11 @@ pub struct LocalCopyMetadata {
     uid: Option<u32>,
     gid: Option<u32>,
     nlink: Option<u64>,
+    symlink_target: Option<PathBuf>,
 }
 
 impl LocalCopyMetadata {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
+    fn from_metadata(metadata: &fs::Metadata, symlink_target: Option<PathBuf>) -> Self {
         let file_type = metadata.file_type();
         let kind = LocalCopyFileKind::from_file_type(&file_type);
         let len = metadata.len();
@@ -1137,6 +1138,12 @@ impl LocalCopyMetadata {
         #[cfg(not(unix))]
         let (mode, uid, gid, nlink) = (None, None, None, None);
 
+        let target = if matches!(kind, LocalCopyFileKind::Symlink) {
+            symlink_target
+        } else {
+            None
+        };
+
         Self {
             kind,
             len,
@@ -1145,6 +1152,7 @@ impl LocalCopyMetadata {
             uid,
             gid,
             nlink,
+            symlink_target: target,
         }
     }
 
@@ -1194,6 +1202,12 @@ impl LocalCopyMetadata {
     #[must_use]
     pub const fn nlink(&self) -> Option<u64> {
         self.nlink
+    }
+
+    /// Returns the recorded symbolic link target when the metadata describes a symlink.
+    #[must_use]
+    pub fn symlink_target(&self) -> Option<&Path> {
+        self.symlink_target.as_deref()
     }
 }
 
@@ -3771,7 +3785,7 @@ fn copy_directory_recursive(
                 LocalCopyAction::DirectoryCreated,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
         }
     }
@@ -3935,7 +3949,7 @@ fn copy_file(
                         LocalCopyAction::SkippedNewerDestination,
                         0,
                         Duration::default(),
-                        Some(LocalCopyMetadata::from_metadata(metadata)),
+                        Some(LocalCopyMetadata::from_metadata(metadata, None)),
                     ));
                     return Ok(());
                 }
@@ -3949,7 +3963,7 @@ fn copy_file(
                 LocalCopyAction::SkippedExisting,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
             return Ok(());
         }
@@ -3968,7 +3982,7 @@ fn copy_file(
             LocalCopyAction::DataCopied,
             file_size,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
@@ -4004,7 +4018,7 @@ fn copy_file(
                     LocalCopyAction::SkippedNewerDestination,
                     0,
                     Duration::default(),
-                    Some(LocalCopyMetadata::from_metadata(metadata)),
+                    Some(LocalCopyMetadata::from_metadata(metadata, None)),
                 ));
                 return Ok(());
             }
@@ -4019,7 +4033,7 @@ fn copy_file(
             LocalCopyAction::SkippedExisting,
             0,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
         return Ok(());
     }
@@ -4062,7 +4076,7 @@ fn copy_file(
             LocalCopyAction::HardLink,
             0,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
@@ -4089,7 +4103,7 @@ fn copy_file(
                 LocalCopyAction::MetadataReused,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
             return Ok(());
         }
@@ -4147,7 +4161,7 @@ fn copy_file(
         LocalCopyAction::DataCopied,
         file_size,
         elapsed,
-        Some(LocalCopyMetadata::from_metadata(metadata)),
+        Some(LocalCopyMetadata::from_metadata(metadata, None)),
     ));
     remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
@@ -4499,7 +4513,7 @@ fn copy_fifo(
                 LocalCopyAction::FifoCopied,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4544,7 +4558,7 @@ fn copy_fifo(
             LocalCopyAction::FifoCopied,
             0,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4620,7 +4634,7 @@ fn copy_device(
                 LocalCopyAction::DeviceCopied,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(metadata, None)),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4665,7 +4679,7 @@ fn copy_device(
             LocalCopyAction::DeviceCopied,
             0,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(metadata, None)),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4886,7 +4900,10 @@ fn copy_symlink(
                 LocalCopyAction::SymlinkCopied,
                 0,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata)),
+                Some(LocalCopyMetadata::from_metadata(
+                    metadata,
+                    Some(target.clone()),
+                )),
             ));
         }
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -4909,7 +4926,10 @@ fn copy_symlink(
             LocalCopyAction::SymlinkCopied,
             0,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata)),
+            Some(LocalCopyMetadata::from_metadata(
+                metadata,
+                Some(target.clone()),
+            )),
         ));
     }
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;

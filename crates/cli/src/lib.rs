@@ -2147,6 +2147,12 @@ fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> 
             if metadata.kind().is_directory() && !rendered.ends_with('/') {
                 rendered.push('/');
             }
+            if metadata.kind().is_symlink() {
+                if let Some(target) = metadata.symlink_target() {
+                    rendered.push_str(" -> ");
+                    rendered.push_str(&target.to_string_lossy());
+                }
+            }
 
             writeln!(
                 stdout,
@@ -2470,8 +2476,17 @@ fn emit_verbose<W: Write + ?Sized>(
             _ => {}
         }
 
+        let mut rendered = event.relative_path().to_string_lossy().into_owned();
+        if let Some(metadata) = event.metadata()
+            && matches!(event.kind(), ClientEventKind::SymlinkCopied)
+            && let Some(target) = metadata.symlink_target()
+        {
+            rendered.push_str(" -> ");
+            rendered.push_str(&target.to_string_lossy());
+        }
+
         if verbosity == 1 {
-            writeln!(stdout, "{}", event.relative_path().display())?;
+            writeln!(stdout, "{rendered}")?;
             continue;
         }
 
@@ -2481,20 +2496,14 @@ fn emit_verbose<W: Write + ?Sized>(
             if let Some(rate) = compute_rate(bytes, event.elapsed()) {
                 writeln!(
                     stdout,
-                    "{descriptor}: {} ({} bytes, {rate:.1} B/s)",
-                    event.relative_path().display(),
+                    "{descriptor}: {rendered} ({} bytes, {rate:.1} B/s)",
                     bytes
                 )?;
             } else {
-                writeln!(
-                    stdout,
-                    "{descriptor}: {} ({} bytes)",
-                    event.relative_path().display(),
-                    bytes
-                )?;
+                writeln!(stdout, "{descriptor}: {rendered} ({} bytes)", bytes)?;
             }
         } else {
-            writeln!(stdout, "{descriptor}: {}", event.relative_path().display())?;
+            writeln!(stdout, "{descriptor}: {rendered}")?;
         }
     }
     Ok(())
@@ -8108,6 +8117,13 @@ exit 0
         fs::create_dir(&source_dir).expect("create src dir");
         let source_file = source_dir.join("file.txt");
         fs::write(&source_file, b"contents").expect("write source file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let link_path = source_dir.join("link.txt");
+            symlink("file.txt", &link_path).expect("create symlink");
+        }
         let destination_dir = tmp.path().join("dest");
         fs::create_dir(&destination_dir).expect("create dest dir");
 
@@ -8122,6 +8138,10 @@ exit 0
         assert!(stderr.is_empty());
         let rendered = String::from_utf8(stdout).expect("utf8 stdout");
         assert!(rendered.contains("file.txt"));
+        #[cfg(unix)]
+        {
+            assert!(rendered.contains("link.txt -> file.txt"));
+        }
         assert!(!destination_dir.join("file.txt").exists());
     }
 
@@ -8146,6 +8166,37 @@ exit 0
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
         assert!(!destination.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verbose_output_includes_symlink_target() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        fs::create_dir(&source_dir).expect("create src dir");
+        let source_file = source_dir.join("file.txt");
+        fs::write(&source_file, b"contents").expect("write source file");
+        let link_path = source_dir.join("link.txt");
+        symlink("file.txt", &link_path).expect("create symlink");
+
+        let destination_dir = tmp.path().join("dest");
+        fs::create_dir(&destination_dir).expect("create dest dir");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-av"),
+            source_dir.clone().into_os_string(),
+            destination_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+        assert!(rendered.contains("link.txt -> file.txt"));
     }
 
     #[test]
