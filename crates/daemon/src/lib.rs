@@ -154,9 +154,12 @@ use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -205,6 +208,9 @@ const MODULE_UNAVAILABLE_PAYLOAD: &str =
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
+/// Error payload returned when a module reaches its connection cap.
+const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
+    "@ERROR: max connections ({limit}) reached -- try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 
@@ -254,6 +260,7 @@ struct ModuleDefinition {
     timeout: Option<NonZeroU64>,
     listable: bool,
     use_chroot: bool,
+    max_connections: Option<NonZeroU32>,
 }
 
 impl ModuleDefinition {
@@ -287,6 +294,10 @@ impl ModuleDefinition {
 
     fn requires_authentication(&self) -> bool {
         !self.auth_users.is_empty()
+    }
+
+    fn max_connections(&self) -> Option<NonZeroU32> {
+        self.max_connections
     }
 
     #[cfg(test)]
@@ -341,6 +352,88 @@ impl ModuleDefinition {
     #[cfg(test)]
     fn use_chroot(&self) -> bool {
         self.use_chroot
+    }
+}
+
+struct ModuleRuntime {
+    definition: ModuleDefinition,
+    active_connections: AtomicU32,
+}
+
+impl ModuleRuntime {
+    fn new(definition: ModuleDefinition) -> Self {
+        Self {
+            definition,
+            active_connections: AtomicU32::new(0),
+        }
+    }
+
+    fn try_acquire_connection(&self) -> Result<ModuleConnectionGuard<'_>, NonZeroU32> {
+        if let Some(limit) = self.definition.max_connections() {
+            let limit_value = limit.get();
+            let mut current = self.active_connections.load(Ordering::Acquire);
+            loop {
+                if current >= limit_value {
+                    return Err(limit);
+                }
+
+                match self.active_connections.compare_exchange(
+                    current,
+                    current + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return Ok(ModuleConnectionGuard::limited(self)),
+                    Err(updated) => current = updated,
+                }
+            }
+        } else {
+            Ok(ModuleConnectionGuard::unlimited())
+        }
+    }
+
+    fn release(&self) {
+        if self.definition.max_connections().is_some() {
+            self.active_connections.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+impl From<ModuleDefinition> for ModuleRuntime {
+    fn from(definition: ModuleDefinition) -> Self {
+        Self::new(definition)
+    }
+}
+
+impl std::ops::Deref for ModuleRuntime {
+    type Target = ModuleDefinition;
+
+    fn deref(&self) -> &Self::Target {
+        &self.definition
+    }
+}
+
+struct ModuleConnectionGuard<'a> {
+    module: Option<&'a ModuleRuntime>,
+}
+
+impl<'a> ModuleConnectionGuard<'a> {
+    fn limited(module: &'a ModuleRuntime) -> Self {
+        Self {
+            module: Some(module),
+        }
+    }
+
+    const fn unlimited() -> Self {
+        Self { module: None }
+    }
+}
+
+impl<'a> Drop for ModuleConnectionGuard<'a> {
+    fn drop(&mut self) {
+        if let Some(module) = self.module.take() {
+            module.release();
+        }
     }
 }
 
@@ -874,6 +967,16 @@ fn parse_config_modules(path: &Path) -> Result<Vec<ModuleDefinition>, DaemonErro
                 })?;
                 builder.set_timeout(timeout, path, line_number)?;
             }
+            "max connections" => {
+                let max = parse_max_connections_directive(value).ok_or_else(|| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!("invalid max connections value '{value}'"),
+                    )
+                })?;
+                builder.set_max_connections(max, path, line_number)?;
+            }
             _ => {
                 // Unsupported directives are ignored for now.
             }
@@ -906,6 +1009,7 @@ struct ModuleDefinitionBuilder {
     timeout: Option<Option<NonZeroU64>>,
     listable: Option<bool>,
     use_chroot: Option<bool>,
+    max_connections: Option<Option<NonZeroU32>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -929,6 +1033,7 @@ impl ModuleDefinitionBuilder {
             timeout: None,
             listable: None,
             use_chroot: None,
+            max_connections: None,
         }
     }
 
@@ -1228,6 +1333,27 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_max_connections(
+        &mut self,
+        max: Option<NonZeroU32>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.max_connections.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'max connections' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.max_connections = Some(max);
+        Ok(())
+    }
+
     fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -1292,6 +1418,7 @@ impl ModuleDefinitionBuilder {
             timeout: self.timeout.unwrap_or(None),
             listable: self.listable.unwrap_or(true),
             use_chroot,
+            max_connections: self.max_connections.unwrap_or(None),
         })
     }
 }
@@ -1418,6 +1545,19 @@ fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
     } else {
         Some(NonZeroU64::new(seconds))
     }
+}
+
+fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed == "0" {
+        return Some(None);
+    }
+
+    trimmed.parse::<NonZeroU32>().ok().map(Some)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1858,7 +1998,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         ..
     } = options;
 
-    let modules = Arc::new(modules);
+    let modules: Arc<Vec<ModuleRuntime>> =
+        Arc::new(modules.into_iter().map(ModuleRuntime::from).collect());
     let motd_lines = Arc::new(motd_lines);
     let requested_addr = SocketAddr::new(bind_address, port);
     let listener =
@@ -1959,7 +2100,7 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
 fn handle_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
-    modules: &[ModuleDefinition],
+    modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
 ) -> io::Result<()> {
@@ -2029,7 +2170,7 @@ fn write_limited(
 fn handle_legacy_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
-    modules: &[ModuleDefinition],
+    modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
 ) -> io::Result<()> {
@@ -2172,7 +2313,7 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     Ok(Some(line))
 }
 
-fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleDefinition]) -> io::Result<()> {
+fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleRuntime]) -> io::Result<()> {
     for payload in advertised_capability_lines(modules) {
         let message = format_legacy_daemon_message(LegacyDaemonMessage::Capabilities {
             flags: payload.as_str(),
@@ -2187,7 +2328,7 @@ fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleDefinition]) 
     }
 }
 
-fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
+fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<String> {
     if modules.is_empty() {
         return Vec::new();
     }
@@ -2197,7 +2338,7 @@ fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
 
     if modules
         .iter()
-        .any(ModuleDefinition::requires_authentication)
+        .any(|module| module.requires_authentication())
     {
         features.push(String::from("authlist"));
     }
@@ -2208,7 +2349,7 @@ fn advertised_capability_lines(modules: &[ModuleDefinition]) -> Vec<String> {
 fn respond_with_module_list(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
-    modules: &[ModuleDefinition],
+    modules: &[ModuleRuntime],
     motd_lines: &[String],
     peer_ip: IpAddr,
 ) -> io::Result<()> {
@@ -2407,7 +2548,7 @@ fn apply_module_bandwidth_limit(
 fn respond_with_module_request(
     reader: &mut BufReader<TcpStream>,
     limiter: &mut Option<BandwidthLimiter>,
-    modules: &[ModuleDefinition],
+    modules: &[ModuleRuntime],
     request: &str,
     peer_ip: IpAddr,
     options: &[String],
@@ -2418,6 +2559,21 @@ fn respond_with_module_request(
         let mut hostname_cache: Option<Option<String>> = None;
         let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
         if module.permits(peer_ip, peer_host) {
+            let _connection_guard = match module.try_acquire_connection() {
+                Ok(guard) => guard,
+                Err(limit) => {
+                    let payload =
+                        MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, payload.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+                    write_limited(stream, limiter, exit.as_bytes())?;
+                    stream.flush()?;
+                    return Ok(());
+                }
+            };
+
             if let Some(refused) = refused_option(module, options) {
                 let payload = format!("@ERROR: The server is configured to refuse {}", refused);
                 let stream = reader.get_mut();
@@ -2577,6 +2733,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         timeout: None,
         listable: true,
         use_chroot: true,
+        max_connections: None,
     })
 }
 
@@ -2887,6 +3044,7 @@ mod tests {
             timeout: None,
             listable: true,
             use_chroot: true,
+            max_connections: None,
         }
     }
 
@@ -2940,7 +3098,7 @@ mod tests {
 
     #[test]
     fn advertised_capability_lines_report_modules_without_auth() {
-        let module = base_module("docs");
+        let module = ModuleRuntime::from(base_module("docs"));
 
         assert_eq!(
             advertised_capability_lines(&[module]),
@@ -2950,9 +3108,10 @@ mod tests {
 
     #[test]
     fn advertised_capability_lines_include_authlist_when_required() {
-        let mut module = base_module("secure");
-        module.auth_users.push(String::from("alice"));
-        module.secrets_file = Some(PathBuf::from("secrets.txt"));
+        let mut definition = base_module("secure");
+        definition.auth_users.push(String::from("alice"));
+        definition.secrets_file = Some(PathBuf::from("secrets.txt"));
+        let module = ModuleRuntime::from(definition);
 
         assert_eq!(
             advertised_capability_lines(&[module]),
@@ -2984,6 +3143,7 @@ mod tests {
             timeout: None,
             listable: true,
             use_chroot: true,
+            max_connections: None,
         }
     }
 
@@ -3537,6 +3697,53 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_loads_max_connections_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nmax connections = 7\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("config parses");
+
+        assert_eq!(options.modules[0].max_connections(), NonZeroU32::new(7));
+    }
+
+    #[test]
+    fn runtime_options_loads_unlimited_max_connections_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nmax connections = 0\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("config parses");
+
+        assert!(options.modules[0].max_connections().is_none());
+    }
+
+    #[test]
+    fn runtime_options_rejects_invalid_max_connections() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nmax connections = nope\n").expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("invalid max connections should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid max connections value")
+        );
+    }
+
+    #[test]
     fn runtime_options_rejects_duplicate_refuse_options_directives() {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
@@ -4037,6 +4244,149 @@ mod tests {
         assert_eq!(line, "@RSYNCD: EXIT\n");
 
         drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_enforces_module_connection_limit() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            fs::File::create(&config_path).expect("create config"),
+            "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\nmax connections = 1\n",
+            module_dir.display(),
+            secrets_path.display()
+        )
+        .expect("write config");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--max-sessions"),
+                OsString::from("2"),
+                OsString::from("--config"),
+                config_path.as_os_str().to_os_string(),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut first_stream = connect_with_retries(port);
+        let mut first_reader = BufReader::new(first_stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        first_reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        first_stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake");
+        first_stream.flush().expect("flush handshake");
+
+        line.clear();
+        first_reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        first_stream
+            .write_all(b"secure\n")
+            .expect("send module request");
+        first_stream.flush().expect("flush module");
+
+        line.clear();
+        first_reader
+            .read_line(&mut line)
+            .expect("capabilities for first client");
+        assert_eq!(line.trim_end(), "@RSYNCD: CAP modules authlist");
+
+        line.clear();
+        first_reader
+            .read_line(&mut line)
+            .expect("auth request for first client");
+        assert!(line.starts_with("@RSYNCD: AUTHREQD"));
+
+        let mut second_stream = connect_with_retries(port);
+        let mut second_reader = BufReader::new(second_stream.try_clone().expect("clone second"));
+
+        line.clear();
+        second_reader.read_line(&mut line).expect("second greeting");
+        assert_eq!(line, expected_greeting);
+
+        second_stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send second handshake");
+        second_stream.flush().expect("flush second handshake");
+
+        line.clear();
+        second_reader
+            .read_line(&mut line)
+            .expect("second handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        second_stream
+            .write_all(b"secure\n")
+            .expect("send second module");
+        second_stream.flush().expect("flush second module");
+
+        line.clear();
+        second_reader
+            .read_line(&mut line)
+            .expect("second capabilities");
+        assert_eq!(line.trim_end(), "@RSYNCD: CAP modules authlist");
+
+        line.clear();
+        second_reader.read_line(&mut line).expect("limit error");
+        assert_eq!(
+            line.trim_end(),
+            "@ERROR: max connections (1) reached -- try again later"
+        );
+
+        line.clear();
+        second_reader
+            .read_line(&mut line)
+            .expect("second exit message");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        first_stream
+            .write_all(b"\n")
+            .expect("send empty credentials to first client");
+        first_stream.flush().expect("flush first credentials");
+
+        line.clear();
+        first_reader
+            .read_line(&mut line)
+            .expect("first denial message");
+        assert!(line.starts_with("@ERROR: access denied"));
+
+        line.clear();
+        first_reader
+            .read_line(&mut line)
+            .expect("first exit message");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(second_reader);
+        drop(second_stream);
+        drop(first_reader);
+        drop(first_stream);
+
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
     }
