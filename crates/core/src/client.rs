@@ -184,6 +184,10 @@ impl Default for TransferTimeout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompressionSetting {
     /// Compression has been explicitly disabled (e.g. `--compress-level=0`).
+    ///
+    /// This is also the default when building a [`ClientConfig`], matching
+    /// upstream rsync's behaviour of leaving compression off unless the caller
+    /// explicitly enables it.
     Disabled,
     /// Compression is enabled with the provided [`CompressionLevel`].
     Level(CompressionLevel),
@@ -243,7 +247,7 @@ impl CompressionSetting {
 
 impl Default for CompressionSetting {
     fn default() -> Self {
-        Self::Level(CompressionLevel::Default)
+        Self::Disabled
     }
 }
 
@@ -849,6 +853,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        if compress {
+            if self.compression_setting.is_disabled() {
+                self.compression_setting = CompressionSetting::level(CompressionLevel::Default);
+            }
+        } else {
+            self.compression_setting = CompressionSetting::disabled();
+            self.compression_level = None;
+        }
         self
     }
 
@@ -857,6 +869,10 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_level(mut self, level: Option<CompressionLevel>) -> Self {
         self.compression_level = level;
+        if let Some(level) = level {
+            self.compression_setting = CompressionSetting::level(level);
+            self.compress = true;
+        }
         self
     }
 
@@ -865,6 +881,10 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_setting(mut self, setting: CompressionSetting) -> Self {
         self.compression_setting = setting;
+        self.compress = setting.is_enabled();
+        if !self.compress {
+            self.compression_level = None;
+        }
         self
     }
 
@@ -2746,6 +2766,45 @@ exit 42
             config.compression_setting(),
             CompressionSetting::level(CompressionLevel::Best)
         );
+    }
+
+    #[test]
+    fn builder_defaults_disable_compression() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!config.compress());
+        assert!(config.compression_setting().is_disabled());
+    }
+
+    #[test]
+    fn builder_enabling_compress_sets_default_level() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compress(true)
+            .build();
+
+        assert!(config.compress());
+        assert!(config.compression_setting().is_enabled());
+        assert_eq!(
+            config.compression_setting().level_or_default(),
+            CompressionLevel::Default
+        );
+    }
+
+    #[test]
+    fn builder_disabling_compress_clears_override() {
+        let level = NonZeroU8::new(5).unwrap();
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compression_level(Some(CompressionLevel::precise(level)))
+            .compress(false)
+            .build();
+
+        assert!(!config.compress());
+        assert!(config.compression_setting().is_disabled());
+        assert_eq!(config.compression_level(), None);
     }
 
     #[test]
