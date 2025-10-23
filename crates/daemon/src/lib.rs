@@ -76,7 +76,7 @@
 //! assert!(!stdout.is_empty());
 //! ```
 //!
-//! Launching the daemon binds a TCP listener (defaulting to `127.0.0.1:8730`),
+//! Launching the daemon binds a TCP listener (defaulting to `127.0.0.1:873`),
 //! accepts a legacy connection, and responds with an explanatory error.
 //!
 //! ```
@@ -190,7 +190,7 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 /// Default bind address when no CLI overrides are provided.
 const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 /// Default port used for the development daemon listener.
-const DEFAULT_PORT: u16 = 8730;
+const DEFAULT_PORT: u16 = 873;
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -218,7 +218,7 @@ const HELP_TEXT: &str = concat!(
     "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
     "  --ipv4             Restrict the listener to IPv4 sockets.\n",
     "  --ipv6             Restrict the listener to IPv6 sockets (defaults to ::1 when no bind address is provided).\n",
-    "  --port PORT         Listen on the supplied TCP port (default 8730).\n",
+    "  --port PORT         Listen on the supplied TCP port (default 873).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
     "  --config FILE      Load module definitions from FILE (rsyncd.conf subset).\n",
@@ -1753,7 +1753,7 @@ impl Error for DaemonError {}
 
 /// Runs the daemon orchestration using the provided configuration.
 ///
-/// The helper binds a TCP listener (defaulting to `127.0.0.1:8730`), accepts a
+/// The helper binds a TCP listener (defaulting to `127.0.0.1:873`), accepts a
 /// single connection, performs the legacy ASCII handshake, and replies with a
 /// deterministic `@ERROR` message explaining that module serving is not yet
 /// available. This behaviour gives higher layers a concrete negotiation target
