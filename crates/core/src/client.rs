@@ -3721,6 +3721,18 @@ exit 42
     }
 
     #[test]
+    fn module_list_request_requires_bracketed_ipv6_host() {
+        let operands = vec![OsString::from("fe80::1::")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("unbracketed IPv6 host should be rejected");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(error
+            .message()
+            .to_string()
+            .contains("IPv6 daemon addresses must be enclosed in brackets"));
+    }
+
+    #[test]
     fn run_module_list_collects_entries() {
         let responses = vec![
             "@RSYNCD: MOTD Welcome to the test daemon\n",
@@ -4511,7 +4523,7 @@ impl ModuleListRequest {
             return parse_rsync_url(rest).map(Some);
         }
 
-        if let Some((host_part, module_part)) = split_daemon_host_module(&text) {
+        if let Some((host_part, module_part)) = split_daemon_host_module(&text)? {
             if module_part.is_empty() {
                 let target = parse_host_port(host_part)?;
                 return Ok(Some(Self::new(target.address, target.username)));
@@ -4613,7 +4625,17 @@ fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
     })
 }
 
-fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
+fn split_daemon_host_module(input: &str) -> Result<Option<(&str, &str)>, ClientError> {
+    if !input.contains('[') {
+        let segments = input.split("::");
+        if segments.clone().count() > 2 {
+            return Err(daemon_error(
+                "IPv6 daemon addresses must be enclosed in brackets",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            ));
+        }
+    }
+
     let mut in_brackets = false;
     let mut previous_colon = None;
 
@@ -4632,8 +4654,17 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
                     && prev + 1 == idx
                 {
                     let host = &input[..prev];
+                    if !host.contains('[') {
+                        let colon_count = host.chars().filter(|&ch| ch == ':').count();
+                        if colon_count > 1 {
+                            return Err(daemon_error(
+                                "IPv6 daemon addresses must be enclosed in brackets",
+                                FEATURE_UNAVAILABLE_EXIT_CODE,
+                            ));
+                        }
+                    }
                     let module = &input[idx + 1..];
-                    return Some((host, module));
+                    return Ok(Some((host, module)));
                 }
                 previous_colon = Some(idx);
             }
@@ -4643,7 +4674,7 @@ fn split_daemon_host_module(input: &str) -> Option<(&str, &str)> {
         }
     }
 
-    None
+    Ok(None)
 }
 
 fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
