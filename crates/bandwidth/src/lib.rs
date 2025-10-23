@@ -127,9 +127,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
-        let mut guard = recorded_sleeps()
-            .lock()
-            .expect("lock recorded sleeps");
+        let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
         mem::take(&mut *guard)
     }
 }
