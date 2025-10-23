@@ -1341,11 +1341,28 @@ where
     }
 }
 
+/// Controls when deletion sweeps run relative to content transfers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeleteTiming {
+    /// Remove extraneous entries before copying new content.
+    Before,
+    /// Remove extraneous entries as directories are processed.
+    During,
+    /// Remove extraneous entries after the full transfer completes.
+    After,
+}
+
+impl DeleteTiming {
+    const fn default() -> Self {
+        Self::During
+    }
+}
+
 /// Options that influence how a [`LocalCopyPlan`] is executed.
 #[derive(Clone, Debug)]
 pub struct LocalCopyOptions {
     delete: bool,
-    delete_after: bool,
+    delete_timing: DeleteTiming,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<NonZeroU64>,
@@ -1384,7 +1401,7 @@ impl LocalCopyOptions {
     pub const fn new() -> Self {
         Self {
             delete: false,
-            delete_after: false,
+            delete_timing: DeleteTiming::default(),
             delete_excluded: false,
             remove_source_files: false,
             bandwidth_limit: None,
@@ -1423,6 +1440,9 @@ impl LocalCopyOptions {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete = delete;
+        if delete {
+            self.delete_timing = DeleteTiming::During;
+        }
         self
     }
 
@@ -1432,8 +1452,38 @@ impl LocalCopyOptions {
     pub const fn delete_after(mut self, delete_after: bool) -> Self {
         if delete_after {
             self.delete = true;
+            self.delete_timing = DeleteTiming::After;
+        } else if self.delete && matches!(self.delete_timing, DeleteTiming::After) {
+            self.delete = false;
+            self.delete_timing = DeleteTiming::default();
         }
-        self.delete_after = delete_after;
+        self
+    }
+
+    /// Requests that extraneous destination files be removed before the transfer begins.
+    #[must_use]
+    #[doc(alias = "--delete-before")]
+    pub const fn delete_before(mut self, delete_before: bool) -> Self {
+        if delete_before {
+            self.delete = true;
+            self.delete_timing = DeleteTiming::Before;
+        } else if self.delete && matches!(self.delete_timing, DeleteTiming::Before) {
+            self.delete = false;
+            self.delete_timing = DeleteTiming::default();
+        }
+        self
+    }
+
+    /// Requests that extraneous destination files be removed while processing directories.
+    #[must_use]
+    #[doc(alias = "--delete-during")]
+    pub const fn delete_during(mut self) -> Self {
+        if self.delete {
+            self.delete_timing = DeleteTiming::During;
+        } else {
+            self.delete = true;
+            self.delete_timing = DeleteTiming::During;
+        }
         self
     }
 
@@ -1688,10 +1738,32 @@ impl LocalCopyOptions {
         self.delete
     }
 
+    /// Returns the configured deletion timing when deletion sweeps are enabled.
+    #[must_use]
+    pub const fn delete_timing(&self) -> Option<DeleteTiming> {
+        if self.delete {
+            Some(self.delete_timing)
+        } else {
+            None
+        }
+    }
+
+    /// Reports whether deletions should occur before content transfers.
+    #[must_use]
+    pub const fn delete_before_enabled(&self) -> bool {
+        matches!(self.delete_timing, DeleteTiming::Before) && self.delete
+    }
+
     /// Reports whether deletions should occur after transfers instead of immediately.
     #[must_use]
     pub const fn delete_after_enabled(&self) -> bool {
-        self.delete_after
+        matches!(self.delete_timing, DeleteTiming::After) && self.delete
+    }
+
+    /// Reports whether deletions should occur while processing directory entries.
+    #[must_use]
+    pub const fn delete_during_enabled(&self) -> bool {
+        matches!(self.delete_timing, DeleteTiming::During) && self.delete
     }
 
     /// Reports whether excluded paths should also be removed during deletion sweeps.
@@ -2332,8 +2404,8 @@ impl<'a> CopyContext<'a> {
         &self.options
     }
 
-    fn delete_after_enabled(&self) -> bool {
-        self.options.delete_after_enabled()
+    fn delete_timing(&self) -> Option<DeleteTiming> {
+        self.options.delete_timing()
     }
 
     fn metadata_options(&self) -> MetadataOptions {
@@ -4024,96 +4096,177 @@ fn copy_directory_recursive(
         }
     }
 
-    let mut keep_names = Vec::new();
+    #[derive(Clone, Copy)]
+    enum EntryAction {
+        SkipExcluded,
+        SkipNonRegular,
+        CopyDirectory,
+        CopyFile,
+        CopySymlink,
+        CopyFifo,
+        CopyDevice,
+    }
+
+    struct PlannedEntry<'a> {
+        entry: &'a DirectoryEntry,
+        relative: PathBuf,
+        action: EntryAction,
+    }
+
+    let deletion_enabled = context.options().delete_extraneous();
+    let delete_timing = context.delete_timing();
+    let mut keep_names = if deletion_enabled {
+        Vec::with_capacity(entries.len())
+    } else {
+        Vec::new()
+    };
+    let mut planned_entries = Vec::with_capacity(entries.len());
 
     for entry in entries.iter() {
         context.enforce_timeout()?;
         context.register_progress();
-        let file_name = &entry.file_name;
-        let entry_path = &entry.path;
+
+        let file_name = entry.file_name.clone();
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
-        let target_path = destination.join(Path::new(file_name));
-        let metadata_options = context.metadata_options();
-
-        let entry_relative = match relative {
-            Some(base) => base.join(Path::new(file_name)),
-            None => PathBuf::from(Path::new(file_name)),
+        let relative_path = match relative {
+            Some(base) => base.join(Path::new(&file_name)),
+            None => PathBuf::from(Path::new(&file_name)),
         };
 
-        if !context.allows(&entry_relative, entry_type.is_dir()) {
-            keep_names.push(file_name.clone());
-            continue;
-        }
+        let mut keep_name = true;
 
-        keep_names.push(file_name.clone());
-
-        if entry_type.is_dir() {
-            copy_directory_recursive(
-                context,
-                entry_path,
-                &target_path,
-                entry_metadata,
-                Some(entry_relative.as_path()),
-            )?;
+        let action = if !context.allows(&relative_path, entry_type.is_dir()) {
+            // Skip excluded entries while ensuring they are preserved during deletion sweeps.
+            EntryAction::SkipExcluded
+        } else if entry_type.is_dir() {
+            EntryAction::CopyDirectory
         } else if entry_type.is_file() {
-            copy_file(
-                context,
-                entry_path,
-                &target_path,
-                entry_metadata,
-                Some(entry_relative.as_path()),
-            )?;
+            EntryAction::CopyFile
         } else if entry_type.is_symlink() {
-            copy_symlink(
-                context,
-                entry_path,
-                &target_path,
-                entry_metadata,
-                metadata_options,
-                Some(entry_relative.as_path()),
-            )?;
+            EntryAction::CopySymlink
         } else if is_fifo(&entry_type) {
-            if !context.specials_enabled() {
-                context.record_skipped_non_regular(Some(entry_relative.as_path()));
-                keep_names.pop();
-                continue;
+            if context.specials_enabled() {
+                EntryAction::CopyFifo
+            } else {
+                keep_name = false;
+                EntryAction::SkipNonRegular
             }
-            copy_fifo(
-                context,
-                entry_path,
-                &target_path,
-                entry_metadata,
-                metadata_options,
-                Some(entry_relative.as_path()),
-            )?;
         } else if is_device(&entry_type) {
-            if !context.devices_enabled() {
-                context.record_skipped_non_regular(Some(entry_relative.as_path()));
-                keep_names.pop();
-                continue;
+            if context.devices_enabled() {
+                EntryAction::CopyDevice
+            } else {
+                keep_name = false;
+                EntryAction::SkipNonRegular
             }
-            copy_device(
-                context,
-                entry_path,
-                &target_path,
-                entry_metadata,
-                metadata_options,
-                Some(entry_relative.as_path()),
-            )?;
         } else {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::UnsupportedFileType,
             ));
+        };
+
+        if deletion_enabled && keep_name {
+            let preserve_name = match delete_timing {
+                Some(DeleteTiming::Before) => matches!(
+                    action,
+                    EntryAction::CopyDirectory | EntryAction::SkipExcluded
+                ),
+                _ => true,
+            };
+
+            if preserve_name {
+                keep_names.push(file_name.clone());
+            }
+        }
+
+        planned_entries.push(PlannedEntry {
+            entry,
+            relative: relative_path,
+            action,
+        });
+    }
+
+    if deletion_enabled && matches!(delete_timing, Some(DeleteTiming::Before)) {
+        delete_extraneous_entries(context, destination, relative, &keep_names)?;
+    }
+
+    for planned in planned_entries {
+        let file_name = &planned.entry.file_name;
+        let target_path = destination.join(Path::new(file_name));
+        let entry_metadata = &planned.entry.metadata;
+        let record_relative = non_empty_path(planned.relative.as_path());
+
+        match planned.action {
+            EntryAction::SkipExcluded => {}
+            EntryAction::SkipNonRegular => {
+                context.record_skipped_non_regular(record_relative);
+            }
+            EntryAction::CopyDirectory => {
+                copy_directory_recursive(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
+                    Some(planned.relative.as_path()),
+                )?;
+            }
+            EntryAction::CopyFile => {
+                copy_file(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
+                    Some(planned.relative.as_path()),
+                )?;
+            }
+            EntryAction::CopySymlink => {
+                let metadata_options = context.metadata_options();
+                copy_symlink(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
+                    metadata_options,
+                    Some(planned.relative.as_path()),
+                )?;
+            }
+            EntryAction::CopyFifo => {
+                let metadata_options = context.metadata_options();
+                copy_fifo(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
+                    metadata_options,
+                    Some(planned.relative.as_path()),
+                )?;
+            }
+            EntryAction::CopyDevice => {
+                let metadata_options = context.metadata_options();
+                copy_device(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
+                    metadata_options,
+                    Some(planned.relative.as_path()),
+                )?;
+            }
         }
     }
 
-    if context.options().delete_extraneous() {
-        if context.delete_after_enabled() {
-            let relative_owned = relative.map(Path::to_path_buf);
-            context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
-        } else {
-            delete_extraneous_entries(context, destination, relative, &keep_names)?;
+    if deletion_enabled {
+        match delete_timing.unwrap_or(DeleteTiming::During) {
+            DeleteTiming::Before => {
+                // Deletions already performed prior to copying.
+            }
+            DeleteTiming::During => {
+                delete_extraneous_entries(context, destination, relative, &keep_names)?;
+            }
+            DeleteTiming::After => {
+                let relative_owned = relative.map(Path::to_path_buf);
+                context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
+            }
         }
     }
 
@@ -6880,6 +7033,33 @@ mod tests {
         assert!(!dest_root.join("extra.txt").exists());
         assert_eq!(summary.files_copied(), 1);
         assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn execute_with_delete_before_removes_conflicting_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("file"), b"fresh").expect("write source file");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(dest_root.join("file")).expect("create conflicting directory");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete_before(true);
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds with delete-before");
+
+        let target = dest_root.join("file");
+        assert_eq!(fs::read(&target).expect("read copied file"), b"fresh");
+        assert!(target.is_file());
+        assert_eq!(summary.files_copied(), 1);
+        assert!(summary.items_deleted() >= 1);
     }
 
     #[test]
