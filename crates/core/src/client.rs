@@ -1564,6 +1564,7 @@ pub struct ClientEntryMetadata {
     uid: Option<u32>,
     gid: Option<u32>,
     nlink: Option<u64>,
+    symlink_target: Option<PathBuf>,
 }
 
 impl ClientEntryMetadata {
@@ -1585,6 +1586,7 @@ impl ClientEntryMetadata {
             uid: metadata.uid(),
             gid: metadata.gid(),
             nlink: metadata.nlink(),
+            symlink_target: metadata.symlink_target().map(Path::to_path_buf),
         }
     }
 
@@ -1628,6 +1630,12 @@ impl ClientEntryMetadata {
     #[must_use]
     pub const fn nlink(&self) -> Option<u64> {
         self.nlink
+    }
+
+    /// Returns the recorded symbolic link target when the entry represents a symlink.
+    #[must_use]
+    pub fn symlink_target(&self) -> Option<&Path> {
+        self.symlink_target.as_deref()
     }
 }
 
@@ -2528,6 +2536,7 @@ mod tests {
         let destination_link = tmp.path().join("dest-link");
         let config = ClientConfig::builder()
             .transfer_args([source_link.clone(), destination_link.clone()])
+            .force_event_collection(true)
             .build();
 
         let summary = run_client(config).expect("link copy succeeds");
@@ -2535,6 +2544,17 @@ mod tests {
         let copied = fs::read_link(destination_link).expect("read copied link");
         assert_eq!(copied, target_file);
         assert_eq!(summary.symlinks_copied(), 1);
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::SymlinkCopied))
+            .expect("symlink event present");
+        let recorded_target = event
+            .metadata()
+            .and_then(ClientEntryMetadata::symlink_target)
+            .expect("symlink target recorded");
+        assert_eq!(recorded_target, target_file.as_path());
     }
 
     #[cfg(unix)]
@@ -2555,6 +2575,7 @@ mod tests {
         let dest_root = tmp.path().join("destination");
         let config = ClientConfig::builder()
             .transfer_args([source_root.clone(), dest_root.clone()])
+            .force_event_collection(true)
             .build();
 
         let summary = run_client(config).expect("directory copy succeeds");
@@ -2563,6 +2584,17 @@ mod tests {
         let copied_target = fs::read_link(copied_link).expect("read copied link");
         assert_eq!(copied_target, target_file);
         assert_eq!(summary.symlinks_copied(), 1);
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::SymlinkCopied))
+            .expect("symlink event present");
+        let recorded_target = event
+            .metadata()
+            .and_then(ClientEntryMetadata::symlink_target)
+            .expect("symlink target recorded");
+        assert_eq!(recorded_target, target_file.as_path());
     }
 
     #[cfg(unix)]
