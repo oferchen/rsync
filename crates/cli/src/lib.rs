@@ -1804,7 +1804,6 @@ where
 
     let fallback_args = if fallback_required {
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
-
         Some(RemoteFallbackArgs {
             dry_run,
             list_only,
