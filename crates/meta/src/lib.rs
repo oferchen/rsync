@@ -94,6 +94,12 @@ use rustix::{
 #[cfg(feature = "xattr")]
 pub use xattr_support::sync_xattrs;
 
+#[cfg(feature = "acl")]
+mod acl_support;
+
+#[cfg(feature = "acl")]
+pub use acl_support::sync_acls;
+
 #[cfg(unix)]
 mod ownership {
     #![allow(unsafe_code)]

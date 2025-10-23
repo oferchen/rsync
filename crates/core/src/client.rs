@@ -290,6 +290,8 @@ pub struct ClientConfig {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    #[cfg(feature = "acl")]
+    preserve_acls: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -331,6 +333,8 @@ impl Default for ClientConfig {
             preserve_specials: false,
             list_only: false,
             timeout: TransferTimeout::Default,
+            #[cfg(feature = "acl")]
+            preserve_acls: false,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
         }
@@ -445,6 +449,15 @@ impl ClientConfig {
     #[doc(alias = "--times")]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether POSIX ACLs should be preserved.
+    #[cfg(feature = "acl")]
+    #[must_use]
+    #[doc(alias = "--acls")]
+    #[doc(alias = "-A")]
+    pub const fn preserve_acls(&self) -> bool {
+        self.preserve_acls
     }
 
     /// Reports whether compression was requested for transfers.
@@ -646,6 +659,8 @@ pub struct ClientConfigBuilder {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    #[cfg(feature = "acl")]
+    preserve_acls: bool,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
 }
@@ -752,6 +767,16 @@ impl ClientConfigBuilder {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    #[cfg(feature = "acl")]
+    /// Enables or disables POSIX ACL preservation when applying metadata.
+    #[must_use]
+    #[doc(alias = "--acls")]
+    #[doc(alias = "-A")]
+    pub const fn acls(mut self, preserve: bool) -> Self {
+        self.preserve_acls = preserve;
         self
     }
 
@@ -1001,6 +1026,8 @@ impl ClientConfigBuilder {
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
             timeout: self.timeout,
+            #[cfg(feature = "acl")]
+            preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
             preserve_xattrs: self.preserve_xattrs,
         }
@@ -2426,6 +2453,8 @@ pub fn run_client_with_observer(
             .implied_dirs(config.implied_dirs())
             .inplace(config.inplace())
             .partial(config.partial());
+        #[cfg(feature = "acl")]
+        let options = options.acls(config.preserve_acls());
         #[cfg(feature = "xattr")]
         let options = options.xattrs(config.preserve_xattrs());
         options
@@ -2822,6 +2851,18 @@ exit 42
 
         assert!(config.preserve_specials());
         assert!(!config.preserve_devices());
+    }
+
+    #[cfg(feature = "acl")]
+    #[test]
+    fn builder_preserves_acls_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .acls(true)
+            .build();
+
+        assert!(config.preserve_acls());
+        assert!(!ClientConfig::default().preserve_acls());
     }
 
     #[cfg(feature = "xattr")]

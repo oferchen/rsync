@@ -42,10 +42,10 @@ referenced functionality ships and parity is verified by tests or goldens.
     sessions can progress beyond the initial diagnostic.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
-    regular files, directories, and symbolic links, but delta transfer,
-    ACLs, and compression remain unavailable. Remote
-    orchestration is still missing, preventing the client from negotiating
-    network transports.
+    regular files, directories, symbolic links, device nodes, FIFOs, extended
+    attributes, and (when the feature is enabled) POSIX ACLs. Delta transfer
+    and compression remain unavailable. Remote orchestration is still missing,
+    preventing the client from negotiating network transports.
   - *Removal plan*: Extend the engine with delta-transfer support and integrate
     full filter semantics alongside `compress` and enhanced metadata handling
     from `rsync_meta`.
