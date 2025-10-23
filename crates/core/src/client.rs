@@ -245,7 +245,7 @@ impl From<CompressionLevel> for CompressionSetting {
 }
 
 /// Configuration describing the requested client operation.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
@@ -269,6 +269,7 @@ pub struct ClientConfig {
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
     relative_paths: bool,
+    implied_dirs: bool,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -281,6 +282,48 @@ pub struct ClientConfig {
     timeout: TransferTimeout,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            transfer_args: Vec::new(),
+            dry_run: false,
+            delete: false,
+            delete_excluded: false,
+            remove_source_files: false,
+            bandwidth_limit: None,
+            preserve_owner: false,
+            preserve_group: false,
+            preserve_permissions: false,
+            preserve_times: false,
+            compress: false,
+            compression_level: None,
+            compression_setting: CompressionSetting::default(),
+            whole_file: true,
+            checksum: false,
+            size_only: false,
+            ignore_existing: false,
+            update: false,
+            numeric_ids: false,
+            filter_rules: Vec::new(),
+            sparse: false,
+            relative_paths: false,
+            implied_dirs: true,
+            verbosity: 0,
+            progress: false,
+            stats: false,
+            partial: false,
+            inplace: false,
+            force_event_collection: false,
+            preserve_devices: false,
+            preserve_specials: false,
+            list_only: false,
+            timeout: TransferTimeout::Default,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs: false,
+        }
+    }
 }
 
 impl ClientConfig {
@@ -490,6 +533,14 @@ impl ClientConfig {
         self.relative_paths
     }
 
+    /// Returns whether parent directories implied by the source path should be created.
+    #[must_use]
+    #[doc(alias = "--implied-dirs")]
+    #[doc(alias = "--no-implied-dirs")]
+    pub const fn implied_dirs(&self) -> bool {
+        self.implied_dirs
+    }
+
     /// Returns the requested verbosity level.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -565,6 +616,7 @@ pub struct ClientConfigBuilder {
     filter_rules: Vec<FilterRuleSpec>,
     sparse: bool,
     relative_paths: bool,
+    implied_dirs: Option<bool>,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -785,6 +837,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables creation of parent directories implied by the source path.
+    #[must_use]
+    #[doc(alias = "--implied-dirs")]
+    #[doc(alias = "--no-implied-dirs")]
+    pub fn implied_dirs(mut self, implied: bool) -> Self {
+        self.implied_dirs = Some(implied);
+        self
+    }
+
     /// Sets the verbosity level requested by the caller.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -898,6 +959,7 @@ impl ClientConfigBuilder {
             filter_rules: self.filter_rules,
             sparse: self.sparse,
             relative_paths: self.relative_paths,
+            implied_dirs: self.implied_dirs.unwrap_or(true),
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
@@ -1761,6 +1823,7 @@ pub fn run_client_with_observer(
             .devices(config.preserve_devices())
             .specials(config.preserve_specials())
             .relative_paths(config.relative_paths())
+            .implied_dirs(config.implied_dirs())
             .inplace(config.inplace())
             .partial(config.partial());
         #[cfg(feature = "xattr")]
@@ -2080,6 +2143,30 @@ mod tests {
 
         assert!(config.size_only());
         assert!(!ClientConfig::default().size_only());
+    }
+
+    #[test]
+    fn builder_configures_implied_dirs_flag() {
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(default_config.implied_dirs());
+        assert!(ClientConfig::default().implied_dirs());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .implied_dirs(false)
+            .build();
+
+        assert!(!disabled.implied_dirs());
+
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .implied_dirs(true)
+            .build();
+
+        assert!(enabled.implied_dirs());
     }
 
     #[test]

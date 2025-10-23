@@ -151,6 +151,8 @@ const HELP_TEXT: &str = concat!(
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
+    "      --implied-dirs  Create parent directories implied by source paths.\n",
+    "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
     "      --msgs2stderr  Route informational messages to standard error.\n",
@@ -424,6 +426,7 @@ struct ParsedArgs {
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
+    implied_dirs: Option<bool>,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -597,6 +600,20 @@ fn clap_command() -> ClapCommand {
                 .help("Disable preservation of source path components.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("relative"),
+        )
+        .arg(
+            Arg::new("implied-dirs")
+                .long("implied-dirs")
+                .help("Create parent directories implied by source paths.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-implied-dirs"),
+        )
+        .arg(
+            Arg::new("no-implied-dirs")
+                .long("no-implied-dirs")
+                .help("Disable creation of parent directories implied by source paths.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("implied-dirs"),
         )
         .arg(
             Arg::new("progress")
@@ -1034,6 +1051,13 @@ where
     } else {
         None
     };
+    let implied_dirs = if matches.get_flag("implied-dirs") {
+        Some(true)
+    } else if matches.get_flag("no-implied-dirs") {
+        Some(false)
+    } else {
+        None
+    };
     let verbosity = matches.get_count("verbose") as u8;
     let mut progress = matches.get_flag("progress");
     let stats = matches.get_flag("stats");
@@ -1134,6 +1158,7 @@ where
         devices,
         specials,
         relative,
+        implied_dirs,
         verbosity,
         progress,
         stats,
@@ -1301,6 +1326,7 @@ where
         devices,
         specials,
         relative,
+        implied_dirs,
         verbosity,
         progress,
         stats,
@@ -1562,6 +1588,8 @@ where
     }
 
     let files_from_used = !files_from.is_empty();
+    let implied_dirs_option = implied_dirs;
+    let implied_dirs = implied_dirs_option.unwrap_or(true);
     if transfer_requires_remote(&remainder, &file_list_operands) {
         let fallback_args = RemoteFallbackArgs {
             dry_run,
@@ -1584,6 +1612,7 @@ where
             devices,
             specials,
             relative,
+            implied_dirs: implied_dirs_option,
             verbosity,
             progress,
             stats,
@@ -1683,6 +1712,7 @@ where
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .relative_paths(relative)
+        .implied_dirs(implied_dirs)
         .verbosity(verbosity)
         .progress(progress)
         .stats(stats)
@@ -3333,6 +3363,7 @@ struct RemoteFallbackArgs {
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
+    implied_dirs: Option<bool>,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -3404,6 +3435,7 @@ where
         devices,
         specials,
         relative,
+        implied_dirs,
         verbosity,
         progress,
         stats,
@@ -3485,6 +3517,12 @@ where
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
     push_toggle(&mut command_args, "--relative", "--no-relative", relative);
+    push_toggle(
+        &mut command_args,
+        "--implied-dirs",
+        "--no-implied-dirs",
+        implied_dirs,
+    );
     push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
     #[cfg(feature = "acl")]
     push_toggle(&mut command_args, "--acls", "--no-acls", acls);
@@ -5288,6 +5326,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.relative, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_implied_dirs_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--implied-dirs"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.implied_dirs, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-implied-dirs"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.implied_dirs, Some(false));
     }
 
     #[test]
@@ -7582,6 +7643,61 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
         assert!(!args.iter().any(|arg| *arg == "--whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_implied_dirs_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-implied-dirs"),
+            OsString::from("remote::module"),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-implied-dirs"));
+        assert!(!args.contains(&"--implied-dirs"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--implied-dirs"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--implied-dirs"));
+        assert!(!args.contains(&"--no-implied-dirs"));
     }
 
     #[cfg(unix)]
