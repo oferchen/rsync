@@ -731,9 +731,16 @@ fn clap_command() -> ClapCommand {
         .arg(
             Arg::new("remove-source-files")
                 .long("remove-source-files")
-                .alias("remove-sent-files")
                 .help("Remove source files after a successful transfer.")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::SetTrue)
+                .overrides_with("remove-sent-files"),
+        )
+        .arg(
+            Arg::new("remove-sent-files")
+                .long("remove-sent-files")
+                .help("Alias of --remove-source-files.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("remove-source-files"),
         )
         .arg(
             Arg::new("inplace")
@@ -1138,7 +1145,8 @@ where
             progress = true;
         }
     }
-    let remove_source_files = matches.get_flag("remove-source-files");
+    let remove_source_files =
+        matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
     let inplace = if matches.get_flag("no-inplace") {
         Some(false)
     } else if matches.get_flag("inplace") {
@@ -4716,6 +4724,32 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_remove_sent_files_alias_deletes_source() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"alias move").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--remove-sent-files"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert!(!source.exists(), "source should be removed");
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"alias move"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_bwlimit_copies_file() {
         use tempfile::tempdir;
 
@@ -5330,6 +5364,19 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.devices, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_remove_sent_files_alias() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--remove-sent-files"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.remove_source_files);
     }
 
     #[test]
