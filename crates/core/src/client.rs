@@ -3718,6 +3718,7 @@ exit 42
                 .to_string()
                 .contains("remote operands are not supported")
         );
+        assert!(error.message().to_string().contains("OC_RSYNC_FALLBACK"));
     }
 
     #[test]
@@ -4395,7 +4396,10 @@ fn daemon_access_denied_error(reason: &str) -> ClientError {
 
 fn remote_operands_unsupported() -> ClientError {
     daemon_error(
-        "remote operands are not supported: this build handles local filesystem copies only",
+        concat!(
+            "remote operands are not supported: this build handles local filesystem copies only; ",
+            "set OC_RSYNC_FALLBACK to point to an upstream rsync binary for remote transfers",
+        ),
         PARTIAL_TRANSFER_EXIT_CODE,
     )
 }
