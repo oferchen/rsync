@@ -15,6 +15,7 @@ rsync-core = { path = "../core" }
 rsync-protocol = { path = "../protocol" }
 rsync-logging = { path = "../logging" }
 rsync-checksums = { path = "../checksums" }
+time = { version = "0.3", default-features = false, features = ["formatting", "local-offset", "macros", "std"] }
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -9,8 +9,11 @@
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
 //! authenticating `auth users` entries via the upstream challenge/response
-//! exchange backed by the configured secrets file, and replying with
-//! explanatory `@ERROR` messages when module transfers are not yet available.
+//! exchange backed by the configured secrets file, and writing timestamped log
+//! entries compatible with upstream `rsyncd` when the caller provides
+//! `--log-file`. Module transfers continue to emit explanatory `@ERROR`
+//! messages while the data path is under construction, keeping the behaviour
+//! stable for integration tests.
 //! Clients that initiate the newer binary negotiation (protocols ≥ 30) are
 //! recognised automatically: the daemon responds with the negotiated protocol
 //! advertisement and emits multiplexed error frames describing the current
@@ -151,13 +154,13 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU32, Ordering},
 };
 use std::thread;
@@ -184,6 +187,8 @@ use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     format_legacy_daemon_message, parse_legacy_daemon_message,
 };
+use time::macros::format_description;
+use time::{OffsetDateTime, UtcOffset};
 
 /// Exit code used when daemon functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -213,6 +218,52 @@ const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
+/// Timestamp format used when emitting daemon log entries.
+const LOG_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
+    format_description!("[year]/[month]/[day] [hour]:[minute]:[second]");
+
+struct LogHandle {
+    file: Mutex<File>,
+}
+
+impl LogHandle {
+    fn open(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Self {
+            file: Mutex::new(file),
+        })
+    }
+
+    fn write_entry(&self, peer: Option<SocketAddr>, message: &str) -> io::Result<()> {
+        let timestamp = current_timestamp();
+        let mut line = String::with_capacity(64 + message.len());
+        line.push_str(&timestamp);
+        line.push(' ');
+        line.push('[');
+        line.push_str(&std::process::id().to_string());
+        line.push(']');
+        if let Some(peer) = peer {
+            line.push(' ');
+            line.push_str(&peer.to_string());
+        }
+        line.push(' ');
+        line.push_str(message);
+        line.push('\n');
+
+        let mut guard = self.file.lock().expect("log mutex poisoned");
+        guard.write_all(line.as_bytes())?;
+        guard.flush()
+    }
+}
+
+fn current_timestamp() -> String {
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let offset = UtcOffset::current_local_offset().unwrap_or_else(|_| UtcOffset::UTC);
+    let adjusted = now.to_offset(offset);
+    adjusted
+        .format(LOG_TIMESTAMP_FORMAT)
+        .unwrap_or_else(|_| "0000/00/00 00:00:00".to_string())
+}
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
@@ -232,6 +283,7 @@ const HELP_TEXT: &str = concat!(
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
     "  --config FILE      Load module definitions from FILE (rsyncd.conf subset).\n",
+    "  --log-file FILE    Append timestamped daemon logs to FILE.\n",
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
@@ -526,6 +578,7 @@ struct RuntimeOptions {
     bandwidth_limit_configured: bool,
     address_family: Option<AddressFamily>,
     bind_address_overridden: bool,
+    log_file: Option<PathBuf>,
 }
 
 impl Default for RuntimeOptions {
@@ -540,6 +593,7 @@ impl Default for RuntimeOptions {
             bandwidth_limit_configured: false,
             address_family: None,
             bind_address_overridden: false,
+            log_file: None,
         }
     }
 }
@@ -561,6 +615,8 @@ impl RuntimeOptions {
                 options.set_bind_address(addr)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
                 options.load_config_modules(&value, &mut seen_modules)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
+                options.set_log_file_from_cli(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
                 options.load_motd_file(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd")? {
@@ -612,6 +668,15 @@ impl RuntimeOptions {
 
         self.bandwidth_limit = limit;
         self.bandwidth_limit_configured = true;
+        Ok(())
+    }
+
+    fn set_log_file_from_cli(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if self.log_file.is_some() {
+            return Err(duplicate_argument("--log-file"));
+        }
+
+        self.log_file = Some(path);
         Ok(())
     }
 
@@ -733,6 +798,11 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn motd_lines(&self) -> &[String] {
         &self.motd_lines
+    }
+
+    #[cfg(test)]
+    fn log_file_path(&self) -> Option<&Path> {
+        self.log_file.as_deref()
     }
 
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
@@ -1995,12 +2065,20 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
+        log_file,
         ..
     } = options;
 
     let modules: Arc<Vec<ModuleRuntime>> =
         Arc::new(modules.into_iter().map(ModuleRuntime::from).collect());
     let motd_lines = Arc::new(motd_lines);
+    let log_handle = if let Some(path) = log_file.as_ref() {
+        Some(Arc::new(
+            LogHandle::open(path).map_err(|error| log_file_error(path, error))?,
+        ))
+    } else {
+        None
+    };
     let requested_addr = SocketAddr::new(bind_address, port);
     let listener =
         TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
@@ -2017,6 +2095,12 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             Ok((stream, peer_addr)) => {
                 let modules = Arc::clone(&modules);
                 let motd_lines = Arc::clone(&motd_lines);
+                if let Some(log) = log_handle.as_ref() {
+                    if let Err(error) = log.write_entry(Some(peer_addr), "connect") {
+                        return Err(stream_error(Some(peer_addr), "log connection", error));
+                    }
+                }
+                let log = log_handle.as_ref().map(Arc::clone);
                 let handle = thread::spawn(move || {
                     let modules_vec = modules.as_ref();
                     let motd_vec = motd_lines.as_ref();
@@ -2026,6 +2110,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         modules_vec.as_slice(),
                         motd_vec.as_slice(),
                         bandwidth_limit,
+                        log,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -2103,14 +2188,15 @@ fn handle_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    log: Option<Arc<LogHandle>>,
 ) -> io::Result<()> {
     let style = detect_session_style(&stream)?;
     configure_stream(&stream)?;
 
     match style {
-        SessionStyle::Binary => handle_binary_session(stream, daemon_limit),
+        SessionStyle::Binary => handle_binary_session(stream, peer_addr, daemon_limit, log),
         SessionStyle::Legacy => {
-            handle_legacy_session(stream, peer_addr, modules, motd_lines, daemon_limit)
+            handle_legacy_session(stream, peer_addr, modules, motd_lines, daemon_limit, log)
         }
     }
 }
@@ -2173,9 +2259,14 @@ fn handle_legacy_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    log: Option<Arc<LogHandle>>,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
+
+    if let Some(logger) = log.as_ref() {
+        logger.write_entry(Some(peer_addr), "legacy negotiation")?;
+    }
 
     let greeting = legacy_daemon_greeting();
     write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
@@ -2220,6 +2311,9 @@ fn handle_legacy_session(
     advertise_capabilities(reader.get_mut(), modules)?;
 
     if request == "#list" {
+        if let Some(logger) = log.as_ref() {
+            logger.write_entry(Some(peer_addr), "list modules")?;
+        }
         respond_with_module_list(
             reader.get_mut(),
             &mut limiter,
@@ -2243,8 +2337,9 @@ fn handle_legacy_session(
             &mut limiter,
             modules,
             &request,
-            peer_addr.ip(),
+            peer_addr,
             &refused_options,
+            log,
         )?;
     }
 
@@ -2253,9 +2348,15 @@ fn handle_legacy_session(
 
 fn handle_binary_session(
     mut stream: TcpStream,
+    peer_addr: SocketAddr,
     daemon_limit: Option<NonZeroU64>,
+    log: Option<Arc<LogHandle>>,
 ) -> io::Result<()> {
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
+
+    if let Some(logger) = log.as_ref() {
+        logger.write_entry(Some(peer_addr), "binary negotiation")?;
+    }
 
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
@@ -2550,15 +2651,19 @@ fn respond_with_module_request(
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     request: &str,
-    peer_ip: IpAddr,
+    peer_addr: SocketAddr,
     options: &[String],
+    log: Option<Arc<LogHandle>>,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
 
         let mut hostname_cache: Option<Option<String>> = None;
-        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
-        if module.permits(peer_ip, peer_host) {
+        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_addr.ip());
+        if module.permits(peer_addr.ip(), peer_host) {
+            if let Some(logger) = log.as_ref() {
+                logger.write_entry(Some(peer_addr), &format!("module '{}' requested", request))?;
+            }
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
                 Err(limit) => {
@@ -2575,6 +2680,12 @@ fn respond_with_module_request(
             };
 
             if let Some(refused) = refused_option(module, options) {
+                if let Some(logger) = log.as_ref() {
+                    logger.write_entry(
+                        Some(peer_addr),
+                        &format!("module '{}' refused option {}", request, refused),
+                    )?;
+                }
                 let payload = format!("@ERROR: The server is configured to refuse {}", refused);
                 let stream = reader.get_mut();
                 write_limited(stream, limiter, payload.as_bytes())?;
@@ -2587,8 +2698,16 @@ fn respond_with_module_request(
 
             apply_module_timeout(reader.get_mut(), module)?;
             if module.requires_authentication() {
-                match perform_module_authentication(reader, limiter, module, peer_ip)? {
-                    AuthenticationStatus::Denied => return Ok(()),
+                match perform_module_authentication(reader, limiter, module, peer_addr.ip())? {
+                    AuthenticationStatus::Denied => {
+                        if let Some(logger) = log.as_ref() {
+                            logger.write_entry(
+                                Some(peer_addr),
+                                &format!("module '{}' authentication denied", request),
+                            )?;
+                        }
+                        return Ok(());
+                    }
                     AuthenticationStatus::Granted => {}
                 }
             }
@@ -2597,8 +2716,20 @@ fn respond_with_module_request(
             let stream = reader.get_mut();
             write_limited(stream, limiter, payload.as_bytes())?;
             write_limited(stream, limiter, b"\n")?;
+            if let Some(logger) = log.as_ref() {
+                logger.write_entry(
+                    Some(peer_addr),
+                    &format!("module '{}' transfer unavailable", request),
+                )?;
+            }
         } else {
-            deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+            if let Some(logger) = log.as_ref() {
+                logger.write_entry(
+                    Some(peer_addr),
+                    &format!("module '{}' denied by host rules", request),
+                )?;
+            }
+            deny_module(reader.get_mut(), module, peer_addr.ip(), limiter)?;
             return Ok(());
         }
     } else {
@@ -2606,6 +2737,12 @@ fn respond_with_module_request(
         let stream = reader.get_mut();
         write_limited(stream, limiter, payload.as_bytes())?;
         write_limited(stream, limiter, b"\n")?;
+        if let Some(logger) = log.as_ref() {
+            logger.write_entry(
+                Some(peer_addr),
+                &format!("unknown module '{}' requested", request),
+            )?;
+        }
     }
 
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
@@ -2851,6 +2988,12 @@ fn stream_error(peer: Option<SocketAddr>, action: &str, error: io::Error) -> Dae
 
 fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> DaemonError {
     let text = format!("failed to {action} {target}: {error}");
+    let message = Message::error(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
+    DaemonError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
+    let text = format!("failed to open log file '{}': {}", path.display(), error);
     let message = Message::error(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
     DaemonError::new(SOCKET_IO_EXIT_CODE, message)
 }
@@ -3859,6 +4002,20 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_parse_log_file_argument() {
+        let dir = tempdir().expect("log dir");
+        let log_path = dir.path().join("daemon.log");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--log-file"),
+            log_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse log-file option");
+
+        assert_eq!(options.log_file_path(), Some(log_path.as_path()));
+    }
+
+    #[test]
     fn runtime_options_parse_motd_sources() {
         let dir = tempdir().expect("motd dir");
         let motd_path = dir.path().join("motd.txt");
@@ -4177,6 +4334,77 @@ mod tests {
 
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_logs_binary_negotiation() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let dir = tempdir().expect("log dir");
+        let log_path = dir.path().join("daemon.log");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--log-file"),
+                log_path.as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .expect("set write timeout");
+        let client_addr = stream.local_addr().expect("client addr");
+
+        let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+        stream
+            .write_all(&advertisement)
+            .expect("send client advertisement");
+        stream.flush().expect("flush advertisement");
+
+        let mut response = [0u8; 4];
+        stream
+            .read_exact(&mut response)
+            .expect("read server advertisement");
+        assert_eq!(response, advertisement);
+
+        let mut frames = Vec::new();
+        stream.read_to_end(&mut frames).expect("read frames");
+        drop(stream);
+
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+
+        let contents = fs::read_to_string(&log_path).expect("read log file");
+        assert!(!contents.is_empty(), "log file must contain entries");
+        let lines: Vec<&str> = contents.lines().collect();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains(&client_addr.to_string())),
+            "peer address missing from log"
+        );
+        assert!(
+            lines.iter().any(|line| line.ends_with(" connect")),
+            "missing connect log entry"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.ends_with(" binary negotiation")),
+            "missing binary negotiation log entry"
+        );
     }
 
     #[test]
@@ -5147,6 +5375,89 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_writes_log_entries_when_configured() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let dir = tempdir().expect("log dir");
+        let log_path = dir.path().join("daemon.log");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--log-file"),
+                log_path.as_os_str().to_os_string(),
+                OsString::from("--module"),
+                OsString::from("public=/srv/public"),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let client_addr = stream.local_addr().expect("client addr");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("ok line");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("module line");
+        assert_eq!(line.trim_end(), "public");
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        drop(stream);
+
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+
+        let contents = fs::read_to_string(&log_path).expect("read log file");
+        assert!(!contents.is_empty(), "log file must contain entries");
+        let lines: Vec<&str> = contents.lines().collect();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains(&client_addr.to_string())),
+            "peer address missing from log"
+        );
+        assert!(
+            lines.iter().any(|line| line.ends_with(" connect")),
+            "missing connect log entry"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.ends_with(" legacy negotiation")),
+            "missing legacy negotiation log entry"
+        );
+        assert!(
+            lines.iter().any(|line| line.ends_with(" list modules")),
+            "missing list modules log entry"
+        );
     }
 
     #[test]
