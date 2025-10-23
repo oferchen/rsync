@@ -217,11 +217,13 @@ enum OutFormatToken {
 enum OutFormatPlaceholder {
     FileName,
     FullPath,
-    Length,
-    BytesTransferred,
+    FileLength,
+    BytesWritten,
+    BytesRead,
     Operation,
-    Permissions,
-    PermissionBits,
+    ModifyTime,
+    PermissionString,
+    CurrentTime,
 }
 
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
@@ -261,7 +263,9 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             tokens.push(OutFormatToken::Literal(literal.clone()));
                             literal.clear();
                         }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::Length));
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::FileLength,
+                        ));
                     }
                     'b' => {
                         if !literal.is_empty() {
@@ -269,8 +273,15 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             literal.clear();
                         }
                         tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::BytesTransferred,
+                            OutFormatPlaceholder::BytesWritten,
                         ));
+                    }
+                    'c' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::BytesRead));
                     }
                     'o' => {
                         if !literal.is_empty() {
@@ -285,7 +296,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             literal.clear();
                         }
                         tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::Permissions,
+                            OutFormatPlaceholder::ModifyTime,
                         ));
                     }
                     'B' => {
@@ -294,7 +305,16 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             literal.clear();
                         }
                         tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::PermissionBits,
+                            OutFormatPlaceholder::PermissionString,
+                        ));
+                    }
+                    't' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(literal.clone()));
+                            literal.clear();
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::CurrentTime,
                         ));
                     }
                     other => {
@@ -342,36 +362,34 @@ impl OutFormat {
                 OutFormatToken::Literal(text) => buffer.push_str(text),
                 OutFormatToken::Placeholder(placeholder) => match placeholder {
                     OutFormatPlaceholder::FileName | OutFormatPlaceholder::FullPath => {
-                        let _ = write!(&mut buffer, "{}", event.relative_path().display());
+                        append_rendered_path(
+                            &mut buffer,
+                            event,
+                            matches!(placeholder, OutFormatPlaceholder::FileName),
+                        );
                     }
-                    OutFormatPlaceholder::Length => {
+                    OutFormatPlaceholder::FileLength => {
                         let length = event
                             .metadata()
                             .map(ClientEntryMetadata::length)
                             .unwrap_or(0);
                         let _ = write!(&mut buffer, "{length}");
                     }
-                    OutFormatPlaceholder::BytesTransferred => {
+                    OutFormatPlaceholder::BytesWritten | OutFormatPlaceholder::BytesRead => {
                         let bytes = event.bytes_transferred();
                         let _ = write!(&mut buffer, "{bytes}");
                     }
                     OutFormatPlaceholder::Operation => {
                         buffer.push_str(describe_event_kind(event.kind()));
                     }
-                    OutFormatPlaceholder::Permissions => {
-                        if let Some(metadata) = event.metadata() {
-                            buffer.push_str(&format_list_permissions(metadata));
-                        } else {
-                            buffer.push_str("??????????");
-                        }
+                    OutFormatPlaceholder::ModifyTime => {
+                        buffer.push_str(&format_out_format_mtime(event.metadata()));
                     }
-                    OutFormatPlaceholder::PermissionBits => {
-                        if let Some(mode) = event.metadata().and_then(ClientEntryMetadata::mode) {
-                            let masked = mode & 0o7777;
-                            let _ = write!(&mut buffer, "{:04o}", masked);
-                        } else {
-                            buffer.push_str("????");
-                        }
+                    OutFormatPlaceholder::PermissionString => {
+                        buffer.push_str(&format_out_format_permissions(event.metadata()));
+                    }
+                    OutFormatPlaceholder::CurrentTime => {
+                        buffer.push_str(&format_current_timestamp());
                     }
                 },
             }
@@ -395,6 +413,52 @@ fn emit_out_format<W: Write + ?Sized>(
         format.render(event, writer)?;
     }
     Ok(())
+}
+
+fn append_rendered_path(buffer: &mut String, event: &ClientEvent, ensure_trailing_slash: bool) {
+    let mut rendered = event.relative_path().to_string_lossy().into_owned();
+    if ensure_trailing_slash
+        && !rendered.ends_with('/')
+        && event
+            .metadata()
+            .map(ClientEntryMetadata::kind)
+            .map(ClientEntryKind::is_directory)
+            .unwrap_or_else(|| matches!(event.kind(), ClientEventKind::DirectoryCreated))
+    {
+        rendered.push('/');
+    }
+    buffer.push_str(&rendered);
+}
+
+fn format_out_format_mtime(metadata: Option<&ClientEntryMetadata>) -> String {
+    metadata
+        .and_then(|meta| meta.modified())
+        .and_then(|time| {
+            OffsetDateTime::from(time)
+                .format(LIST_TIMESTAMP_FORMAT)
+                .ok()
+        })
+        .map(|formatted| formatted.replace(' ', "-"))
+        .unwrap_or_else(|| "1970/01/01-00:00:00".to_string())
+}
+
+fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> String {
+    metadata
+        .map(format_list_permissions)
+        .map(|mut perms| {
+            if !perms.is_empty() {
+                perms.remove(0);
+            }
+            perms
+        })
+        .unwrap_or_else(|| "---------".to_string())
+}
+
+fn format_current_timestamp() -> String {
+    let now = OffsetDateTime::from(SystemTime::now());
+    now.format(LIST_TIMESTAMP_FORMAT)
+        .map(|text| text.replace(' ', "-"))
+        .unwrap_or_else(|_| "1970/01/01-00:00:00".to_string())
 }
 
 /// Parsed command produced by [`parse_args`].
@@ -5602,7 +5666,7 @@ mod tests {
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
         let format =
-            parse_out_format(OsStr::new("%f %b %l %o %M %B %%")).expect("parse out-format");
+            parse_out_format(OsStr::new("%f %b %c %l %o %M %B %t %%")).expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
 
@@ -5614,7 +5678,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn out_format_renders_permission_bits() {
+    fn out_format_renders_permission_string() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
@@ -5660,7 +5724,38 @@ mod tests {
             .render(event, &mut output)
             .expect("render out-format");
 
-        assert_eq!(output, b"0755\n");
+        assert_eq!(output, b"rwxr-xr-x\n");
+    }
+
+    #[test]
+    fn out_format_renders_modify_time_placeholder() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("file.txt");
+        std::fs::write(&source, b"data").expect("write source");
+        let destination = temp.path().join("dest");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| event.relative_path().to_string_lossy().contains("file.txt"))
+            .expect("event present");
+
+        let format = parse_out_format(OsStr::new("%M")).expect("parse out-format");
+        let mut output = Vec::new();
+        format
+            .render(event, &mut output)
+            .expect("render out-format");
+
+        assert!(String::from_utf8_lossy(&output).trim().contains('-'));
     }
 
     #[test]
