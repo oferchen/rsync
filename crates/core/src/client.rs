@@ -80,12 +80,15 @@
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 //! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
 use std::time::{Duration, SystemTime};
 use std::{env, error::Error};
 
@@ -108,12 +111,16 @@ use rsync_protocol::{
 use rsync_transport::negotiate_legacy_daemon_session;
 #[cfg(test)]
 use std::cell::RefCell;
+use tempfile::NamedTempFile;
 
 use crate::{
     bandwidth::{self, BandwidthParseError},
     message::{Message, Role},
     rsync_error,
 };
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 /// Exit code returned when client functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -126,6 +133,8 @@ const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
 /// Timeout applied to daemon sockets to avoid hanging handshakes when the caller
 /// does not provide an override.
 const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
+/// Maximum exit code representable in the traditional 8-bit rsync transport.
+const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 /// Describes the timeout configuration applied to network operations.
 ///
@@ -1396,6 +1405,562 @@ impl ClientSummary {
     }
 }
 
+/// Arguments used to spawn the legacy `rsync` binary when remote operands are present.
+///
+/// The fallback path preserves the command-line semantics of upstream rsync while the
+/// native protocol engine is completed. Higher level consumers such as the CLI build
+/// this structure from parsed flags before handing control to
+/// [`run_remote_transfer_fallback`].
+#[derive(Clone, Debug)]
+pub struct RemoteFallbackArgs {
+    /// Enables `--dry-run`.
+    pub dry_run: bool,
+    /// Enables `--list-only`.
+    pub list_only: bool,
+    /// Enables archive mode (`-a`).
+    pub archive: bool,
+    /// Enables `--delete`.
+    pub delete: bool,
+    /// Enables `--delete-after`.
+    pub delete_after: bool,
+    /// Enables `--delete-excluded`.
+    pub delete_excluded: bool,
+    /// Enables `--checksum`.
+    pub checksum: bool,
+    /// Enables `--size-only`.
+    pub size_only: bool,
+    /// Enables `--ignore-existing`.
+    pub ignore_existing: bool,
+    /// Enables `--compress`.
+    pub compress: bool,
+    /// Enables `--no-compress` when `true` and compression is otherwise disabled.
+    pub compress_disabled: bool,
+    /// Optional compression level forwarded via `--compress-level`.
+    pub compress_level: Option<OsString>,
+    /// Optional `--owner`/`--no-owner` toggle.
+    pub owner: Option<bool>,
+    /// Optional `--group`/`--no-group` toggle.
+    pub group: Option<bool>,
+    /// Optional `--perms`/`--no-perms` toggle.
+    pub perms: Option<bool>,
+    /// Optional `--times`/`--no-times` toggle.
+    pub times: Option<bool>,
+    /// Optional `--numeric-ids`/`--no-numeric-ids` toggle.
+    pub numeric_ids: Option<bool>,
+    /// Optional `--sparse`/`--no-sparse` toggle.
+    pub sparse: Option<bool>,
+    /// Optional `--devices`/`--no-devices` toggle.
+    pub devices: Option<bool>,
+    /// Optional `--specials`/`--no-specials` toggle.
+    pub specials: Option<bool>,
+    /// Optional `--relative`/`--no-relative` toggle.
+    pub relative: Option<bool>,
+    /// Optional `--implied-dirs`/`--no-implied-dirs` toggle.
+    pub implied_dirs: Option<bool>,
+    /// Verbosity level translated into repeated `-v` flags.
+    pub verbosity: u8,
+    /// Enables `--progress`.
+    pub progress: bool,
+    /// Enables `--stats`.
+    pub stats: bool,
+    /// Enables `--partial`.
+    pub partial: bool,
+    /// Enables `--remove-source-files`.
+    pub remove_source_files: bool,
+    /// Optional `--inplace`/`--no-inplace` toggle.
+    pub inplace: Option<bool>,
+    /// Routes daemon messages to standard error via `--msgs2stderr`.
+    pub msgs_to_stderr: bool,
+    /// Optional `--whole-file`/`--no-whole-file` toggle.
+    pub whole_file: Option<bool>,
+    /// Optional bandwidth limit forwarded through `--bwlimit`.
+    pub bwlimit: Option<OsString>,
+    /// Patterns forwarded via repeated `--exclude` flags.
+    pub excludes: Vec<OsString>,
+    /// Patterns forwarded via repeated `--include` flags.
+    pub includes: Vec<OsString>,
+    /// File paths forwarded via repeated `--exclude-from` flags.
+    pub exclude_from: Vec<OsString>,
+    /// File paths forwarded via repeated `--include-from` flags.
+    pub include_from: Vec<OsString>,
+    /// Raw filter directives forwarded via repeated `--filter` flags.
+    pub filters: Vec<OsString>,
+    /// Whether the original invocation used `--files-from`.
+    pub files_from_used: bool,
+    /// Entries collected from `--files-from` operands.
+    pub file_list_entries: Vec<OsString>,
+    /// Indicates that `--from0` was supplied.
+    pub from0: bool,
+    /// Optional path provided via `--password-file`.
+    pub password_file: Option<PathBuf>,
+    /// Optional protocol override forwarded via `--protocol`.
+    pub protocol: Option<ProtocolVersion>,
+    /// Timeout applied to the spawned process via `--timeout`.
+    pub timeout: TransferTimeout,
+    /// Optional `--out-format` template.
+    pub out_format: Option<OsString>,
+    /// Enables `--no-motd`.
+    pub no_motd: bool,
+    /// Optional override for the fallback executable path.
+    ///
+    /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
+    /// defaults to `rsync` if the override is missing or empty.
+    pub fallback_binary: Option<OsString>,
+    /// Remaining operands to forward to the fallback binary.
+    pub remainder: Vec<OsString>,
+    /// Controls ACL forwarding (`--acls`/`--no-acls`).
+    #[cfg(feature = "acl")]
+    pub acls: Option<bool>,
+    /// Controls xattr forwarding (`--xattrs`/`--no-xattrs`).
+    #[cfg(feature = "xattr")]
+    pub xattrs: Option<bool>,
+}
+
+/// Spawns the fallback `rsync` binary with arguments derived from [`RemoteFallbackArgs`].
+///
+/// The helper forwards the subprocess stdout/stderr into the provided writers and returns
+/// the exit status code on success. Errors surface as [`ClientError`] instances with
+/// fully formatted diagnostics.
+pub fn run_remote_transfer_fallback<Out, Err>(
+    stdout: &mut Out,
+    stderr: &mut Err,
+    args: RemoteFallbackArgs,
+) -> Result<i32, ClientError>
+where
+    Out: Write,
+    Err: Write,
+{
+    let RemoteFallbackArgs {
+        dry_run,
+        list_only,
+        archive,
+        delete,
+        delete_after,
+        delete_excluded,
+        checksum,
+        size_only,
+        ignore_existing,
+        compress,
+        compress_disabled,
+        compress_level,
+        owner,
+        group,
+        perms,
+        times,
+        numeric_ids,
+        sparse,
+        devices,
+        specials,
+        relative,
+        implied_dirs,
+        verbosity,
+        progress,
+        stats,
+        partial,
+        remove_source_files,
+        inplace,
+        msgs_to_stderr,
+        whole_file,
+        bwlimit,
+        excludes,
+        includes,
+        exclude_from,
+        include_from,
+        filters,
+        files_from_used,
+        file_list_entries,
+        from0,
+        password_file,
+        protocol,
+        timeout,
+        out_format,
+        no_motd,
+        fallback_binary,
+        mut remainder,
+        #[cfg(feature = "acl")]
+        acls,
+        #[cfg(feature = "xattr")]
+        xattrs,
+    } = args;
+
+    let mut command_args = Vec::new();
+    if archive {
+        command_args.push(OsString::from("-a"));
+    }
+    if dry_run {
+        command_args.push(OsString::from("--dry-run"));
+    }
+    if list_only {
+        command_args.push(OsString::from("--list-only"));
+    }
+    if delete {
+        command_args.push(OsString::from("--delete"));
+    }
+    if delete_after {
+        command_args.push(OsString::from("--delete-after"));
+    }
+    if delete_excluded {
+        command_args.push(OsString::from("--delete-excluded"));
+    }
+    if checksum {
+        command_args.push(OsString::from("--checksum"));
+    }
+    if size_only {
+        command_args.push(OsString::from("--size-only"));
+    }
+    if ignore_existing {
+        command_args.push(OsString::from("--ignore-existing"));
+    }
+    if compress {
+        command_args.push(OsString::from("--compress"));
+    } else if compress_disabled {
+        command_args.push(OsString::from("--no-compress"));
+        if whole_file.is_none() {
+            command_args.push(OsString::from("--no-whole-file"));
+        }
+    }
+    if let Some(level) = compress_level {
+        command_args.push(OsString::from("--compress-level"));
+        command_args.push(level);
+    }
+
+    push_toggle(&mut command_args, "--owner", "--no-owner", owner);
+    push_toggle(&mut command_args, "--group", "--no-group", group);
+    push_toggle(&mut command_args, "--perms", "--no-perms", perms);
+    push_toggle(&mut command_args, "--times", "--no-times", times);
+    push_toggle(
+        &mut command_args,
+        "--numeric-ids",
+        "--no-numeric-ids",
+        numeric_ids,
+    );
+    push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
+    push_toggle(&mut command_args, "--devices", "--no-devices", devices);
+    push_toggle(&mut command_args, "--specials", "--no-specials", specials);
+    push_toggle(&mut command_args, "--relative", "--no-relative", relative);
+    push_toggle(
+        &mut command_args,
+        "--implied-dirs",
+        "--no-implied-dirs",
+        implied_dirs,
+    );
+    push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
+    #[cfg(feature = "acl")]
+    push_toggle(&mut command_args, "--acls", "--no-acls", acls);
+    push_toggle(
+        &mut command_args,
+        "--whole-file",
+        "--no-whole-file",
+        whole_file,
+    );
+    #[cfg(feature = "xattr")]
+    push_toggle(&mut command_args, "--xattrs", "--no-xattrs", xattrs);
+
+    for _ in 0..verbosity {
+        command_args.push(OsString::from("-v"));
+    }
+    if progress {
+        command_args.push(OsString::from("--progress"));
+    }
+    if stats {
+        command_args.push(OsString::from("--stats"));
+    }
+    if partial {
+        command_args.push(OsString::from("--partial"));
+    }
+    if remove_source_files {
+        command_args.push(OsString::from("--remove-source-files"));
+    }
+    if msgs_to_stderr {
+        command_args.push(OsString::from("--msgs2stderr"));
+    }
+
+    if let Some(limit) = bwlimit {
+        command_args.push(OsString::from("--bwlimit"));
+        command_args.push(limit);
+    }
+
+    if let Some(format) = out_format {
+        command_args.push(OsString::from("--out-format"));
+        command_args.push(format);
+    }
+
+    for exclude in excludes {
+        command_args.push(OsString::from("--exclude"));
+        command_args.push(exclude);
+    }
+    for include in includes {
+        command_args.push(OsString::from("--include"));
+        command_args.push(include);
+    }
+    for path in exclude_from {
+        command_args.push(OsString::from("--exclude-from"));
+        command_args.push(path);
+    }
+    for path in include_from {
+        command_args.push(OsString::from("--include-from"));
+        command_args.push(path);
+    }
+    for filter in filters {
+        command_args.push(OsString::from("--filter"));
+        command_args.push(filter);
+    }
+
+    let files_from_temp =
+        prepare_file_list(&file_list_entries, files_from_used, from0).map_err(|error| {
+            fallback_error(format!(
+                "failed to prepare file list for fallback rsync invocation: {error}"
+            ))
+        })?;
+
+    if let Some(temp) = files_from_temp.as_ref() {
+        command_args.push(OsString::from("--files-from"));
+        command_args.push(temp.path().as_os_str().to_os_string());
+        if from0 {
+            command_args.push(OsString::from("--from0"));
+        }
+    }
+
+    if let Some(path) = password_file {
+        command_args.push(OsString::from("--password-file"));
+        command_args.push(path.into_os_string());
+    }
+
+    if let Some(protocol) = protocol {
+        command_args.push(OsString::from("--protocol"));
+        command_args.push(OsString::from(protocol.to_string()));
+    }
+
+    match timeout {
+        TransferTimeout::Default => {}
+        TransferTimeout::Disabled => {
+            command_args.push(OsString::from("--timeout"));
+            command_args.push(OsString::from("0"));
+        }
+        TransferTimeout::Seconds(value) => {
+            command_args.push(OsString::from("--timeout"));
+            command_args.push(OsString::from(value.get().to_string()));
+        }
+    }
+
+    if no_motd {
+        command_args.push(OsString::from("--no-motd"));
+    }
+
+    command_args.append(&mut remainder);
+
+    let binary = fallback_binary.unwrap_or_else(|| {
+        env::var_os("OC_RSYNC_FALLBACK")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| OsString::from("rsync"))
+    });
+
+    let mut command = Command::new(&binary);
+    command.args(&command_args);
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|error| {
+        fallback_error(format!(
+            "failed to launch fallback rsync binary '{}': {error}",
+            Path::new(&binary).display()
+        ))
+    })?;
+
+    let (sender, receiver) = mpsc::channel();
+    let mut stdout_thread = child
+        .stdout
+        .take()
+        .map(|handle| spawn_fallback_reader(handle, FallbackStreamKind::Stdout, sender.clone()));
+    let mut stderr_thread = child
+        .stderr
+        .take()
+        .map(|handle| spawn_fallback_reader(handle, FallbackStreamKind::Stderr, sender.clone()));
+    drop(sender);
+
+    let mut stdout_open = stdout_thread.is_some();
+    let mut stderr_open = stderr_thread.is_some();
+
+    while stdout_open || stderr_open {
+        match receiver.recv() {
+            Ok(FallbackStreamMessage::Data(FallbackStreamKind::Stdout, data)) => {
+                if let Err(error) = stdout.write_all(&data) {
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return Err(fallback_error(format!(
+                        "failed to forward fallback stdout: {error}"
+                    )));
+                }
+            }
+            Ok(FallbackStreamMessage::Data(FallbackStreamKind::Stderr, data)) => {
+                if let Err(error) = stderr.write_all(&data) {
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return Err(fallback_error(format!(
+                        "failed to forward fallback stderr: {error}"
+                    )));
+                }
+            }
+            Ok(FallbackStreamMessage::Error(FallbackStreamKind::Stdout, error)) => {
+                terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                return Err(fallback_error(format!(
+                    "failed to read stdout from fallback rsync: {error}"
+                )));
+            }
+            Ok(FallbackStreamMessage::Error(FallbackStreamKind::Stderr, error)) => {
+                terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                return Err(fallback_error(format!(
+                    "failed to read stderr from fallback rsync: {error}"
+                )));
+            }
+            Ok(FallbackStreamMessage::Finished(kind)) => match kind {
+                FallbackStreamKind::Stdout => stdout_open = false,
+                FallbackStreamKind::Stderr => stderr_open = false,
+            },
+            Err(_) => {
+                if stdout_open {
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return Err(fallback_error(
+                        "failed to capture stdout from fallback rsync binary",
+                    ));
+                }
+                if stderr_open {
+                    terminate_fallback_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    return Err(fallback_error(
+                        "failed to capture stderr from fallback rsync binary",
+                    ));
+                }
+                break;
+            }
+        }
+    }
+
+    join_fallback_thread(&mut stdout_thread);
+    join_fallback_thread(&mut stderr_thread);
+
+    let status = child.wait().map_err(|error| {
+        fallback_error(format!(
+            "failed to wait for fallback rsync process: {error}"
+        ))
+    })?;
+
+    drop(files_from_temp);
+
+    Ok(status.code().unwrap_or(MAX_EXIT_CODE))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FallbackStreamKind {
+    Stdout,
+    Stderr,
+}
+
+enum FallbackStreamMessage {
+    Data(FallbackStreamKind, Vec<u8>),
+    Error(FallbackStreamKind, io::Error),
+    Finished(FallbackStreamKind),
+}
+
+fn fallback_error(text: impl Into<String>) -> ClientError {
+    let message = rsync_error!(1, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(1, message)
+}
+
+fn push_toggle(args: &mut Vec<OsString>, enable: &str, disable: &str, setting: Option<bool>) {
+    match setting {
+        Some(true) => args.push(OsString::from(enable)),
+        Some(false) => args.push(OsString::from(disable)),
+        None => {}
+    }
+}
+
+fn prepare_file_list(
+    entries: &[OsString],
+    files_from_used: bool,
+    zero_terminated: bool,
+) -> io::Result<Option<NamedTempFile>> {
+    if !files_from_used {
+        return Ok(None);
+    }
+
+    let mut file = NamedTempFile::new()?;
+    {
+        let writer = file.as_file_mut();
+        for entry in entries {
+            write_file_list_entry(writer, entry.as_os_str())?;
+            if zero_terminated {
+                writer.write_all(&[0])?;
+            } else {
+                writer.write_all(b"\n")?;
+            }
+        }
+        writer.flush()?;
+    }
+
+    Ok(Some(file))
+}
+
+fn write_file_list_entry<W: Write>(writer: &mut W, value: &OsStr) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        writer.write_all(value.as_bytes())
+    }
+
+    #[cfg(not(unix))]
+    {
+        writer.write_all(value.to_string_lossy().as_bytes())
+    }
+}
+
+fn spawn_fallback_reader<R>(
+    mut reader: R,
+    kind: FallbackStreamKind,
+    sender: Sender<FallbackStreamMessage>,
+) -> thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(FallbackStreamMessage::Finished(kind));
+                    break;
+                }
+                Ok(n) => {
+                    if sender
+                        .send(FallbackStreamMessage::Data(kind, Vec::from(&buffer[..n])))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(FallbackStreamMessage::Error(kind, error));
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn join_fallback_thread(handle: &mut Option<thread::JoinHandle<()>>) {
+    if let Some(join_handle) = handle.take() {
+        let _ = join_handle.join();
+    }
+}
+
+fn terminate_fallback_process(
+    child: &mut Child,
+    stdout_thread: &mut Option<thread::JoinHandle<()>>,
+    stderr_thread: &mut Option<thread::JoinHandle<()>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    join_fallback_thread(stdout_thread);
+    join_fallback_thread(stderr_thread);
+}
+
 /// Describes a transfer action performed by the local copy engine.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEventKind {
@@ -1904,8 +2469,9 @@ pub fn run_client_with_observer(
 mod tests {
     use super::*;
     use rsync_compress::zlib::CompressionLevel;
+    use std::ffi::OsString;
     use std::fs;
-    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+    use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
     use std::sync::{Mutex, OnceLock};
@@ -1915,10 +2481,121 @@ mod tests {
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
 
+    #[cfg(unix)]
+    use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(unix)]
+    const FALLBACK_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --files-from)
+      FILE="$2"
+      cat "$FILE"
+      shift 2
+      ;;
+    --from0)
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+printf 'fallback stdout\n'
+printf 'fallback stderr\n' >&2
+exit 42
+"#;
+
     static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn env_lock() -> &'static Mutex<()> {
         ENV_GUARD.get_or_init(|| Mutex::new(()))
+    }
+
+    #[cfg(unix)]
+    fn write_fallback_script(dir: &Path) -> PathBuf {
+        let path = dir.join("fallback.sh");
+        fs::write(&path, FALLBACK_SCRIPT).expect("script written");
+        let metadata = fs::metadata(&path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("script permissions set");
+        path
+    }
+
+    fn baseline_fallback_args() -> RemoteFallbackArgs {
+        RemoteFallbackArgs {
+            dry_run: false,
+            list_only: false,
+            archive: false,
+            delete: false,
+            delete_after: false,
+            delete_excluded: false,
+            checksum: false,
+            size_only: false,
+            ignore_existing: false,
+            compress: false,
+            compress_disabled: false,
+            compress_level: None,
+            owner: None,
+            group: None,
+            perms: None,
+            times: None,
+            numeric_ids: None,
+            sparse: None,
+            devices: None,
+            specials: None,
+            relative: None,
+            implied_dirs: None,
+            verbosity: 0,
+            progress: false,
+            stats: false,
+            partial: false,
+            remove_source_files: false,
+            inplace: None,
+            msgs_to_stderr: false,
+            whole_file: None,
+            bwlimit: None,
+            excludes: Vec::new(),
+            includes: Vec::new(),
+            exclude_from: Vec::new(),
+            include_from: Vec::new(),
+            filters: Vec::new(),
+            files_from_used: false,
+            file_list_entries: Vec::new(),
+            from0: false,
+            password_file: None,
+            protocol: None,
+            timeout: TransferTimeout::Default,
+            out_format: None,
+            no_motd: false,
+            fallback_binary: None,
+            remainder: Vec::new(),
+            #[cfg(feature = "acl")]
+            acls: None,
+            #[cfg(feature = "xattr")]
+            xattrs: None,
+        }
+    }
+
+    #[cfg(unix)]
+    struct FailingWriter;
+
+    #[cfg(unix)]
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::Other, "forced failure"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::Other, "forced failure"))
+        }
     }
 
     #[test]
@@ -2241,6 +2918,75 @@ mod tests {
             .build();
 
         assert!(!disabled.stats());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_invocation_forwards_streams() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let script = write_fallback_script(temp.path());
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut args = baseline_fallback_args();
+        args.files_from_used = true;
+        args.file_list_entries = vec![OsString::from("alpha"), OsString::from("beta")];
+        args.fallback_binary = Some(script.into_os_string());
+
+        let exit_code = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert_eq!(exit_code, 42);
+        assert_eq!(
+            String::from_utf8(stdout).expect("stdout utf8"),
+            "alpha\nbeta\nfallback stdout\n"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).expect("stderr utf8"),
+            "fallback stderr\n"
+        );
+    }
+
+    #[test]
+    fn remote_fallback_reports_launch_errors() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let missing = temp.path().join("missing-rsync");
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(missing.into_os_string());
+
+        let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect_err("spawn failure reported");
+
+        assert_eq!(error.exit_code(), 1);
+        let message = format!("{error}");
+        assert!(message.contains("failed to launch fallback rsync binary"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_reports_stdout_forward_errors() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let script = write_fallback_script(temp.path());
+
+        let mut stdout = FailingWriter;
+        let mut stderr = Vec::new();
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script.into_os_string());
+
+        let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect_err("stdout forwarding failure surfaces");
+
+        assert_eq!(error.exit_code(), 1);
+        let message = format!("{error}");
+        assert!(message.contains("failed to forward fallback stdout"));
     }
 
     #[test]
