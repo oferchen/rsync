@@ -2933,8 +2933,9 @@ fn run_delegate_mode<Err>(args: &[OsString], stderr: &mut MessageSink<Err>) -> i
 where
     Err: Write,
 {
-    let binary = env::var_os("OC_RSYNC_FALLBACK")
+    let binary = env::var_os("OC_RSYNC_DAEMON_FALLBACK")
         .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os("OC_RSYNC_FALLBACK").filter(|value| !value.is_empty()))
         .unwrap_or_else(|| OsString::from("rsync"));
 
     let mut command = ProcessCommand::new(&binary);
@@ -3203,7 +3204,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("oc-rsyncd"),
@@ -3227,7 +3228,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("rsync-wrapper.sh");
         write_executable_script(&script_path, "#!/bin/sh\nexit 7\n");
-        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("oc-rsyncd"),
@@ -3237,6 +3238,30 @@ mod tests {
         assert_eq!(code, 7);
         let stderr_str = String::from_utf8_lossy(&stderr);
         assert!(stderr_str.contains("system rsync daemon exited"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delegate_system_rsync_falls_back_to_client_override() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("rsync-wrapper.sh");
+        let log_path = temp.path().join("invocation.log");
+        let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
+        write_executable_script(&script_path, &script);
+        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let (code, _stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsyncd"),
+            OsStr::new("--delegate-system-rsync"),
+            OsStr::new("--port"),
+            OsStr::new("1234"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let recorded = fs::read_to_string(&log_path).expect("read invocation log");
+        assert!(recorded.contains("--port 1234"));
     }
 
     #[test]
