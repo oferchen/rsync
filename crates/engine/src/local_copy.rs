@@ -4265,7 +4265,7 @@ fn copy_file(
 
     let start = Instant::now();
 
-    let compressed = context.copy_file_contents(
+    let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
         &mut buffer,
@@ -4276,13 +4276,42 @@ fn copy_file(
         record_path.as_path(),
         file_size,
         start,
-    )?;
+    );
 
     drop(writer);
 
-    if let Some(guard) = guard {
-        guard.commit()?;
-    }
+    let compressed = match copy_result {
+        Ok(compressed) => {
+            if let Err(timeout_error) = context.enforce_timeout() {
+                if let Some(guard) = guard.take() {
+                    guard.discard();
+                }
+
+                if existing_metadata.is_none() {
+                    remove_incomplete_destination(destination);
+                }
+
+                return Err(timeout_error);
+            }
+
+            if let Some(guard) = guard.take() {
+                guard.commit()?;
+            }
+
+            compressed
+        }
+        Err(error) => {
+            if let Some(guard) = guard.take() {
+                guard.discard();
+            }
+
+            if existing_metadata.is_none() {
+                remove_incomplete_destination(destination);
+            }
+
+            return Err(error);
+        }
+    };
 
     apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
@@ -4301,6 +4330,15 @@ fn copy_file(
         elapsed,
         Some(LocalCopyMetadata::from_metadata(metadata, None)),
     ));
+
+    if let Err(timeout_error) = context.enforce_timeout() {
+        if existing_metadata.is_none() {
+            remove_incomplete_destination(destination);
+        }
+
+        return Err(timeout_error);
+    }
+
     remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
 }
@@ -4416,6 +4454,21 @@ impl DestinationWriteGuard {
         Ok(())
     }
 
+    fn discard(mut self) {
+        if self.preserve_on_error {
+            self.committed = true;
+            return;
+        }
+
+        if let Err(error) = fs::remove_file(&self.temp_path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                // Best-effort cleanup: the file may have been removed concurrently.
+            }
+        }
+
+        self.committed = true;
+    }
+
     fn finalise_action(&self) -> &'static str {
         if self.preserve_on_error {
             "finalise partial file"
@@ -4429,6 +4482,14 @@ impl Drop for DestinationWriteGuard {
     fn drop(&mut self) {
         if !self.committed && !self.preserve_on_error {
             let _ = fs::remove_file(&self.temp_path);
+        }
+    }
+}
+
+fn remove_incomplete_destination(destination: &Path) {
+    if let Err(error) = fs::remove_file(destination) {
+        if error.kind() != io::ErrorKind::NotFound {
+            // Preserve the original error from the transfer attempt.
         }
     }
 }

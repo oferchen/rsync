@@ -3727,10 +3727,12 @@ exit 42
         let error = ModuleListRequest::from_operands(&operands)
             .expect_err("unbracketed IPv6 host should be rejected");
         assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-        assert!(error
-            .message()
-            .to_string()
-            .contains("IPv6 daemon addresses must be enclosed in brackets"));
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("IPv6 daemon addresses must be enclosed in brackets")
+        );
     }
 
     #[test]
