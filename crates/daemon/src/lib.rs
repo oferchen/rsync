@@ -237,6 +237,7 @@ const HELP_TEXT: &str = concat!(
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
     "  --bwlimit=RATE     Limit per-connection bandwidth in KiB/s (0 = unlimited).\n",
+    "  --no-bwlimit       Remove any per-connection bandwidth limit configured so far.\n",
     "\n",
     "The listener accepts legacy @RSYNCD: connections sequentially, reports the\n",
     "negotiated protocol as 32, lists configured modules for #list requests, and\n",
@@ -585,6 +586,8 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
                 let limit = parse_runtime_bwlimit(&value)?;
                 options.set_bandwidth_limit(limit)?;
+            } else if argument == "--no-bwlimit" {
+                options.set_bandwidth_limit(None)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -4430,6 +4433,15 @@ mod tests {
     fn runtime_options_parse_bwlimit_unlimited() {
         let options = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("0")])
             .expect("parse unlimited");
+
+        assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_parse_no_bwlimit_argument() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--no-bwlimit")]).expect("parse no-bwlimit");
 
         assert!(options.bandwidth_limit().is_none());
         assert!(options.bandwidth_limit_configured());
