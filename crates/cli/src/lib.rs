@@ -101,6 +101,7 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
+use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
@@ -228,6 +229,8 @@ enum OutFormatPlaceholder {
     CurrentTime,
     SymlinkTarget,
     OctalPermissions,
+    OwnerName,
+    GroupName,
     OwnerUid,
     OwnerGid,
 }
@@ -252,15 +255,13 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     '%' => literal.push('%'),
                     'n' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FileName));
                     }
                     'N' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::FileNameWithSymlinkTarget,
@@ -268,15 +269,13 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'f' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FullPath));
                     }
                     'i' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::ItemizedChanges,
@@ -284,8 +283,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'l' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::FileLength,
@@ -293,8 +291,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'b' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::BytesWritten,
@@ -302,22 +299,19 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'c' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::BytesRead));
                     }
                     'o' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::Operation));
                     }
                     'M' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::ModifyTime,
@@ -325,8 +319,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'B' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::PermissionString,
@@ -334,8 +327,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'L' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::SymlinkTarget,
@@ -343,8 +335,7 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     't' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::CurrentTime,
@@ -352,24 +343,33 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                     }
                     'p' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
                             OutFormatPlaceholder::OctalPermissions,
                         ));
                     }
+                    'u' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerName));
+                    }
+                    'g' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::GroupName));
+                    }
                     'U' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerUid));
                     }
                     'G' => {
                         if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(literal.clone()));
-                            literal.clear();
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerGid));
                     }
@@ -476,6 +476,12 @@ impl OutFormat {
                     OutFormatPlaceholder::OctalPermissions => {
                         buffer.push_str(&format_out_format_octal_permissions(event.metadata()));
                     }
+                    OutFormatPlaceholder::OwnerName => {
+                        buffer.push_str(&format_owner_name(event.metadata()));
+                    }
+                    OutFormatPlaceholder::GroupName => {
+                        buffer.push_str(&format_group_name(event.metadata()));
+                    }
                     OutFormatPlaceholder::OwnerUid => {
                         let uid = event
                             .metadata()
@@ -560,6 +566,34 @@ fn format_out_format_octal_permissions(metadata: Option<&ClientEntryMetadata>) -
         .and_then(|meta| meta.mode())
         .map(|mode| format!("{:04o}", mode & 0o7777))
         .unwrap_or_else(|| "0000".to_string())
+}
+
+fn format_owner_name(metadata: Option<&ClientEntryMetadata>) -> String {
+    metadata
+        .and_then(ClientEntryMetadata::uid)
+        .map(resolve_user_name)
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
+    metadata
+        .and_then(ClientEntryMetadata::gid)
+        .map(resolve_group_name)
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn resolve_user_name(uid: u32) -> String {
+    get_user_by_uid(uid as uid_t)
+        .map(|user| user.name().to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| uid.to_string())
+}
+
+fn resolve_group_name(gid: u32) -> String {
+    get_group_by_gid(gid as gid_t)
+        .map(|group| group.name().to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| gid.to_string())
 }
 
 fn format_current_timestamp() -> String {
@@ -5541,8 +5575,10 @@ mod tests {
 
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
-        let format = parse_out_format(OsStr::new("%f %b %c %l %o %M %B %L %N %p %U %G %t %i %%"))
-            .expect("parse out-format");
+        let format = parse_out_format(OsStr::new(
+            "%f %b %c %l %o %M %B %L %N %p %u %g %U %G %t %i %%",
+        ))
+        .expect("parse out-format");
         assert!(!format.tokens.is_empty());
     }
 
@@ -5559,6 +5595,7 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
+        use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
         let temp = tempdir().expect("tempdir");
         let src_dir = temp.path().join("src");
@@ -5570,6 +5607,12 @@ mod tests {
 
         let expected_uid = fs::metadata(&source).expect("source metadata").uid();
         let expected_gid = fs::metadata(&source).expect("source metadata").gid();
+        let expected_user = get_user_by_uid(expected_uid as uid_t)
+            .map(|user| user.name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| expected_uid.to_string());
+        let expected_group = get_group_by_gid(expected_gid as gid_t)
+            .map(|group| group.name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| expected_gid.to_string());
 
         let mut permissions = fs::metadata(&source)
             .expect("source metadata")
@@ -5630,6 +5673,20 @@ mod tests {
             .render(event, &mut output)
             .expect("render %G");
         assert_eq!(output, format!("{expected_gid}\n").as_bytes());
+
+        output.clear();
+        parse_out_format(OsStr::new("%u"))
+            .expect("parse %u")
+            .render(event, &mut output)
+            .expect("render %u");
+        assert_eq!(output, format!("{expected_user}\n").as_bytes());
+
+        output.clear();
+        parse_out_format(OsStr::new("%g"))
+            .expect("parse %g")
+            .render(event, &mut output)
+            .expect("render %g");
+        assert_eq!(output, format!("{expected_group}\n").as_bytes());
     }
 
     #[test]
