@@ -92,6 +92,11 @@ use rsync_core::{
         ClientSummary, CompressionSetting, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
         FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext,
         TransferTimeout, run_client_or_fallback, run_module_list_with_password,
+        ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
+        CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
+        FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, TransferTimeout,
+        run_client_with_observer as run_core_client_with_observer, run_module_list_with_password,
+        run_remote_transfer_fallback,
     },
     message::{Message, Role},
     rsync_error,
@@ -121,6 +126,8 @@ const HELP_TEXT: &str = concat!(
     "      --list-only  List files without performing a transfer.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
     "      --delete     Remove destination files that are absent from the source.\n",
+    "      --delete-before  Remove destination files that are absent from the source before transfers start.\n",
+    "      --delete-during  Remove destination files while processing directories.\n",
     "      --delete-after  Remove destination files after transfers complete.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
@@ -189,7 +196,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -558,8 +565,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     archive: bool,
-    delete: bool,
-    delete_after: bool,
+    delete_mode: DeleteMode,
     delete_excluded: bool,
     checksum: bool,
     size_only: bool,
@@ -861,6 +867,18 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("delete-before")
+                .long("delete-before")
+                .help("Remove destination files that are absent from the source before transfers start.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("delete-during")
+                .long("delete-during")
+                .help("Remove destination files that are absent from the source during directory traversal.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("delete-after")
                 .long("delete-after")
                 .help("Remove destination files after transfers complete.")
@@ -1126,11 +1144,36 @@ where
         dry_run = true;
     }
     let archive = matches.get_flag("archive");
-    let mut delete = matches.get_flag("delete");
-    let delete_after = matches.get_flag("delete-after");
+    let delete_flag = matches.get_flag("delete");
+    let delete_before_flag = matches.get_flag("delete-before");
+    let delete_during_flag = matches.get_flag("delete-during");
+    let delete_after_flag = matches.get_flag("delete-after");
     let delete_excluded = matches.get_flag("delete-excluded");
-    if delete_after || delete_excluded {
-        delete = true;
+
+    let delete_mode_conflicts = [delete_before_flag, delete_during_flag, delete_after_flag]
+        .into_iter()
+        .filter(|flag| *flag)
+        .count();
+
+    if delete_mode_conflicts > 1 {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            "--delete-before, --delete-during, and --delete-after are mutually exclusive",
+        ));
+    }
+
+    let mut delete_mode = if delete_before_flag {
+        DeleteMode::Before
+    } else if delete_after_flag {
+        DeleteMode::After
+    } else if delete_during_flag || delete_flag {
+        DeleteMode::During
+    } else {
+        DeleteMode::Disabled
+    };
+
+    if delete_excluded && !delete_mode.is_enabled() {
+        delete_mode = DeleteMode::During;
     }
     let compress_flag = matches.get_flag("compress");
     let no_compress = matches.get_flag("no-compress");
@@ -1307,8 +1350,7 @@ where
         dry_run,
         list_only,
         archive,
-        delete,
-        delete_after,
+        delete_mode,
         delete_excluded,
         checksum,
         size_only,
@@ -1468,8 +1510,7 @@ where
         dry_run,
         list_only,
         archive,
-        delete,
-        delete_after,
+        delete_mode,
         delete_excluded,
         checksum,
         size_only,
@@ -1767,11 +1808,14 @@ where
 
     let fallback_args = if fallback_required {
         Some(RemoteFallbackArgs {
+    if requires_delta_fallback || transfer_requires_remote(&remainder, &file_list_operands) {
+        let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
+        let fallback_args = RemoteFallbackArgs {
             dry_run,
             list_only,
             archive,
-            delete,
-            delete_after,
+            delete: delete_for_fallback,
+            delete_mode,
             delete_excluded,
             checksum,
             size_only,
@@ -1873,8 +1917,7 @@ where
         .transfer_args(transfer_operands)
         .dry_run(dry_run)
         .list_only(list_only)
-        .delete(delete)
-        .delete_after(delete_after)
+        .delete(delete_mode.is_enabled() || delete_excluded)
         .delete_excluded(delete_excluded)
         .bandwidth_limit(bandwidth_limit)
         .compression_setting(compression_setting)
@@ -1910,6 +1953,12 @@ where
     {
         builder = builder.xattrs(xattrs.unwrap_or(false));
     }
+
+    builder = match delete_mode {
+        DeleteMode::Before => builder.delete_before(true),
+        DeleteMode::After => builder.delete_after(true),
+        DeleteMode::During | DeleteMode::Disabled => builder,
+    };
 
     builder = builder.force_event_collection(out_format_template.is_some());
 
@@ -6958,7 +7007,7 @@ mod tests {
         ])
         .expect("parse succeeds");
 
-        assert!(parsed.delete);
+        assert_eq!(parsed.delete_mode, DeleteMode::During);
         assert!(!parsed.delete_excluded);
     }
 
@@ -6972,8 +7021,35 @@ mod tests {
         ])
         .expect("parse succeeds");
 
-        assert!(parsed.delete);
-        assert!(parsed.delete_after);
+        assert_eq!(parsed.delete_mode, DeleteMode::After);
+        assert!(!parsed.delete_excluded);
+    }
+
+    #[test]
+    fn delete_before_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-before"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert_eq!(parsed.delete_mode, DeleteMode::Before);
+        assert!(!parsed.delete_excluded);
+    }
+
+    #[test]
+    fn delete_during_flag_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-during"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert_eq!(parsed.delete_mode, DeleteMode::During);
         assert!(!parsed.delete_excluded);
     }
 
@@ -6987,7 +7063,7 @@ mod tests {
         ])
         .expect("parse succeeds");
 
-        assert!(parsed.delete);
+        assert!(parsed.delete_mode.is_enabled());
         assert!(parsed.delete_excluded);
     }
 
@@ -7594,6 +7670,82 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--delete"));
         assert!(args.contains(&"--delete-after"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_delete_before_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-before"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--delete"));
+        assert!(args.contains(&"--delete-before"));
+        assert!(!args.contains(&"--delete-after"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_delete_during_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delete-during"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--delete"));
+        assert!(!args.contains(&"--delete-before"));
+        assert!(!args.contains(&"--delete-after"));
     }
 
     #[cfg(unix)]

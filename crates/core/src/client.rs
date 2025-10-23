@@ -184,6 +184,10 @@ impl Default for TransferTimeout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompressionSetting {
     /// Compression has been explicitly disabled (e.g. `--compress-level=0`).
+    ///
+    /// This is also the default when building a [`ClientConfig`], matching
+    /// upstream rsync's behaviour of leaving compression off unless the caller
+    /// explicitly enables it.
     Disabled,
     /// Compression is enabled with the provided [`CompressionLevel`].
     Level(CompressionLevel),
@@ -243,7 +247,7 @@ impl CompressionSetting {
 
 impl Default for CompressionSetting {
     fn default() -> Self {
-        Self::Level(CompressionLevel::Default)
+        Self::Disabled
     }
 }
 
@@ -253,13 +257,39 @@ impl From<CompressionLevel> for CompressionSetting {
     }
 }
 
+/// Deletion scheduling selected by the caller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeleteMode {
+    /// Do not remove extraneous destination entries.
+    Disabled,
+    /// Remove extraneous entries before transferring file data.
+    Before,
+    /// Remove extraneous entries while processing directory contents (upstream default).
+    During,
+    /// Remove extraneous entries after the transfer completes.
+    After,
+}
+
+impl DeleteMode {
+    /// Returns `true` when deletion sweeps are enabled.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+}
+
+impl Default for DeleteMode {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
-    delete: bool,
-    delete_after: bool,
+    delete_mode: DeleteMode,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
@@ -301,8 +331,7 @@ impl Default for ClientConfig {
         Self {
             transfer_args: Vec::new(),
             dry_run: false,
-            delete: false,
-            delete_after: false,
+            delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
             remove_source_files: false,
             bandwidth_limit: None,
@@ -388,18 +417,31 @@ impl ClientConfig {
         self.dry_run
     }
 
+    /// Returns the configured deletion mode.
+    #[must_use]
+    pub const fn delete_mode(&self) -> DeleteMode {
+        self.delete_mode
+    }
+
     /// Returns whether extraneous destination files should be removed.
     #[must_use]
     #[doc(alias = "--delete")]
     pub const fn delete(&self) -> bool {
-        self.delete
+        self.delete_mode.is_enabled()
+    }
+
+    /// Returns whether extraneous entries should be removed before the transfer begins.
+    #[must_use]
+    #[doc(alias = "--delete-before")]
+    pub const fn delete_before(&self) -> bool {
+        matches!(self.delete_mode, DeleteMode::Before)
     }
 
     /// Returns whether extraneous entries should be removed after the transfer completes.
     #[must_use]
     #[doc(alias = "--delete-after")]
     pub const fn delete_after(&self) -> bool {
-        self.delete_after
+        matches!(self.delete_mode, DeleteMode::After)
     }
 
     /// Returns whether excluded destination entries should also be deleted.
@@ -627,8 +669,7 @@ impl ClientConfig {
 pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,
     dry_run: bool,
-    delete: bool,
-    delete_after: bool,
+    delete_mode: DeleteMode,
     delete_excluded: bool,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
@@ -698,7 +739,31 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
-        self.delete = delete;
+        self.delete_mode = if delete {
+            DeleteMode::During
+        } else {
+            DeleteMode::Disabled
+        };
+        self
+    }
+
+    /// Requests deletion of extraneous entries before the transfer begins.
+    #[must_use]
+    #[doc(alias = "--delete-before")]
+    pub const fn delete_before(mut self, delete_before: bool) -> Self {
+        if delete_before {
+            self.delete_mode = DeleteMode::Before;
+        } else if matches!(self.delete_mode, DeleteMode::Before) {
+            self.delete_mode = DeleteMode::Disabled;
+        }
+        self
+    }
+
+    /// Requests deletion of extraneous entries while directories are processed.
+    #[must_use]
+    #[doc(alias = "--delete-during")]
+    pub const fn delete_during(mut self) -> Self {
+        self.delete_mode = DeleteMode::During;
         self
     }
 
@@ -707,9 +772,10 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete-after")]
     pub const fn delete_after(mut self, delete_after: bool) -> Self {
         if delete_after {
-            self.delete = true;
+            self.delete_mode = DeleteMode::After;
+        } else if matches!(self.delete_mode, DeleteMode::After) {
+            self.delete_mode = DeleteMode::Disabled;
         }
-        self.delete_after = delete_after;
         self
     }
 
@@ -787,6 +853,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
+        if compress {
+            if self.compression_setting.is_disabled() {
+                self.compression_setting = CompressionSetting::level(CompressionLevel::Default);
+            }
+        } else {
+            self.compression_setting = CompressionSetting::disabled();
+            self.compression_level = None;
+        }
         self
     }
 
@@ -795,6 +869,10 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_level(mut self, level: Option<CompressionLevel>) -> Self {
         self.compression_level = level;
+        if let Some(level) = level {
+            self.compression_setting = CompressionSetting::level(level);
+            self.compress = true;
+        }
         self
     }
 
@@ -803,6 +881,10 @@ impl ClientConfigBuilder {
     #[doc(alias = "--compress-level")]
     pub const fn compression_setting(mut self, setting: CompressionSetting) -> Self {
         self.compression_setting = setting;
+        self.compress = setting.is_enabled();
+        if !self.compress {
+            self.compression_level = None;
+        }
         self
     }
 
@@ -994,8 +1076,7 @@ impl ClientConfigBuilder {
         ClientConfig {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
-            delete: self.delete,
-            delete_after: self.delete_after,
+            delete_mode: self.delete_mode,
             delete_excluded: self.delete_excluded,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
@@ -1485,8 +1566,8 @@ pub struct RemoteFallbackArgs {
     pub archive: bool,
     /// Enables `--delete`.
     pub delete: bool,
-    /// Enables `--delete-after`.
-    pub delete_after: bool,
+    /// Selects the deletion timing to forward to the fallback binary.
+    pub delete_mode: DeleteMode,
     /// Enables `--delete-excluded`.
     pub delete_excluded: bool,
     /// Enables `--checksum`.
@@ -1635,7 +1716,7 @@ where
         list_only,
         archive,
         delete,
-        delete_after,
+        delete_mode,
         delete_excluded,
         checksum,
         size_only,
@@ -1695,9 +1776,11 @@ where
     }
     if delete {
         command_args.push(OsString::from("--delete"));
-    }
-    if delete_after {
-        command_args.push(OsString::from("--delete-after"));
+        match delete_mode {
+            DeleteMode::Before => command_args.push(OsString::from("--delete-before")),
+            DeleteMode::After => command_args.push(OsString::from("--delete-after")),
+            DeleteMode::During | DeleteMode::Disabled => {}
+        }
     }
     if delete_excluded {
         command_args.push(OsString::from("--delete-excluded"));
@@ -2552,9 +2635,16 @@ where
     let filter_program = compile_filter_program(config.filter_rules())?;
 
     let mut options = {
-        let options = LocalCopyOptions::default()
-            .delete(config.delete() || config.delete_excluded() || config.delete_after())
-            .delete_after(config.delete_after())
+        let mut options = LocalCopyOptions::default();
+        if config.delete_mode().is_enabled() || config.delete_excluded() {
+            options = options.delete(true);
+        }
+        options = match config.delete_mode() {
+            DeleteMode::Before => options.delete_before(true),
+            DeleteMode::After => options.delete_after(true),
+            DeleteMode::During | DeleteMode::Disabled => options,
+        };
+        options = options
             .delete_excluded(config.delete_excluded())
             .remove_source_files(config.remove_source_files())
             .bandwidth_limit(
@@ -2711,7 +2801,7 @@ exit 42
             list_only: false,
             archive: false,
             delete: false,
-            delete_after: false,
+            delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
             checksum: false,
             size_only: false,
@@ -2822,6 +2912,45 @@ exit 42
     }
 
     #[test]
+    fn builder_defaults_disable_compression() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!config.compress());
+        assert!(config.compression_setting().is_disabled());
+    }
+
+    #[test]
+    fn builder_enabling_compress_sets_default_level() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compress(true)
+            .build();
+
+        assert!(config.compress());
+        assert!(config.compression_setting().is_enabled());
+        assert_eq!(
+            config.compression_setting().level_or_default(),
+            CompressionLevel::Default
+        );
+    }
+
+    #[test]
+    fn builder_disabling_compress_clears_override() {
+        let level = NonZeroU8::new(5).unwrap();
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compression_level(Some(CompressionLevel::precise(level)))
+            .compress(false)
+            .build();
+
+        assert!(!config.compress());
+        assert!(config.compression_setting().is_disabled());
+        assert_eq!(config.compression_level(), None);
+    }
+
+    #[test]
     fn builder_enables_delete() {
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -2829,6 +2958,7 @@ exit 42
             .build();
 
         assert!(config.delete());
+        assert_eq!(config.delete_mode(), DeleteMode::During);
     }
 
     #[test]
@@ -2840,6 +2970,19 @@ exit 42
 
         assert!(config.delete());
         assert!(config.delete_after());
+        assert_eq!(config.delete_mode(), DeleteMode::After);
+    }
+
+    #[test]
+    fn builder_enables_delete_before() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete_before(true)
+            .build();
+
+        assert!(config.delete());
+        assert!(config.delete_before());
+        assert_eq!(config.delete_mode(), DeleteMode::Before);
     }
 
     #[test]

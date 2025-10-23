@@ -152,12 +152,13 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU32, Ordering},
 };
 use std::thread;
@@ -176,8 +177,8 @@ use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{BandwidthLimiter, BandwidthParseError, parse_bandwidth_argument},
     message::{Message, Role},
-    rsync_error,
-    version::VersionInfoReport,
+    rsync_error, rsync_info,
+    version::{RUST_VERSION, VersionInfoReport},
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{
@@ -515,6 +516,8 @@ impl DaemonConfig {
     }
 }
 
+type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimeOptions {
     bind_address: IpAddr,
@@ -526,6 +529,8 @@ struct RuntimeOptions {
     bandwidth_limit_configured: bool,
     address_family: Option<AddressFamily>,
     bind_address_overridden: bool,
+    log_file: Option<PathBuf>,
+    log_file_configured: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -540,6 +545,8 @@ impl Default for RuntimeOptions {
             bandwidth_limit_configured: false,
             address_family: None,
             bind_address_overridden: false,
+            log_file: None,
+            log_file_configured: false,
         }
     }
 }
@@ -579,6 +586,8 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv4)?;
             } else if argument == "--ipv6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
+                options.set_log_file(PathBuf::from(value))?;
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -612,6 +621,16 @@ impl RuntimeOptions {
 
         self.bandwidth_limit = limit;
         self.bandwidth_limit_configured = true;
+        Ok(())
+    }
+
+    fn set_log_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if self.log_file_configured {
+            return Err(duplicate_argument("--log-file"));
+        }
+
+        self.log_file = Some(path);
+        self.log_file_configured = true;
         Ok(())
     }
 
@@ -733,6 +752,11 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn motd_lines(&self) -> &[String] {
         &self.motd_lines
+    }
+
+    #[cfg(test)]
+    fn log_file(&self) -> Option<&PathBuf> {
+        self.log_file.as_ref()
     }
 
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
@@ -1995,8 +2019,15 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
+        log_file,
         ..
     } = options;
+
+    let log_sink = if let Some(path) = log_file {
+        Some(open_log_sink(&path)?)
+    } else {
+        None
+    };
 
     let modules: Arc<Vec<ModuleRuntime>> =
         Arc::new(modules.into_iter().map(ModuleRuntime::from).collect());
@@ -2005,6 +2036,16 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let listener =
         TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
     let local_addr = listener.local_addr().unwrap_or(requested_addr);
+
+    if let Some(log) = log_sink.as_ref() {
+        let text = format!(
+            "rsyncd version {} starting, listening on port {}",
+            RUST_VERSION,
+            local_addr.port()
+        );
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
 
     let mut served = 0usize;
     let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
@@ -2017,6 +2058,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             Ok((stream, peer_addr)) => {
                 let modules = Arc::clone(&modules);
                 let motd_lines = Arc::clone(&motd_lines);
+                let log_for_worker = log_sink.as_ref().map(Arc::clone);
                 let handle = thread::spawn(move || {
                     let modules_vec = modules.as_ref();
                     let motd_vec = motd_lines.as_ref();
@@ -2026,6 +2068,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         modules_vec.as_slice(),
                         motd_vec.as_slice(),
                         bandwidth_limit,
+                        log_for_worker,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -2047,7 +2090,15 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     }
 
-    drain_workers(&mut workers)
+    let result = drain_workers(&mut workers);
+
+    if let Some(log) = log_sink.as_ref() {
+        let text = format!("rsyncd version {} shutting down", RUST_VERSION);
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    result
 }
 
 type WorkerResult = Result<(), (Option<SocketAddr>, io::Error)>;
@@ -2103,15 +2154,27 @@ fn handle_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
     let style = detect_session_style(&stream)?;
     configure_stream(&stream)?;
 
+    let peer_host = resolve_peer_hostname(peer_addr.ip());
+    if let Some(log) = log_sink.as_ref() {
+        log_connection(log, peer_host.as_deref(), peer_addr);
+    }
+
     match style {
-        SessionStyle::Binary => handle_binary_session(stream, daemon_limit),
-        SessionStyle::Legacy => {
-            handle_legacy_session(stream, peer_addr, modules, motd_lines, daemon_limit)
-        }
+        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, log_sink),
+        SessionStyle::Legacy => handle_legacy_session(
+            stream,
+            peer_addr,
+            modules,
+            motd_lines,
+            daemon_limit,
+            log_sink,
+            peer_host,
+        ),
     }
 }
 
@@ -2173,6 +2236,8 @@ fn handle_legacy_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    log_sink: Option<SharedLogSink>,
+    peer_host: Option<String>,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
@@ -2220,6 +2285,9 @@ fn handle_legacy_session(
     advertise_capabilities(reader.get_mut(), modules)?;
 
     if request == "#list" {
+        if let Some(log) = log_sink.as_ref() {
+            log_list_request(log, peer_host.as_deref(), peer_addr);
+        }
         respond_with_module_list(
             reader.get_mut(),
             &mut limiter,
@@ -2244,7 +2312,9 @@ fn handle_legacy_session(
             modules,
             &request,
             peer_addr.ip(),
+            peer_host.as_deref(),
             &refused_options,
+            log_sink.as_ref(),
         )?;
     }
 
@@ -2254,6 +2324,7 @@ fn handle_legacy_session(
 fn handle_binary_session(
     mut stream: TcpStream,
     daemon_limit: Option<NonZeroU64>,
+    log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
 
@@ -2280,7 +2351,15 @@ fn handle_binary_session(
     .encode_into_writer(&mut frames)?;
     MessageFrame::new(MessageCode::ErrorExit, Vec::new())?.encode_into_writer(&mut frames)?;
     write_limited(&mut stream, &mut limiter, &frames)?;
-    stream.flush()
+    stream.flush()?;
+
+    if let Some(log) = log_sink.as_ref() {
+        let message =
+            rsync_info!("binary negotiation forwarded error frames").with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    Ok(())
 }
 
 fn legacy_daemon_greeting() -> String {
@@ -2551,14 +2630,16 @@ fn respond_with_module_request(
     modules: &[ModuleRuntime],
     request: &str,
     peer_ip: IpAddr,
+    session_peer_host: Option<&str>,
     options: &[String],
+    log_sink: Option<&SharedLogSink>,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
 
         let mut hostname_cache: Option<Option<String>> = None;
-        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
-        if module.permits(peer_ip, peer_host) {
+        let module_peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
                 Err(limit) => {
@@ -2570,9 +2651,27 @@ fn respond_with_module_request(
                     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
                     write_limited(stream, limiter, exit.as_bytes())?;
                     stream.flush()?;
+                    if let Some(log) = log_sink {
+                        log_module_limit(
+                            log,
+                            module_peer_host.or(session_peer_host),
+                            peer_ip,
+                            request,
+                            limit,
+                        );
+                    }
                     return Ok(());
                 }
             };
+
+            if let Some(log) = log_sink {
+                log_module_request(
+                    log,
+                    module_peer_host.or(session_peer_host),
+                    peer_ip,
+                    request,
+                );
+            }
 
             if let Some(refused) = refused_option(module, options) {
                 let payload = format!("@ERROR: The server is configured to refuse {}", refused);
@@ -2582,14 +2681,42 @@ fn respond_with_module_request(
                 let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
                 write_limited(stream, limiter, exit.as_bytes())?;
                 stream.flush()?;
+                if let Some(log) = log_sink {
+                    log_module_refused_option(
+                        log,
+                        module_peer_host.or(session_peer_host),
+                        peer_ip,
+                        request,
+                        refused,
+                    );
+                }
                 return Ok(());
             }
 
             apply_module_timeout(reader.get_mut(), module)?;
             if module.requires_authentication() {
                 match perform_module_authentication(reader, limiter, module, peer_ip)? {
-                    AuthenticationStatus::Denied => return Ok(()),
-                    AuthenticationStatus::Granted => {}
+                    AuthenticationStatus::Denied => {
+                        if let Some(log) = log_sink {
+                            log_module_auth_failure(
+                                log,
+                                module_peer_host.or(session_peer_host),
+                                peer_ip,
+                                request,
+                            );
+                        }
+                        return Ok(());
+                    }
+                    AuthenticationStatus::Granted => {
+                        if let Some(log) = log_sink {
+                            log_module_auth_success(
+                                log,
+                                module_peer_host.or(session_peer_host),
+                                peer_ip,
+                                request,
+                            );
+                        }
+                    }
                 }
             }
 
@@ -2597,7 +2724,23 @@ fn respond_with_module_request(
             let stream = reader.get_mut();
             write_limited(stream, limiter, payload.as_bytes())?;
             write_limited(stream, limiter, b"\n")?;
+            if let Some(log) = log_sink {
+                log_module_unavailable(
+                    log,
+                    module_peer_host.or(session_peer_host),
+                    peer_ip,
+                    request,
+                );
+            }
         } else {
+            if let Some(log) = log_sink {
+                log_module_denied(
+                    log,
+                    module_peer_host.or(session_peer_host),
+                    peer_ip,
+                    request,
+                );
+            }
             deny_module(reader.get_mut(), module, peer_ip, limiter)?;
             return Ok(());
         }
@@ -2606,12 +2749,154 @@ fn respond_with_module_request(
         let stream = reader.get_mut();
         write_limited(stream, limiter, payload.as_bytes())?;
         write_limited(stream, limiter, b"\n")?;
+        if let Some(log) = log_sink {
+            log_unknown_module(log, session_peer_host, peer_ip, request);
+        }
     }
 
     let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
     let stream = reader.get_mut();
     write_limited(stream, limiter, exit.as_bytes())?;
     stream.flush()
+}
+
+fn open_log_sink(path: &Path) -> Result<SharedLogSink, DaemonError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| log_file_error(path, error))?;
+    Ok(Arc::new(Mutex::new(MessageSink::new(file))))
+}
+
+fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to open log file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+fn log_message(log: &SharedLogSink, message: &Message) {
+    if let Ok(mut sink) = log.lock() {
+        if sink.write(message).is_ok() {
+            let _ = sink.flush();
+        }
+    }
+}
+
+fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
+    host.map(str::to_string)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
+    let display = format_host(host, peer_addr.ip());
+    let text = format!("connect from {} ({})", display, peer_addr.ip());
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
+    let display = format_host(host, peer_addr.ip());
+    let text = format!("list request from {} ({})", display, peer_addr.ip());
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "module '{}' requested from {} ({})",
+        module, display, peer_ip
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_limit(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+    limit: NonZeroU32,
+) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "refusing module '{}' from {} ({}): max connections {}",
+        module, display, peer_ip, limit,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_refused_option(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+    refused: &str,
+) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "refusing option '{}' for module '{}' from {} ({})",
+        refused, module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_auth_failure(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "authentication failed for module '{}' from {} ({})",
+        module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "authentication succeeded for module '{}' from {} ({})",
+        module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_unavailable(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "module '{}' transfers unavailable for {} ({})",
+        module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "access denied to module '{}' from {} ({})",
+        module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_unknown_module(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "unknown module '{}' requested from {} ({})",
+        module, display, peer_ip,
+    );
+    let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
 }
 
 fn parse_daemon_option(payload: &str) -> Option<&str> {
@@ -3855,6 +4140,38 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("duplicate daemon argument '--bwlimit'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_parse_log_file_argument() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--log-file"),
+            OsString::from("/var/log/oc-rsyncd.log"),
+        ])
+        .expect("parse log file argument");
+
+        assert_eq!(
+            options.log_file(),
+            Some(&PathBuf::from("/var/log/oc-rsyncd.log"))
+        );
+    }
+
+    #[test]
+    fn runtime_options_reject_duplicate_log_file_argument() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--log-file"),
+            OsString::from("/tmp/one.log"),
+            OsString::from("--log-file"),
+            OsString::from("/tmp/two.log"),
+        ])
+        .expect_err("duplicate log file should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate daemon argument '--log-file'")
         );
     }
 
@@ -5147,6 +5464,71 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_records_log_file_entries() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let temp = tempdir().expect("log dir");
+        let log_path = temp.path().join("oc-rsyncd.log");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--log-file"),
+                log_path.as_os_str().to_os_string(),
+                OsString::from("--module"),
+                OsString::from("docs=/srv/docs"),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream
+            .write_all(b"@RSYNCD: 32.0\n")
+            .expect("send handshake response");
+        stream.flush().expect("flush handshake response");
+
+        line.clear();
+        reader.read_line(&mut line).expect("handshake ack");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        stream.write_all(b"docs\n").expect("send module request");
+        stream.flush().expect("flush module request");
+
+        line.clear();
+        reader.read_line(&mut line).expect("capabilities");
+        assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("module response");
+        assert!(line.starts_with("@ERROR:"));
+
+        line.clear();
+        reader.read_line(&mut line).expect("exit line");
+        assert_eq!(line, "@RSYNCD: EXIT\n");
+
+        drop(reader);
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+
+        let log_contents = fs::read_to_string(&log_path).expect("read log file");
+        assert!(log_contents.contains("connect from"));
+        assert!(log_contents.contains("127.0.0.1"));
+        assert!(log_contents.contains("module 'docs'"));
     }
 
     #[test]
