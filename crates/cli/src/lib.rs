@@ -88,6 +88,10 @@ use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
         BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
+        ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
+        ClientSummary, CompressionSetting, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
+        FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext,
+        TransferTimeout, run_client_or_fallback, run_module_list_with_password,
         ClientEventKind, ClientProgressObserver, ClientProgressUpdate, ClientSummary,
         CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind,
         FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs, TransferTimeout,
@@ -1799,6 +1803,11 @@ where
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
     let requires_delta_fallback = whole_file_option == Some(false);
+    let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
+    let fallback_required = requires_delta_fallback || requires_remote_fallback;
+
+    let fallback_args = if fallback_required {
+        Some(RemoteFallbackArgs {
     if requires_delta_fallback || transfer_requires_remote(&remainder, &file_list_operands) {
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
         let fallback_args = RemoteFallbackArgs {
@@ -1832,14 +1841,14 @@ where
             inplace,
             msgs_to_stderr,
             whole_file: whole_file_option,
-            bwlimit,
-            excludes,
-            includes,
-            exclude_from,
-            include_from,
-            filters,
+            bwlimit: bwlimit.clone(),
+            excludes: excludes.clone(),
+            includes: includes.clone(),
+            exclude_from: exclude_from.clone(),
+            include_from: include_from.clone(),
+            filters: filters.clone(),
             files_from_used,
-            file_list_entries: file_list_operands,
+            file_list_entries: file_list_operands.clone(),
             from0,
             password_file: password_file.clone(),
             protocol: desired_protocol,
@@ -1847,58 +1856,48 @@ where
             out_format: out_format.clone(),
             no_motd,
             fallback_binary: None,
-            remainder,
+            remainder: remainder.clone(),
             #[cfg(feature = "acl")]
             acls,
             #[cfg(feature = "xattr")]
             xattrs,
-        };
-        let fallback_result = {
-            let mut stderr_writer = stderr.writer_mut();
-            run_remote_transfer_fallback(stdout, &mut stderr_writer, fallback_args)
-        };
-        return match fallback_result {
-            Ok(code) => code,
-            Err(error) => {
-                if write_message(error.message(), stderr).is_err() {
-                    let fallback = error.message().to_string();
-                    let _ = writeln!(stderr.writer_mut(), "{}", fallback);
-                }
-                error.exit_code()
-            }
-        };
-    }
+        })
+    } else {
+        None
+    };
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);
 
-    if desired_protocol.is_some() {
-        let message = rsync_error!(
-            1,
-            "the --protocol option may only be used when accessing an rsync daemon"
-        )
-        .with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(
-                stderr.writer_mut(),
+    if !fallback_required {
+        if desired_protocol.is_some() {
+            let message = rsync_error!(
+                1,
                 "the --protocol option may only be used when accessing an rsync daemon"
-            );
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --protocol option may only be used when accessing an rsync daemon"
+                );
+            }
+            return 1;
         }
-        return 1;
-    }
 
-    if password_file.is_some() {
-        let message = rsync_error!(
-            1,
-            "the --password-file option may only be used when accessing an rsync daemon"
-        )
-        .with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(
-                stderr.writer_mut(),
+        if password_file.is_some() {
+            let message = rsync_error!(
+                1,
                 "the --password-file option may only be used when accessing an rsync daemon"
-            );
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --password-file option may only be used when accessing an rsync daemon"
+                );
+            }
+            return 1;
         }
-        return 1;
     }
 
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
@@ -2025,6 +2024,31 @@ where
 
     let config = builder.build();
 
+    if let Some(args) = fallback_args {
+        let outcome = {
+            let mut stderr_writer = stderr.writer_mut();
+            run_client_or_fallback(
+                config,
+                None,
+                Some(RemoteFallbackContext::new(stdout, &mut stderr_writer, args)),
+            )
+        };
+
+        return match outcome {
+            Ok(ClientOutcome::Fallback(summary)) => summary.exit_code(),
+            Ok(ClientOutcome::Local(_)) => {
+                unreachable!("local outcome returned without fallback context")
+            }
+            Err(error) => {
+                if write_message(error.message(), stderr).is_err() {
+                    let fallback = error.message().to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+                }
+                error.exit_code()
+            }
+        };
+    }
+
     let mut live_progress = if progress {
         Some(with_output_writer(
             stdout,
@@ -2040,11 +2064,11 @@ where
         let observer = live_progress
             .as_mut()
             .map(|observer| observer as &mut dyn ClientProgressObserver);
-        run_core_client_with_observer(config, observer)
+        run_client_or_fallback::<io::Sink, io::Sink>(config, observer, None)
     };
 
     match result {
-        Ok(summary) => {
+        Ok(ClientOutcome::Local(summary)) => {
             let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
 
             if let Some(observer) = live_progress {
@@ -2075,6 +2099,9 @@ where
                 });
             }
             0
+        }
+        Ok(ClientOutcome::Fallback(_)) => {
+            unreachable!("fallback outcome returned without fallback args")
         }
         Err(error) => {
             if let Some(observer) = live_progress {
@@ -5412,7 +5439,12 @@ mod tests {
             .force_event_collection(true)
             .build();
 
-        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
         let event = summary
             .events()
             .iter()
@@ -5468,7 +5500,12 @@ mod tests {
             .force_event_collection(true)
             .build();
 
-        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
         let event = summary
             .events()
             .iter()
@@ -8184,7 +8221,12 @@ exit 0
             .force_event_collection(true)
             .build();
 
-        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
         let event = summary
             .events()
             .iter()
@@ -8226,7 +8268,12 @@ exit 0
             .force_event_collection(true)
             .build();
 
-        let summary = run_core_client_with_observer(config, None).expect("run client");
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
         let event = summary
             .events()
             .iter()

@@ -99,9 +99,9 @@ use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
-    LocalCopyError, LocalCopyErrorKind, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata,
-    LocalCopyOptions, LocalCopyPlan, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler,
-    LocalCopyReport, LocalCopySummary,
+    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
+    LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
+    LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -1513,6 +1513,43 @@ impl ClientSummary {
     }
 }
 
+/// Outcome returned when executing [`run_client_or_fallback`].
+#[derive(Debug)]
+pub enum ClientOutcome {
+    /// The transfer was handled by the local copy engine.
+    Local(ClientSummary),
+    /// The transfer was delegated to an upstream `rsync` binary.
+    Fallback(FallbackSummary),
+}
+
+impl ClientOutcome {
+    /// Returns the contained [`ClientSummary`] when the outcome represents a local execution.
+    pub fn into_local(self) -> Option<ClientSummary> {
+        match self {
+            Self::Local(summary) => Some(summary),
+            Self::Fallback(_) => None,
+        }
+    }
+}
+
+/// Summary describing the result of a fallback invocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FallbackSummary {
+    exit_code: i32,
+}
+
+impl FallbackSummary {
+    const fn new(exit_code: i32) -> Self {
+        Self { exit_code }
+    }
+
+    /// Returns the exit code reported by the fallback process.
+    #[must_use]
+    pub const fn exit_code(self) -> i32 {
+        self.exit_code
+    }
+}
+
 /// Arguments used to spawn the legacy `rsync` binary when remote operands are present.
 ///
 /// The fallback path preserves the command-line semantics of upstream rsync while the
@@ -1622,6 +1659,42 @@ pub struct RemoteFallbackArgs {
     /// Controls xattr forwarding (`--xattrs`/`--no-xattrs`).
     #[cfg(feature = "xattr")]
     pub xattrs: Option<bool>,
+}
+
+/// Writer references and arguments required to invoke the fallback binary.
+pub struct RemoteFallbackContext<'a, Out, Err>
+where
+    Out: Write + 'a,
+    Err: Write + 'a,
+{
+    stdout: &'a mut Out,
+    stderr: &'a mut Err,
+    args: RemoteFallbackArgs,
+}
+
+impl<'a, Out, Err> RemoteFallbackContext<'a, Out, Err>
+where
+    Out: Write + 'a,
+    Err: Write + 'a,
+{
+    /// Creates a new context that streams output into the supplied writers.
+    #[must_use]
+    pub fn new(stdout: &'a mut Out, stderr: &'a mut Err, args: RemoteFallbackArgs) -> Self {
+        Self {
+            stdout,
+            stderr,
+            args,
+        }
+    }
+
+    fn split(self) -> (&'a mut Out, &'a mut Err, RemoteFallbackArgs) {
+        let Self {
+            stdout,
+            stderr,
+            args,
+        } = self;
+        (stdout, stderr, args)
+    }
 }
 
 /// Spawns the fallback `rsync` binary with arguments derived from [`RemoteFallbackArgs`].
@@ -2484,7 +2557,11 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
 /// delta compression remain works in progress, while remote operands delegate to
 /// the system `rsync` binary until the native network engine is available.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
-    run_client_with_observer(config, None)
+    match run_client_internal::<io::Sink, io::Sink>(config, None, None) {
+        Ok(ClientOutcome::Local(summary)) => Ok(summary),
+        Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
+        Err(error) => Err(error),
+    }
 }
 
 /// Runs the client orchestration while forwarding progress updates to the provided observer.
@@ -2492,16 +2569,68 @@ pub fn run_client_with_observer(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
+    match run_client_internal::<io::Sink, io::Sink>(config, observer, None) {
+        Ok(ClientOutcome::Local(summary)) => Ok(summary),
+        Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
+        Err(error) => Err(error),
+    }
+}
+
+/// Executes the client flow, delegating to a fallback `rsync` binary when provided.
+pub fn run_client_or_fallback<Out, Err>(
+    config: ClientConfig,
+    observer: Option<&mut dyn ClientProgressObserver>,
+    fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
+) -> Result<ClientOutcome, ClientError>
+where
+    Out: Write,
+    Err: Write,
+{
+    run_client_internal(config, observer, fallback)
+}
+
+fn run_client_internal<Out, Err>(
+    config: ClientConfig,
+    observer: Option<&mut dyn ClientProgressObserver>,
+    fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
+) -> Result<ClientOutcome, ClientError>
+where
+    Out: Write,
+    Err: Write,
+{
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
 
+    let mut fallback = fallback;
+
     if !config.whole_file() {
+        if let Some(ctx) = fallback.take() {
+            return invoke_fallback(ctx);
+        }
         return Err(delta_transfer_unsupported());
     }
 
-    let plan =
-        LocalCopyPlan::from_operands(config.transfer_args()).map_err(map_local_copy_error)?;
+    let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let requires_fallback =
+                matches!(
+                    error.kind(),
+                    LocalCopyErrorKind::InvalidArgument(
+                        LocalCopyArgumentError::RemoteOperandUnsupported,
+                    )
+                ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
+
+            if requires_fallback {
+                if let Some(ctx) = fallback.take() {
+                    return invoke_fallback(ctx);
+                }
+            }
+
+            return Err(map_local_copy_error(error));
+        }
+    };
 
     let filter_program = compile_filter_program(config.filter_rules())?;
 
@@ -2565,7 +2694,7 @@ pub fn run_client_with_observer(
         .map(|observer| ClientProgressForwarder::new(observer, &plan, options.clone()))
         .transpose()?;
 
-    if collect_events {
+    let summary = if collect_events {
         plan.execute_with_report_and_handler(
             mode,
             options,
@@ -2574,7 +2703,6 @@ pub fn run_client_with_observer(
                 .map(ClientProgressForwarder::as_handler_mut),
         )
         .map(ClientSummary::from_report)
-        .map_err(map_local_copy_error)
     } else {
         plan.execute_with_options_and_handler(
             mode,
@@ -2584,8 +2712,23 @@ pub fn run_client_with_observer(
                 .map(ClientProgressForwarder::as_handler_mut),
         )
         .map(ClientSummary::from_summary)
+    };
+
+    summary
+        .map(ClientOutcome::Local)
         .map_err(map_local_copy_error)
-    }
+}
+
+fn invoke_fallback<Out, Err>(
+    ctx: RemoteFallbackContext<'_, Out, Err>,
+) -> Result<ClientOutcome, ClientError>
+where
+    Out: Write,
+    Err: Write,
+{
+    let (stdout, stderr, args) = ctx.split();
+    run_remote_transfer_fallback(stdout, stderr, args)
+        .map(|code| ClientOutcome::Fallback(FallbackSummary::new(code)))
 }
 
 #[cfg(test)]
@@ -3129,6 +3272,93 @@ exit 42
         assert_eq!(
             String::from_utf8(stdout).expect("stdout utf8"),
             "alpha\nbeta\nfallback stdout\n"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).expect("stderr utf8"),
+            "fallback stderr\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_or_fallback_uses_fallback_for_remote_operands() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let script = write_fallback_script(temp.path());
+
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("remote::module"), OsString::from("/tmp/dst")])
+            .build();
+
+        let mut args = baseline_fallback_args();
+        args.remainder = vec![OsString::from("remote::module"), OsString::from("/tmp/dst")];
+        args.fallback_binary = Some(script.into_os_string());
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+
+        let outcome = run_client_or_fallback(config, None, Some(context))
+            .expect("fallback invocation succeeds");
+
+        match outcome {
+            ClientOutcome::Fallback(summary) => {
+                assert_eq!(summary.exit_code(), 42);
+            }
+            ClientOutcome::Local(_) => panic!("expected fallback outcome"),
+        }
+
+        assert_eq!(
+            String::from_utf8(stdout).expect("stdout utf8"),
+            "fallback stdout\n"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).expect("stderr utf8"),
+            "fallback stderr\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_client_or_fallback_uses_fallback_for_delta_mode() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let script = write_fallback_script(temp.path());
+
+        let source_path = temp.path().join("source.txt");
+        let dest_path = temp.path().join("dest.txt");
+        fs::write(&source_path, b"delta-test").expect("source created");
+
+        let source = OsString::from(source_path.as_os_str());
+        let dest = OsString::from(dest_path.as_os_str());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), dest.clone()])
+            .whole_file(false)
+            .build();
+
+        let mut args = baseline_fallback_args();
+        args.remainder = vec![source, dest];
+        args.whole_file = Some(false);
+        args.fallback_binary = Some(script.into_os_string());
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+
+        let outcome = run_client_or_fallback(config, None, Some(context))
+            .expect("fallback invocation succeeds");
+
+        match outcome {
+            ClientOutcome::Fallback(summary) => {
+                assert_eq!(summary.exit_code(), 42);
+            }
+            ClientOutcome::Local(_) => panic!("expected fallback outcome"),
+        }
+
+        assert_eq!(
+            String::from_utf8(stdout).expect("stdout utf8"),
+            "fallback stdout\n"
         );
         assert_eq!(
             String::from_utf8(stderr).expect("stderr utf8"),
