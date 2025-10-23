@@ -1667,7 +1667,8 @@ where
     let files_from_used = !files_from.is_empty();
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
-    if transfer_requires_remote(&remainder, &file_list_operands) {
+    let requires_delta_fallback = whole_file_option == Some(false);
+    if requires_delta_fallback || transfer_requires_remote(&remainder, &file_list_operands) {
         let fallback_args = RemoteFallbackArgs {
             dry_run,
             list_only,
@@ -7429,6 +7430,49 @@ exit 0
         assert!(args.contains(&"0"));
         assert!(!args.contains(&"--whole-file"));
         assert!(args.contains(&"--no-whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_delta_transfer_uses_fallback() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        std::fs::write(&source, b"contents").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-whole-file"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-whole-file"));
+        let source_str = source.display().to_string();
+        let dest_str = destination.display().to_string();
+        assert!(args.iter().any(|arg| *arg == source_str));
+        assert!(args.iter().any(|arg| *arg == dest_str));
     }
 
     #[cfg(unix)]
