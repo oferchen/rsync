@@ -3641,9 +3641,8 @@ exit 42
     #[test]
     fn module_list_request_rejects_remote_transfer() {
         let operands = vec![OsString::from("rsync://example.com/module")];
-        let error = ModuleListRequest::from_operands(&operands)
-            .expect_err("module transfer should be rejected");
-        assert!(error.message().to_string().contains("remote operands"));
+        let request = ModuleListRequest::from_operands(&operands).expect("parse succeeds");
+        assert!(request.is_none());
     }
 
     #[test]
@@ -3709,16 +3708,8 @@ exit 42
     #[test]
     fn module_list_request_rejects_ipv6_module_transfer() {
         let operands = vec![OsString::from("[fe80::1]::module")];
-        let error = ModuleListRequest::from_operands(&operands)
-            .expect_err("module transfers should be rejected");
-        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
-        assert!(
-            error
-                .message()
-                .to_string()
-                .contains("remote operands are not supported")
-        );
-        assert!(error.message().to_string().contains("OC_RSYNC_FALLBACK"));
+        let request = ModuleListRequest::from_operands(&operands).expect("parse succeeds");
+        assert!(request.is_none());
     }
 
     #[test]
@@ -4416,16 +4407,6 @@ fn daemon_access_denied_error(reason: &str) -> ClientError {
     daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
 }
 
-fn remote_operands_unsupported() -> ClientError {
-    daemon_error(
-        concat!(
-            "remote operands are not supported: this build handles local filesystem copies only; ",
-            "set OC_RSYNC_FALLBACK to point to an upstream rsync binary for remote transfers",
-        ),
-        PARTIAL_TRANSFER_EXIT_CODE,
-    )
-}
-
 fn delta_transfer_unsupported() -> ClientError {
     let message = rsync_error!(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -4534,7 +4515,7 @@ impl ModuleListRequest {
         let text = operand.to_string_lossy();
 
         if let Some(rest) = strip_prefix_ignore_ascii_case(&text, "rsync://") {
-            return parse_rsync_url(rest).map(Some);
+            return parse_rsync_url(rest);
         }
 
         if let Some((host_part, module_part)) = split_daemon_host_module(&text)? {
@@ -4542,7 +4523,7 @@ impl ModuleListRequest {
                 let target = parse_host_port(host_part)?;
                 return Ok(Some(Self::new(target.address, target.username)));
             }
-            return Err(remote_operands_unsupported());
+            return Ok(None);
         }
 
         Ok(None)
@@ -4582,17 +4563,20 @@ impl ModuleListRequest {
     }
 }
 
-fn parse_rsync_url(rest: &str) -> Result<ModuleListRequest, ClientError> {
+fn parse_rsync_url(rest: &str) -> Result<Option<ModuleListRequest>, ClientError> {
     let mut parts = rest.splitn(2, '/');
     let host_port = parts.next().unwrap_or("");
     let remainder = parts.next();
 
     if remainder.is_some_and(|path| !path.is_empty()) {
-        return Err(remote_operands_unsupported());
+        return Ok(None);
     }
 
     let target = parse_host_port(host_port)?;
-    Ok(ModuleListRequest::new(target.address, target.username))
+    Ok(Some(ModuleListRequest::new(
+        target.address,
+        target.username,
+    )))
 }
 
 struct ParsedDaemonTarget {
