@@ -729,6 +729,10 @@ impl RuntimeOptions {
             self.inherit_global_refuse_options(options, &path, line)?;
         }
 
+        if !parsed.motd_lines.is_empty() {
+            self.motd_lines.extend(parsed.motd_lines);
+        }
+
         let mut modules = parsed.modules;
         if let Some(global) = &self.global_refuse_options {
             for module in &mut modules {
@@ -857,6 +861,7 @@ where
 struct ParsedConfigModules {
     modules: Vec<ModuleDefinition>,
     global_refuse_options: Option<(Vec<String>, usize)>,
+    motd_lines: Vec<String>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -865,6 +870,7 @@ fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError>
     let mut modules = Vec::new();
     let mut current: Option<ModuleDefinitionBuilder> = None;
     let mut global_refuse_options: Option<(Vec<String>, usize)> = None;
+    let mut motd_lines = Vec::new();
 
     for (index, raw_line) in contents.lines().enumerate() {
         let line_number = index + 1;
@@ -1085,6 +1091,36 @@ fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError>
 
                 global_refuse_options = Some((options, line_number));
             }
+            "motd file" => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        "'motd file' directive must not be empty",
+                    ));
+                }
+
+                let motd_path = resolve_config_relative_path(path, trimmed);
+                let contents = fs::read_to_string(&motd_path).map_err(|error| {
+                    config_parse_error(
+                        path,
+                        line_number,
+                        format!(
+                            "failed to read motd file '{}': {}",
+                            motd_path.display(),
+                            error
+                        ),
+                    )
+                })?;
+
+                for raw_line in contents.lines() {
+                    motd_lines.push(raw_line.trim_end_matches('\r').to_string());
+                }
+            }
+            "motd" => {
+                motd_lines.push(value.trim_end_matches(['\r', '\n']).to_string());
+            }
             _ => {
                 return Err(config_parse_error(
                     path,
@@ -1102,7 +1138,21 @@ fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError>
     Ok(ParsedConfigModules {
         modules,
         global_refuse_options,
+        motd_lines,
     })
+}
+
+fn resolve_config_relative_path(config_path: &Path, value: &str) -> PathBuf {
+    let candidate = Path::new(value);
+    if candidate.is_absolute() {
+        return candidate.to_path_buf();
+    }
+
+    if let Some(parent) = config_path.parent() {
+        parent.join(candidate)
+    } else {
+        candidate.to_path_buf()
+    }
 }
 
 struct ModuleDefinitionBuilder {
@@ -4407,6 +4457,34 @@ mod tests {
             String::from("Welcome to oc-rsyncd"),
             String::from("Second line"),
             String::from("Trailing notice"),
+        ];
+
+        assert_eq!(options.motd_lines(), expected.as_slice());
+    }
+
+    #[test]
+    fn runtime_options_loads_motd_from_config_directives() {
+        let dir = tempdir().expect("motd dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        let motd_path = dir.path().join("motd.txt");
+        fs::write(&motd_path, "First line\nSecond line\r\n").expect("write motd file");
+
+        fs::write(
+            &config_path,
+            "motd file = motd.txt\nmotd = Inline note\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with motd directives");
+
+        let expected = vec![
+            String::from("First line"),
+            String::from("Second line"),
+            String::from("Inline note"),
         ];
 
         assert_eq!(options.motd_lines(), expected.as_slice());
