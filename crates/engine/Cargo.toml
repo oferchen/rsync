@@ -20,6 +20,7 @@ globset = "0.4"
 [features]
 default = []
 xattr = ["rsync-meta/xattr"]
+acl = ["rsync-meta/acl"]
 
 [dev-dependencies]
 filetime = "0.2"
