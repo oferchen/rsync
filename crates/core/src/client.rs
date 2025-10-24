@@ -5170,6 +5170,56 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_accepts_http_scheme() {
+        let proxy =
+            parse_proxy_spec("http://user:secret@proxy.example:8080").expect("http proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 8080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpzZWNyZXQ="))
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_accepts_https_scheme() {
+        let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 3128);
+        assert!(proxy.authorization_header().is_none());
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_unknown_scheme() {
+        let error = match parse_proxy_spec("socks5://proxy:1080") {
+            Ok(_) => panic!("invalid proxy scheme should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY scheme must be http:// or https://")
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_path_component() {
+        let error = match parse_proxy_spec("http://proxy.example:3128/path") {
+            Ok(_) => panic!("proxy specification with path should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY must not include a path component")
+        );
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -6589,8 +6639,33 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
         ));
     }
 
-    let (credentials, remainder) = if let Some(idx) = trimmed.rfind('@') {
-        let (userinfo, host_part) = trimmed.split_at(idx);
+    let mut remainder = trimmed;
+    if let Some(idx) = trimmed.find("://") {
+        let (scheme, rest_with_separator) = trimmed.split_at(idx);
+        let rest = &rest_with_separator[3..];
+        if rest.is_empty() {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY must specify a proxy host",
+            ));
+        }
+
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY scheme must be http:// or https://",
+            ));
+        }
+
+        remainder = rest;
+    }
+
+    if remainder.contains('/') {
+        return Err(proxy_configuration_error(
+            "RSYNC_PROXY must not include a path component",
+        ));
+    }
+
+    let (credentials, remainder) = if let Some(idx) = remainder.rfind('@') {
+        let (userinfo, host_part) = remainder.split_at(idx);
         if userinfo.is_empty() {
             return Err(proxy_configuration_error(
                 "RSYNC_PROXY user information must be non-empty when '@' is present",
@@ -6606,7 +6681,7 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
         let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
         (Some(credentials), &host_part[1..])
     } else {
-        (None, trimmed)
+        (None, remainder)
     };
 
     let (host, port) = parse_proxy_host_port(remainder)?;
