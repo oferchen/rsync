@@ -3037,6 +3037,20 @@ mod tests {
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
 
+    #[test]
+    fn sensitive_bytes_zeroizes_on_drop() {
+        let bytes = SensitiveBytes::new(b"topsecret".to_vec());
+        let zeroed = bytes.into_zeroized_vec();
+        assert!(zeroed.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn daemon_auth_context_zeroizes_secret_on_drop() {
+        let context = DaemonAuthContext::new("user".to_string(), b"supersecret".to_vec());
+        let zeroed = context.into_zeroized_secret();
+        assert!(zeroed.iter().all(|&byte| byte == 0));
+    }
+
     #[cfg(unix)]
     use std::path::{Path, PathBuf};
 
@@ -5944,7 +5958,7 @@ pub fn run_module_list_with_password_and_options(
 ) -> Result<ModuleList, ClientError> {
     let addr = request.address();
     let username = request.username().map(str::to_owned);
-    let mut password_bytes = password_override;
+    let mut password_bytes = password_override.map(SensitiveBytes::new);
     let mut auth_attempted = false;
     let mut auth_context: Option<DaemonAuthContext> = None;
     let suppress_motd = options.suppresses_motd();
@@ -6019,14 +6033,17 @@ pub fn run_module_list_with_password_and_options(
                     })?;
 
                     let secret = if let Some(secret) = password_bytes.as_ref() {
-                        secret.clone()
+                        secret.to_vec()
                     } else {
-                        password_bytes = load_daemon_password();
-                        password_bytes.clone().ok_or_else(|| {
-                            daemon_authentication_required_error(
-                                "set RSYNC_PASSWORD before contacting authenticated daemons",
-                            )
-                        })?
+                        password_bytes = load_daemon_password().map(SensitiveBytes::new);
+                        password_bytes
+                            .as_ref()
+                            .map(SensitiveBytes::to_vec)
+                            .ok_or_else(|| {
+                                daemon_authentication_required_error(
+                                    "set RSYNC_PASSWORD before contacting authenticated daemons",
+                                )
+                            })?
                     };
 
                     let context = DaemonAuthContext::new(username.to_owned(), secret);
@@ -6098,12 +6115,60 @@ pub fn run_module_list_with_password_and_options(
 
 struct DaemonAuthContext {
     username: String,
-    secret: Vec<u8>,
+    secret: SensitiveBytes,
 }
 
 impl DaemonAuthContext {
     fn new(username: String, secret: Vec<u8>) -> Self {
-        Self { username, secret }
+        Self {
+            username,
+            secret: SensitiveBytes::new(secret),
+        }
+    }
+
+    fn secret(&self) -> &[u8] {
+        self.secret.as_slice()
+    }
+}
+
+#[cfg(test)]
+impl DaemonAuthContext {
+    fn into_zeroized_secret(self) -> Vec<u8> {
+        self.secret.into_zeroized_vec()
+    }
+}
+
+struct SensitiveBytes(Vec<u8>);
+
+impl SensitiveBytes {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    fn to_vec(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl SensitiveBytes {
+    fn into_zeroized_vec(mut self) -> Vec<u8> {
+        for byte in &mut self.0 {
+            *byte = 0;
+        }
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for SensitiveBytes {
+    fn drop(&mut self) {
+        for byte in &mut self.0 {
+            *byte = 0;
+        }
     }
 }
 
@@ -6116,7 +6181,7 @@ fn send_daemon_auth_credentials<S>(
 where
     S: Write,
 {
-    let digest = compute_daemon_auth_response(context.secret.as_slice(), challenge);
+    let digest = compute_daemon_auth_response(context.secret(), challenge);
     let mut command = String::with_capacity(context.username.len() + digest.len() + 2);
     command.push_str(&context.username);
     command.push(' ');
