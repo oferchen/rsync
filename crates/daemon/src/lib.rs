@@ -3226,19 +3226,19 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
     let name = name_part.trim();
     ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_string()))?;
 
-    let (path_part, comment_part) = match remainder.split_once(',') {
-        Some((path, comment)) => (path, Some(comment.trim().to_string())),
-        None => (remainder, None),
-    };
+    let (path_part, comment_part) = split_module_path_and_comment(remainder);
 
     let path_text = path_part.trim();
     if path_text.is_empty() {
         return Err(config_error("module path must be non-empty".to_string()));
     }
 
-    let comment = comment_part.filter(|value| !value.is_empty());
+    let path_text = unescape_module_component(path_text);
+    let comment = comment_part
+        .map(|value| unescape_module_component(value.trim()))
+        .filter(|value| !value.is_empty());
 
-    let path = PathBuf::from(path_text);
+    let path = PathBuf::from(&path_text);
     if !path.is_absolute() {
         return Err(config_error(format!(
             "module path '{}' must be absolute when 'use chroot' is enabled",
@@ -3265,6 +3265,48 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         use_chroot: true,
         max_connections: None,
     })
+}
+
+fn split_module_path_and_comment(value: &str) -> (&str, Option<&str>) {
+    let mut chars = value.char_indices();
+    let mut escape = false;
+
+    while let Some((idx, ch)) = chars.next() {
+        if escape {
+            escape = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+
+        if ch == ',' {
+            let (path, rest) = value.split_at(idx);
+            let comment = rest.get(1..);
+            return (path, comment);
+        }
+    }
+
+    (value, None)
+}
+
+fn unescape_module_component(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                result.push(next);
+            } else {
+                result.push(ch);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
@@ -4007,6 +4049,35 @@ mod tests {
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
         assert!(modules[1].refused_options().is_empty());
+    }
+
+    #[test]
+    fn runtime_options_module_definition_supports_escaped_commas() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs\\,archive,Project\\, Docs"),
+        ])
+        .expect("parse modules with escapes");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].name, "docs");
+        assert_eq!(modules[0].path, PathBuf::from("/srv/docs,archive"));
+        assert_eq!(modules[0].comment.as_deref(), Some("Project, Docs"));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_preserves_escaped_backslash() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("logs=/var/log\\\\files,Log share"),
+        ])
+        .expect("parse modules with escaped backslash");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].path, PathBuf::from("/var/log\\files"));
+        assert_eq!(modules[0].comment.as_deref(), Some("Log share"));
     }
 
     #[test]
