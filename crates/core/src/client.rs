@@ -3029,6 +3029,7 @@ fn build_local_copy_options(
         .specials(config.preserve_specials())
         .relative_paths(config.relative_paths())
         .implied_dirs(config.implied_dirs())
+        .mkpath(config.mkpath())
         .inplace(config.inplace())
         .partial(config.partial())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
