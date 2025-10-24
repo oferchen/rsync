@@ -145,8 +145,8 @@ pub struct DirMergeOptions {
 }
 
 impl DirMergeOptions {
-    /// Creates default merge options: inherited rules, line-based parsing, and
-    /// comment support.
+    /// Creates default merge options: inherited rules, line-based parsing,
+    /// comment support, and permission for list-clearing directives.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -156,7 +156,7 @@ impl DirMergeOptions {
                 enforce_kind: None,
                 allow_comments: true,
             },
-            allow_list_clear: false,
+            allow_list_clear: true,
             sender_side: SideState::Unspecified,
             receiver_side: SideState::Unspecified,
             anchor_root: false,
