@@ -3860,8 +3860,76 @@ impl MergeDirective {
     }
 }
 
-fn merge_directive_options(_base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
-    directive.options().clone()
+fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
+    let defaults = DirMergeOptions::default();
+    let current = directive.options();
+
+    let inherit = if current.inherit_rules() != defaults.inherit_rules() {
+        current.inherit_rules()
+    } else {
+        base.inherit_rules()
+    };
+
+    let exclude_self = if current.excludes_self() != defaults.excludes_self() {
+        current.excludes_self()
+    } else {
+        base.excludes_self()
+    };
+
+    let allow_list_clear = if current.list_clear_allowed() != defaults.list_clear_allowed() {
+        current.list_clear_allowed()
+    } else {
+        base.list_clear_allowed()
+    };
+
+    let uses_whitespace = if current.uses_whitespace() != defaults.uses_whitespace() {
+        current.uses_whitespace()
+    } else {
+        base.uses_whitespace()
+    };
+
+    let allows_comments = if current.allows_comments() != defaults.allows_comments() {
+        current.allows_comments()
+    } else {
+        base.allows_comments()
+    };
+
+    let enforced_kind = if current.enforced_kind() != defaults.enforced_kind() {
+        current.enforced_kind()
+    } else {
+        base.enforced_kind()
+    };
+
+    let sender_override = current
+        .sender_side_override()
+        .or_else(|| base.sender_side_override());
+    let receiver_override = current
+        .receiver_side_override()
+        .or_else(|| base.receiver_side_override());
+
+    let anchor_root = if current.anchor_root_enabled() != defaults.anchor_root_enabled() {
+        current.anchor_root_enabled()
+    } else {
+        base.anchor_root_enabled()
+    };
+
+    let mut merged = DirMergeOptions::default()
+        .inherit(inherit)
+        .exclude_filter_file(exclude_self)
+        .allow_list_clearing(allow_list_clear)
+        .anchor_root(anchor_root)
+        .with_side_overrides(sender_override, receiver_override)
+        .with_enforced_kind(enforced_kind);
+
+    if uses_whitespace {
+        merged = merged.use_whitespace();
+    }
+
+    if !allows_comments {
+        merged = merged.allow_comments(false);
+    }
+
+    merged
 }
 
 fn parse_filter_shorthand(
@@ -4621,6 +4689,8 @@ fn process_merge_directive(
             destination.push(rule);
         }
         Ok(FilterDirective::Merge(nested)) => {
+            let effective_options = merge_directive_options(options, &nested);
+            let nested = nested.with_options(effective_options);
             apply_merge_directive(nested, base_dir, destination, visited).map_err(|error| {
                 let detail = error.to_string();
                 rsync_error!(
@@ -8398,6 +8468,87 @@ mod tests {
             .map(|rule| rule.pattern().to_string())
             .collect();
         assert_eq!(patterns, vec!["beta"]);
+    }
+
+    #[test]
+    fn merge_directive_options_inherit_parent_configuration() {
+        let base = DirMergeOptions::default()
+            .inherit(false)
+            .exclude_filter_file(true)
+            .allow_list_clearing(false)
+            .anchor_root(true)
+            .allow_comments(false)
+            .with_side_overrides(Some(true), Some(false));
+
+        let directive = MergeDirective::new(OsString::from("nested.rules"), None);
+        let merged = super::merge_directive_options(&base, &directive);
+
+        assert!(!merged.inherit_rules());
+        assert!(merged.excludes_self());
+        assert!(!merged.list_clear_allowed());
+        assert!(merged.anchor_root_enabled());
+        assert!(!merged.allows_comments());
+        assert_eq!(merged.sender_side_override(), Some(true));
+        assert_eq!(merged.receiver_side_override(), Some(false));
+    }
+
+    #[test]
+    fn merge_directive_options_respect_child_overrides() {
+        let base = DirMergeOptions::default()
+            .inherit(false)
+            .with_side_overrides(Some(true), Some(false));
+
+        let child_options = DirMergeOptions::default()
+            .inherit(true)
+            .allow_list_clearing(true)
+            .with_enforced_kind(Some(DirMergeEnforcedKind::Include))
+            .use_whitespace()
+            .with_side_overrides(Some(false), Some(true));
+        let directive =
+            MergeDirective::new(OsString::from("nested.rules"), None).with_options(child_options);
+
+        let merged = super::merge_directive_options(&base, &directive);
+
+        assert_eq!(merged.enforced_kind(), Some(DirMergeEnforcedKind::Include));
+        assert!(merged.uses_whitespace());
+        assert_eq!(merged.sender_side_override(), Some(false));
+        assert_eq!(merged.receiver_side_override(), Some(true));
+    }
+
+    #[test]
+    fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("nested.rules");
+        std::fs::write(&nested, b"+ file\n").expect("write nested");
+
+        let options = DirMergeOptions::default()
+            .sender_modifier()
+            .inherit(false)
+            .exclude_filter_file(true)
+            .allow_list_clearing(false);
+
+        let mut rules = Vec::new();
+        let mut visited = HashSet::new();
+        super::process_merge_directive(
+            "merge nested.rules",
+            &options,
+            temp.path(),
+            "parent.rules",
+            &mut rules,
+            &mut visited,
+        )
+        .expect("merge succeeds");
+
+        assert!(visited.is_empty());
+        let include_rule = rules
+            .iter()
+            .find(|rule| rule.pattern() == "file")
+            .expect("include rule present");
+        assert!(include_rule.applies_to_sender());
+        assert!(!include_rule.applies_to_receiver());
+        assert!(rules.iter().any(|rule| rule.pattern() == "nested.rules"));
     }
 
     #[test]
