@@ -147,6 +147,7 @@ use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
@@ -2493,7 +2494,9 @@ fn handle_binary_session(
         HANDSHAKE_ERROR_PAYLOAD.as_bytes().to_vec(),
     )?
     .encode_into_writer(&mut frames)?;
-    MessageFrame::new(MessageCode::ErrorExit, Vec::new())?.encode_into_writer(&mut frames)?;
+    let exit_code = u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE).unwrap_or_default();
+    MessageFrame::new(MessageCode::ErrorExit, exit_code.to_be_bytes().to_vec())?
+        .encode_into_writer(&mut frames)?;
     write_limited(&mut stream, &mut limiter, &frames)?;
     stream.flush()?;
 
@@ -4853,6 +4856,12 @@ mod tests {
         assert_eq!(first.payload(), HANDSHAKE_ERROR_PAYLOAD.as_bytes());
         let second = iter.next().expect("second frame").expect("decode frame");
         assert_eq!(second.code(), MessageCode::ErrorExit);
+        assert_eq!(
+            second.payload(),
+            u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE)
+                .expect("feature unavailable exit code fits")
+                .to_be_bytes()
+        );
         assert!(iter.next().is_none());
 
         let result = handle.join().expect("daemon thread");
