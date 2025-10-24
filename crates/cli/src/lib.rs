@@ -222,18 +222,23 @@ enum OutFormatPlaceholder {
     FullPath,
     ItemizedChanges,
     FileLength,
-    BytesWritten,
-    BytesRead,
+    BytesTransferred,
+    ChecksumBytes,
     Operation,
     ModifyTime,
     PermissionString,
     CurrentTime,
     SymlinkTarget,
-    OctalPermissions,
     OwnerName,
     GroupName,
     OwnerUid,
     OwnerGid,
+    ProcessId,
+    RemoteHost,
+    RemoteAddress,
+    ModuleName,
+    ModulePath,
+    FullChecksum,
 }
 
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
@@ -295,14 +300,16 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::BytesWritten,
+                            OutFormatPlaceholder::BytesTransferred,
                         ));
                     }
                     'c' => {
                         if !literal.is_empty() {
                             tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::BytesRead));
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::ChecksumBytes,
+                        ));
                     }
                     'o' => {
                         if !literal.is_empty() {
@@ -342,14 +349,6 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             OutFormatPlaceholder::CurrentTime,
                         ));
                     }
-                    'p' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::OctalPermissions,
-                        ));
-                    }
                     'u' => {
                         if !literal.is_empty() {
                             tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
@@ -373,6 +372,52 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
                             tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
                         }
                         tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerGid));
+                    }
+                    'p' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::ProcessId));
+                    }
+                    'h' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::RemoteHost,
+                        ));
+                    }
+                    'a' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::RemoteAddress,
+                        ));
+                    }
+                    'm' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::ModuleName,
+                        ));
+                    }
+                    'P' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::ModulePath,
+                        ));
+                    }
+                    'C' => {
+                        if !literal.is_empty() {
+                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
+                        }
+                        tokens.push(OutFormatToken::Placeholder(
+                            OutFormatPlaceholder::FullChecksum,
+                        ));
                     }
                     other => {
                         return Err(rsync_error!(
@@ -449,9 +494,12 @@ impl OutFormat {
                             .unwrap_or(0);
                         let _ = write!(&mut buffer, "{length}");
                     }
-                    OutFormatPlaceholder::BytesWritten | OutFormatPlaceholder::BytesRead => {
+                    OutFormatPlaceholder::BytesTransferred => {
                         let bytes = event.bytes_transferred();
                         let _ = write!(&mut buffer, "{bytes}");
+                    }
+                    OutFormatPlaceholder::ChecksumBytes => {
+                        buffer.push('0');
                     }
                     OutFormatPlaceholder::Operation => {
                         buffer.push_str(describe_event_kind(event.kind()));
@@ -473,9 +521,6 @@ impl OutFormat {
                     }
                     OutFormatPlaceholder::CurrentTime => {
                         buffer.push_str(&format_current_timestamp());
-                    }
-                    OutFormatPlaceholder::OctalPermissions => {
-                        buffer.push_str(&format_out_format_octal_permissions(event.metadata()));
                     }
                     OutFormatPlaceholder::OwnerName => {
                         buffer.push_str(&format_owner_name(event.metadata()));
@@ -499,6 +544,15 @@ impl OutFormat {
                             .unwrap_or_else(|| "0".to_string());
                         buffer.push_str(&gid);
                     }
+                    OutFormatPlaceholder::ProcessId => {
+                        let pid = std::process::id();
+                        let _ = write!(&mut buffer, "{pid}");
+                    }
+                    OutFormatPlaceholder::RemoteHost
+                    | OutFormatPlaceholder::RemoteAddress
+                    | OutFormatPlaceholder::ModuleName
+                    | OutFormatPlaceholder::ModulePath
+                    | OutFormatPlaceholder::FullChecksum => {}
                 },
             }
         }
@@ -560,13 +614,6 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
             perms
         })
         .unwrap_or_else(|| "---------".to_string())
-}
-
-fn format_out_format_octal_permissions(metadata: Option<&ClientEntryMetadata>) -> String {
-    metadata
-        .and_then(|meta| meta.mode())
-        .map(|mode| format!("{:04o}", mode & 0o7777))
-        .unwrap_or_else(|| "0000".to_string())
 }
 
 fn format_owner_name(metadata: Option<&ClientEntryMetadata>) -> String {
@@ -5923,7 +5970,7 @@ mod tests {
     #[test]
     fn out_format_argument_accepts_supported_placeholders() {
         let format = parse_out_format(OsStr::new(
-            "%f %b %c %l %o %M %B %L %N %p %u %g %U %G %t %i %%",
+            "%f %b %c %l %o %M %B %L %N %p %u %g %U %G %t %i %h %a %m %P %C %%",
         ))
         .expect("parse out-format");
         assert!(!format.tokens.is_empty());
@@ -6005,7 +6052,8 @@ mod tests {
             .expect("parse %p")
             .render(event, &mut output)
             .expect("render %p");
-        assert_eq!(output, b"0755\n");
+        let expected_pid = format!("{}\n", std::process::id());
+        assert_eq!(output, expected_pid.as_bytes());
 
         output.clear();
         parse_out_format(OsStr::new("%U"))
