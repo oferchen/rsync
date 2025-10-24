@@ -4632,6 +4632,33 @@ exit 42
     }
 
     #[test]
+    fn run_module_list_suppresses_motd_when_requested() {
+        let responses = vec![
+            "@RSYNCD: MOTD Welcome to the test daemon\n",
+            "@RSYNCD: OK\n",
+            "alpha\tPrimary module\n",
+            "@RSYNCD: EXIT\n",
+        ];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list =
+            run_module_list_with_options(request, ModuleListOptions::default().suppress_motd(true))
+                .expect("module list succeeds");
+        assert!(list.motd_lines().is_empty());
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "alpha");
+        assert_eq!(list.entries()[0].comment(), Some("Primary module"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn run_module_list_collects_warnings() {
         let responses = vec![
             "@WARNING: Maintenance scheduled\n",
@@ -5394,6 +5421,41 @@ impl ModuleListRequest {
     }
 }
 
+/// Configuration toggles that influence daemon module listings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModuleListOptions {
+    suppress_motd: bool,
+}
+
+impl ModuleListOptions {
+    /// Creates a new options structure with all toggles disabled.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            suppress_motd: false,
+        }
+    }
+
+    /// Returns a new configuration that suppresses daemon MOTD lines.
+    #[must_use]
+    pub const fn suppress_motd(mut self, suppress: bool) -> Self {
+        self.suppress_motd = suppress;
+        self
+    }
+
+    /// Returns whether MOTD lines should be suppressed.
+    #[must_use]
+    pub const fn suppresses_motd(self) -> bool {
+        self.suppress_motd
+    }
+}
+
+impl Default for ModuleListOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn parse_rsync_url(rest: &str) -> Result<Option<ModuleListRequest>, ClientError> {
     let mut parts = rest.splitn(2, '/');
     let host_port = parts.next().unwrap_or("");
@@ -5724,7 +5786,18 @@ impl ModuleListEntry {
 
 /// Performs a daemon module listing by connecting to the supplied address.
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
-    run_module_list_with_password(request, None, TransferTimeout::Default)
+    run_module_list_with_options(request, ModuleListOptions::default())
+}
+
+/// Performs a daemon module listing using caller-provided options.
+///
+/// This variant mirrors [`run_module_list`] while allowing callers to configure
+/// behaviours such as suppressing daemon MOTD lines when `--no-motd` is supplied.
+pub fn run_module_list_with_options(
+    request: ModuleListRequest,
+    options: ModuleListOptions,
+) -> Result<ModuleList, ClientError> {
+    run_module_list_with_password_and_options(request, options, None, TransferTimeout::Default)
 }
 
 /// Performs a daemon module listing using an optional password override.
@@ -5737,11 +5810,32 @@ pub fn run_module_list_with_password(
     password_override: Option<Vec<u8>>,
     timeout: TransferTimeout,
 ) -> Result<ModuleList, ClientError> {
+    run_module_list_with_password_and_options(
+        request,
+        ModuleListOptions::default(),
+        password_override,
+        timeout,
+    )
+}
+
+/// Performs a daemon module listing with the supplied options and password override.
+///
+/// The helper is primarily used by the CLI to honour flags such as `--no-motd`
+/// while still exercising the optional password override path used for
+/// `--password-file`. The [`ModuleListOptions`] parameter defaults to the same
+/// behaviour as [`run_module_list`].
+pub fn run_module_list_with_password_and_options(
+    request: ModuleListRequest,
+    options: ModuleListOptions,
+    password_override: Option<Vec<u8>>,
+    timeout: TransferTimeout,
+) -> Result<ModuleList, ClientError> {
     let addr = request.address();
     let username = request.username().map(str::to_owned);
     let mut password_bytes = password_override;
     let mut auth_attempted = false;
     let mut auth_context: Option<DaemonAuthContext> = None;
+    let suppress_motd = options.suppresses_motd();
 
     let stream = TcpStream::connect((addr.host.as_str(), addr.port))
         .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
@@ -5857,7 +5951,9 @@ pub fn run_module_list_with_password(
                     }
 
                     if is_motd_payload(payload) {
-                        motd.push(normalize_motd_payload(payload));
+                        if !suppress_motd {
+                            motd.push(normalize_motd_payload(payload));
+                        }
                         continue;
                     }
 
