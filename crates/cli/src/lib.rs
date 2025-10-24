@@ -676,6 +676,13 @@ enum ProgressSetting {
     Overall,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NameOutputLevel {
+    Disabled,
+    UpdatedOnly,
+    UpdatedAndUnchanged,
+}
+
 impl ProgressSetting {
     fn resolved(self) -> Option<ProgressMode> {
         match self {
@@ -718,6 +725,8 @@ struct ParsedArgs {
     implied_dirs: Option<bool>,
     verbosity: u8,
     progress: ProgressSetting,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
     stats: bool,
     partial: bool,
     remove_source_files: bool,
@@ -1445,6 +1454,12 @@ where
         None
     };
     let verbosity = matches.get_count("verbose") as u8;
+    let name_level = match verbosity {
+        0 => NameOutputLevel::Disabled,
+        1 => NameOutputLevel::UpdatedOnly,
+        _ => NameOutputLevel::UpdatedAndUnchanged,
+    };
+    let name_overridden = false;
     let progress_flag = matches.get_flag("progress");
     let no_progress_flag = matches.get_flag("no-progress");
     let mut progress_setting = if progress_flag {
@@ -1560,6 +1575,8 @@ where
         implied_dirs,
         verbosity,
         progress: progress_setting,
+        name_level,
+        name_overridden,
         stats,
         partial,
         remove_source_files,
@@ -1732,6 +1749,8 @@ where
         implied_dirs,
         verbosity,
         progress: initial_progress,
+        name_level: initial_name_level,
+        name_overridden: initial_name_overridden,
         stats,
         partial,
         remove_source_files,
@@ -1822,6 +1841,8 @@ where
     let mut compress = compress_flag;
     let mut progress_setting = initial_progress;
     let mut stats = stats;
+    let mut name_level = initial_name_level;
+    let mut name_overridden = initial_name_overridden;
 
     if !info.is_empty() {
         match parse_info_flags(&info) {
@@ -1840,6 +1861,10 @@ where
                 }
                 if let Some(value) = settings.stats {
                     stats = value;
+                }
+                if let Some(level) = settings.name {
+                    name_level = level;
+                    name_overridden = true;
                 }
             }
             Err(message) => {
@@ -2181,7 +2206,9 @@ where
         DeleteMode::During | DeleteMode::Disabled => builder,
     };
 
-    builder = builder.force_event_collection(out_format_template.is_some());
+    let force_event_collection =
+        out_format_template.is_some() || !matches!(name_level, NameOutputLevel::Disabled);
+    builder = builder.force_event_collection(force_event_collection);
 
     let mut filter_rules = Vec::new();
     if let Err(message) =
@@ -2310,6 +2337,8 @@ where
                     progress_rendered_live,
                     list_only,
                     out_format_template.as_ref(),
+                    name_level,
+                    name_overridden,
                     writer,
                 )
             }) {
@@ -2493,6 +2522,8 @@ fn emit_transfer_summary(
     progress_already_rendered: bool,
     list_only: bool,
     out_format: Option<&OutFormat>,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -2538,10 +2569,13 @@ fn emit_transfer_summary(
         false
     };
 
+    let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
     let emit_verbose_listing = out_format.is_none()
-        && verbosity > 0
         && !events.is_empty()
-        && (!progress_rendered || verbosity > 1);
+        && ((verbosity > 0
+            && (!name_overridden || name_enabled)
+            && (!progress_rendered || verbosity > 1))
+            || (verbosity == 0 && name_enabled));
 
     if formatted_rendered && (emit_verbose_listing || stats || verbosity > 0) {
         writeln!(writer)?;
@@ -2552,7 +2586,7 @@ fn emit_transfer_summary(
     }
 
     if emit_verbose_listing {
-        emit_verbose(events, verbosity, writer)?;
+        emit_verbose(events, verbosity, name_level, name_overridden, writer)?;
         if stats {
             writeln!(writer)?;
         }
@@ -2560,7 +2594,7 @@ fn emit_transfer_summary(
 
     if stats {
         emit_stats(summary, writer)?;
-    } else if verbosity > 0 {
+    } else if verbosity > 0 || (verbosity == 0 && name_enabled) {
         emit_totals(summary, writer)?;
     }
 
@@ -2930,10 +2964,40 @@ fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io
 fn emit_verbose<W: Write + ?Sized>(
     events: &[ClientEvent],
     verbosity: u8,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
+    if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
+        return Ok(());
+    }
+
     for event in events {
-        match event.kind() {
+        let kind = event.kind();
+        let include_for_name = event_matches_name_level(event, name_level);
+
+        if verbosity == 0 {
+            if !include_for_name {
+                continue;
+            }
+
+            let mut rendered = event.relative_path().to_string_lossy().into_owned();
+            if let Some(metadata) = event.metadata()
+                && matches!(kind, ClientEventKind::SymlinkCopied)
+                && let Some(target) = metadata.symlink_target()
+            {
+                rendered.push_str(" -> ");
+                rendered.push_str(&target.to_string_lossy());
+            }
+            writeln!(stdout, "{rendered}")?;
+            continue;
+        }
+
+        if name_overridden && !include_for_name {
+            continue;
+        }
+
+        match kind {
             ClientEventKind::SkippedExisting => {
                 writeln!(
                     stdout,
@@ -2963,7 +3027,7 @@ fn emit_verbose<W: Write + ?Sized>(
 
         let mut rendered = event.relative_path().to_string_lossy().into_owned();
         if let Some(metadata) = event.metadata()
-            && matches!(event.kind(), ClientEventKind::SymlinkCopied)
+            && matches!(kind, ClientEventKind::SymlinkCopied)
             && let Some(target) = metadata.symlink_target()
         {
             rendered.push_str(" -> ");
@@ -2975,7 +3039,7 @@ fn emit_verbose<W: Write + ?Sized>(
             continue;
         }
 
-        let descriptor = describe_event_kind(event.kind());
+        let descriptor = describe_event_kind(kind);
         let bytes = event.bytes_transferred();
         if bytes > 0 {
             if let Some(rate) = compute_rate(bytes, event.elapsed()) {
@@ -2992,6 +3056,33 @@ fn emit_verbose<W: Write + ?Sized>(
         }
     }
     Ok(())
+}
+
+fn event_matches_name_level(event: &ClientEvent, level: NameOutputLevel) -> bool {
+    match level {
+        NameOutputLevel::Disabled => false,
+        NameOutputLevel::UpdatedOnly => matches!(
+            event.kind(),
+            ClientEventKind::DataCopied
+                | ClientEventKind::HardLink
+                | ClientEventKind::SymlinkCopied
+                | ClientEventKind::FifoCopied
+                | ClientEventKind::DeviceCopied
+                | ClientEventKind::DirectoryCreated
+                | ClientEventKind::SourceRemoved
+        ),
+        NameOutputLevel::UpdatedAndUnchanged => matches!(
+            event.kind(),
+            ClientEventKind::DataCopied
+                | ClientEventKind::MetadataReused
+                | ClientEventKind::HardLink
+                | ClientEventKind::SymlinkCopied
+                | ClientEventKind::FifoCopied
+                | ClientEventKind::DeviceCopied
+                | ClientEventKind::DirectoryCreated
+                | ClientEventKind::SourceRemoved
+        ),
+    }
 }
 
 /// Maps an event kind to a human-readable description.
@@ -3147,6 +3238,7 @@ impl Default for ProgressSetting {
 struct InfoFlagSettings {
     progress: ProgressSetting,
     stats: Option<bool>,
+    name: Option<NameOutputLevel>,
     help_requested: bool,
 }
 
@@ -3154,11 +3246,13 @@ impl InfoFlagSettings {
     fn enable_all(&mut self) {
         self.progress = ProgressSetting::PerFile;
         self.stats = Some(true);
+        self.name = Some(NameOutputLevel::UpdatedAndUnchanged);
     }
 
     fn disable_all(&mut self) {
         self.progress = ProgressSetting::Disabled;
         self.stats = Some(false);
+        self.name = Some(NameOutputLevel::Disabled);
     }
 
     fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
@@ -3196,6 +3290,26 @@ impl InfoFlagSettings {
                 self.stats = Some(false);
                 Ok(())
             }
+            _ if lower.starts_with("name") => {
+                let level = &lower[4..];
+                let parsed = if level.is_empty() || level == "1" {
+                    Some(NameOutputLevel::UpdatedOnly)
+                } else if level == "0" {
+                    Some(NameOutputLevel::Disabled)
+                } else if level.chars().all(|ch| ch.is_ascii_digit()) {
+                    Some(NameOutputLevel::UpdatedAndUnchanged)
+                } else {
+                    None
+                };
+
+                match parsed {
+                    Some(level) => {
+                        self.name = Some(level);
+                        Ok(())
+                    }
+                    None => Err(info_flag_error(display)),
+                }
+            }
             _ => Err(info_flag_error(display)),
         }
     }
@@ -3205,7 +3319,7 @@ fn info_flag_error(display: &str) -> Message {
     rsync_error!(
         1,
         format!(
-            "invalid --info flag '{display}': supported flags are all, none, progress, progress2, progress0, stats, and stats0"
+            "invalid --info flag '{display}': supported flags are all, none, name, name2, name0, progress, progress2, progress0, stats, and stats0"
         )
     )
     .with_role(Role::Client)
@@ -3235,6 +3349,9 @@ fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
 const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
     all         Enable all informational output currently implemented.\n\
     none        Disable all informational output handled by this build.\n\
+    name        Mention updated file and directory names.\n\
+    name2       Mention updated and unchanged file and directory names.\n\
+    name0       Disable file and directory name output.\n\
     progress    Enable per-file progress updates.\n\
     progress2   Enable overall transfer progress.\n\
     progress0   Disable progress reporting.\n\
@@ -4847,6 +4964,88 @@ mod tests {
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("stderr utf8");
         assert!(rendered.contains("invalid --info flag"));
+    }
+
+    #[test]
+    fn info_name_emits_filenames_without_verbose() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("name.txt");
+        let destination = tmp.path().join("name.out");
+        std::fs::write(&source, b"name-info").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--info=name"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stdout utf8");
+        assert!(rendered.contains("name.txt"));
+        assert!(rendered.contains("sent"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"name-info"
+        );
+    }
+
+    #[test]
+    fn info_name0_suppresses_verbose_output() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("quiet.txt");
+        let destination = tmp.path().join("quiet.out");
+        std::fs::write(&source, b"quiet").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-v"),
+            OsString::from("--info=name0"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stdout utf8");
+        assert!(!rendered.contains("quiet.txt"));
+        assert!(rendered.contains("sent"));
+    }
+
+    #[test]
+    fn info_name2_reports_unchanged_entries() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("unchanged.txt");
+        let destination = tmp.path().join("unchanged.out");
+        std::fs::write(&source, b"unchanged").expect("write source");
+
+        let initial = run_with_args([
+            OsString::from("oc-rsync"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+        assert_eq!(initial.0, 0);
+        assert!(initial.1.is_empty());
+        assert!(initial.2.is_empty());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--info=name2"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stdout utf8");
+        assert!(rendered.contains("unchanged.txt"));
     }
 
     #[test]
