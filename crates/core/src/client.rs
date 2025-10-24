@@ -80,6 +80,7 @@
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 //! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env::VarError;
 use std::ffi::{OsStr, OsString};
@@ -6411,8 +6412,14 @@ fn establish_proxy_tunnel(
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
     let mut request = String::new();
+    let host = addr.host();
+    let encoded_host: Cow<'_, str> = if host.contains(':') && !host.starts_with('[') {
+        Cow::Owned(format!("[{}]", host))
+    } else {
+        Cow::Borrowed(host)
+    };
     request.push_str("CONNECT ");
-    request.push_str(addr.host());
+    request.push_str(&encoded_host);
     request.push(':');
     request.push_str(&addr.port().to_string());
     request.push_str(" HTTP/1.0\r\n");
