@@ -2942,6 +2942,7 @@ where
     };
 
     let filter_program = compile_filter_program(config.filter_rules())?;
+
     let mut options = build_local_copy_options(&config, filter_program);
     let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun
