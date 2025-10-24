@@ -3611,7 +3611,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
@@ -4666,6 +4666,19 @@ mod tests {
     fn runtime_options_parse_bwlimit_argument() {
         let options = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("8M")])
             .expect("parse bwlimit");
+
+        assert_eq!(
+            options.bandwidth_limit(),
+            Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
+        );
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_trim_bwlimit_argument() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from(" 8M \n")])
+                .expect("parse bwlimit");
 
         assert_eq!(
             options.bandwidth_limit(),
