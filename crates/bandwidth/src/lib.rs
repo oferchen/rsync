@@ -250,19 +250,23 @@ fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
 ///
-/// The function mirrors upstream rsync's behaviour. `Ok(None)` denotes an
-/// unlimited transfer rate (users may specify `0` for this effect). Successful
-/// parses return the rounded byte-per-second limit as [`NonZeroU64`].
+/// The function mirrors upstream rsync's behaviour. Leading and trailing ASCII
+/// whitespace is ignored to match `strtod`'s parsing rules. `Ok(None)` denotes
+/// an unlimited transfer rate (users may specify `0` for this effect).
+/// Successful parses return the rounded byte-per-second limit as
+/// [`NonZeroU64`].
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
-    if text.is_empty() {
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+
+    if trimmed.is_empty() {
         return Err(BandwidthParseError::Invalid);
     }
 
     let mut digits_seen = false;
     let mut decimal_seen = false;
-    let mut numeric_end = text.len();
+    let mut numeric_end = trimmed.len();
 
-    for (index, ch) in text.char_indices() {
+    for (index, ch) in trimmed.char_indices() {
         if ch.is_ascii_digit() {
             digits_seen = true;
             continue;
@@ -277,8 +281,8 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         break;
     }
 
-    let numeric_part = &text[..numeric_end];
-    let remainder = &text[numeric_end..];
+    let numeric_part = &trimmed[..numeric_end];
+    let remainder = &trimmed[numeric_end..];
 
     if !digits_seen || numeric_part == "." || numeric_part == "," {
         return Err(BandwidthParseError::Invalid);
@@ -557,6 +561,12 @@ mod tests {
     fn parse_bandwidth_accepts_comma_fraction_separator() {
         let limit = parse_bandwidth_argument("0,5M").expect("parse succeeds");
         assert_eq!(limit, NonZeroU64::new(512 * 1024));
+    }
+
+    #[test]
+    fn parse_bandwidth_trims_surrounding_whitespace() {
+        let limit = parse_bandwidth_argument("\t 2M \n").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(2_097_152));
     }
 
     #[test]

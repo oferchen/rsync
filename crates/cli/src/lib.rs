@@ -8594,6 +8594,14 @@ mod tests {
     }
 
     #[test]
+    fn bwlimit_argument_trims_whitespace() {
+        let limit = parse_bandwidth_limit(OsStr::new(" 1M \t"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 1_048_576);
+    }
+
+    #[test]
     fn compress_level_invalid_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
