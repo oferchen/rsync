@@ -1647,6 +1647,12 @@ pub struct RemoteFallbackArgs {
     pub list_only: bool,
     /// Supplies the remote shell command forwarded via `-e`/`--rsh`.
     pub remote_shell: Option<OsString>,
+    /// Controls whether remote shell arguments are protected from expansion.
+    ///
+    /// When `Some(true)` the fallback command receives `--protect-args`,
+    /// while `Some(false)` forwards `--no-protect-args`. A `None` value keeps
+    /// rsync's default behaviour.
+    pub protect_args: Option<bool>,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Enables `--delete`.
@@ -1814,6 +1820,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        protect_args,
         archive,
         delete,
         delete_mode,
@@ -1978,6 +1985,14 @@ where
     }
     if msgs_to_stderr {
         command_args.push(OsString::from("--msgs2stderr"));
+    }
+
+    if let Some(enabled) = protect_args {
+        if enabled {
+            command_args.push(OsString::from("--protect-args"));
+        } else {
+            command_args.push(OsString::from("--no-protect-args"));
+        }
     }
 
     if let Some(limit) = bwlimit {
@@ -3018,6 +3033,7 @@ exit 42
             dry_run: false,
             list_only: false,
             remote_shell: None,
+            protect_args: None,
             archive: false,
             delete: false,
             delete_mode: DeleteMode::Disabled,
