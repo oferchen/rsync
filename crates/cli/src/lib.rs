@@ -4223,6 +4223,10 @@ fn apply_merge_directive(
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let is_stdin = directive.source() == OsStr::new("-");
+    let original_source_text = directive
+        .source()
+        .to_string_lossy()
+        .into_owned();
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
     } else {
