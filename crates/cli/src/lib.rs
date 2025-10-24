@@ -4232,6 +4232,7 @@ fn apply_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
+    let options = directive.options().clone();
     let is_stdin = directive.source() == OsStr::new("-");
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
@@ -4291,6 +4292,11 @@ fn apply_merge_directive(
         )
     })();
     visited.pop();
+    if result.is_ok() && options.excludes_self() && !is_stdin {
+        let mut rule = FilterRuleSpec::exclude(original_source_text);
+        rule.apply_dir_merge_overrides(&options);
+        destination.push(rule);
+    }
     result
 }
 
@@ -7381,7 +7387,7 @@ mod tests {
 
     #[test]
     fn parse_filter_directive_rejects_merge_with_unknown_modifier() {
-        let error = parse_filter_directive(OsStr::new("merge,s rules"))
+        let error = parse_filter_directive(OsStr::new("merge,x rules"))
             .expect_err("merge with unsupported modifier should error");
         let rendered = error.to_string();
         assert!(rendered.contains("uses unsupported modifier"));
