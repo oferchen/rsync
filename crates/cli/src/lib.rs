@@ -3119,10 +3119,11 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let fifos_total = summary.fifos_total();
     let hard_links = summary.hard_links_created();
     let deleted = summary.items_deleted();
-    let transferred = summary.bytes_copied();
-    let compressed = summary.compressed_bytes().unwrap_or(transferred);
+    let literal_bytes = summary.bytes_copied();
+    let transferred_size = summary.transferred_file_size();
+    let compressed = summary.compressed_bytes().unwrap_or(literal_bytes);
     let total_size = summary.total_source_bytes();
-    let matched_bytes = total_size.saturating_sub(transferred);
+    let matched_bytes = transferred_size.saturating_sub(literal_bytes);
     let file_list_size = summary.file_list_size();
     let file_list_generation = summary.file_list_generation_time().as_secs_f64();
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
@@ -3160,8 +3161,11 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     writeln!(stdout, "Number of regular files transferred: {files}")?;
     writeln!(stdout, "Number of hard links: {hard_links}")?;
     writeln!(stdout, "Total file size: {total_size} bytes")?;
-    writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
-    writeln!(stdout, "Literal data: {transferred} bytes")?;
+    writeln!(
+        stdout,
+        "Total transferred file size: {transferred_size} bytes"
+    )?;
+    writeln!(stdout, "Literal data: {literal_bytes} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes} bytes")?;
     writeln!(stdout, "File list size: {file_list_size}")?;
     writeln!(
