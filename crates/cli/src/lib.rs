@@ -4096,7 +4096,8 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed)?;
+        let (options, assume_cvsignore) =
+            parse_merge_modifiers(modifiers, trimmed, true)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
