@@ -2487,6 +2487,35 @@ impl FileCopyOutcome {
     }
 }
 
+/// Describes a block matched against the existing destination during delta copy.
+#[derive(Clone, Copy, Debug)]
+struct MatchedBlock<'a> {
+    descriptor: &'a SignatureBlock,
+    canonical_length: usize,
+}
+
+impl<'a> MatchedBlock<'a> {
+    /// Creates a matched block descriptor from a [`SignatureBlock`] and its canonical length.
+    fn new(descriptor: &'a SignatureBlock, canonical_length: usize) -> Self {
+        Self {
+            descriptor,
+            canonical_length,
+        }
+    }
+
+    /// Returns the matched [`SignatureBlock`].
+    fn descriptor(&self) -> &'a SignatureBlock {
+        self.descriptor
+    }
+
+    /// Calculates the byte offset of the block within the destination file.
+    fn offset(&self) -> u64 {
+        self.descriptor
+            .index()
+            .saturating_mul(self.canonical_length as u64)
+    }
+}
+
 struct DeferredDeletion {
     destination: PathBuf,
     relative: Option<PathBuf>,
@@ -3113,16 +3142,17 @@ impl<'a> CopyContext<'a> {
                 }
 
                 let block = index.block(block_index);
+                let block_len = block.len();
+                let matched = MatchedBlock::new(block, index.block_length());
                 self.copy_matched_block(
                     &mut destination_reader,
                     writer,
                     buffer,
                     destination,
-                    block,
-                    index.block_length(),
+                    matched,
                     sparse,
                 )?;
-                total_bytes = total_bytes.saturating_add(block.len() as u64);
+                total_bytes = total_bytes.saturating_add(block_len as u64);
                 self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
                 window.clear();
                 rolling.reset();
@@ -3192,7 +3222,7 @@ impl<'a> CopyContext<'a> {
         writer: &mut fs::File,
         chunk: &[u8],
         sparse: bool,
-        mut compressor: Option<&mut CountingZlibEncoder>,
+        compressor: Option<&mut CountingZlibEncoder>,
         compressed_progress: &mut u64,
         source: &Path,
         destination: &Path,
@@ -3209,7 +3239,7 @@ impl<'a> CopyContext<'a> {
             })?;
         }
 
-        if let Some(encoder) = compressor.as_deref_mut() {
+        if let Some(encoder) = compressor {
             encoder.write(chunk).map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
@@ -3235,11 +3265,10 @@ impl<'a> CopyContext<'a> {
         writer: &mut fs::File,
         buffer: &mut [u8],
         destination: &Path,
-        block: &SignatureBlock,
-        block_length: usize,
+        matched: MatchedBlock<'_>,
         sparse: bool,
     ) -> Result<(), LocalCopyError> {
-        let offset = block.index().saturating_mul(block_length as u64);
+        let offset = matched.offset();
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
             LocalCopyError::io(
                 "read existing destination",
@@ -3248,7 +3277,7 @@ impl<'a> CopyContext<'a> {
             )
         })?;
 
-        let mut remaining = block.len();
+        let mut remaining = matched.descriptor().len();
         while remaining > 0 {
             self.enforce_timeout()?;
             let chunk_len = remaining.min(buffer.len());
