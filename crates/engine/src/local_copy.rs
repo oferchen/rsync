@@ -3744,6 +3744,30 @@ fn parse_filter_directive_line(
         ))))
     };
 
+    if keyword.len() == 1 {
+        let shorthand = keyword.chars().next().unwrap().to_ascii_lowercase();
+        match shorthand {
+            'p' => {
+                return handle_keyword(remainder, FilterRule::protect);
+            }
+            's' => {
+                if remainder.is_empty() {
+                    return Err(FilterParseError::new("filter directive missing pattern"));
+                }
+                let rule = FilterRule::show(remainder.to_string());
+                return Ok(Some(ParsedFilterDirective::Rule(rule)));
+            }
+            'h' => {
+                if remainder.is_empty() {
+                    return Err(FilterParseError::new("filter directive missing pattern"));
+                }
+                let rule = FilterRule::hide(remainder.to_string());
+                return Ok(Some(ParsedFilterDirective::Rule(rule)));
+            }
+            _ => {}
+        }
+    }
+
     if keyword.eq_ignore_ascii_case("include") {
         return handle_keyword(remainder, FilterRule::include);
     }
@@ -6769,6 +6793,39 @@ mod tests {
 
         assert!(rule.applies_to_sender());
         assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_shorthand_show_is_sender_only() {
+        let rule = match parse_filter_directive_line("S logs/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_shorthand_hide_is_sender_only() {
+        let rule = match parse_filter_directive_line("H *.bak").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_shorthand_protect_requires_receiver() {
+        let rule = match parse_filter_directive_line("P cache/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
     }
 
     #[test]
