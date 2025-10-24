@@ -4727,6 +4727,30 @@ exit 42
     }
 
     #[test]
+    fn module_list_request_decodes_percent_encoded_username() {
+        let operands = vec![OsString::from("user%2Bname@localhost::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.username(), Some("user+name"));
+        assert_eq!(request.address().host(), "localhost");
+    }
+
+    #[test]
+    fn module_list_request_rejects_truncated_percent_encoding_in_username() {
+        let operands = vec![OsString::from("user%2@localhost::")];
+        let error =
+            ModuleListRequest::from_operands(&operands).expect_err("invalid encoding should fail");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid percent-encoding in daemon username")
+        );
+    }
+
+    #[test]
     fn module_list_request_defaults_to_localhost_for_shorthand() {
         let operands = vec![OsString::from("::")];
         let request = ModuleListRequest::from_operands(&operands)
@@ -5717,22 +5741,17 @@ fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
     const DEFAULT_HOST: &str = "localhost";
 
     let (username, input) = split_daemon_username(input)?;
+    let username = username.map(decode_daemon_username).transpose()?;
 
     if input.is_empty() {
         let address = DaemonAddress::new(DEFAULT_HOST.to_string(), DEFAULT_PORT)?;
-        return Ok(ParsedDaemonTarget {
-            address,
-            username: username.map(|value| value.to_owned()),
-        });
+        return Ok(ParsedDaemonTarget { address, username });
     }
 
     if let Some(host) = input.strip_prefix('[') {
         let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
         let address = DaemonAddress::new(address, port)?;
-        return Ok(ParsedDaemonTarget {
-            address,
-            username: username.map(|value| value.to_owned()),
-        });
+        return Ok(ParsedDaemonTarget { address, username });
     }
 
     if let Some((host, port)) = split_host_port(input) {
@@ -5741,18 +5760,12 @@ fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
             .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
         let host = decode_host_component(host)?;
         let address = DaemonAddress::new(host, port)?;
-        return Ok(ParsedDaemonTarget {
-            address,
-            username: username.map(|value| value.to_owned()),
-        });
+        return Ok(ParsedDaemonTarget { address, username });
     }
 
     let host = decode_host_component(input)?;
     let address = DaemonAddress::new(host, DEFAULT_PORT)?;
-    Ok(ParsedDaemonTarget {
-        address,
-        username: username.map(|value| value.to_owned()),
-    })
+    Ok(ParsedDaemonTarget { address, username })
 }
 
 fn split_daemon_host_module(input: &str) -> Result<Option<(&str, &str)>, ClientError> {
@@ -5849,6 +5862,26 @@ fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), 
 }
 
 fn decode_host_component(input: &str) -> Result<String, ClientError> {
+    decode_percent_component(
+        input,
+        invalid_percent_encoding_error,
+        invalid_host_utf8_error,
+    )
+}
+
+fn decode_daemon_username(input: &str) -> Result<String, ClientError> {
+    decode_percent_component(
+        input,
+        invalid_username_percent_encoding_error,
+        invalid_username_utf8_error,
+    )
+}
+
+fn decode_percent_component(
+    input: &str,
+    truncated_error: fn() -> ClientError,
+    invalid_utf8_error: fn() -> ClientError,
+) -> Result<String, ClientError> {
     if !input.contains('%') {
         return Ok(input.to_string());
     }
@@ -5860,7 +5893,7 @@ fn decode_host_component(input: &str) -> Result<String, ClientError> {
     while index < bytes.len() {
         if bytes[index] == b'%' {
             if index + 2 >= bytes.len() {
-                return Err(invalid_percent_encoding_error());
+                return Err(truncated_error());
             }
 
             let hi = hex_value(bytes[index + 1]);
@@ -5877,12 +5910,7 @@ fn decode_host_component(input: &str) -> Result<String, ClientError> {
         index += 1;
     }
 
-    String::from_utf8(decoded).map_err(|_| {
-        daemon_error(
-            "daemon host contains invalid UTF-8 after percent-decoding",
-            FEATURE_UNAVAILABLE_EXIT_CODE,
-        )
-    })
+    String::from_utf8(decoded).map_err(|_| invalid_utf8_error())
 }
 
 fn hex_value(byte: u8) -> Option<u8> {
@@ -5897,6 +5925,27 @@ fn hex_value(byte: u8) -> Option<u8> {
 fn invalid_percent_encoding_error() -> ClientError {
     daemon_error(
         "invalid percent-encoding in daemon host",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
+fn invalid_host_utf8_error() -> ClientError {
+    daemon_error(
+        "daemon host contains invalid UTF-8 after percent-decoding",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
+fn invalid_username_percent_encoding_error() -> ClientError {
+    daemon_error(
+        "invalid percent-encoding in daemon username",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
+fn invalid_username_utf8_error() -> ClientError {
+    daemon_error(
+        "daemon username contains invalid UTF-8 after percent-decoding",
         FEATURE_UNAVAILABLE_EXIT_CODE,
     )
 }
