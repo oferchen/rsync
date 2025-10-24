@@ -3746,71 +3746,11 @@ impl MergeDirective {
     }
 }
 
-fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
-    let defaults = DirMergeOptions::default();
-    let mut merged = directive.options().clone();
-
-    if base.uses_whitespace() && !merged.uses_whitespace() && !defaults.uses_whitespace() {
-        merged = merged.use_whitespace();
-    }
-
-    if base.allows_comments() != defaults.allows_comments()
-        && merged.allows_comments() == defaults.allows_comments()
-    {
-        merged = merged.allow_comments(base.allows_comments());
-    }
-
-    if base.list_clear_allowed() != defaults.list_clear_allowed()
-        && merged.list_clear_allowed() == defaults.list_clear_allowed()
-    {
-        merged = merged.allow_list_clearing(base.list_clear_allowed());
-    }
-
-    if base.inherit_rules() != defaults.inherit_rules()
-        && merged.inherit_rules() == defaults.inherit_rules()
-    {
-        merged = merged.inherit(base.inherit_rules());
-    }
-
-    if base.excludes_self() != defaults.excludes_self()
-        && merged.excludes_self() == defaults.excludes_self()
-    {
-        merged = merged.exclude_filter_file(base.excludes_self());
-    }
-
-    if base.anchor_root_enabled() != defaults.anchor_root_enabled()
-        && merged.anchor_root_enabled() == defaults.anchor_root_enabled()
-    {
-        merged = merged.anchor_root(base.anchor_root_enabled());
-    }
-
-    if base.enforced_kind() != defaults.enforced_kind()
-        && merged.enforced_kind() == defaults.enforced_kind()
-    {
-        merged = merged.with_enforced_kind(base.enforced_kind());
-    }
-
-    if let Some(base_sender) = base.sender_side_override() {
-        if merged.sender_side_override().is_none() {
-            if base_sender {
-                merged = merged.sender_modifier();
-            } else if let Some(true) = base.receiver_side_override() {
-                merged = merged.receiver_modifier();
-            }
-        }
-    }
-
-    if let Some(base_receiver) = base.receiver_side_override() {
-        if merged.receiver_side_override().is_none() {
-            if base_receiver {
-                merged = merged.receiver_modifier();
-            } else if let Some(true) = base.sender_side_override() {
-                merged = merged.sender_modifier();
-            }
-        }
-    }
-
-    merged
+fn merge_directive_options(
+    _base: &DirMergeOptions,
+    directive: &MergeDirective,
+) -> DirMergeOptions {
+    directive.options().clone()
 }
 
 fn parse_filter_shorthand(
@@ -4285,7 +4225,6 @@ fn apply_merge_directive(
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let is_stdin = directive.source() == OsStr::new("-");
-    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
     } else {
