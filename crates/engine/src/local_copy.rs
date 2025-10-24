@@ -1381,6 +1381,7 @@ pub struct LocalCopyOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    omit_dir_times: bool,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     filters: Option<FilterSet>,
@@ -1423,6 +1424,7 @@ impl LocalCopyOptions {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            omit_dir_times: false,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             filters: None,
@@ -1623,6 +1625,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    /// Skips preserving directory modification times even when [`Self::times`] is enabled.
+    #[must_use]
+    #[doc(alias = "--omit-dir-times")]
+    pub const fn omit_dir_times(mut self, omit: bool) -> Self {
+        self.omit_dir_times = omit;
         self
     }
 
@@ -1892,6 +1902,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether directory modification times should be skipped during metadata preservation.
+    #[must_use]
+    pub const fn omit_dir_times_enabled(&self) -> bool {
+        self.omit_dir_times
     }
 
     #[cfg(feature = "acl")]
@@ -2507,6 +2523,10 @@ impl<'a> CopyContext<'a> {
 
     fn implied_dirs_enabled(&self) -> bool {
         self.options.implied_dirs_enabled()
+    }
+
+    fn omit_dir_times_enabled(&self) -> bool {
+        self.options.omit_dir_times_enabled()
     }
 
     fn prepare_parent_directory(&self, parent: &Path) -> Result<(), LocalCopyError> {
@@ -4693,7 +4713,11 @@ fn copy_directory_recursive(
     }
 
     if !context.mode().is_dry_run() {
-        let metadata_options = context.metadata_options();
+        let metadata_options = if context.omit_dir_times_enabled() {
+            context.metadata_options().preserve_times(false)
+        } else {
+            context.metadata_options()
+        };
         apply_directory_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
         #[cfg(feature = "xattr")]
@@ -6200,6 +6224,13 @@ mod tests {
         let options = LocalCopyOptions::default().checksum(true);
         assert!(options.checksum_enabled());
         assert!(!LocalCopyOptions::default().checksum_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_omit_dir_times_round_trip() {
+        let options = LocalCopyOptions::default().omit_dir_times(true);
+        assert!(options.omit_dir_times_enabled());
+        assert!(!LocalCopyOptions::default().omit_dir_times_enabled());
     }
 
     #[test]
