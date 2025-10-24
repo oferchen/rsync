@@ -1702,7 +1702,7 @@ where
     let mut partial = matches.get_flag("partial");
     let mut partial_dir = matches
         .get_one::<OsString>("partial-dir")
-        .map(|value| PathBuf::from(value));
+        .map(PathBuf::from);
     if partial_dir.is_some() {
         partial = true;
     }

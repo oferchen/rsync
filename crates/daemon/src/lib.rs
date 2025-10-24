@@ -898,7 +898,7 @@ fn parse_config_modules_inner(
         return Err(config_parse_error(
             path,
             0,
-            &format!("recursive include detected for '{}'", canonical.display()),
+            format!("recursive include detected for '{}'", canonical.display()),
         ));
     }
 
@@ -1131,7 +1131,7 @@ fn parse_config_modules_inner(
                         return Err(config_parse_error(
                             path,
                             line_number,
-                            &format!(
+                            format!(
                                 "duplicate 'refuse options' directive in global section (previously defined on line {})",
                                 existing_line
                             ),
@@ -3284,10 +3284,10 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
 }
 
 fn split_module_path_and_comment(value: &str) -> (&str, Option<&str>) {
-    let mut chars = value.char_indices();
+    let chars = value.char_indices();
     let mut escape = false;
 
-    while let Some((idx, ch)) = chars.next() {
+    for (idx, ch) in chars {
         if escape {
             escape = false;
             continue;

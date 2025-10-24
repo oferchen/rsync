@@ -42,7 +42,7 @@ impl DeltaSignatureIndex {
             let digest = block.rolling();
             lookup
                 .entry((digest.sum1(), digest.sum2(), block.len()))
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(index);
         }
 
