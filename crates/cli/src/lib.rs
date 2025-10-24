@@ -4096,7 +4096,7 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed)?;
+        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed, true)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
@@ -9122,10 +9122,7 @@ exit 0
 
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
-            OsString::from(format!(
-                "--partial-dir={}",
-                partial_dir.display()
-            )),
+            OsString::from(format!("--partial-dir={}", partial_dir.display())),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
         ]);
@@ -9137,14 +9134,18 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--partial"));
         assert!(recorded.lines().any(|line| line == "--partial-dir"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == partial_dir.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == partial_dir.display().to_string())
+        );
 
         // Ensure destination operand still forwarded correctly alongside partial dir args.
-        assert!(recorded
-            .lines()
-            .any(|line| line == dest_path.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
