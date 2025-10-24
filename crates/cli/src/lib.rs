@@ -77,6 +77,7 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
+use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
@@ -146,6 +147,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
+    "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
@@ -209,6 +211,46 @@ const HELP_TEXT: &str = concat!(
     "sources are supplied, DEST must name a directory. Metadata preservation\n",
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
+
+/// Default patterns excluded by `--cvs-exclude`.
+const CVS_EXCLUDE_PATTERNS: &[&str] = &[
+    "RCS",
+    "SCCS",
+    "CVS",
+    "CVS.adm",
+    "RCSLOG",
+    "cvslog.*",
+    "tags",
+    "TAGS",
+    ".make.state",
+    ".nse_depinfo",
+    "*~",
+    "#*",
+    ".#*",
+    ",*",
+    "_$*",
+    "*$",
+    "*.old",
+    "*.bak",
+    "*.BAK",
+    "*.orig",
+    "*.rej",
+    ".del-*",
+    "*.a",
+    "*.olb",
+    "*.o",
+    "*.obj",
+    "*.so",
+    "*.exe",
+    "*.Z",
+    "*.elc",
+    "*.ln",
+    "core",
+    ".svn/",
+    ".git/",
+    ".hg/",
+    ".bzr/",
+];
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
@@ -803,6 +845,7 @@ struct ParsedArgs {
     exclude_from: Vec<OsString>,
     include_from: Vec<OsString>,
     filters: Vec<OsString>,
+    cvs_exclude: bool,
     files_from: Vec<OsString>,
     from0: bool,
     info: Vec<OsString>,
@@ -1216,6 +1259,13 @@ fn clap_command() -> ClapCommand {
                 .help("Read include patterns from FILE.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("cvs-exclude")
+                .long("cvs-exclude")
+                .short('C')
+                .help("Auto-ignore files using CVS-style ignore rules.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("filter")
@@ -1704,6 +1754,7 @@ where
         .remove_many::<OsString>("filter")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let cvs_exclude = matches.get_flag("cvs-exclude");
     let files_from = matches
         .remove_many::<OsString>("files-from")
         .map(|values| values.collect())
@@ -1770,6 +1821,7 @@ where
         exclude_from,
         include_from,
         filters,
+        cvs_exclude,
         files_from,
         from0,
         info,
@@ -1970,6 +2022,7 @@ where
         exclude_from,
         include_from,
         filters,
+        cvs_exclude,
         files_from,
         from0,
         info,
@@ -2355,6 +2408,7 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            cvs_exclude,
             info_flags: fallback_info_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
@@ -2511,6 +2565,16 @@ where
             .into_iter()
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
+    if cvs_exclude {
+        if let Err(message) = append_cvs_exclude_rules(&mut filter_rules) {
+            if write_message(&message, stderr).is_err() {
+                let fallback = message.to_string();
+                let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+            }
+            return 1;
+        }
+    }
+
     let mut merge_stack = HashSet::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     for filter in filters {
@@ -4215,6 +4279,80 @@ fn append_filter_rules_from_files(
         }));
     }
     Ok(())
+}
+
+fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) -> Result<(), Message> {
+    let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
+        .iter()
+        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_string()))
+        .collect();
+
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let path = Path::new(&home).join(".cvsignore");
+        match fs::read(&path) {
+            Ok(contents) => {
+                let owned = String::from_utf8_lossy(&contents).into_owned();
+                append_cvsignore_tokens(&mut cvs_rules, owned.split_whitespace());
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                let text = format!(
+                    "failed to read '{}' for --cvs-exclude: {error}",
+                    path.display()
+                );
+                return Err(rsync_error!(1, text).with_role(Role::Client));
+            }
+        }
+    }
+
+    if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
+        let owned = value.to_string_lossy().into_owned();
+        append_cvsignore_tokens(&mut cvs_rules, owned.split_whitespace());
+    }
+
+    let options = DirMergeOptions::default()
+        .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+        .use_whitespace()
+        .allow_comments(false)
+        .inherit(false)
+        .allow_list_clearing(true);
+    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_string(), options));
+
+    destination.extend(cvs_rules);
+    Ok(())
+}
+
+fn append_cvsignore_tokens<'a, I>(destination: &mut Vec<FilterRuleSpec>, tokens: I)
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    for token in tokens {
+        let trimmed = token.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed == "!" {
+            destination.clear();
+            continue;
+        }
+
+        if let Some(remainder) = trimmed.strip_prefix('!') {
+            if remainder.is_empty() {
+                continue;
+            }
+            remove_cvs_pattern(destination, remainder);
+            continue;
+        }
+
+        destination.push(FilterRuleSpec::exclude(trimmed.to_string()));
+    }
+}
+
+fn remove_cvs_pattern(rules: &mut Vec<FilterRuleSpec>, pattern: &str) {
+    rules.retain(|rule| {
+        !(matches!(rule.kind(), FilterRuleKind::Exclude) && rule.pattern() == pattern)
+    });
 }
 
 fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
@@ -6488,6 +6626,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_cvs_exclude_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--cvs-exclude"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.cvs_exclude);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-C"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.cvs_exclude);
+    }
+
+    #[test]
     fn parse_args_recognises_partial_dir_and_enables_partial() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -7865,6 +8026,107 @@ mod tests {
             OsString::from("oc-rsync"),
             OsString::from("--exclude-from"),
             exclude_file.as_os_str().to_os_string(),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.tmp").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_cvs_exclude_skips_default_patterns() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
+        let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new(""));
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("core"), b"core").expect("write core");
+        let git_dir = source_root.join(".git");
+        std::fs::create_dir_all(&git_dir).expect("create git dir");
+        std::fs::write(git_dir.join("config"), b"git").expect("write git config");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--cvs-exclude"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("core").exists());
+        assert!(!copied_root.join(".git").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_cvs_exclude_respects_cvsignore_files() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
+        let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new(""));
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.log"), b"skip").expect("write skip");
+        std::fs::write(source_root.join(".cvsignore"), b"skip.log\n").expect("write cvsignore");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--cvs-exclude"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("keep.txt").exists());
+        assert!(!copied_root.join("skip.log").exists());
+    }
+
+    #[test]
+    fn transfer_request_with_cvs_exclude_respects_cvsignore_env() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
+        let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new("*.tmp"));
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_root).expect("create source root");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--cvs-exclude"),
             source_root.clone().into_os_string(),
             dest_root.clone().into_os_string(),
         ]);

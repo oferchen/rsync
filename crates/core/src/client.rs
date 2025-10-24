@@ -1795,6 +1795,8 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Enables `--cvs-exclude` on the fallback binary.
+    pub cvs_exclude: bool,
     /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
     pub info_flags: Vec<OsString>,
     /// Whether the original invocation used `--files-from`.
@@ -1929,6 +1931,7 @@ where
         exclude_from,
         include_from,
         filters,
+        cvs_exclude,
         info_flags,
         files_from_used,
         file_list_entries,
@@ -2101,6 +2104,9 @@ where
     for path in include_from {
         command_args.push(OsString::from("--include-from"));
         command_args.push(path);
+    }
+    if cvs_exclude {
+        command_args.push(OsString::from("--cvs-exclude"));
     }
     for filter in filters {
         command_args.push(OsString::from("--filter"));
@@ -3182,6 +3188,7 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            cvs_exclude: false,
             info_flags: Vec::new(),
             files_from_used: false,
             file_list_entries: Vec::new(),
@@ -3842,6 +3849,40 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_cvs_exclude_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.cvs_exclude = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--cvs-exclude"));
     }
 
     #[cfg(unix)]
