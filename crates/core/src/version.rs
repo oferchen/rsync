@@ -1266,7 +1266,7 @@ impl VersionInfoConfig {
             supports_hardlinks: cfg!(unix),
             supports_hardlink_specials: false,
             supports_hardlink_symlinks: false,
-            supports_ipv6: false,
+            supports_ipv6: true,
             supports_atimes: true,
             supports_batchfiles: false,
             supports_inplace: true,
@@ -1961,7 +1961,7 @@ mod tests {
         assert!(!actual.contains("no symlinks"));
         assert!(!actual.contains("no symtimes"));
         assert!(!actual.contains("no hardlinks"));
-        assert!(actual.contains("no IPv6, atimes"));
+        assert!(actual.contains("IPv6, atimes"));
         assert!(actual.contains("optional secluded-args"));
         let compiled_line = format!("Compiled features:\n    {}\n", compiled_features_text);
         assert!(actual.contains(&compiled_line));
