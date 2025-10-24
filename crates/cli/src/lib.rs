@@ -10,7 +10,7 @@
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
-//! `--bwlimit`, and `--sparse`) and delegates local copy operations to
+//! `--bwlimit`, `--append`, `--append-verify`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
@@ -178,6 +178,9 @@ const HELP_TEXT: &str = concat!(
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
     "      --remove-sent-files   Alias of --remove-source-files.\n",
+    "      --append    Append data to existing destination files without rewriting preserved bytes.\n",
+    "      --no-append  Disable append mode for destination updates.\n",
+    "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
     "      --inplace    Write updated data directly to destination files.\n",
     "      --no-inplace Use temporary files when updating regular files.\n",
     "  -P              Equivalent to --partial --progress.\n",
@@ -213,7 +216,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --append, --no-append, --append-verify, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -840,6 +843,8 @@ struct ParsedArgs {
     partial_dir: Option<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
+    append: Option<bool>,
+    append_verify: bool,
     msgs_to_stderr: bool,
     itemize_changes: bool,
     whole_file: Option<bool>,
@@ -1179,6 +1184,32 @@ fn clap_command() -> ClapCommand {
                 .help("Alias of --remove-source-files.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("remove-source-files"),
+        )
+        .arg(
+            Arg::new("append")
+                .long("append")
+                .help(
+                    "Append data to existing destination files without rewriting preserved bytes.",
+                )
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-append")
+                .overrides_with("append-verify"),
+        )
+        .arg(
+            Arg::new("no-append")
+                .long("no-append")
+                .help("Disable append mode for destination updates.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("append")
+                .overrides_with("append-verify"),
+        )
+        .arg(
+            Arg::new("append-verify")
+                .long("append-verify")
+                .help("Append data while verifying that existing bytes match the sender.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("append")
+                .overrides_with("no-append"),
         )
         .arg(
             Arg::new("inplace")
@@ -1721,6 +1752,18 @@ where
     }
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
+    let append_verify_flag = matches.get_flag("append-verify");
+    let append_flag = matches.get_flag("append");
+    let no_append_flag = matches.get_flag("no-append");
+    let append = if append_verify_flag {
+        Some(true)
+    } else if append_flag {
+        Some(true)
+    } else if no_append_flag {
+        Some(false)
+    } else {
+        None
+    };
     let inplace = if matches.get_flag("no-inplace") {
         Some(false)
     } else if matches.get_flag("inplace") {
@@ -1826,6 +1869,8 @@ where
         partial_dir,
         remove_source_files,
         inplace,
+        append,
+        append_verify: append_verify_flag,
         msgs_to_stderr,
         itemize_changes,
         whole_file,
@@ -2057,6 +2102,8 @@ where
         partial_dir,
         remove_source_files,
         inplace,
+        append,
+        append_verify,
         msgs_to_stderr,
         itemize_changes,
         whole_file,
@@ -2388,6 +2435,8 @@ where
     let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
     let fallback_required = requires_remote_fallback;
 
+    let append_for_fallback = if append_verify { Some(true) } else { append };
+
     let fallback_args = if fallback_required {
         let mut fallback_info_flags = info.clone();
         if protect_args.unwrap_or(false)
@@ -2446,6 +2495,8 @@ where
             partial,
             partial_dir: partial_dir.clone(),
             remove_source_files,
+            append: append_for_fallback,
+            append_verify,
             inplace,
             msgs_to_stderr,
             whole_file: whole_file_option,
@@ -2562,6 +2613,8 @@ where
         .partial_directory(partial_dir.clone())
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
+        .append(append.unwrap_or(false))
+        .append_verify(append_verify)
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
     #[cfg(feature = "acl")]
@@ -6974,6 +7027,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_append_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(true));
+        assert!(!parsed.append_verify);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-append"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(false));
+        assert!(!parsed.append_verify);
+    }
+
+    #[test]
+    fn parse_args_recognises_append_verify_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append-verify"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(true));
+        assert!(parsed.append_verify);
+    }
+
+    #[test]
     fn parse_args_recognises_whole_file_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -9979,6 +10071,84 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
         assert!(!args.iter().any(|arg| *arg == "--whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_append_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--append"));
+        assert!(!args.contains(&"--append-verify"));
+        assert!(!args.contains(&"--no-append"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-append"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-append"));
+        assert!(!args.contains(&"--append"));
+        assert!(!args.contains(&"--append-verify"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append-verify"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--append-verify"));
+        assert!(!args.contains(&"--append"));
+        assert!(!args.contains(&"--no-append"));
     }
 
     #[cfg(unix)]
