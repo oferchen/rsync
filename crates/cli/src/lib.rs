@@ -119,6 +119,10 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
+    "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
+    "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
+    "      --secluded-args  Alias of --protect-args.\n",
+    "      --no-secluded-args  Alias of --no-protect-args.\n",
     "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --list-only  List files without performing a transfer.\n",
@@ -749,6 +753,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
+    protect_args: Option<bool>,
     archive: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
@@ -801,6 +806,28 @@ struct ParsedArgs {
     out_format: Option<OsString>,
 }
 
+fn env_protect_args_default() -> Option<bool> {
+    let value = env::var_os("RSYNC_PROTECT_ARGS")?;
+    if value.is_empty() {
+        return Some(true);
+    }
+
+    let normalized = value.to_string_lossy();
+    let trimmed = normalized.trim();
+
+    if trimmed.is_empty() {
+        Some(true)
+    } else if trimmed.eq_ignore_ascii_case("0")
+        || trimmed.eq_ignore_ascii_case("no")
+        || trimmed.eq_ignore_ascii_case("false")
+        || trimmed.eq_ignore_ascii_case("off")
+    {
+        Some(false)
+    } else {
+        Some(true)
+    }
+}
+
 /// Builds the `clap` command used for parsing.
 fn clap_command() -> ClapCommand {
     ClapCommand::new("oc-rsync")
@@ -844,6 +871,23 @@ fn clap_command() -> ClapCommand {
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("protect-args")
+                .long("protect-args")
+                .short('s')
+                .alias("secluded-args")
+                .help("Protect remote shell arguments from expansion.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-protect-args"),
+        )
+        .arg(
+            Arg::new("no-protect-args")
+                .long("no-protect-args")
+                .alias("no-secluded-args")
+                .help("Allow the remote shell to expand wildcard arguments.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("protect-args"),
         )
         .arg(
             Arg::new("dry-run")
@@ -1400,6 +1444,13 @@ where
         .remove_one::<OsString>("rsh")
         .filter(|value| !value.is_empty())
         .or_else(|| env::var_os("RSYNC_RSH").filter(|value| !value.is_empty()));
+    let protect_args = if matches.get_flag("no-protect-args") {
+        Some(false)
+    } else if matches.get_flag("protect-args") {
+        Some(true)
+    } else {
+        env_protect_args_default()
+    };
     let archive = matches.get_flag("archive");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
@@ -1646,6 +1697,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        protect_args,
         archive,
         delete_mode,
         delete_excluded,
@@ -1813,6 +1865,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        protect_args,
         archive,
         delete_mode,
         delete_excluded,
@@ -2169,6 +2222,7 @@ where
             dry_run,
             list_only,
             remote_shell: remote_shell.clone(),
+            protect_args,
             archive,
             delete: delete_for_fallback,
             delete_mode,
@@ -5773,6 +5827,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_sets_protect_args_flag() {
+        let parsed = parse_args([OsString::from("oc-rsync"), OsString::from("--protect-args")])
+            .expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(true));
+    }
+
+    #[test]
+    fn parse_args_sets_protect_args_alias() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--secluded-args"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(true));
+    }
+
+    #[test]
+    fn parse_args_sets_no_protect_args_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-protect-args"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(false));
+    }
+
+    #[test]
+    fn parse_args_sets_no_protect_args_alias() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-secluded-args"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(false));
+    }
+
+    #[test]
     fn parse_args_recognises_group_overrides() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -5796,6 +5891,26 @@ mod tests {
 
         assert_eq!(parsed.group, Some(false));
         assert!(parsed.archive);
+    }
+
+    #[test]
+    fn parse_args_reads_env_protect_args_default() {
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("1"));
+
+        let parsed = parse_args([OsString::from("oc-rsync")]).expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(true));
+    }
+
+    #[test]
+    fn parse_args_respects_env_protect_args_disabled() {
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("0"));
+
+        let parsed = parse_args([OsString::from("oc-rsync")]).expect("parse");
+
+        assert_eq!(parsed.protect_args, Some(false));
     }
 
     #[test]
@@ -8864,6 +8979,7 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn remote_fallback_forwards_protect_args_flag() {
     fn remote_fallback_forwards_info_flags() {
         use tempfile::tempdir;
 
@@ -8885,6 +9001,7 @@ exit 0
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
+            OsString::from("--protect-args"),
             OsString::from("--info=progress2"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -8896,6 +9013,83 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--protect-args"));
+        assert!(!args.contains(&"--no-protect-args"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_no_protect_args_alias() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-secluded-args"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-protect-args"));
+        assert!(!args.contains(&"--protect-args"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_respects_env_protect_args() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+        let _protect_guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("1"));
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--protect-args"));
         assert!(args.contains(&"--info=progress2"));
     }
 
