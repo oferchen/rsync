@@ -4609,6 +4609,28 @@ exit 42
     }
 
     #[test]
+    fn module_list_request_defaults_to_localhost_for_shorthand() {
+        let operands = vec![OsString::from("::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "localhost");
+        assert_eq!(request.address().port(), 873);
+        assert!(request.username().is_none());
+    }
+
+    #[test]
+    fn module_list_request_preserves_username_with_default_host() {
+        let operands = vec![OsString::from("user@::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "localhost");
+        assert_eq!(request.address().port(), 873);
+        assert_eq!(request.username(), Some("user"));
+    }
+
+    #[test]
     fn module_list_request_rejects_truncated_percent_encoding() {
         let operands = vec![OsString::from("rsync://example%2/")];
         let error = ModuleListRequest::from_operands(&operands)
@@ -5574,15 +5596,17 @@ struct ParsedDaemonTarget {
 
 fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
     const DEFAULT_PORT: u16 = 873;
-
-    if input.is_empty() {
-        return Err(daemon_error(
-            "daemon host must be non-empty",
-            FEATURE_UNAVAILABLE_EXIT_CODE,
-        ));
-    }
+    const DEFAULT_HOST: &str = "localhost";
 
     let (username, input) = split_daemon_username(input)?;
+
+    if input.is_empty() {
+        let address = DaemonAddress::new(DEFAULT_HOST.to_string(), DEFAULT_PORT)?;
+        return Ok(ParsedDaemonTarget {
+            address,
+            username: username.map(|value| value.to_owned()),
+        });
+    }
 
     if let Some(host) = input.strip_prefix('[') {
         let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
@@ -5774,13 +5798,6 @@ fn split_daemon_username(input: &str) -> Result<(Option<&str>, &str), ClientErro
         if user.is_empty() {
             return Err(daemon_error(
                 "daemon username must be non-empty",
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-            ));
-        }
-
-        if host.len() <= 1 {
-            return Err(daemon_error(
-                "daemon host must be non-empty",
                 FEATURE_UNAVAILABLE_EXIT_CODE,
             ));
         }
