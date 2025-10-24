@@ -189,6 +189,22 @@ fn sleep_for(duration: Duration) {
     }
 }
 
+fn limit_parameters(limit: NonZeroU64) -> (NonZeroU64, usize) {
+    let kib = limit
+        .get()
+        .checked_div(1024)
+        .and_then(NonZeroU64::new)
+        .expect("bandwidth limit must be at least 1024 bytes per second");
+
+    let mut write_max = u128::from(kib.get()).saturating_mul(128);
+    if write_max < 512 {
+        write_max = 512;
+    }
+    let write_max = write_max.min(usize::MAX as u128) as usize;
+
+    (kib, write_max)
+}
+
 /// Errors returned when parsing a bandwidth limit fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BandwidthParseError {
@@ -249,6 +265,7 @@ fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
 }
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
+#[doc(alias = "--bwlimit")]
 ///
 /// The function mirrors upstream rsync's behaviour. Leading and trailing ASCII
 /// whitespace is ignored to match `strtod`'s parsing rules. `Ok(None)` denotes
@@ -394,6 +411,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 }
 
 /// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
+#[doc(alias = "--bwlimit")]
 #[derive(Clone, Debug)]
 pub struct BandwidthLimiter {
     limit_bytes: NonZeroU64,
@@ -408,16 +426,7 @@ impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
-        let kib = limit
-            .get()
-            .checked_div(1024)
-            .and_then(NonZeroU64::new)
-            .expect("bandwidth limit must be at least 1024 bytes per second");
-        let mut write_max = u128::from(kib.get()).saturating_mul(128);
-        if write_max < 512 {
-            write_max = 512;
-        }
-        let write_max = write_max.min(usize::MAX as u128) as usize;
+        let (kib, write_max) = limit_parameters(limit);
 
         Self {
             limit_bytes: limit,
@@ -427,6 +436,24 @@ impl BandwidthLimiter {
             last_instant: None,
             simulated_elapsed_us: 0,
         }
+    }
+
+    /// Updates the limiter so a new byte-per-second limit takes effect.
+    ///
+    /// Upstream rsync applies daemon-imposed caps by resetting its pacing state
+    /// before continuing the transfer with the negotiated limit. Mirroring that
+    /// behaviour keeps previously accumulated debt from leaking into the new
+    /// configuration and ensures subsequent calls behave as if the limiter had
+    /// been freshly constructed with the supplied rate.
+    pub fn update_limit(&mut self, limit: NonZeroU64) {
+        let (kib, write_max) = limit_parameters(limit);
+
+        self.limit_bytes = limit;
+        self.kib_per_second = kib;
+        self.write_max = write_max;
+        self.total_written = 0;
+        self.last_instant = None;
+        self.simulated_elapsed_us = 0;
     }
 
     /// Returns the configured limit in bytes per second.
@@ -634,6 +661,31 @@ mod tests {
         let mut follow_up = crate::recorded_sleep_session();
         assert!(follow_up.is_empty());
         let _ = follow_up.take();
+    }
+
+    #[test]
+    fn limiter_update_limit_resets_internal_state() {
+        let mut session = crate::recorded_sleep_session();
+        session.clear();
+
+        let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
+        let mut baseline = BandwidthLimiter::new(new_limit);
+        baseline.register(4096);
+        let baseline_sleeps = session.take();
+
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(4096);
+        session.clear();
+
+        limiter.update_limit(new_limit);
+        limiter.register(4096);
+        assert_eq!(limiter.limit_bytes(), new_limit);
+        assert_eq!(limiter.recommended_read_size(1 << 20), 1 << 20);
+
+        let updated_sleeps = session.take();
+        assert_eq!(updated_sleeps, baseline_sleeps);
     }
 
     proptest! {
