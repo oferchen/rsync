@@ -1727,6 +1727,8 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
+    pub info_flags: Vec<OsString>,
     /// Whether the original invocation used `--files-from`.
     pub files_from_used: bool,
     /// Entries collected from `--files-from` operands.
@@ -1856,6 +1858,7 @@ where
         exclude_from,
         include_from,
         filters,
+        info_flags,
         files_from_used,
         file_list_entries,
         from0,
@@ -2021,6 +2024,12 @@ where
     for filter in filters {
         command_args.push(OsString::from("--filter"));
         command_args.push(filter);
+    }
+
+    for flag in info_flags {
+        let mut arg = OsString::from("--info=");
+        arg.push(&flag);
+        command_args.push(arg);
     }
 
     let files_from_temp =
@@ -3062,6 +3071,7 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            info_flags: Vec::new(),
             files_from_used: false,
             file_list_entries: Vec::new(),
             from0: false,

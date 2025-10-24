@@ -2260,6 +2260,7 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            info_flags: info.clone(),
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
@@ -8979,6 +8980,7 @@ exit 0
     #[cfg(unix)]
     #[test]
     fn remote_fallback_forwards_protect_args_flag() {
+    fn remote_fallback_forwards_info_flags() {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -9000,6 +9002,7 @@ exit 0
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
             OsString::from("--protect-args"),
+            OsString::from("--info=progress2"),
             OsString::from("remote::module"),
             destination.into_os_string(),
         ]);
@@ -9087,6 +9090,7 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--protect-args"));
+        assert!(args.contains(&"--info=progress2"));
     }
 
     #[cfg(unix)]
