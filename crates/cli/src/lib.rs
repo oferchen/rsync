@@ -3744,11 +3744,10 @@ impl MergeDirective {
     fn options(&self) -> &DirMergeOptions {
         &self.options
     }
-
 }
 
 fn merge_directive_options(
-    _defaults: &DirMergeOptions,
+    _base: &DirMergeOptions,
     directive: &MergeDirective,
 ) -> DirMergeOptions {
     directive.options().clone()
@@ -4226,7 +4225,6 @@ fn apply_merge_directive(
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let is_stdin = directive.source() == OsStr::new("-");
-    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
     } else {
