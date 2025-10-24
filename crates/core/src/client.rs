@@ -2955,7 +2955,7 @@ where
             .implied_dirs(config.implied_dirs())
             .inplace(config.inplace())
             .partial(config.partial())
-            .partial_directory(config.partial_directory().map(|path| path.to_path_buf()));
+            .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()));
         #[cfg(feature = "acl")]
         let options = options.acls(config.preserve_acls());
         #[cfg(feature = "xattr")]
