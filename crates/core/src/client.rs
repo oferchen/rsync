@@ -107,8 +107,8 @@ use rsync_engine::local_copy::{
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, ProtocolVersion, parse_legacy_daemon_message,
-    parse_legacy_error_message, parse_legacy_warning_message,
+    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, NegotiationError, ProtocolVersion,
+    parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
 };
 use rsync_transport::negotiate_legacy_daemon_session;
 #[cfg(test)]
@@ -5396,6 +5396,48 @@ exit 42
     }
 
     #[test]
+    fn map_daemon_handshake_error_converts_error_payload() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@ERROR module unavailable".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("module unavailable"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_converts_other_malformed_greetings() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@RSYNCD? unexpected".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("@RSYNCD? unexpected"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_propagates_other_failures() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = mapped.message().to_string();
+        assert!(rendered.contains("timed out"));
+        assert!(rendered.contains("negotiate with"));
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
         let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -6076,6 +6118,30 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
         .trim();
 
     Some(payload.to_string())
+}
+
+fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
+    if let Some(mapped) = handshake_error_to_client_error(&error) {
+        mapped
+    } else {
+        socket_error("negotiate with", addr.socket_addr_display(), error)
+    }
+}
+
+fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
+    let negotiation_error = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<NegotiationError>())?;
+
+    if let Some(input) = negotiation_error.malformed_legacy_greeting() {
+        if let Some(payload) = legacy_daemon_error_payload(input) {
+            return Some(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
+        }
+
+        return Some(daemon_protocol_error(input));
+    }
+
+    None
 }
 
 /// Target daemon address used for module listing requests.
@@ -7020,7 +7086,7 @@ pub fn run_module_list_with_password_and_options(
     let stream = open_daemon_stream(addr, effective_timeout)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
-        .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
+        .map_err(|error| map_daemon_handshake_error(error, addr))?;
     let stream = handshake.into_stream();
     let mut reader = BufReader::new(stream);
 
