@@ -5188,6 +5188,42 @@ exit 42
     }
 
     #[test]
+    fn run_module_list_reports_daemon_error_without_colon() {
+        let responses = vec!["@ERROR unavailable\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let error = run_module_list(request).expect_err("daemon error should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(error.message().to_string().contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
+        let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let error = run_module_list(request).expect_err("daemon error should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(error.message().to_string().contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn run_module_list_reports_authentication_required() {
         let responses = vec!["@RSYNCD: AUTHREQD modules\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -5827,6 +5863,29 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     }
 
     Ok(Some(line))
+}
+
+fn legacy_daemon_error_payload(line: &str) -> Option<String> {
+    if let Some(payload) = parse_legacy_error_message(line) {
+        return Some(payload.to_string());
+    }
+
+    let trimmed = line.trim_matches(['\r', '\n']).trim_start();
+    let Some(remainder) = strip_prefix_ignore_ascii_case(trimmed, "@ERROR") else {
+        return None;
+    };
+
+    if let Some(ch) = remainder.chars().next() {
+        if ch != ':' && !ch.is_ascii_whitespace() {
+            return None;
+        }
+    }
+
+    let payload = remainder
+        .trim_start_matches(|ch: char| ch == ':' || ch.is_ascii_whitespace())
+        .trim();
+
+    Some(payload.to_string())
 }
 
 /// Target daemon address used for module listing requests.
@@ -6722,11 +6781,8 @@ pub fn run_module_list_with_password_and_options(
     while let Some(line) = read_trimmed_line(&mut reader)
         .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
     {
-        if let Some(payload) = parse_legacy_error_message(&line) {
-            return Err(daemon_error(
-                payload.to_string(),
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+        if let Some(payload) = legacy_daemon_error_payload(&line) {
+            return Err(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
         }
 
         if let Some(payload) = parse_legacy_warning_message(&line) {
