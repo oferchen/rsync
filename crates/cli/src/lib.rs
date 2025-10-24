@@ -169,6 +169,7 @@ const HELP_TEXT: &str = concat!(
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
+    "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
     "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
@@ -208,7 +209,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -790,6 +791,7 @@ struct ParsedArgs {
     name_overridden: bool,
     stats: bool,
     partial: bool,
+    partial_dir: Option<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
     msgs_to_stderr: bool,
@@ -1079,6 +1081,14 @@ fn clap_command() -> ClapCommand {
                 .help("Discard partially transferred files on error.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("partial-dir")
+                .long("partial-dir")
+                .value_name("DIR")
+                .help("Store partially transferred files in DIR.")
+                .value_parser(OsStringValueParser::new())
+                .overrides_with("no-partial"),
         )
         .arg(
             Arg::new("whole-file")
@@ -1620,11 +1630,18 @@ where
     };
     let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
+    let mut partial_dir = matches
+        .get_one::<OsString>("partial-dir")
+        .map(|value| PathBuf::from(value));
+    if partial_dir.is_some() {
+        partial = true;
+    }
     if no_progress_flag {
         progress_setting = ProgressSetting::Disabled;
     }
     if matches.get_flag("no-partial") {
         partial = false;
+        partial_dir = None;
     }
     if matches.get_count("partial-progress") > 0 {
         partial = true;
@@ -1733,6 +1750,7 @@ where
         name_overridden,
         stats,
         partial,
+        partial_dir,
         remove_source_files,
         inplace,
         msgs_to_stderr,
@@ -1959,6 +1977,7 @@ where
         name_overridden: initial_name_overridden,
         stats,
         partial,
+        partial_dir,
         remove_source_files,
         inplace,
         msgs_to_stderr,
@@ -2313,6 +2332,7 @@ where
             progress: progress_mode.is_some(),
             stats,
             partial,
+            partial_dir: partial_dir.clone(),
             remove_source_files,
             inplace,
             msgs_to_stderr,
@@ -2424,6 +2444,7 @@ where
         .progress(progress_mode.is_some())
         .stats(stats)
         .partial(partial)
+        .partial_directory(partial_dir.clone())
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
         .whole_file(whole_file_option.unwrap_or(true))
@@ -2488,7 +2509,6 @@ where
                 if let Err(message) = apply_merge_directive(
                     directive,
                     merge_base.as_path(),
-                    effective_options,
                     &mut filter_rules,
                     &mut merge_stack,
                 ) {
@@ -3693,22 +3713,40 @@ enum FilterDirective {
 struct MergeDirective {
     source: OsString,
     enforced_kind: Option<FilterRuleKind>,
+    options: DirMergeOptions,
 }
 
 impl MergeDirective {
     fn new(source: OsString, enforced_kind: Option<FilterRuleKind>) -> Self {
+        let mut options = DirMergeOptions::default();
+        options = match enforced_kind {
+            Some(FilterRuleKind::Include) => {
+                options.with_enforced_kind(Some(DirMergeEnforcedKind::Include))
+            }
+            Some(FilterRuleKind::Exclude) => {
+                options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+            }
+            _ => options,
+        };
+
         Self {
             source,
             enforced_kind,
+            options,
         }
+    }
+
+    fn with_options(mut self, options: DirMergeOptions) -> Self {
+        self.options = options;
+        self
     }
 
     fn source(&self) -> &OsStr {
         self.source.as_os_str()
     }
 
-    fn enforced_kind(&self) -> Option<FilterRuleKind> {
-        self.enforced_kind
+    fn options(&self) -> &DirMergeOptions {
+        &self.options
     }
 }
 
@@ -3771,6 +3809,7 @@ fn parse_filter_shorthand(
 fn parse_merge_modifiers(
     modifiers: &str,
     directive: &str,
+    allow_extended: bool,
 ) -> Result<(DirMergeOptions, bool), Message> {
     let mut options = DirMergeOptions::default();
     let mut enforced: Option<DirMergeEnforcedKind> = None;
@@ -3785,7 +3824,7 @@ fn parse_merge_modifiers(
                 if saw_include {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                        format!("filter rule '{directive}' cannot combine '+' and '-' modifiers")
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3797,7 +3836,7 @@ fn parse_merge_modifiers(
                 if saw_exclude {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                        format!("filter rule '{directive}' cannot combine '+' and '-' modifiers")
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3809,7 +3848,9 @@ fn parse_merge_modifiers(
                 if saw_include {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+/C' modifiers")
+                        format!(
+                            "filter merge directive '{directive}' cannot combine 'C' with '+' or '-'"
+                        )
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3824,22 +3865,94 @@ fn parse_merge_modifiers(
                 assume_cvsignore = true;
             }
             'e' => {
-                options = options.exclude_filter_file(true);
+                if allow_extended {
+                    options = options.exclude_filter_file(true);
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             'n' => {
-                options = options.inherit(false);
+                if allow_extended {
+                    options = options.inherit(false);
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             'w' => {
-                options = options.use_whitespace().allow_comments(false);
+                if allow_extended {
+                    options = options.use_whitespace().allow_comments(false);
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             's' => {
-                options = options.sender_modifier();
+                if allow_extended {
+                    options = options.sender_modifier();
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             'r' => {
-                options = options.receiver_modifier();
+                if allow_extended {
+                    options = options.receiver_modifier();
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             '/' => {
-                options = options.anchor_root(true);
+                if allow_extended {
+                    options = options.anchor_root(true);
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
             }
             _ => {
                 let message = rsync_error!(
@@ -3855,9 +3968,7 @@ fn parse_merge_modifiers(
         }
     }
 
-    options = options
-        .with_enforced_kind(enforced)
-        .allow_list_clearing(true);
+    options = options.with_enforced_kind(enforced);
     Ok((options, assume_cvsignore))
 }
 
@@ -3873,58 +3984,11 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             modifiers = split.next().unwrap_or("");
             remainder = split.next().unwrap_or("").trim_start();
         }
-
-        let mut enforced_kind = None;
-        let mut saw_plus = false;
-        let mut saw_minus = false;
-        let mut used_cvs_default = false;
-
-        for modifier in modifiers.chars() {
-            let lower = modifier.to_ascii_lowercase();
-            match lower {
-                '+' => {
-                    if saw_minus {
-                        let text = format!(
-                            "filter merge directive '{trimmed_leading}' cannot combine '+' and '-' modifiers"
-                        );
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_plus = true;
-                    enforced_kind = Some(FilterRuleKind::Include);
-                }
-                '-' => {
-                    if saw_plus {
-                        let text = format!(
-                            "filter merge directive '{trimmed_leading}' cannot combine '+' and '-' modifiers"
-                        );
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_minus = true;
-                    enforced_kind = Some(FilterRuleKind::Exclude);
-                }
-                'c' => {
-                    if saw_plus || saw_minus {
-                        let text = format!(
-                            "filter merge directive '{trimmed_leading}' cannot combine 'C' with '+' or '-'"
-                        );
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    used_cvs_default = true;
-                    enforced_kind = Some(FilterRuleKind::Exclude);
-                }
-                _ if !modifier.is_ascii_whitespace() => {
-                    let text = format!(
-                        "filter merge directive '{trimmed_leading}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(rsync_error!(1, text).with_role(Role::Client));
-                }
-                _ => {}
-            }
-        }
+        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed_leading, false)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
-            if used_cvs_default {
+            if assume_cvsignore {
                 path_text = ".cvsignore";
             } else {
                 let message = rsync_error!(
@@ -3936,10 +4000,15 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             }
         }
 
-        return Ok(FilterDirective::Merge(MergeDirective::new(
-            OsString::from(path_text),
-            enforced_kind,
-        )));
+        let enforced_kind = match options.enforced_kind() {
+            Some(DirMergeEnforcedKind::Include) => Some(FilterRuleKind::Include),
+            Some(DirMergeEnforcedKind::Exclude) => Some(FilterRuleKind::Exclude),
+            None => None,
+        };
+
+        let directive =
+            MergeDirective::new(OsString::from(path_text), enforced_kind).with_options(options);
+        return Ok(FilterDirective::Merge(directive));
     }
 
     let trimmed = trimmed_leading.trim_end();
@@ -4048,71 +4117,11 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let mut options = DirMergeOptions::default();
-        let mut saw_plus = false;
-        let mut saw_minus = false;
-        let mut used_cvs_default = false;
-
-        for modifier in modifiers.chars() {
-            let lower = modifier.to_ascii_lowercase();
-            match lower {
-                '-' => {
-                    if saw_plus {
-                        let text =
-                            format!("filter rule '{trimmed}' cannot combine '+' and '-' modifiers");
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_minus = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-                }
-                '+' => {
-                    if saw_minus {
-                        let text =
-                            format!("filter rule '{trimmed}' cannot combine '+' and '-' modifiers");
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_plus = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Include));
-                }
-                'n' => {
-                    options = options.inherit(false);
-                }
-                'e' => {
-                    options = options.exclude_filter_file(true);
-                }
-                'w' => {
-                    options = options.use_whitespace();
-                    options = options.allow_comments(false);
-                }
-                's' => {
-                    options = options.sender_modifier();
-                }
-                'r' => {
-                    options = options.receiver_modifier();
-                }
-                '/' => {
-                    options = options.anchor_root(true);
-                }
-                'c' => {
-                    used_cvs_default = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-                    options = options.use_whitespace();
-                    options = options.allow_comments(false);
-                    options = options.inherit(false);
-                    options = options.allow_list_clearing(true);
-                }
-                _ => {
-                    let text = format!(
-                        "filter rule '{trimmed}' uses unsupported dir-merge modifier '{modifier}'"
-                    );
-                    return Err(rsync_error!(1, text).with_role(Role::Client));
-                }
-            }
-        }
+        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
-            if used_cvs_default {
+            if assume_cvsignore {
                 path_text = ".cvsignore";
             } else {
                 let text =
@@ -4220,7 +4229,6 @@ fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
 fn apply_merge_directive(
     directive: MergeDirective,
     base_dir: &Path,
-    options: DirMergeOptions,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
@@ -4265,7 +4273,7 @@ fn apply_merge_directive(
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
-
+    let options = directive.options().clone();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
             read_merge_from_standard_input()?
@@ -4432,17 +4440,14 @@ fn process_merge_directive(
             destination.push(rule);
         }
         Ok(FilterDirective::Merge(nested)) => {
-            let nested_options = merge_directive_options(options, &nested);
-            apply_merge_directive(nested, base_dir, nested_options, destination, visited).map_err(
-                |error| {
-                    let detail = error.to_string();
-                    rsync_error!(
-                        1,
-                        format!("failed to process merge file '{display}': {detail}")
-                    )
-                    .with_role(Role::Client)
-                },
-            )?;
+            apply_merge_directive(nested, base_dir, destination, visited).map_err(|error| {
+                let detail = error.to_string();
+                rsync_error!(
+                    1,
+                    format!("failed to process merge file '{display}': {detail}")
+                )
+                .with_role(Role::Client)
+            })?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
         Err(error) => {
@@ -6452,6 +6457,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_partial_dir_and_enables_partial() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--partial-dir=.rsync-partial"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.partial);
+        assert_eq!(
+            parsed.partial_dir.as_deref(),
+            Some(Path::new(".rsync-partial"))
+        );
+    }
+
+    #[test]
+    fn parse_args_allows_no_partial_to_clear_partial_dir() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--partial-dir=.rsync-partial"),
+            OsString::from("--no-partial"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.partial);
+        assert!(parsed.partial_dir.is_none());
+    }
+
+    #[test]
     fn parse_args_recognises_devices_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -7296,10 +7333,11 @@ mod tests {
     fn parse_filter_directive_accepts_merge() {
         let directive =
             parse_filter_directive(OsStr::new("merge filters.txt")).expect("merge directive");
-        assert_eq!(
-            directive,
-            FilterDirective::Merge(MergeDirective::new(OsString::from("filters.txt"), None))
-        );
+        let (options, _) =
+            parse_merge_modifiers("", "merge filters.txt", false).expect("modifiers");
+        let expected =
+            MergeDirective::new(OsString::from("filters.txt"), None).with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
     }
 
     #[test]
@@ -7314,39 +7352,31 @@ mod tests {
     fn parse_filter_directive_accepts_merge_with_forced_include() {
         let directive =
             parse_filter_directive(OsStr::new("merge,+ rules")).expect("merge,+ should parse");
-        assert_eq!(
-            directive,
-            FilterDirective::Merge(MergeDirective::new(
-                OsString::from("rules"),
-                Some(FilterRuleKind::Include),
-            ))
-        );
+        let (options, _) = parse_merge_modifiers("+", "merge,+ rules", false).expect("modifiers");
+        let expected = MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Include))
+            .with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
     }
 
     #[test]
     fn parse_filter_directive_accepts_merge_with_forced_exclude() {
         let directive =
             parse_filter_directive(OsStr::new("merge,- rules")).expect("merge,- should parse");
-        assert_eq!(
-            directive,
-            FilterDirective::Merge(MergeDirective::new(
-                OsString::from("rules"),
-                Some(FilterRuleKind::Exclude),
-            ))
-        );
+        let (options, _) = parse_merge_modifiers("-", "merge,- rules", false).expect("modifiers");
+        let expected = MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Exclude))
+            .with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
     }
 
     #[test]
     fn parse_filter_directive_accepts_merge_with_cvs_alias() {
         let directive =
             parse_filter_directive(OsStr::new("merge,C")).expect("merge,C should parse");
-        assert_eq!(
-            directive,
-            FilterDirective::Merge(MergeDirective::new(
-                OsString::from(".cvsignore"),
-                Some(FilterRuleKind::Exclude),
-            ))
-        );
+        let (options, _) = parse_merge_modifiers("C", "merge,C", false).expect("modifiers");
+        let expected =
+            MergeDirective::new(OsString::from(".cvsignore"), Some(FilterRuleKind::Exclude))
+                .with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
     }
 
     #[test]
@@ -7951,14 +7981,10 @@ mod tests {
 
         let mut rules = Vec::new();
         let mut visited = Vec::new();
-        super::apply_merge_directive(
-            MergeDirective::new(OsString::from("outer.rules"), None),
-            temp.path(),
-            DirMergeOptions::default(),
-            &mut rules,
-            &mut visited,
-        )
-        .expect("merge succeeds");
+        let directive = MergeDirective::new(OsString::from("outer.rules"), None)
+            .with_options(DirMergeOptions::default().allow_list_clearing(true));
+        super::apply_merge_directive(directive, temp.path(), &mut rules, &mut visited)
+            .expect("merge succeeds");
 
         assert!(visited.is_empty());
         let patterns: Vec<_> = rules
@@ -7978,9 +8004,13 @@ mod tests {
 
         let mut rules = vec![FilterRuleSpec::exclude("existing".to_string())];
         let mut visited = Vec::new();
-        let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include));
-        let options = merge_directive_options(&DirMergeOptions::default(), &directive);
-        super::apply_merge_directive(directive, temp.path(), options, &mut rules, &mut visited)
+        let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include))
+            .with_options(
+                DirMergeOptions::default()
+                    .with_enforced_kind(Some(DirMergeEnforcedKind::Include))
+                    .allow_list_clearing(true),
+            );
+        super::apply_merge_directive(directive, temp.path(), &mut rules, &mut visited)
             .expect("merge succeeds");
 
         assert!(visited.is_empty());
@@ -9086,6 +9116,57 @@ exit 0
 
         let copied = std::fs::read(&files_copy_path).expect("read copied file list");
         assert_eq!(copied, b"alpha\nbeta\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_partial_dir_argument() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let partial_dir = temp.path().join("partials");
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--partial-dir={}", partial_dir.display())),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--partial"));
+        assert!(recorded.lines().any(|line| line == "--partial-dir"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == partial_dir.display().to_string())
+        );
+
+        // Ensure destination operand still forwarded correctly alongside partial dir args.
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
