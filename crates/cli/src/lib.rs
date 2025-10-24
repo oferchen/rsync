@@ -3745,9 +3745,13 @@ impl MergeDirective {
         &self.options
     }
 
-    fn enforced_kind(&self) -> Option<FilterRuleKind> {
-        self.enforced_kind
-    }
+}
+
+fn merge_directive_options(
+    _defaults: &DirMergeOptions,
+    directive: &MergeDirective,
+) -> DirMergeOptions {
+    directive.options().clone()
 }
 
 fn parse_filter_shorthand(
@@ -4221,7 +4225,6 @@ fn apply_merge_directive(
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
-    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let is_stdin = directive.source() == OsStr::new("-");
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let (resolved_path, display, canonical_path) = if is_stdin {
