@@ -2504,6 +2504,8 @@ where
         match parse_filter_directive(filter.as_os_str()) {
             Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
             Ok(FilterDirective::Merge(directive)) => {
+                let effective_options =
+                    merge_directive_options(&DirMergeOptions::default(), &directive);
                 if let Err(message) = apply_merge_directive(
                     directive,
                     merge_base.as_path(),
@@ -3745,6 +3747,25 @@ impl MergeDirective {
 
     fn options(&self) -> &DirMergeOptions {
         &self.options
+    }
+}
+
+fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
+    let mut options = base.clone();
+    options = options.allow_list_clearing(true);
+    if let Some(kind) = directive.enforced_kind() {
+        if let Some(enforced) = filter_rule_kind_to_enforced_kind(kind) {
+            options = options.with_enforced_kind(Some(enforced));
+        }
+    }
+    options
+}
+
+fn filter_rule_kind_to_enforced_kind(kind: FilterRuleKind) -> Option<DirMergeEnforcedKind> {
+    match kind {
+        FilterRuleKind::Include => Some(DirMergeEnforcedKind::Include),
+        FilterRuleKind::Exclude => Some(DirMergeEnforcedKind::Exclude),
+        _ => None,
     }
 }
 
