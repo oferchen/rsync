@@ -2074,6 +2074,19 @@ where
 
     let fallback_args = if fallback_required {
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
+        let daemon_password = match password_file.as_deref() {
+            Some(path) if path == Path::new("-") => match load_password_file(path) {
+                Ok(bytes) => Some(bytes),
+                Err(message) => {
+                    if write_message(&message, stderr).is_err() {
+                        let fallback = message.to_string();
+                        let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                    }
+                    return 1;
+                }
+            },
+            _ => None,
+        };
         Some(RemoteFallbackArgs {
             dry_run,
             list_only,
@@ -2117,6 +2130,7 @@ where
             file_list_entries: file_list_operands.clone(),
             from0,
             password_file: password_file.clone(),
+            daemon_password,
             protocol: desired_protocol,
             timeout: timeout_setting,
             out_format: out_format.clone(),
