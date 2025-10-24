@@ -2217,6 +2217,13 @@ where
             }
         }
         let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
+        let mut info_flags = info.clone();
+        if protect_args.unwrap_or(false)
+            && matches!(progress_setting, ProgressSetting::Unspecified)
+            && !info_flags_include_progress(&info_flags)
+        {
+            info_flags.push(OsString::from("progress2"));
+        }
         let daemon_password = match password_file.as_deref() {
             Some(path) if path == Path::new("-") => match load_password_file(path) {
                 Ok(bytes) => Some(bytes),
@@ -2274,6 +2281,7 @@ where
             include_from: include_from.clone(),
             filters: filters.clone(),
             info_flags: fallback_info_flags,
+            info_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
@@ -3532,6 +3540,24 @@ fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
     }
 
     Ok(settings)
+}
+
+fn info_flags_include_progress(flags: &[OsString]) -> bool {
+    flags.iter().any(|value| {
+        value
+            .to_string_lossy()
+            .split(',')
+            .map(|token| token.trim())
+            .filter(|token| !token.is_empty())
+            .any(|token| {
+                let normalized = token.to_ascii_lowercase();
+                let stripped = normalized
+                    .strip_prefix("no-")
+                    .or_else(|| normalized.strip_prefix("no"))
+                    .unwrap_or(&normalized);
+                stripped.starts_with("progress")
+            })
+    })
 }
 
 const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
