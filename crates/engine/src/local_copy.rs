@@ -240,6 +240,22 @@ impl DirMergeOptions {
         self
     }
 
+    /// Overrides the sender/receiver applicability flags without inferring defaults.
+    #[must_use]
+    pub fn with_side_overrides(mut self, sender: Option<bool>, receiver: Option<bool>) -> Self {
+        self.sender_side = match sender {
+            Some(true) => SideState::Enabled,
+            Some(false) => SideState::Disabled,
+            None => SideState::Unspecified,
+        };
+        self.receiver_side = match receiver {
+            Some(true) => SideState::Enabled,
+            Some(false) => SideState::Disabled,
+            None => SideState::Unspecified,
+        };
+        self
+    }
+
     /// Requests that patterns within the filter file be anchored to the transfer root.
     #[must_use]
     pub const fn anchor_root(mut self, anchor: bool) -> Self {
