@@ -324,6 +324,8 @@ pub struct ClientConfig {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
@@ -371,6 +373,8 @@ impl Default for ClientConfig {
             partial: false,
             partial_dir: None,
             inplace: false,
+            append: false,
+            append_verify: false,
             force_event_collection: false,
             preserve_devices: false,
             preserve_specials: false,
@@ -709,6 +713,20 @@ impl ClientConfig {
         self.inplace
     }
 
+    /// Reports whether appended transfers are enabled.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(&self) -> bool {
+        self.append
+    }
+
+    /// Reports whether append verification is enabled.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(&self) -> bool {
+        self.append_verify
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {
@@ -758,6 +776,8 @@ pub struct ClientConfigBuilder {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
@@ -1148,6 +1168,30 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables append-only transfers for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(mut self, append: bool) -> Self {
+        self.append = append;
+        if !append {
+            self.append_verify = false;
+        }
+        self
+    }
+
+    /// Enables append verification for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(mut self, verify: bool) -> Self {
+        if verify {
+            self.append = true;
+            self.append_verify = true;
+        } else {
+            self.append_verify = false;
+        }
+        self
+    }
+
     /// Forces collection of transfer events regardless of verbosity.
     #[must_use]
     pub const fn force_event_collection(mut self, force: bool) -> Self {
@@ -1227,6 +1271,8 @@ impl ClientConfigBuilder {
             partial: self.partial,
             partial_dir: self.partial_dir,
             inplace: self.inplace,
+            append: self.append,
+            append_verify: self.append_verify,
             force_event_collection: self.force_event_collection,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
@@ -1780,6 +1826,10 @@ pub struct RemoteFallbackArgs {
     pub partial_dir: Option<PathBuf>,
     /// Enables `--remove-source-files`.
     pub remove_source_files: bool,
+    /// Optional `--append`/`--no-append` toggle.
+    pub append: Option<bool>,
+    /// Enables `--append-verify`.
+    pub append_verify: bool,
     /// Optional `--inplace`/`--no-inplace` toggle.
     pub inplace: Option<bool>,
     /// Routes daemon messages to standard error via `--msgs2stderr`.
@@ -1932,6 +1982,8 @@ where
         partial,
         partial_dir,
         remove_source_files,
+        append,
+        append_verify,
         inplace,
         msgs_to_stderr,
         whole_file,
@@ -2080,6 +2132,11 @@ where
     }
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
+    }
+    if append_verify {
+        command_args.push(OsString::from("--append-verify"));
+    } else {
+        push_toggle(&mut command_args, "--append", "--no-append", append);
     }
     if msgs_to_stderr {
         command_args.push(OsString::from("--msgs2stderr"));
@@ -3071,6 +3128,8 @@ fn build_local_copy_options(
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
         .inplace(config.inplace())
+        .append(config.append())
+        .append_verify(config.append_verify())
         .partial(config.partial())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .with_timeout(
@@ -3214,6 +3273,8 @@ exit 42
             partial: false,
             partial_dir: None,
             remove_source_files: false,
+            append: None,
+            append_verify: false,
             inplace: None,
             msgs_to_stderr: false,
             whole_file: None,
@@ -3270,6 +3331,32 @@ exit 42
         );
         assert!(config.has_transfer_request());
         assert!(!config.dry_run());
+    }
+
+    #[test]
+    fn builder_append_round_trip() {
+        let enabled = ClientConfig::builder().append(true).build();
+        assert!(enabled.append());
+        assert!(!enabled.append_verify());
+
+        let disabled = ClientConfig::builder().append(false).build();
+        assert!(!disabled.append());
+        assert!(!disabled.append_verify());
+    }
+
+    #[test]
+    fn builder_append_verify_implies_append() {
+        let verified = ClientConfig::builder().append_verify(true).build();
+        assert!(verified.append());
+        assert!(verified.append_verify());
+
+        let cleared = ClientConfig::builder()
+            .append(true)
+            .append_verify(true)
+            .append_verify(false)
+            .build();
+        assert!(cleared.append());
+        assert!(!cleared.append_verify());
     }
 
     #[test]
