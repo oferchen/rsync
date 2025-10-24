@@ -298,6 +298,7 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
@@ -342,6 +343,7 @@ impl Default for ClientConfig {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            omit_dir_times: false,
             compress: false,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
@@ -512,6 +514,13 @@ impl ClientConfig {
     #[doc(alias = "--times")]
     pub const fn preserve_times(&self) -> bool {
         self.preserve_times
+    }
+
+    /// Reports whether directory timestamps should be skipped when preserving times.
+    #[must_use]
+    #[doc(alias = "--omit-dir-times")]
+    pub const fn omit_dir_times(&self) -> bool {
+        self.omit_dir_times
     }
 
     /// Reports whether POSIX ACLs should be preserved.
@@ -698,6 +707,7 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
@@ -856,6 +866,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--times")]
     pub const fn times(mut self, preserve: bool) -> Self {
         self.preserve_times = preserve;
+        self
+    }
+
+    /// Requests that directory timestamps be skipped when preserving times.
+    #[must_use]
+    #[doc(alias = "--omit-dir-times")]
+    pub const fn omit_dir_times(mut self, omit: bool) -> Self {
+        self.omit_dir_times = omit;
         self
     }
 
@@ -1125,6 +1143,7 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            omit_dir_times: self.omit_dir_times,
             compress: self.compress,
             compression_level: self.compression_level,
             compression_setting: self.compression_setting,
@@ -1635,6 +1654,8 @@ pub struct RemoteFallbackArgs {
     pub perms: Option<bool>,
     /// Optional `--times`/`--no-times` toggle.
     pub times: Option<bool>,
+    /// Optional `--omit-dir-times`/`--no-omit-dir-times` toggle.
+    pub omit_dir_times: Option<bool>,
     /// Optional `--numeric-ids`/`--no-numeric-ids` toggle.
     pub numeric_ids: Option<bool>,
     /// Optional `--copy-links`/`--no-copy-links` toggle.
@@ -1784,6 +1805,7 @@ where
         group,
         perms,
         times,
+        omit_dir_times,
         numeric_ids,
         copy_links,
         copy_dirlinks,
@@ -1871,6 +1893,12 @@ where
     push_toggle(&mut command_args, "--group", "--no-group", group);
     push_toggle(&mut command_args, "--perms", "--no-perms", perms);
     push_toggle(&mut command_args, "--times", "--no-times", times);
+    push_toggle(
+        &mut command_args,
+        "--omit-dir-times",
+        "--no-omit-dir-times",
+        omit_dir_times,
+    );
     push_toggle(
         &mut command_args,
         "--numeric-ids",
@@ -2807,6 +2835,7 @@ where
             .group(config.preserve_group())
             .permissions(config.preserve_permissions())
             .times(config.preserve_times())
+            .omit_dir_times(config.omit_dir_times())
             .checksum(config.checksum())
             .size_only(config.size_only())
             .ignore_existing(config.ignore_existing())
@@ -2964,6 +2993,7 @@ exit 42
             group: None,
             perms: None,
             times: None,
+            omit_dir_times: None,
             numeric_ids: None,
             copy_links: None,
             copy_dirlinks: false,
@@ -3326,6 +3356,17 @@ exit 42
 
         assert!(config.remove_source_files());
         assert!(!ClientConfig::default().remove_source_files());
+    }
+
+    #[test]
+    fn builder_controls_omit_dir_times_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .omit_dir_times(true)
+            .build();
+
+        assert!(config.omit_dir_times());
+        assert!(!ClientConfig::default().omit_dir_times());
     }
 
     #[test]

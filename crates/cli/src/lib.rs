@@ -185,6 +185,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
     "      --no-times   Disable modification time preservation.\n",
+    "      --omit-dir-times  Skip preserving directory modification times.\n",
+    "      --no-omit-dir-times  Preserve directory modification times.\n",
     "  -A, --acls      Preserve POSIX ACLs when supported.\n",
     "      --no-acls   Disable POSIX ACL preservation.\n",
     "  -X, --xattrs     Preserve extended attributes when supported.\n",
@@ -198,7 +200,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -763,6 +765,7 @@ struct ParsedArgs {
     group: Option<bool>,
     perms: Option<bool>,
     times: Option<bool>,
+    omit_dir_times: Option<bool>,
     acls: Option<bool>,
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
@@ -1239,6 +1242,21 @@ fn clap_command() -> ClapCommand {
                 .overrides_with("times"),
         )
         .arg(
+            Arg::new("omit-dir-times")
+                .long("omit-dir-times")
+                .short('O')
+                .help("Skip preserving directory modification times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-omit-dir-times"),
+        )
+        .arg(
+            Arg::new("no-omit-dir-times")
+                .long("no-omit-dir-times")
+                .help("Preserve directory modification times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("omit-dir-times"),
+        )
+        .arg(
             Arg::new("acls")
                 .long("acls")
                 .short('A')
@@ -1445,6 +1463,13 @@ where
     } else {
         None
     };
+    let omit_dir_times = if matches.get_flag("omit-dir-times") {
+        Some(true)
+    } else if matches.get_flag("no-omit-dir-times") {
+        Some(false)
+    } else {
+        None
+    };
     let acls = if matches.get_flag("acls") {
         Some(true)
     } else if matches.get_flag("no-acls") {
@@ -1623,6 +1648,7 @@ where
         group,
         perms,
         times,
+        omit_dir_times,
         numeric_ids,
         sparse,
         copy_links,
@@ -1789,6 +1815,7 @@ where
         group,
         perms,
         times,
+        omit_dir_times,
         acls,
         excludes,
         includes,
@@ -2142,6 +2169,7 @@ where
             group,
             perms,
             times,
+            omit_dir_times,
             numeric_ids: numeric_ids_option,
             copy_links,
             copy_dirlinks,
@@ -2226,6 +2254,7 @@ where
     let preserve_group = group.unwrap_or(archive);
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
+    let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
     let sparse = sparse.unwrap_or(false);
@@ -2246,6 +2275,7 @@ where
         .group(preserve_group)
         .permissions(preserve_permissions)
         .times(preserve_times)
+        .omit_dir_times(omit_dir_times_setting)
         .devices(preserve_devices)
         .specials(preserve_specials)
         .checksum(checksum)
@@ -5661,6 +5691,7 @@ mod tests {
             OsString::from("oc-rsync"),
             OsString::from("--perms"),
             OsString::from("--times"),
+            OsString::from("--omit-dir-times"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -5668,12 +5699,14 @@ mod tests {
 
         assert_eq!(parsed.perms, Some(true));
         assert_eq!(parsed.times, Some(true));
+        assert_eq!(parsed.omit_dir_times, Some(true));
 
         let parsed = parse_args([
             OsString::from("oc-rsync"),
             OsString::from("-a"),
             OsString::from("--no-perms"),
             OsString::from("--no-times"),
+            OsString::from("--no-omit-dir-times"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -5681,6 +5714,7 @@ mod tests {
 
         assert_eq!(parsed.perms, Some(false));
         assert_eq!(parsed.times, Some(false));
+        assert_eq!(parsed.omit_dir_times, Some(false));
     }
 
     #[test]
@@ -7357,6 +7391,48 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
+        use filetime::{FileTime, set_file_times};
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        let source_dir = source_root.join("nested");
+        let source_file = source_dir.join("file.txt");
+
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        std::fs::write(&source_file, b"payload").expect("write file");
+
+        let dir_mtime = FileTime::from_unix_time(1_700_200_000, 0);
+        set_file_times(&source_dir, dir_mtime, dir_mtime).expect("set dir times");
+        set_file_times(&source_file, dir_mtime, dir_mtime).expect("set file times");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--omit-dir-times"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let dest_dir = dest_root.join("nested");
+        let dest_file = dest_dir.join("file.txt");
+
+        let dir_metadata = std::fs::metadata(&dest_dir).expect("dest dir metadata");
+        let file_metadata = std::fs::metadata(&dest_file).expect("dest file metadata");
+        let dest_dir_mtime = FileTime::from_last_modification_time(&dir_metadata);
+        let dest_file_mtime = FileTime::from_last_modification_time(&file_metadata);
+
+        assert_ne!(dest_dir_mtime, dir_mtime);
+        assert_eq!(dest_file_mtime, dir_mtime);
+    }
+
+    #[test]
     fn checksum_with_no_times_preserves_existing_destination() {
         use filetime::{FileTime, set_file_mtime};
         use tempfile::tempdir;
@@ -9000,6 +9076,42 @@ exit 0
         assert!(!recorded.contains("--no-acls"));
     }
 
+    #[test]
+    fn remote_fallback_forwards_omit_dir_times_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--omit-dir-times"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--omit-dir-times"));
+        assert!(!recorded.contains("--no-omit-dir-times"));
+    }
+
     #[cfg(all(unix, feature = "acl"))]
     #[test]
     fn remote_fallback_forwards_no_acls_toggle() {
@@ -9034,6 +9146,41 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.contains("--no-acls"));
+    }
+
+    #[test]
+    fn remote_fallback_forwards_no_omit_dir_times_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-omit-dir-times"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-omit-dir-times"));
     }
 
     #[test]
