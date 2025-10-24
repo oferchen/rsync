@@ -7,12 +7,15 @@
 //! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--daemon`, `--dry-run`/`-n`, `--list-only`, `--delete`/`--delete-excluded`,
-//! `--filter` (supporting `+`/`-` actions, the `!` clear directive, and
-//! `merge FILE` directives), `--files-from`, `--from0`, `--bwlimit`, and
-//! `--sparse`) and delegates local copy operations to
-//! [`rsync_core::client::run_client`] or forwards daemon invocations to
-//! [`rsync_daemon::run`]. Higher layers will eventually extend the
+//! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
+//! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
+//! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
+//! `--bwlimit`, and `--sparse`) and delegates local copy operations to
+//! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
+//! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
+//! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
+//! variable) so remote-shell transports keep functioning while the native
+//! server implementation is completed. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
 //! downstream tooling to depend on a stable binary path (`oc-rsync`) while
@@ -76,6 +79,7 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 
@@ -1779,6 +1783,10 @@ where
         args.push(OsString::from("oc-rsync"));
     }
 
+    if server_mode_requested(&args) {
+        return run_server_mode(&args, stdout, stderr);
+    }
+
     if let Some(daemon_args) = daemon_mode_arguments(&args) {
         return run_daemon_mode(daemon_args, stdout, stderr);
     }
@@ -1825,6 +1833,51 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
     }
 
     if found { Some(daemon_args) } else { None }
+}
+
+/// Returns `true` when the invocation requests server mode.
+fn server_mode_requested(args: &[OsString]) -> bool {
+    args.iter().skip(1).any(|arg| arg == "--server")
+}
+
+/// Delegates execution to the system rsync binary when `--server` is requested.
+fn run_server_mode<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    let _ = stdout.flush();
+    let _ = stderr.flush();
+
+    let fallback = env::var_os("OC_RSYNC_FALLBACK")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("rsync"));
+
+    let mut command = Command::new(&fallback);
+    command.args(args.iter().skip(1));
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+
+    match command.status() {
+        Ok(status) => status
+            .code()
+            .map(|code| code.clamp(0, MAX_EXIT_CODE))
+            .unwrap_or(1),
+        Err(error) => {
+            let mut sink = MessageSink::new(stderr);
+            let text = format!(
+                "failed to launch fallback rsync binary '{}': {error}",
+                Path::new(&fallback).display()
+            );
+            let mut message = rsync_error!(1, "{}", text);
+            message = message.with_role(Role::Client);
+            if write_message(&message, &mut sink).is_err() {
+                let _ = writeln!(sink.writer_mut(), "{}", text);
+            }
+            1
+        }
+    }
 }
 
 /// Delegates execution to the daemon front-end.
@@ -8433,6 +8486,58 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"payload"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_mode_invokes_fallback_binary() {
+        use std::fs;
+        use std::io;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("server.sh");
+        let marker_path = temp.path().join("marker.txt");
+
+        fs::write(
+            &script_path,
+            r#"#!/bin/sh
+set -eu
+: "${SERVER_MARKER:?}"
+printf 'invoked' > "$SERVER_MARKER"
+exit 37
+"#,
+        )
+        .expect("write script");
+
+        let mut perms = fs::metadata(&script_path)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("set script perms");
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
+
+        let mut stdout = io::sink();
+        let mut stderr = io::sink();
+        let exit_code = run(
+            [
+                OsString::from("oc-rsync"),
+                OsString::from("--server"),
+                OsString::from("--sender"),
+                OsString::from("."),
+                OsString::from("dest"),
+            ],
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(exit_code, 37);
+        assert_eq!(fs::read(&marker_path).expect("read marker"), b"invoked");
     }
 
     #[cfg(unix)]
