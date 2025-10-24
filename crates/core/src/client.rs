@@ -2080,24 +2080,14 @@ where
     })?;
 
     if let Some(mut password) = daemon_password.take() {
-        if !password.ends_with(b"\n") {
-            password.push(b'\n');
-        }
-
         let mut stdin = child
             .stdin
             .take()
             .ok_or_else(|| fallback_error("fallback rsync did not expose a writable stdin"))?;
 
-        stdin.write_all(&password).map_err(|error| {
+        write_daemon_password(&mut stdin, &mut password).map_err(|error| {
             fallback_error(format!(
                 "failed to write password to fallback rsync stdin: {error}"
-            ))
-        })?;
-
-        stdin.flush().map_err(|error| {
-            fallback_error(format!(
-                "failed to flush password to fallback rsync stdin: {error}"
             ))
         })?;
     }
@@ -2276,6 +2266,23 @@ where
             }
         }
     })
+}
+
+/// Writes the daemon password into `writer`, appending a newline when required and
+/// scrubbing the buffer afterwards.
+fn write_daemon_password<W: Write>(writer: &mut W, password: &mut Vec<u8>) -> io::Result<()> {
+    if !password.ends_with(b"\n") {
+        password.push(b'\n');
+    }
+
+    writer.write_all(password)?;
+    writer.flush()?;
+
+    for byte in password.iter_mut() {
+        *byte = 0;
+    }
+
+    Ok(())
 }
 
 fn join_fallback_thread(handle: &mut Option<thread::JoinHandle<()>>) {
@@ -3561,6 +3568,28 @@ exit 42
 
         let captured = fs::read(&capture_path).expect("captured password");
         assert_eq!(captured, b"topsecret\n");
+    }
+
+    #[test]
+    fn write_daemon_password_appends_newline_and_zeroizes_buffer() {
+        let mut output = Vec::new();
+        let mut secret = b"swordfish".to_vec();
+
+        write_daemon_password(&mut output, &mut secret).expect("write succeeds");
+
+        assert_eq!(output, b"swordfish\n");
+        assert!(secret.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn write_daemon_password_handles_existing_newline() {
+        let mut output = Vec::new();
+        let mut secret = b"hunter2\n".to_vec();
+
+        write_daemon_password(&mut output, &mut secret).expect("write succeeds");
+
+        assert_eq!(output, b"hunter2\n");
+        assert!(secret.iter().all(|&byte| byte == 0));
     }
 
     #[cfg(unix)]
