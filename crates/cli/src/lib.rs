@@ -90,9 +90,9 @@ use rsync_core::{
         BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
         ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
-        FilterRuleKind, FilterRuleSpec, ModuleListRequest, RemoteFallbackArgs,
+        FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
         RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
-        run_module_list_with_password,
+        run_module_list_with_password_and_options,
     },
     message::{Message, Role},
     rsync_error,
@@ -2162,8 +2162,10 @@ where
                     }
                 };
 
-                return match run_module_list_with_password(
+                let list_options = ModuleListOptions::default().suppress_motd(no_motd);
+                return match run_module_list_with_password_and_options(
                     request,
+                    list_options,
                     password_override,
                     timeout_setting,
                 ) {
