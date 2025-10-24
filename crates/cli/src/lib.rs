@@ -3803,7 +3803,7 @@ fn parse_merge_modifiers(
                 if saw_include {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                        format!("filter rule '{directive}' cannot combine '+' and '-' modifiers")
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3815,7 +3815,7 @@ fn parse_merge_modifiers(
                 if saw_exclude {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                        format!("filter rule '{directive}' cannot combine '+' and '-' modifiers")
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3827,7 +3827,9 @@ fn parse_merge_modifiers(
                 if saw_include {
                     let message = rsync_error!(
                         1,
-                        format!("filter merge directive '{directive}' mixes '+/C' modifiers")
+                        format!(
+                            "filter merge directive '{directive}' cannot combine 'C' with '+' or '-'"
+                        )
                     )
                     .with_role(Role::Client);
                     return Err(message);
@@ -3945,9 +3947,7 @@ fn parse_merge_modifiers(
         }
     }
 
-    options = options
-        .with_enforced_kind(enforced)
-        .allow_list_clearing(true);
+    options = options.with_enforced_kind(enforced);
     Ok((options, assume_cvsignore))
 }
 
@@ -4096,71 +4096,11 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let mut options = DirMergeOptions::default();
-        let mut saw_plus = false;
-        let mut saw_minus = false;
-        let mut used_cvs_default = false;
-
-        for modifier in modifiers.chars() {
-            let lower = modifier.to_ascii_lowercase();
-            match lower {
-                '-' => {
-                    if saw_plus {
-                        let text =
-                            format!("filter rule '{trimmed}' cannot combine '+' and '-' modifiers");
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_minus = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-                }
-                '+' => {
-                    if saw_minus {
-                        let text =
-                            format!("filter rule '{trimmed}' cannot combine '+' and '-' modifiers");
-                        return Err(rsync_error!(1, text).with_role(Role::Client));
-                    }
-                    saw_plus = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Include));
-                }
-                'n' => {
-                    options = options.inherit(false);
-                }
-                'e' => {
-                    options = options.exclude_filter_file(true);
-                }
-                'w' => {
-                    options = options.use_whitespace();
-                    options = options.allow_comments(false);
-                }
-                's' => {
-                    options = options.sender_modifier();
-                }
-                'r' => {
-                    options = options.receiver_modifier();
-                }
-                '/' => {
-                    options = options.anchor_root(true);
-                }
-                'c' => {
-                    used_cvs_default = true;
-                    options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-                    options = options.use_whitespace();
-                    options = options.allow_comments(false);
-                    options = options.inherit(false);
-                    options = options.allow_list_clearing(true);
-                }
-                _ => {
-                    let text = format!(
-                        "filter rule '{trimmed}' uses unsupported dir-merge modifier '{modifier}'"
-                    );
-                    return Err(rsync_error!(1, text).with_role(Role::Client));
-                }
-            }
-        }
+        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
-            if used_cvs_default {
+            if assume_cvsignore {
                 path_text = ".cvsignore";
             } else {
                 let text =
