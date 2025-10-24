@@ -2506,6 +2506,7 @@ where
             Ok(FilterDirective::Merge(directive)) => {
                 let effective_options =
                     merge_directive_options(&DirMergeOptions::default(), &directive);
+                let directive = directive.with_options(effective_options);
                 if let Err(message) = apply_merge_directive(
                     directive,
                     merge_base.as_path(),
@@ -3748,6 +3749,10 @@ impl MergeDirective {
     fn options(&self) -> &DirMergeOptions {
         &self.options
     }
+
+    fn enforced_kind(&self) -> Option<FilterRuleKind> {
+        self.enforced_kind
+    }
 }
 
 fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
@@ -4124,8 +4129,7 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let (options, assume_cvsignore) =
-            parse_merge_modifiers(modifiers, trimmed, true)?;
+        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed, true)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
@@ -4240,7 +4244,6 @@ fn apply_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
-    let options = directive.options().clone();
     let is_stdin = directive.source() == OsStr::new("-");
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
@@ -4283,6 +4286,7 @@ fn apply_merge_directive(
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
     let options = directive.options().clone();
+    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
             read_merge_from_standard_input()?
