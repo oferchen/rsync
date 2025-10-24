@@ -3214,7 +3214,10 @@ fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> i
 
         let bytes = event.bytes_transferred();
         let size_field = format!("{:>15}", format_progress_bytes(bytes));
-        let percent_hint = matches!(event.kind(), ClientEventKind::DataCopied).then_some(bytes);
+        let percent_hint = match event.kind() {
+            ClientEventKind::DataCopied => event.total_bytes(),
+            _ => None,
+        };
         let percent_field = format!("{:>4}", format_progress_percent(bytes, percent_hint));
         let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
         let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));

@@ -5460,7 +5460,9 @@ mod tests {
         stream.flush().expect("flush credentials");
 
         line.clear();
-        reader.read_line(&mut line).expect("post-auth acknowledgement");
+        reader
+            .read_line(&mut line)
+            .expect("post-auth acknowledgement");
         assert_eq!(line, "@RSYNCD: OK\n");
 
         line.clear();
