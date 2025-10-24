@@ -3586,7 +3586,7 @@ fn info_flag_error(display: &str) -> Message {
     rsync_error!(
         1,
         format!(
-            "invalid --info flag '{display}': supported flags are all, none, name, name2, name0, progress, progress2, progress0, stats, and stats0"
+            "invalid --info flag '{display}': supported flags are help, all, none, 0, 1, name, name0, name1, name2, progress, progress0, progress1, progress2, stats, stats0, and stats1"
         )
     )
     .with_role(Role::Client)
@@ -3597,17 +3597,21 @@ fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
     for value in values {
         let text = value.to_string_lossy();
         let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
-        let display = if trimmed.is_empty() {
-            text.as_ref()
-        } else {
-            trimmed
-        };
 
         if trimmed.is_empty() {
             return Err(rsync_error!(1, "--info flag must not be empty").with_role(Role::Client));
         }
 
-        settings.apply(trimmed, display)?;
+        for token in trimmed.split(',') {
+            let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
+            if token.is_empty() {
+                return Err(
+                    rsync_error!(1, "--info flag must not be empty").with_role(Role::Client)
+                );
+            }
+
+            settings.apply(token, token)?;
+        }
     }
 
     Ok(settings)
@@ -5579,6 +5583,22 @@ mod tests {
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("stderr utf8");
         assert!(rendered.contains("invalid --info flag"));
+    }
+
+    #[test]
+    fn info_accepts_comma_separated_tokens() {
+        let flags = vec![OsString::from("progress,name2,stats")];
+        let settings = parse_info_flags(&flags).expect("flags parse");
+        assert!(matches!(settings.progress, ProgressSetting::PerFile));
+        assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
+        assert_eq!(settings.stats, Some(true));
+    }
+
+    #[test]
+    fn info_rejects_empty_segments() {
+        let flags = vec![OsString::from("progress,,stats")];
+        let error = parse_info_flags(&flags).err().expect("parse should fail");
+        assert!(error.to_string().contains("--info flag must not be empty"));
     }
 
     #[test]
