@@ -168,6 +168,7 @@ const HELP_TEXT: &str = concat!(
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
     "      --msgs2stderr  Route informational messages to standard error.\n",
+    "  -i, --itemize-changes  Output a change summary for each updated entry.\n",
     "      --out-format=FORMAT  Customise transfer output using FORMAT.\n",
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
@@ -212,6 +213,9 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+
+const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
 const CVS_EXCLUDE_PATTERNS: &[&str] = &[
     "RCS",
@@ -839,6 +843,7 @@ struct ParsedArgs {
     remove_source_files: bool,
     inplace: Option<bool>,
     msgs_to_stderr: bool,
+    itemize_changes: bool,
     whole_file: Option<bool>,
     excludes: Vec<OsString>,
     includes: Vec<OsString>,
@@ -896,6 +901,13 @@ fn clap_command() -> ClapCommand {
             Arg::new("msgs2stderr")
                 .long("msgs2stderr")
                 .help("Route informational messages to standard error.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("itemize-changes")
+                .long("itemize-changes")
+                .short('i')
+                .help("Output a change summary for each updated entry.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -1770,6 +1782,7 @@ where
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
     let out_format = matches.remove_one::<OsString>("out-format");
+    let itemize_changes = matches.get_flag("itemize-changes");
     let no_motd = matches.get_flag("no-motd");
 
     Ok(ParsedArgs {
@@ -1815,6 +1828,7 @@ where
         remove_source_files,
         inplace,
         msgs_to_stderr,
+        itemize_changes,
         whole_file,
         excludes,
         includes,
@@ -2045,6 +2059,7 @@ where
         remove_source_files,
         inplace,
         msgs_to_stderr,
+        itemize_changes,
         whole_file,
         xattrs,
         no_motd,
@@ -2083,7 +2098,7 @@ where
         None => TransferTimeout::Default,
     };
 
-    let out_format_template = match out_format.as_ref() {
+    let mut out_format_template = match out_format.as_ref() {
         Some(value) => match parse_out_format(value.as_os_str()) {
             Ok(template) => Some(template),
             Err(message) => {
@@ -2096,6 +2111,20 @@ where
         },
         None => None,
     };
+
+    let mut fallback_out_format = out_format.clone();
+
+    if itemize_changes {
+        if fallback_out_format.is_none() {
+            fallback_out_format = Some(OsString::from(ITEMIZE_CHANGES_FORMAT));
+        }
+        if out_format_template.is_none() {
+            out_format_template = Some(
+                parse_out_format(OsStr::new(ITEMIZE_CHANGES_FORMAT))
+                    .expect("default itemize-changes format parses"),
+            );
+        }
+    }
 
     if show_help {
         let help = render_help();
@@ -2417,7 +2446,7 @@ where
             daemon_password,
             protocol: desired_protocol,
             timeout: timeout_setting,
-            out_format: out_format.clone(),
+            out_format: fallback_out_format.clone(),
             no_motd,
             fallback_binary: None,
             remainder: remainder.clone(),
@@ -2425,6 +2454,7 @@ where
             acls,
             #[cfg(feature = "xattr")]
             xattrs,
+            itemize_changes,
         })
     } else {
         None
@@ -2532,8 +2562,9 @@ where
         DeleteMode::During | DeleteMode::Disabled => builder,
     };
 
-    let force_event_collection =
-        out_format_template.is_some() || !matches!(name_level, NameOutputLevel::Disabled);
+    let force_event_collection = itemize_changes
+        || out_format_template.is_some()
+        || !matches!(name_level, NameOutputLevel::Disabled);
     builder = builder.force_event_collection(force_event_collection);
 
     let mut filter_rules = Vec::new();
@@ -5964,6 +5995,37 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_itemize_changes_renders_itemized_output() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir(&dest_dir).expect("create dest dir");
+        std::fs::write(&source, b"itemized").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--itemize-changes"),
+            source.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(
+            String::from_utf8(stdout).expect("utf8"),
+            ">fcst...... source.txt\n"
+        );
+
+        let destination = dest_dir.join("source.txt");
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"itemized"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_ignore_existing_leaves_destination_unchanged() {
         use tempfile::tempdir;
 
@@ -6882,6 +6944,19 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.out_format, Some(OsString::from("%f %b")));
+    }
+
+    #[test]
+    fn parse_args_recognises_itemize_changes_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--itemize-changes"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.itemize_changes);
     }
 
     #[test]
