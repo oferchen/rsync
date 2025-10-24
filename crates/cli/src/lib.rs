@@ -3791,6 +3791,9 @@ fn parse_merge_modifiers(
     allow_extended: bool,
 ) -> Result<(DirMergeOptions, bool), Message> {
     let mut options = DirMergeOptions::default();
+    if !allow_extended {
+        options = options.allow_list_clearing(true);
+    }
     let mut enforced: Option<DirMergeEnforcedKind> = None;
     let mut saw_include = false;
     let mut saw_exclude = false;
@@ -4096,7 +4099,8 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
             remainder = split.next().unwrap_or("").trim_start();
         }
 
-        let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed)?;
+        let (options, assume_cvsignore) =
+            parse_merge_modifiers(modifiers, trimmed, true)?;
 
         let mut path_text = remainder.trim();
         if path_text.is_empty() {
