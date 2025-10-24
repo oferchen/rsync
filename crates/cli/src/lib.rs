@@ -3742,6 +3742,10 @@ impl MergeDirective {
         self
     }
 
+    fn enforced_kind(&self) -> Option<FilterRuleKind> {
+        self.enforced_kind.clone()
+    }
+
     fn source(&self) -> &OsStr {
         self.source.as_os_str()
     }
@@ -4244,6 +4248,8 @@ fn apply_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
+    let options = directive.options().clone();
+    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let is_stdin = directive.source() == OsStr::new("-");
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
@@ -4285,8 +4291,6 @@ fn apply_merge_directive(
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
-    let options = directive.options().clone();
-    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
             read_merge_from_standard_input()?
@@ -4305,6 +4309,7 @@ fn apply_merge_directive(
     })();
     visited.pop();
     if result.is_ok() && options.excludes_self() && !is_stdin {
+        let original_source_text = os_string_to_pattern(directive.source().to_os_string());
         let mut rule = FilterRuleSpec::exclude(original_source_text);
         rule.apply_dir_merge_overrides(&options);
         destination.push(rule);
