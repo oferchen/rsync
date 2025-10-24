@@ -2483,10 +2483,12 @@ where
         match parse_filter_directive(filter.as_os_str()) {
             Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
             Ok(FilterDirective::Merge(directive)) => {
+                let effective_options =
+                    merge_directive_options(&DirMergeOptions::default(), &directive);
                 if let Err(message) = apply_merge_directive(
                     directive,
                     merge_base.as_path(),
-                    options,
+                    effective_options,
                     &mut filter_rules,
                     &mut merge_stack,
                 ) {
@@ -3710,6 +3712,25 @@ impl MergeDirective {
     }
 }
 
+fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
+    let mut options = base.clone();
+    options = options.allow_list_clearing(true);
+    if let Some(kind) = directive.enforced_kind() {
+        if let Some(enforced) = filter_rule_kind_to_enforced_kind(kind) {
+            options = options.with_enforced_kind(Some(enforced));
+        }
+    }
+    options
+}
+
+fn filter_rule_kind_to_enforced_kind(kind: FilterRuleKind) -> Option<DirMergeEnforcedKind> {
+    match kind {
+        FilterRuleKind::Include => Some(DirMergeEnforcedKind::Include),
+        FilterRuleKind::Exclude => Some(DirMergeEnforcedKind::Exclude),
+        _ => None,
+    }
+}
+
 fn parse_filter_shorthand(
     trimmed: &str,
     short: char,
@@ -4245,56 +4266,21 @@ fn apply_merge_directive(
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
 
-    let original_source_text = source.to_string_lossy().into_owned();
     let result = (|| -> Result<(), Message> {
-        let entries = load_filter_file_patterns(&resolved_path)?;
-        if let Some(kind) = directive.enforced_kind() {
-            for entry in entries {
-                if entry == "!" {
-                    destination.clear();
-                    continue;
-                }
-                let rule = match kind {
-                    FilterRuleKind::Include => FilterRuleSpec::include(entry.clone()),
-                    FilterRuleKind::Exclude => FilterRuleSpec::exclude(entry.clone()),
-                    _ => unreachable!("merge directives only enforce include/exclude kinds"),
-                };
-                destination.push(rule);
-            }
+        let contents = if is_stdin {
+            read_merge_from_standard_input()?
         } else {
-            for entry in entries {
-                match parse_filter_directive(OsStr::new(entry.as_str())) {
-                    Ok(FilterDirective::Rule(rule)) => destination.push(rule),
-                    Ok(FilterDirective::Merge(nested)) => {
-                        apply_merge_directive(nested, next_base, destination, visited).map_err(
-                            |error| {
-                                let detail = error.to_string();
-                                rsync_error!(
-                                    1,
-                                    format!("failed to process merge file '{display}': {detail}")
-                                )
-                                .with_role(Role::Client)
-                            },
-                        )?;
-                    }
-                    Ok(FilterDirective::Clear) => destination.clear(),
-                    Err(error) => {
-                        let detail = error.to_string();
-                        return Err(
-                            rsync_error!(
-                                1,
-                                format!(
-                                    "failed to parse filter rule '{entry}' from merge file '{display}': {detail}"
-                                )
-                            )
-                            .with_role(Role::Client),
-                        );
-                    }
-                }
-            }
-        }
+            read_merge_file(&resolved_path)?
+        };
 
-        Ok(())
+        parse_merge_contents(
+            &contents,
+            &options,
+            next_base,
+            &display,
+            destination,
+            visited,
+        )
     })();
     visited.pop();
     result
@@ -4445,11 +4431,9 @@ fn process_merge_directive(
             rule.apply_dir_merge_overrides(options);
             destination.push(rule);
         }
-        Ok(FilterDirective::Merge {
-            source,
-            options: nested,
-        }) => {
-            apply_merge_directive(source, base_dir, nested, destination, visited).map_err(
+        Ok(FilterDirective::Merge(nested)) => {
+            let nested_options = merge_directive_options(options, &nested);
+            apply_merge_directive(nested, base_dir, nested_options, destination, visited).map_err(
                 |error| {
                     let detail = error.to_string();
                     rsync_error!(
@@ -7994,13 +7978,10 @@ mod tests {
 
         let mut rules = vec![FilterRuleSpec::exclude("existing".to_string())];
         let mut visited = Vec::new();
-        super::apply_merge_directive(
-            MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include)),
-            temp.path(),
-            &mut rules,
-            &mut visited,
-        )
-        .expect("merge succeeds");
+        let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include));
+        let options = merge_directive_options(&DirMergeOptions::default(), &directive);
+        super::apply_merge_directive(directive, temp.path(), options, &mut rules, &mut visited)
+            .expect("merge succeeds");
 
         assert!(visited.is_empty());
         let patterns: Vec<_> = rules
