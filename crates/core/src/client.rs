@@ -1771,6 +1771,8 @@ pub struct RemoteFallbackArgs {
     pub progress: bool,
     /// Enables `--stats`.
     pub stats: bool,
+    /// Enables `--itemize-changes` on the fallback command line.
+    pub itemize_changes: bool,
     /// Enables `--partial`.
     pub partial: bool,
     /// Optional directory forwarded via `--partial-dir`.
@@ -1919,6 +1921,7 @@ where
         verbosity,
         progress,
         stats,
+        itemize_changes,
         partial,
         partial_dir,
         remove_source_files,
@@ -2056,6 +2059,9 @@ where
     }
     if stats {
         command_args.push(OsString::from("--stats"));
+    }
+    if itemize_changes {
+        command_args.push(OsString::from("--itemize-changes"));
     }
     if partial {
         command_args.push(OsString::from("--partial"));
@@ -3176,6 +3182,7 @@ exit 42
             verbosity: 0,
             progress: false,
             stats: false,
+            itemize_changes: false,
             partial: false,
             partial_dir: None,
             remove_source_files: false,
@@ -3952,6 +3959,46 @@ exit 42
         assert!(captured.lines().any(|line| line == "--partial"));
         assert!(captured.lines().any(|line| line == "--partial-dir"));
         assert!(captured.lines().any(|line| line == ".rsync-partial"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_itemize_changes_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        const ITEMIZE_FORMAT: &str = "%i %n%L";
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.itemize_changes = true;
+        args.out_format = Some(OsString::from(ITEMIZE_FORMAT));
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--itemize-changes"));
+        assert!(captured.lines().any(|line| line == "--out-format"));
+        assert!(captured.lines().any(|line| line == ITEMIZE_FORMAT));
     }
 
     #[cfg(unix)]
