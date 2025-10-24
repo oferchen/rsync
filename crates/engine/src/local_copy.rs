@@ -145,8 +145,8 @@ pub struct DirMergeOptions {
 }
 
 impl DirMergeOptions {
-    /// Creates default merge options: inherited rules, line-based parsing, and
-    /// comment support.
+    /// Creates default merge options: inherited rules, line-based parsing,
+    /// comment support, and permission for list-clearing directives.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -156,7 +156,7 @@ impl DirMergeOptions {
                 enforce_kind: None,
                 allow_comments: true,
             },
-            allow_list_clear: false,
+            allow_list_clear: true,
             sender_side: SideState::Unspecified,
             receiver_side: SideState::Unspecified,
             anchor_root: false,
@@ -1726,7 +1726,7 @@ impl LocalCopyOptions {
     /// Selects the directory used to retain partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
-    pub fn partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+    pub fn with_partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
         self.partial_dir = directory.map(Into::into);
         if self.partial_dir.is_some() {
             self.partial = true;
@@ -2636,7 +2636,7 @@ impl<'a> CopyContext<'a> {
         self.options.partial_enabled()
     }
 
-    fn partial_directory(&self) -> Option<&Path> {
+    fn partial_directory_path(&self) -> Option<&Path> {
         self.options.partial_directory_path()
     }
 
@@ -5154,8 +5154,11 @@ fn copy_file(
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
     } else {
-        let (new_guard, file) =
-            DestinationWriteGuard::new(destination, partial_enabled, context.partial_directory())?;
+        let (new_guard, file) = DestinationWriteGuard::new(
+            destination,
+            partial_enabled,
+            context.partial_directory_path(),
+        )?;
         guard = Some(new_guard);
         file
     };
