@@ -3744,79 +3744,13 @@ impl MergeDirective {
     fn options(&self) -> &DirMergeOptions {
         &self.options
     }
-
 }
 
 fn merge_directive_options(
-    base: &DirMergeOptions,
+    _base: &DirMergeOptions,
     directive: &MergeDirective,
 ) -> DirMergeOptions {
-    let defaults = DirMergeOptions::default();
-    let mut options = directive.options().clone();
-
-    if base.inherit_rules() != defaults.inherit_rules()
-        && options.inherit_rules() == defaults.inherit_rules()
-    {
-        options = options.inherit(base.inherit_rules());
-    }
-
-    if base.excludes_self() != defaults.excludes_self()
-        && options.excludes_self() == defaults.excludes_self()
-    {
-        options = options.exclude_filter_file(base.excludes_self());
-    }
-
-    if base.list_clear_allowed() != defaults.list_clear_allowed()
-        && options.list_clear_allowed() == defaults.list_clear_allowed()
-    {
-        options = options.allow_list_clearing(base.list_clear_allowed());
-    }
-
-    if base.uses_whitespace() != defaults.uses_whitespace()
-        && options.uses_whitespace() == defaults.uses_whitespace()
-        && base.uses_whitespace()
-    {
-        options = options.use_whitespace();
-    }
-
-    if !options.uses_whitespace()
-        && base.allows_comments() != defaults.allows_comments()
-        && options.allows_comments() == defaults.allows_comments()
-    {
-        options = options.allow_comments(base.allows_comments());
-    }
-
-    if base.enforced_kind() != defaults.enforced_kind()
-        && options.enforced_kind() == defaults.enforced_kind()
-    {
-        options = options.with_enforced_kind(base.enforced_kind());
-    }
-
-    if base.anchor_root_enabled() != defaults.anchor_root_enabled()
-        && options.anchor_root_enabled() == defaults.anchor_root_enabled()
-    {
-        options = options.anchor_root(base.anchor_root_enabled());
-    }
-
-    if options.sender_side_override().is_none() {
-        match base.sender_side_override() {
-            Some(true) => {
-                options = options.sender_modifier();
-            }
-            Some(false) => {
-                options = options.receiver_modifier();
-            }
-            None => {}
-        }
-    }
-
-    if options.receiver_side_override().is_none() {
-        if let Some(true) = base.receiver_side_override() {
-            options = options.receiver_modifier();
-        }
-    }
-
-    options
+    directive.options().clone()
 }
 
 fn parse_filter_shorthand(
@@ -4349,7 +4283,6 @@ fn apply_merge_directive(
     })();
     visited.pop();
     if result.is_ok() && options.excludes_self() && !is_stdin {
-        let original_source_text = os_string_to_pattern(directive.source().to_os_string());
         let mut rule = FilterRuleSpec::exclude(original_source_text);
         rule.apply_dir_merge_overrides(&options);
         destination.push(rule);
