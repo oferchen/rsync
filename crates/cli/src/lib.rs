@@ -786,6 +786,7 @@ struct ParsedArgs {
     specials: Option<bool>,
     relative: Option<bool>,
     implied_dirs: Option<bool>,
+    mkpath: bool,
     verbosity: u8,
     progress: ProgressSetting,
     name_level: NameOutputLevel,
@@ -907,6 +908,12 @@ fn clap_command() -> ClapCommand {
             Arg::new("list-only")
                 .long("list-only")
                 .help("List files without performing a transfer.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("mkpath")
+                .long("mkpath")
+                .help("Create destination's path component.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -1452,6 +1459,7 @@ where
     let show_version = matches.get_flag("version");
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
+    let mkpath = matches.get_flag("mkpath");
     if list_only {
         dry_run = true;
     }
@@ -1745,6 +1753,7 @@ where
         specials,
         relative,
         implied_dirs,
+        mkpath,
         verbosity,
         progress: progress_setting,
         name_level,
@@ -1972,6 +1981,7 @@ where
         specials,
         relative,
         implied_dirs,
+        mkpath,
         verbosity,
         progress: initial_progress,
         name_level: initial_name_level,
@@ -2329,6 +2339,7 @@ where
             specials,
             relative,
             implied_dirs: implied_dirs_option,
+            mkpath,
             verbosity,
             progress: progress_mode.is_some(),
             stats,
@@ -2441,6 +2452,7 @@ where
         .copy_dirlinks(copy_dirlinks)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
+        .mkpath(mkpath)
         .verbosity(verbosity)
         .progress(progress_mode.is_some())
         .stats(stats)
@@ -6723,6 +6735,19 @@ mod tests {
 
         assert!(parsed.list_only);
         assert!(parsed.dry_run);
+    }
+
+    #[test]
+    fn parse_args_recognises_mkpath_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--mkpath"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.mkpath);
     }
 
     #[test]
