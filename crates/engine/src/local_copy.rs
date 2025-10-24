@@ -1400,6 +1400,7 @@ pub struct LocalCopyOptions {
     devices: bool,
     specials: bool,
     implied_dirs: bool,
+    mkpath: bool,
     timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
@@ -1444,6 +1445,7 @@ impl LocalCopyOptions {
             devices: false,
             specials: false,
             implied_dirs: true,
+            mkpath: false,
             timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
@@ -1759,6 +1761,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests creation of missing destination path components prior to copying.
+    #[must_use]
+    #[doc(alias = "--mkpath")]
+    pub const fn mkpath(mut self, mkpath: bool) -> Self {
+        self.mkpath = mkpath;
+        self
+    }
+
     /// Requests that device nodes be copied.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -2007,6 +2017,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn implied_dirs_enabled(&self) -> bool {
         self.implied_dirs
+    }
+
+    /// Reports whether `--mkpath` style directory creation is enabled.
+    #[must_use]
+    #[doc(alias = "--mkpath")]
+    pub const fn mkpath_enabled(&self) -> bool {
+        self.mkpath
     }
 
     /// Reports whether partial transfer handling has been requested.
@@ -2575,6 +2592,10 @@ impl<'a> CopyContext<'a> {
         self.options.implied_dirs_enabled()
     }
 
+    fn mkpath_enabled(&self) -> bool {
+        self.options.mkpath_enabled()
+    }
+
     fn omit_dir_times_enabled(&self) -> bool {
         self.options.omit_dir_times_enabled()
     }
@@ -2583,6 +2604,8 @@ impl<'a> CopyContext<'a> {
         if parent.as_os_str().is_empty() {
             return Ok(());
         }
+
+        let allow_creation = self.implied_dirs_enabled() || self.mkpath_enabled();
 
         if self.mode.is_dry_run() {
             match fs::symlink_metadata(parent) {
@@ -2595,7 +2618,7 @@ impl<'a> CopyContext<'a> {
                     Ok(())
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if self.options.implied_dirs_enabled() {
+                    if allow_creation {
                         Ok(())
                     } else {
                         Err(LocalCopyError::io(
@@ -2611,7 +2634,7 @@ impl<'a> CopyContext<'a> {
                     error,
                 )),
             }
-        } else if self.options.implied_dirs_enabled() {
+        } else if allow_creation {
             fs::create_dir_all(parent).map_err(|error| {
                 LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
             })
@@ -6617,6 +6640,18 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_mkpath_round_trip() {
+        let options = LocalCopyOptions::default();
+        assert!(!options.mkpath_enabled());
+
+        let enabled = LocalCopyOptions::default().mkpath(true);
+        assert!(enabled.mkpath_enabled());
+
+        let disabled = enabled.mkpath(false);
+        assert!(!disabled.mkpath_enabled());
+    }
+
+    #[test]
     fn parse_filter_directive_show_is_sender_only() {
         let rule = match parse_filter_directive_line("show images/**").expect("parse") {
             Some(ParsedFilterDirective::Rule(rule)) => rule,
@@ -8179,6 +8214,27 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
         plan.execute().expect("copy succeeds");
+
+        assert!(destination.exists());
+        assert_eq!(fs::read(&destination).expect("read dest"), b"data");
+    }
+
+    #[test]
+    fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("missing").join("dest.txt");
+        fs::write(&source, b"data").expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().implied_dirs(false).mkpath(true);
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
 
         assert!(destination.exists());
         assert_eq!(fs::read(&destination).expect("read dest"), b"data");
