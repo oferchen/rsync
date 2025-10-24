@@ -2031,23 +2031,39 @@ impl HostnamePattern {
 fn wildcard_match(pattern: &str, text: &str) -> bool {
     let pattern_bytes = pattern.as_bytes();
     let text_bytes = text.as_bytes();
-    let mut dp = vec![vec![false; text_bytes.len() + 1]; pattern_bytes.len() + 1];
-    dp[0][0] = true;
 
-    for i in 1..=pattern_bytes.len() {
-        if pattern_bytes[i - 1] == b'*' {
-            dp[i][0] = dp[i - 1][0];
-        }
-        for j in 1..=text_bytes.len() {
-            dp[i][j] = match pattern_bytes[i - 1] {
-                b'*' => dp[i - 1][j] || dp[i][j - 1],
-                b'?' => dp[i - 1][j - 1],
-                byte => dp[i - 1][j - 1] && byte == text_bytes[j - 1],
-            };
+    let mut pat_index = 0usize;
+    let mut text_index = 0usize;
+    let mut star_index: Option<usize> = None;
+    let mut match_index = 0usize;
+
+    while text_index < text_bytes.len() {
+        if pat_index < pattern_bytes.len()
+            && (pattern_bytes[pat_index] == b'?'
+                || pattern_bytes[pat_index] == text_bytes[text_index])
+        {
+            pat_index += 1;
+            text_index += 1;
+        } else if pat_index < pattern_bytes.len() && pattern_bytes[pat_index] == b'*' {
+            // Record the position of the wildcard and optimistically advance past it.
+            star_index = Some(pat_index);
+            pat_index += 1;
+            match_index = text_index;
+        } else if let Some(star_pos) = star_index {
+            // Retry the match by letting the last '*' consume one additional character.
+            pat_index = star_pos + 1;
+            match_index += 1;
+            text_index = match_index;
+        } else {
+            return false;
         }
     }
 
-    dp[pattern_bytes.len()][text_bytes.len()]
+    while pat_index < pattern_bytes.len() && pattern_bytes[pat_index] == b'*' {
+        pat_index += 1;
+    }
+
+    pat_index == pattern_bytes.len()
 }
 
 fn parse_host_list(
@@ -3734,6 +3750,32 @@ mod tests {
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         assert!(!module.permits(peer, Some("bad.example.com")));
         assert!(module.permits(peer, Some("good.example.com")));
+    }
+
+    #[test]
+    fn module_definition_hostname_wildcard_handles_multiple_asterisks() {
+        let module = module_with_host_patterns(&["*build*node*.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("fastbuild-node1.example.com")));
+        assert!(module.permits(peer, Some("build-node.example.com")));
+        assert!(!module.permits(peer, Some("build.example.org")));
+    }
+
+    #[test]
+    fn module_definition_hostname_wildcard_treats_question_as_single_character() {
+        let module = module_with_host_patterns(&["app??.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("app12.example.com")));
+        assert!(!module.permits(peer, Some("app1.example.com")));
+        assert!(!module.permits(peer, Some("app123.example.com")));
+    }
+
+    #[test]
+    fn module_definition_hostname_wildcard_collapses_consecutive_asterisks() {
+        let module = module_with_host_patterns(&["**.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(module.permits(peer, Some("node.example.com")));
+        assert!(!module.permits(peer, Some("node.example.org")));
     }
 
     #[cfg(unix)]
