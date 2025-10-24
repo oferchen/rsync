@@ -1037,6 +1037,7 @@ pub struct LocalCopyRecord {
     relative_path: PathBuf,
     action: LocalCopyAction,
     bytes_transferred: u64,
+    total_bytes: Option<u64>,
     elapsed: Duration,
     metadata: Option<LocalCopyMetadata>,
 }
@@ -1047,6 +1048,7 @@ impl LocalCopyRecord {
         relative_path: PathBuf,
         action: LocalCopyAction,
         bytes_transferred: u64,
+        total_bytes: Option<u64>,
         elapsed: Duration,
         metadata: Option<LocalCopyMetadata>,
     ) -> Self {
@@ -1054,6 +1056,7 @@ impl LocalCopyRecord {
             relative_path,
             action,
             bytes_transferred,
+            total_bytes,
             elapsed,
             metadata,
         }
@@ -1075,6 +1078,12 @@ impl LocalCopyRecord {
     #[must_use]
     pub const fn bytes_transferred(&self) -> u64 {
         self.bytes_transferred
+    }
+
+    /// Returns the total number of bytes expected for this record, when known.
+    #[must_use]
+    pub const fn total_bytes(&self) -> Option<u64> {
+        self.total_bytes
     }
 
     /// Returns the elapsed time spent performing the action.
@@ -3282,6 +3291,7 @@ impl<'a> CopyContext<'a> {
                 path.to_path_buf(),
                 LocalCopyAction::SkippedNonRegular,
                 0,
+                None,
                 Duration::default(),
                 None,
             ));
@@ -4741,12 +4751,15 @@ fn copy_directory_recursive(
         }
 
         if let Some(rel) = relative {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 rel.to_path_buf(),
                 LocalCopyAction::DirectoryCreated,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                Some(metadata_snapshot),
             ));
         }
     }
@@ -5037,12 +5050,15 @@ fn copy_file(
             if let Some(existing) = destination_state.as_ref() {
                 if destination_is_newer(metadata, existing) {
                     context.summary_mut().record_regular_file_skipped_newer();
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    let total_bytes = Some(metadata_snapshot.len());
                     context.record(LocalCopyRecord::new(
                         record_path.clone(),
                         LocalCopyAction::SkippedNewerDestination,
                         0,
+                        total_bytes,
                         Duration::default(),
-                        Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                        Some(metadata_snapshot),
                     ));
                     return Ok(());
                 }
@@ -5051,12 +5067,15 @@ fn copy_file(
 
         if context.ignore_existing_enabled() && destination_state.is_some() {
             context.summary_mut().record_regular_file_ignored_existing();
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 record_path.clone(),
                 LocalCopyAction::SkippedExisting,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                Some(metadata_snapshot),
             ));
             return Ok(());
         }
@@ -5072,12 +5091,15 @@ fn copy_file(
         context
             .summary_mut()
             .record_file(file_size, file_size, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::DataCopied,
             file_size,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata, None)),
+            Some(metadata_snapshot),
         ));
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
@@ -5109,12 +5131,15 @@ fn copy_file(
             if destination_is_newer(metadata, existing) {
                 context.summary_mut().record_regular_file_skipped_newer();
                 context.hard_links.record(metadata, destination);
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let total_bytes = Some(metadata_snapshot.len());
                 context.record(LocalCopyRecord::new(
                     record_path.clone(),
                     LocalCopyAction::SkippedNewerDestination,
                     0,
+                    total_bytes,
                     Duration::default(),
-                    Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                    Some(metadata_snapshot),
                 ));
                 return Ok(());
             }
@@ -5124,12 +5149,15 @@ fn copy_file(
     if context.ignore_existing_enabled() && existing_metadata.is_some() {
         context.summary_mut().record_regular_file_ignored_existing();
         context.hard_links.record(metadata, destination);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::SkippedExisting,
             0,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata, None)),
+            Some(metadata_snapshot),
         ));
         return Ok(());
     }
@@ -5167,12 +5195,15 @@ fn copy_file(
 
         context.hard_links.record(metadata, destination);
         context.summary_mut().record_hard_link();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::HardLink,
             0,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata, None)),
+            Some(metadata_snapshot),
         ));
         context.register_created_path(
             destination,
@@ -5201,12 +5232,15 @@ fn copy_file(
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.hard_links.record(metadata, destination);
             context.summary_mut().record_regular_file_matched();
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 record_path.clone(),
                 LocalCopyAction::MetadataReused,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                Some(metadata_snapshot),
             ));
             return Ok(());
         }
@@ -5313,12 +5347,15 @@ fn copy_file(
         .summary_mut()
         .record_file(file_size, outcome.literal_bytes(), compressed_bytes);
     context.summary_mut().record_elapsed(elapsed);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let total_bytes = Some(metadata_snapshot.len());
     context.record(LocalCopyRecord::new(
         record_path.clone(),
         LocalCopyAction::DataCopied,
         file_size,
+        total_bytes,
         elapsed,
-        Some(LocalCopyMetadata::from_metadata(metadata, None)),
+        Some(metadata_snapshot),
     ));
 
     if let Err(timeout_error) = context.enforce_timeout() {
@@ -5780,12 +5817,15 @@ fn copy_fifo(
 
         context.summary_mut().record_fifo();
         if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
                 LocalCopyAction::FifoCopied,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                Some(metadata_snapshot),
             ));
         }
         context.register_progress();
@@ -5835,12 +5875,15 @@ fn copy_fifo(
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.summary_mut().record_fifo();
     if let Some(path) = &record_path {
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             path.clone(),
             LocalCopyAction::FifoCopied,
             0,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata, None)),
+            Some(metadata_snapshot),
         ));
     }
     context.register_progress();
@@ -5914,12 +5957,15 @@ fn copy_device(
 
         context.summary_mut().record_device();
         if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
                 LocalCopyAction::DeviceCopied,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(metadata, None)),
+                Some(metadata_snapshot),
             ));
         }
         context.register_progress();
@@ -5969,12 +6015,15 @@ fn copy_device(
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.summary_mut().record_device();
     if let Some(path) = &record_path {
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             path.clone(),
             LocalCopyAction::DeviceCopied,
             0,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(metadata, None)),
+            Some(metadata_snapshot),
         ));
     }
     context.register_progress();
@@ -6037,6 +6086,7 @@ fn delete_extraneous_entries(
                 entry_relative,
                 LocalCopyAction::EntryDeleted,
                 0,
+                None,
                 Duration::default(),
                 None,
             ));
@@ -6050,6 +6100,7 @@ fn delete_extraneous_entries(
             entry_relative,
             LocalCopyAction::EntryDeleted,
             0,
+            None,
             Duration::default(),
             None,
         ));
@@ -6106,6 +6157,7 @@ fn remove_source_entry_if_requested(
                     path.to_path_buf(),
                     LocalCopyAction::SourceRemoved,
                     0,
+                    None,
                     Duration::default(),
                     None,
                 ));
@@ -6204,15 +6256,16 @@ fn copy_symlink(
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
+            let metadata_snapshot =
+                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+            let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
                 LocalCopyAction::SymlinkCopied,
                 0,
+                total_bytes,
                 Duration::default(),
-                Some(LocalCopyMetadata::from_metadata(
-                    metadata,
-                    Some(target.clone()),
-                )),
+                Some(metadata_snapshot),
             ));
         }
         context.register_progress();
@@ -6239,15 +6292,15 @@ fn copy_symlink(
 
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+        let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             path.clone(),
             LocalCopyAction::SymlinkCopied,
             0,
+            total_bytes,
             Duration::default(),
-            Some(LocalCopyMetadata::from_metadata(
-                metadata,
-                Some(target.clone()),
-            )),
+            Some(metadata_snapshot),
         ));
     }
     context.register_progress();
