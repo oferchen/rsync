@@ -3811,7 +3811,11 @@ fn parse_merge_modifiers(
     directive: &str,
     allow_extended: bool,
 ) -> Result<(DirMergeOptions, bool), Message> {
-    let mut options = DirMergeOptions::default();
+    let mut options = if allow_extended {
+        DirMergeOptions::default()
+    } else {
+        DirMergeOptions::default().allow_list_clearing(true)
+    };
     let mut enforced: Option<DirMergeEnforcedKind> = None;
     let mut saw_include = false;
     let mut saw_exclude = false;
