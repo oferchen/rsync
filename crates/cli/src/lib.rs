@@ -3973,6 +3973,9 @@ fn parse_merge_modifiers(
     }
 
     options = options.with_enforced_kind(enforced);
+    if !allow_extended && !options.list_clear_allowed() {
+        options = options.allow_list_clearing(true);
+    }
     Ok((options, assume_cvsignore))
 }
 
