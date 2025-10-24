@@ -2704,6 +2704,7 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let devices_total = summary.devices_total();
     let fifos = summary.fifos_created();
     let fifos_total = summary.fifos_total();
+    let hard_links = summary.hard_links_created();
     let deleted = summary.items_deleted();
     let transferred = summary.bytes_copied();
     let compressed = summary.compressed_bytes().unwrap_or(transferred);
@@ -2744,6 +2745,7 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     )?;
     writeln!(stdout, "Number of deleted files: {deleted}")?;
     writeln!(stdout, "Number of regular files transferred: {files}")?;
+    writeln!(stdout, "Number of hard links: {hard_links}")?;
     writeln!(stdout, "Total file size: {total_size} bytes")?;
     writeln!(stdout, "Total transferred file size: {transferred} bytes")?;
     writeln!(stdout, "Literal data: {transferred} bytes")?;
@@ -4478,7 +4480,7 @@ mod tests {
         assert!(rendered.contains("Number of created files: 1 (reg: 1)"));
         assert!(rendered.contains("Number of regular files transferred: 1"));
         assert!(!rendered.contains("Number of regular files matched"));
-        assert!(!rendered.contains("Number of hard links created"));
+        assert!(rendered.contains("Number of hard links: 0"));
         assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
         assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
         assert!(rendered.contains("Matched data: 0 bytes"));
