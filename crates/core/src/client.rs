@@ -2454,6 +2454,7 @@ pub struct ClientEvent {
     relative_path: PathBuf,
     kind: ClientEventKind,
     bytes_transferred: u64,
+    total_bytes: Option<u64>,
     elapsed: Duration,
     metadata: Option<ClientEntryMetadata>,
 }
@@ -2478,6 +2479,7 @@ impl ClientEvent {
             relative_path: record.relative_path().to_path_buf(),
             kind,
             bytes_transferred: record.bytes_transferred(),
+            total_bytes: record.total_bytes(),
             elapsed: record.elapsed(),
             metadata: record
                 .metadata()
@@ -2485,11 +2487,17 @@ impl ClientEvent {
         }
     }
 
-    fn from_progress(relative: &Path, bytes_transferred: u64, elapsed: Duration) -> Self {
+    fn from_progress(
+        relative: &Path,
+        bytes_transferred: u64,
+        total_bytes: Option<u64>,
+        elapsed: Duration,
+    ) -> Self {
         Self {
             relative_path: relative.to_path_buf(),
             kind: ClientEventKind::DataCopied,
             bytes_transferred,
+            total_bytes,
             elapsed,
             metadata: None,
         }
@@ -2511,6 +2519,12 @@ impl ClientEvent {
     #[must_use]
     pub const fn bytes_transferred(&self) -> u64 {
         self.bytes_transferred
+    }
+
+    /// Returns the total number of bytes expected for this event, when known.
+    #[must_use]
+    pub const fn total_bytes(&self) -> Option<u64> {
+        self.total_bytes
     }
 
     /// Returns the elapsed time spent on this event.
@@ -2814,7 +2828,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         let remaining = self.total.saturating_sub(index);
 
         let total_bytes = if matches!(record.action(), LocalCopyAction::DataCopied) {
-            Some(record.bytes_transferred())
+            record.total_bytes()
         } else {
             None
         };
@@ -2851,6 +2865,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         let event = ClientEvent::from_progress(
             progress.relative_path(),
             progress.bytes_transferred(),
+            progress.total_bytes(),
             progress.elapsed(),
         );
 
