@@ -2068,6 +2068,25 @@ where
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
+
+    if password_file
+        .as_deref()
+        .is_some_and(|path| path == Path::new("-"))
+        && files_from
+            .iter()
+            .any(|entry| entry.as_os_str() == OsStr::new("-"))
+    {
+        let message = rsync_error!(
+            1,
+            "--password-file=- cannot be combined with --files-from=- because both read from standard input"
+        )
+        .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let fallback = message.to_string();
+            let _ = writeln!(stderr.writer_mut(), "{fallback}");
+        }
+        return 1;
+    }
     let desired_protocol = match protocol {
         Some(value) => match parse_protocol_version_arg(value.as_os_str()) {
             Ok(version) => Some(version),
@@ -9115,6 +9134,21 @@ mod tests {
         assert!(rendered.contains("--password-file"));
         assert!(rendered.contains("rsync daemon"));
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn password_file_dash_conflicts_with_files_from_dash() {
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--files-from=-"),
+            OsString::from("--password-file=-"),
+            OsString::from("/tmp/dest"),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("--password-file=- cannot be combined with --files-from=-"));
     }
 
     #[test]
