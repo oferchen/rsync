@@ -267,6 +267,8 @@ pub enum DeleteMode {
     Before,
     /// Remove extraneous entries while processing directory contents (upstream default).
     During,
+    /// Record deletions during the walk and prune entries after transfers finish.
+    Delay,
     /// Remove extraneous entries after the transfer completes.
     After,
 }
@@ -465,6 +467,13 @@ impl ClientConfig {
     #[doc(alias = "--delete-after")]
     pub const fn delete_after(&self) -> bool {
         matches!(self.delete_mode, DeleteMode::After)
+    }
+
+    /// Returns whether extraneous entries should be removed after transfers using delayed sweeps.
+    #[must_use]
+    #[doc(alias = "--delete-delay")]
+    pub const fn delete_delay(&self) -> bool {
+        matches!(self.delete_mode, DeleteMode::Delay)
     }
 
     /// Returns whether excluded destination entries should also be deleted.
@@ -807,6 +816,18 @@ impl ClientConfigBuilder {
         if delete_after {
             self.delete_mode = DeleteMode::After;
         } else if matches!(self.delete_mode, DeleteMode::After) {
+            self.delete_mode = DeleteMode::Disabled;
+        }
+        self
+    }
+
+    /// Requests delayed deletion sweeps that run after transfers complete.
+    #[must_use]
+    #[doc(alias = "--delete-delay")]
+    pub const fn delete_delay(mut self, delete_delay: bool) -> Self {
+        if delete_delay {
+            self.delete_mode = DeleteMode::Delay;
+        } else if matches!(self.delete_mode, DeleteMode::Delay) {
             self.delete_mode = DeleteMode::Disabled;
         }
         self
@@ -1860,6 +1881,7 @@ where
         match delete_mode {
             DeleteMode::Before => command_args.push(OsString::from("--delete-before")),
             DeleteMode::After => command_args.push(OsString::from("--delete-after")),
+            DeleteMode::Delay => command_args.push(OsString::from("--delete-delay")),
             DeleteMode::During => command_args.push(OsString::from("--delete-during")),
             DeleteMode::Disabled => {}
         }
@@ -2817,6 +2839,7 @@ where
         options = match config.delete_mode() {
             DeleteMode::Before => options.delete_before(true),
             DeleteMode::After => options.delete_after(true),
+            DeleteMode::Delay => options.delete_after(true),
             DeleteMode::During | DeleteMode::Disabled => options,
         };
         options = options
@@ -3155,6 +3178,18 @@ exit 42
         assert!(config.delete());
         assert!(config.delete_after());
         assert_eq!(config.delete_mode(), DeleteMode::After);
+    }
+
+    #[test]
+    fn builder_enables_delete_delay() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delete_delay(true)
+            .build();
+
+        assert!(config.delete());
+        assert!(config.delete_delay());
+        assert_eq!(config.delete_mode(), DeleteMode::Delay);
     }
 
     #[test]
