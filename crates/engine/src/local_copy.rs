@@ -297,7 +297,7 @@ impl DirMergeOptions {
 
     /// Optional override for the sender side when explicitly requested by modifiers.
     #[must_use]
-    const fn sender_side_override(&self) -> Option<bool> {
+    pub const fn sender_side_override(&self) -> Option<bool> {
         match self.sender_side {
             SideState::Unspecified => None,
             SideState::Enabled => Some(true),
@@ -313,7 +313,7 @@ impl DirMergeOptions {
 
     /// Optional override for the receiver side when explicitly requested by modifiers.
     #[must_use]
-    const fn receiver_side_override(&self) -> Option<bool> {
+    pub const fn receiver_side_override(&self) -> Option<bool> {
         match self.receiver_side {
             SideState::Unspecified => None,
             SideState::Enabled => Some(true),

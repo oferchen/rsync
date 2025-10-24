@@ -1340,6 +1340,21 @@ impl FilterRuleSpec {
     pub const fn applies_to_receiver(&self) -> bool {
         self.applies_to_receiver
     }
+
+    /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
+    pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
+        if options.anchor_root_enabled() && !self.pattern.starts_with('/') {
+            self.pattern.insert(0, '/');
+        }
+
+        if let Some(sender) = options.sender_side_override() {
+            self.applies_to_sender = sender;
+        }
+
+        if let Some(receiver) = options.receiver_side_override() {
+            self.applies_to_receiver = receiver;
+        }
+    }
 }
 
 /// Bandwidth limit expressed in bytes per second.
