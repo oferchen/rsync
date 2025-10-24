@@ -3429,16 +3429,28 @@ fn load_dir_merge_rules_recursive(
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         rules.push(apply_dir_merge_rule_defaults(rule, options));
                     }
-                    Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
+                    Ok(Some(ParsedFilterDirective::Merge {
+                        path: merge_path,
+                        options: merge_options,
+                    })) => {
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {
                             let parent = path.parent().unwrap_or_else(|| Path::new("."));
                             parent.join(merge_path)
                         };
-                        let nested_rules =
-                            load_dir_merge_rules_recursive(&nested, options, visited)?;
-                        rules.extend(nested_rules);
+                        if let Some(options_override) = merge_options {
+                            let nested_rules = load_dir_merge_rules_recursive(
+                                &nested,
+                                &options_override,
+                                visited,
+                            )?;
+                            rules.extend(nested_rules);
+                        } else {
+                            let nested_rules =
+                                load_dir_merge_rules_recursive(&nested, options, visited)?;
+                            rules.extend(nested_rules);
+                        }
                     }
                     Ok(None) => {}
                     Err(error) => return Err(map_error(error)),
@@ -3483,16 +3495,28 @@ fn load_dir_merge_rules_recursive(
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         rules.push(apply_dir_merge_rule_defaults(rule, options));
                     }
-                    Ok(Some(ParsedFilterDirective::Merge(merge_path))) => {
+                    Ok(Some(ParsedFilterDirective::Merge {
+                        path: merge_path,
+                        options: merge_options,
+                    })) => {
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {
                             let parent = path.parent().unwrap_or_else(|| Path::new("."));
                             parent.join(merge_path)
                         };
-                        let nested_rules =
-                            load_dir_merge_rules_recursive(&nested, options, visited)?;
-                        rules.extend(nested_rules);
+                        if let Some(options_override) = merge_options {
+                            let nested_rules = load_dir_merge_rules_recursive(
+                                &nested,
+                                &options_override,
+                                visited,
+                            )?;
+                            rules.extend(nested_rules);
+                        } else {
+                            let nested_rules =
+                                load_dir_merge_rules_recursive(&nested, options, visited)?;
+                            rules.extend(nested_rules);
+                        }
                     }
                     Ok(None) => {}
                     Err(error) => return Err(map_error(error)),
@@ -3508,7 +3532,10 @@ fn load_dir_merge_rules_recursive(
 #[derive(Debug)]
 enum ParsedFilterDirective {
     Rule(FilterRule),
-    Merge(PathBuf),
+    Merge {
+        path: PathBuf,
+        options: Option<DirMergeOptions>,
+    },
 }
 
 #[derive(Debug)]
@@ -3537,6 +3564,10 @@ fn parse_filter_directive_line(
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     if text.is_empty() || text.starts_with('#') {
         return Ok(None);
+    }
+
+    if let Some(directive) = parse_dir_merge_directive(text)? {
+        return Ok(Some(directive));
     }
 
     if let Some(remainder) = text.strip_prefix('+') {
@@ -3613,13 +3644,129 @@ fn parse_filter_directive_line(
                 "merge from standard input is not supported in .rsync-filter files",
             ));
         }
-        return Ok(Some(ParsedFilterDirective::Merge(PathBuf::from(remainder))));
+        return Ok(Some(ParsedFilterDirective::Merge {
+            path: PathBuf::from(remainder),
+            options: None,
+        }));
     }
 
     Err(FilterParseError::new(format!(
         "unsupported filter directive '{}'",
         text
     )))
+}
+
+fn parse_dir_merge_directive(
+    text: &str,
+) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    const DIR_MERGE_PREFIX: &str = "dir-merge";
+
+    if text.len() < DIR_MERGE_PREFIX.len() {
+        return Ok(None);
+    }
+
+    let (prefix, mut remainder) = text.split_at(DIR_MERGE_PREFIX.len());
+    if !prefix.eq_ignore_ascii_case(DIR_MERGE_PREFIX) {
+        return Ok(None);
+    }
+
+    if let Some(ch) = remainder.chars().next() {
+        if ch != ',' && !ch.is_ascii_whitespace() {
+            return Ok(None);
+        }
+    }
+
+    remainder = remainder.trim_start();
+
+    let mut modifiers = "";
+    if let Some(rest) = remainder.strip_prefix(',') {
+        let mut split = rest.splitn(2, char::is_whitespace);
+        modifiers = split.next().unwrap_or("");
+        remainder = split.next().unwrap_or("").trim_start();
+    }
+
+    let mut options = DirMergeOptions::default();
+    let mut saw_plus = false;
+    let mut saw_minus = false;
+    let mut used_cvs_default = false;
+
+    for modifier in modifiers.chars() {
+        let lower = modifier.to_ascii_lowercase();
+        match lower {
+            '-' => {
+                if saw_plus {
+                    let message = format!(
+                        "dir-merge directive '{}' cannot combine '+' and '-' modifiers",
+                        text
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+                saw_minus = true;
+                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
+            }
+            '+' => {
+                if saw_minus {
+                    let message = format!(
+                        "dir-merge directive '{}' cannot combine '+' and '-' modifiers",
+                        text
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+                saw_plus = true;
+                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Include));
+            }
+            'n' => {
+                options = options.inherit(false);
+            }
+            'e' => {
+                options = options.exclude_filter_file(true);
+            }
+            'w' => {
+                options = options.use_whitespace();
+                options = options.allow_comments(false);
+            }
+            's' => {
+                options = options.sender_modifier();
+            }
+            'r' => {
+                options = options.receiver_modifier();
+            }
+            '/' => {
+                options = options.anchor_root(true);
+            }
+            'c' => {
+                used_cvs_default = true;
+                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
+                options = options.use_whitespace();
+                options = options.allow_comments(false);
+                options = options.inherit(false);
+                options = options.allow_list_clearing(true);
+            }
+            _ => {
+                let message = format!(
+                    "dir-merge directive '{}' uses unsupported modifier '{}'",
+                    text, modifier
+                );
+                return Err(FilterParseError::new(message));
+            }
+        }
+    }
+
+    let path_text = if remainder.is_empty() {
+        if used_cvs_default {
+            ".cvsignore"
+        } else {
+            let message = format!("dir-merge directive '{}' is missing a file name", text);
+            return Err(FilterParseError::new(message));
+        }
+    } else {
+        remainder
+    };
+
+    Ok(Some(ParsedFilterDirective::Merge {
+        path: PathBuf::from(path_text),
+        options: Some(options),
+    }))
 }
 
 #[cfg(feature = "xattr")]
@@ -6382,6 +6529,72 @@ mod tests {
 
         assert!(rule.applies_to_sender());
         assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_dir_merge_without_modifiers() {
+        let directive = parse_filter_directive_line("dir-merge .rsync-filter")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected dir-merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from(".rsync-filter"));
+        let opts = options.expect("options");
+        assert!(opts.inherit_rules());
+        assert!(opts.allows_comments());
+        assert!(!opts.uses_whitespace());
+        assert_eq!(opts.enforced_kind(), None);
+    }
+
+    #[test]
+    fn parse_filter_directive_dir_merge_with_modifiers() {
+        let directive = parse_filter_directive_line("dir-merge,+ne rules/filter.txt")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected dir-merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from("rules/filter.txt"));
+        let opts = options.expect("options");
+        assert!(!opts.inherit_rules());
+        assert!(opts.excludes_self());
+        assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Include));
+    }
+
+    #[test]
+    fn parse_filter_directive_dir_merge_cvs_default_path() {
+        let directive = parse_filter_directive_line("dir-merge,c")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected dir-merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from(".cvsignore"));
+        let opts = options.expect("options");
+        assert!(!opts.inherit_rules());
+        assert!(opts.list_clear_allowed());
+        assert!(opts.uses_whitespace());
+        assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    }
+
+    #[test]
+    fn parse_filter_directive_dir_merge_conflicting_modifiers_error() {
+        let error = parse_filter_directive_line("dir-merge,+- rules").expect_err("conflict");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot combine '+' and '-' modifiers")
+        );
     }
 
     #[test]
