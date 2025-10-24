@@ -133,7 +133,7 @@ const HELP_TEXT: &str = concat!(
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --list-only  List files without performing a transfer.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
-    "      --delete     Remove destination files that are absent from the source.\n",
+    "      --delete, --del  Remove destination files that are absent from the source.\n",
     "      --delete-before  Remove destination files that are absent from the source before transfers start.\n",
     "      --delete-during  Remove destination files while processing directories.\n",
     "      --delete-delay  Defer deletions until after transfers while computing them during the run.\n",
@@ -213,7 +213,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -1205,6 +1205,7 @@ fn clap_command() -> ClapCommand {
         .arg(
             Arg::new("delete")
                 .long("delete")
+                .visible_alias("del")
                 .help("Remove destination files that are absent from the source.")
                 .action(ArgAction::SetTrue),
         )
@@ -9262,6 +9263,20 @@ mod tests {
         let parsed = super::parse_args([
             OsString::from("oc-rsync"),
             OsString::from("--delete"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse succeeds");
+
+        assert_eq!(parsed.delete_mode, DeleteMode::During);
+        assert!(!parsed.delete_excluded);
+    }
+
+    #[test]
+    fn delete_alias_del_is_parsed() {
+        let parsed = super::parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--del"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
