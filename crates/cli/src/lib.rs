@@ -3311,8 +3311,14 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return Err(message);
     }
 
-    if trimmed == "!" {
-        return Ok(FilterDirective::Clear);
+    if let Some(remainder) = trimmed.strip_prefix('!') {
+        if remainder.trim().is_empty() {
+            return Ok(FilterDirective::Clear);
+        }
+
+        let message = rsync_error!(1, "'!' rule has trailing characters: {}", trimmed)
+            .with_role(Role::Client);
+        return Err(message);
     }
 
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
@@ -3358,8 +3364,12 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     if let Some(remainder) = trimmed.strip_prefix('+') {
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
-            let message = rsync_error!(1, "filter rule '{trimmed}' is missing a pattern after '+'")
-                .with_role(Role::Client);
+            let message = rsync_error!(
+                1,
+                "filter rule '{}' is missing a pattern after '+'",
+                trimmed
+            )
+            .with_role(Role::Client);
             return Err(message);
         }
         return Ok(FilterDirective::Rule(FilterRuleSpec::include(
@@ -3370,8 +3380,12 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     if let Some(remainder) = trimmed.strip_prefix('-') {
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
-            let message = rsync_error!(1, "filter rule '{trimmed}' is missing a pattern after '-'")
-                .with_role(Role::Client);
+            let message = rsync_error!(
+                1,
+                "filter rule '{}' is missing a pattern after '-'",
+                trimmed
+            )
+            .with_role(Role::Client);
             return Err(message);
         }
         return Ok(FilterDirective::Rule(FilterRuleSpec::exclude(
@@ -3509,7 +3523,8 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
 
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{trimmed}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives"
+        "unsupported filter rule '{}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives",
+        trimmed
     )
     .with_role(Role::Client);
     Err(message)
@@ -6270,6 +6285,18 @@ mod tests {
         let clear_with_whitespace =
             parse_filter_directive(OsStr::new("  !   ")).expect("clear with whitespace parses");
         assert_eq!(clear_with_whitespace, FilterDirective::Clear);
+    }
+
+    #[test]
+    fn parse_filter_directive_rejects_clear_with_trailing_characters() {
+        let error = parse_filter_directive(OsStr::new("! comment"))
+            .expect_err("trailing text should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("'!' rule has trailing characters: ! comment"));
+
+        let error = parse_filter_directive(OsStr::new("!extra")).expect_err("suffix should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("'!' rule has trailing characters: !extra"));
     }
 
     #[test]
