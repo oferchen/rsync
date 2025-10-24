@@ -1420,6 +1420,8 @@ pub struct LocalCopyOptions {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     collect_events: bool,
     relative_paths: bool,
     devices: bool,
@@ -1465,6 +1467,8 @@ impl LocalCopyOptions {
             partial: false,
             partial_dir: None,
             inplace: false,
+            append: false,
+            append_verify: false,
             collect_events: false,
             relative_paths: false,
             devices: false,
@@ -1769,6 +1773,30 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables appending to existing destination files when they are shorter than the source.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(mut self, append: bool) -> Self {
+        self.append = append;
+        if !append {
+            self.append_verify = false;
+        }
+        self
+    }
+
+    /// Enables append-with-verification semantics.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(mut self, verify: bool) -> Self {
+        if verify {
+            self.append = true;
+            self.append_verify = true;
+        } else {
+            self.append_verify = false;
+        }
+        self
+    }
+
     /// Requests that relative source paths be preserved in the destination.
     #[must_use]
     #[doc(alias = "--relative")]
@@ -2067,6 +2095,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn inplace_enabled(&self) -> bool {
         self.inplace
+    }
+
+    /// Returns `true` when appending to existing destinations is enabled.
+    #[must_use]
+    pub const fn append_enabled(&self) -> bool {
+        self.append
+    }
+
+    /// Returns `true` when append verification is requested.
+    #[must_use]
+    pub const fn append_verify_enabled(&self) -> bool {
+        self.append_verify
     }
 
     /// Reports whether the execution should record transfer events.
@@ -2625,6 +2665,14 @@ impl<'a> CopyContext<'a> {
         self.options.sparse_enabled()
     }
 
+    fn append_enabled(&self) -> bool {
+        self.options.append_enabled()
+    }
+
+    fn append_verify_enabled(&self) -> bool {
+        self.options.append_verify_enabled()
+    }
+
     fn devices_enabled(&self) -> bool {
         self.options.devices_enabled()
     }
@@ -2946,6 +2994,7 @@ impl<'a> CopyContext<'a> {
         relative: &Path,
         delta: Option<&DeltaSignatureIndex>,
         total_size: u64,
+        initial_bytes: u64,
         start: Instant,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         if let Some(index) = delta {
@@ -2960,6 +3009,7 @@ impl<'a> CopyContext<'a> {
                 relative,
                 index,
                 total_size,
+                initial_bytes,
                 start,
             );
         }
@@ -3020,11 +3070,13 @@ impl<'a> CopyContext<'a> {
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
-            self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+            let progressed = initial_bytes.saturating_add(total_bytes);
+            self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
 
         if sparse {
-            writer.set_len(total_bytes).map_err(|error| {
+            let final_len = initial_bytes.saturating_add(total_bytes);
+            writer.set_len(final_len).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",
                     destination.to_path_buf(),
@@ -3067,6 +3119,7 @@ impl<'a> CopyContext<'a> {
         relative: &Path,
         index: &DeltaSignatureIndex,
         total_size: u64,
+        initial_bytes: u64,
         start: Instant,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut destination_reader = fs::File::open(destination).map_err(|error| {
@@ -3137,7 +3190,8 @@ impl<'a> CopyContext<'a> {
                     )?;
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
                     literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
-                    self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+                    let progressed = initial_bytes.saturating_add(total_bytes);
+                    self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
                     pending_literals.clear();
                 }
 
@@ -3153,7 +3207,8 @@ impl<'a> CopyContext<'a> {
                     sparse,
                 )?;
                 total_bytes = total_bytes.saturating_add(block_len as u64);
-                self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+                let progressed = initial_bytes.saturating_add(total_bytes);
+                self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
                 window.clear();
                 rolling.reset();
                 outgoing = None;
@@ -3183,11 +3238,13 @@ impl<'a> CopyContext<'a> {
             )?;
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
             literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
-            self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
+            let progressed = initial_bytes.saturating_add(total_bytes);
+            self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
 
         if sparse {
-            writer.set_len(total_size).map_err(|error| {
+            let final_len = initial_bytes.saturating_add(total_bytes);
+            writer.set_len(final_len).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",
                     destination.to_path_buf(),
@@ -5079,85 +5136,6 @@ fn copy_file(
         context.prepare_parent_directory(parent)?;
     }
 
-    if mode.is_dry_run() {
-        let destination_state = match fs::symlink_metadata(destination) {
-            Ok(existing) => {
-                if existing.file_type().is_dir() {
-                    return Err(LocalCopyError::invalid_argument(
-                        LocalCopyArgumentError::ReplaceDirectoryWithFile,
-                    ));
-                }
-                Some(existing)
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "inspect existing destination",
-                    destination.to_path_buf(),
-                    error,
-                ));
-            }
-        };
-
-        if context.update_enabled() {
-            if let Some(existing) = destination_state.as_ref() {
-                if destination_is_newer(metadata, existing) {
-                    context.summary_mut().record_regular_file_skipped_newer();
-                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-                    let total_bytes = Some(metadata_snapshot.len());
-                    context.record(LocalCopyRecord::new(
-                        record_path.clone(),
-                        LocalCopyAction::SkippedNewerDestination,
-                        0,
-                        total_bytes,
-                        Duration::default(),
-                        Some(metadata_snapshot),
-                    ));
-                    return Ok(());
-                }
-            }
-        }
-
-        if context.ignore_existing_enabled() && destination_state.is_some() {
-            context.summary_mut().record_regular_file_ignored_existing();
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-            let total_bytes = Some(metadata_snapshot.len());
-            context.record(LocalCopyRecord::new(
-                record_path.clone(),
-                LocalCopyAction::SkippedExisting,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
-            return Ok(());
-        }
-
-        if let Err(error) = fs::File::open(source) {
-            return Err(LocalCopyError::io(
-                "open source file",
-                source.to_path_buf(),
-                error,
-            ));
-        }
-
-        context
-            .summary_mut()
-            .record_file(file_size, file_size, None);
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-        let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.clone(),
-            LocalCopyAction::DataCopied,
-            file_size,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
-        remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
-        return Ok(());
-    }
-
     let existing_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -5176,6 +5154,76 @@ fn copy_file(
                 LocalCopyArgumentError::ReplaceDirectoryWithFile,
             ));
         }
+    }
+
+    if mode.is_dry_run() {
+        if context.update_enabled() {
+            if let Some(existing) = existing_metadata.as_ref() {
+                if destination_is_newer(metadata, existing) {
+                    context.summary_mut().record_regular_file_skipped_newer();
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    let total_bytes = Some(metadata_snapshot.len());
+                    context.record(LocalCopyRecord::new(
+                        record_path.clone(),
+                        LocalCopyAction::SkippedNewerDestination,
+                        0,
+                        total_bytes,
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    ));
+                    return Ok(());
+                }
+            }
+        }
+
+        if context.ignore_existing_enabled() && existing_metadata.is_some() {
+            context.summary_mut().record_regular_file_ignored_existing();
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            context.record(LocalCopyRecord::new(
+                record_path.clone(),
+                LocalCopyAction::SkippedExisting,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+            return Ok(());
+        }
+
+        let mut reader = fs::File::open(source)
+            .map_err(|error| LocalCopyError::io("open source file", source.to_path_buf(), error))?;
+
+        let append_mode = determine_append_mode(
+            context.append_enabled(),
+            context.append_verify_enabled(),
+            &mut reader,
+            source,
+            destination,
+            existing_metadata.as_ref(),
+            file_size,
+        )?;
+        let append_offset = match append_mode {
+            AppendMode::Append(offset) => offset,
+            AppendMode::Disabled => 0,
+        };
+        let bytes_transferred = file_size.saturating_sub(append_offset);
+
+        context
+            .summary_mut()
+            .record_file(file_size, bytes_transferred, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::DataCopied,
+            bytes_transferred,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
+        return Ok(());
     }
     let destination_previously_existed = existing_metadata.is_some();
 
@@ -5220,6 +5268,9 @@ fn copy_file(
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();
     let size_only_enabled = context.size_only_enabled();
+    let append_allowed = context.append_enabled();
+    let append_verify = context.append_verify_enabled();
+    let whole_file_enabled = context.whole_file_enabled();
     let compress_enabled = context.compress_enabled();
 
     if let Some(existing_target) = context.hard_links.existing_target(metadata) {
@@ -5299,7 +5350,25 @@ fn copy_file(
         }
     }
 
-    let delta_signature = if !context.whole_file_enabled() && !context.inplace_enabled() {
+    let mut reader = fs::File::open(source)
+        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    let append_mode = determine_append_mode(
+        append_allowed,
+        append_verify,
+        &mut reader,
+        source,
+        destination,
+        existing_metadata.as_ref(),
+        file_size,
+    )?;
+    let append_offset = match append_mode {
+        AppendMode::Append(offset) => offset,
+        AppendMode::Disabled => 0,
+    };
+    reader
+        .seek(SeekFrom::Start(append_offset))
+        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
         match existing_metadata.as_ref() {
             Some(existing) if existing.is_file() => build_delta_signature(destination, existing)?,
             _ => None,
@@ -5307,12 +5376,18 @@ fn copy_file(
     } else {
         None
     };
-
-    let mut reader = fs::File::open(source)
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let mut guard = None;
 
-    let mut writer = if inplace_enabled {
+    let mut writer = if append_offset > 0 {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(destination)
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+        file.seek(SeekFrom::Start(append_offset))
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+        file
+    } else if inplace_enabled {
         fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -5343,6 +5418,7 @@ fn copy_file(
         record_path.as_path(),
         delta_signature.as_ref(),
         file_size,
+        append_offset,
         start,
     );
 
@@ -5405,7 +5481,7 @@ fn copy_file(
     context.record(LocalCopyRecord::new(
         record_path.clone(),
         LocalCopyAction::DataCopied,
-        file_size,
+        outcome.literal_bytes(),
         total_bytes,
         elapsed,
         Some(metadata_snapshot),
@@ -5421,6 +5497,103 @@ fn copy_file(
 
     remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
     Ok(())
+}
+
+enum AppendMode {
+    Disabled,
+    Append(u64),
+}
+
+fn determine_append_mode(
+    append_allowed: bool,
+    append_verify: bool,
+    reader: &mut fs::File,
+    source: &Path,
+    destination: &Path,
+    existing_metadata: Option<&fs::Metadata>,
+    file_size: u64,
+) -> Result<AppendMode, LocalCopyError> {
+    if !append_allowed {
+        return Ok(AppendMode::Disabled);
+    }
+
+    let existing = match existing_metadata {
+        Some(meta) if meta.is_file() => meta,
+        _ => return Ok(AppendMode::Disabled),
+    };
+
+    let existing_len = existing.len();
+    if existing_len == 0 || existing_len >= file_size {
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        return Ok(AppendMode::Disabled);
+    }
+
+    if append_verify {
+        let matches = verify_append_prefix(reader, source, destination, existing_len)?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        if !matches {
+            return Ok(AppendMode::Disabled);
+        }
+    } else {
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    }
+
+    Ok(AppendMode::Append(existing_len))
+}
+
+fn verify_append_prefix(
+    reader: &mut fs::File,
+    source: &Path,
+    destination: &Path,
+    existing_len: u64,
+) -> Result<bool, LocalCopyError> {
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+    let mut destination_file = fs::File::open(destination).map_err(|error| {
+        LocalCopyError::io(
+            "read existing destination",
+            destination.to_path_buf(),
+            error,
+        )
+    })?;
+    let mut remaining = existing_len;
+    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    while remaining > 0 {
+        let chunk = remaining.min(COPY_BUFFER_SIZE as u64) as usize;
+        let source_read = reader
+            .read(&mut source_buffer[..chunk])
+            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        let destination_read = destination_file
+            .read(&mut destination_buffer[..chunk])
+            .map_err(|error| {
+                LocalCopyError::io(
+                    "read existing destination",
+                    destination.to_path_buf(),
+                    error,
+                )
+            })?;
+
+        if source_read == 0 || destination_read == 0 || source_read != destination_read {
+            return Ok(false);
+        }
+
+        if source_buffer[..source_read] != destination_buffer[..destination_read] {
+            return Ok(false);
+        }
+
+        remaining = remaining.saturating_sub(source_read as u64);
+    }
+
+    Ok(true)
 }
 
 fn partial_destination_path(destination: &Path) -> PathBuf {
@@ -6644,6 +6817,24 @@ mod tests {
         let options = LocalCopyOptions::default().sparse(true);
         assert!(options.sparse_enabled());
         assert!(!LocalCopyOptions::default().sparse_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_append_round_trip() {
+        let options = LocalCopyOptions::default().append(true);
+        assert!(options.append_enabled());
+        assert!(!options.append_verify_enabled());
+        assert!(!LocalCopyOptions::default().append_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_append_verify_round_trip() {
+        let options = LocalCopyOptions::default().append_verify(true);
+        assert!(options.append_enabled());
+        assert!(options.append_verify_enabled());
+        let disabled = options.append(false);
+        assert!(!disabled.append_enabled());
+        assert!(!disabled.append_verify_enabled());
     }
 
     #[test]
@@ -8638,6 +8829,56 @@ mod tests {
             total
         );
         assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[test]
+    fn execute_with_append_appends_missing_bytes() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"abcdef").expect("write source");
+        fs::write(&destination, b"abc").expect("write dest");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().append(true),
+            )
+            .expect("append succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), b"abcdef");
+        assert_eq!(summary.bytes_copied(), 3);
+    }
+
+    #[test]
+    fn execute_with_append_verify_rewrites_on_mismatch() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"abcdef").expect("write source");
+        fs::write(&destination, b"abx").expect("write dest");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().append_verify(true),
+            )
+            .expect("append verify succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), b"abcdef");
+        assert_eq!(summary.bytes_copied(), 6);
     }
 
     #[test]
