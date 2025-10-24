@@ -5195,6 +5195,18 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_decodes_percent_encoded_credentials() {
+        let proxy = parse_proxy_spec("http://user%3Aname:p%40ss%25word@proxy.example:1080")
+            .expect("percent-encoded proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 1080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpuYW1lOnBAc3Mld29yZA=="))
+        );
+    }
+
+    #[test]
     fn parse_proxy_spec_accepts_https_scheme() {
         let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
         assert_eq!(proxy.host, "proxy.example");
@@ -5229,6 +5241,34 @@ exit 42
                 .message()
                 .to_string()
                 .contains("RSYNC_PROXY must not include a path component")
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_invalid_percent_encoding_in_credentials() {
+        let error = match parse_proxy_spec("user%zz:secret@proxy.example:8080") {
+            Ok(_) => panic!("invalid percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY username contains invalid percent-encoding")
+        );
+
+        let error = match parse_proxy_spec("user:secret%@proxy.example:8080") {
+            Ok(_) => panic!("truncated percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY password contains truncated percent-encoding")
         );
     }
 
@@ -6691,7 +6731,9 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
             proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
         })?;
 
-        let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
+        let username = decode_proxy_component(username, "username")?;
+        let password = decode_proxy_component(password, "password")?;
+        let credentials = ProxyCredentials::new(username, password);
         (Some(credentials), &host_part[1..])
     } else {
         (None, remainder)
@@ -6745,6 +6787,50 @@ fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
         .map_err(|_| proxy_configuration_error("RSYNC_PROXY specified an invalid port"))?;
 
     Ok((host, port))
+}
+
+fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
+    if !input.contains('%') {
+        return Ok(input.to_string());
+    }
+
+    let mut decoded = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains truncated percent-encoding"
+                )));
+            }
+
+            let hi = hex_value(bytes[index + 1]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+            let lo = hex_value(bytes[index + 2]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).map_err(|_| {
+        proxy_configuration_error(format!(
+            "RSYNC_PROXY {field} contains invalid UTF-8 after percent-decoding"
+        ))
+    })
 }
 
 fn proxy_configuration_error(text: impl Into<String>) -> ClientError {
