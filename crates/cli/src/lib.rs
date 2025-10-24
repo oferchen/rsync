@@ -169,7 +169,8 @@ const HELP_TEXT: &str = concat!(
     "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
-    "  -L, --copy-links  Transform symlinks into referent files/directories.\n",
+    "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
+    "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
     "      --no-copy-links  Preserve symlinks instead of following them.\n",
     "  -D              Equivalent to --devices --specials.\n",
     "      --devices   Preserve device files.\n",
@@ -197,7 +198,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -712,6 +713,7 @@ struct ParsedArgs {
     numeric_ids: Option<bool>,
     sparse: Option<bool>,
     copy_links: Option<bool>,
+    copy_dirlinks: bool,
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
@@ -852,6 +854,13 @@ fn clap_command() -> ClapCommand {
                 .help("Transform symlinks into referent files/directories.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("no-copy-links"),
+        )
+        .arg(
+            Arg::new("copy-dirlinks")
+                .long("copy-dirlinks")
+                .short('k')
+                .help("Transform symlinked directories into referent directories.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("no-copy-links")
@@ -1415,6 +1424,7 @@ where
     } else {
         None
     };
+    let copy_dirlinks = matches.get_flag("copy-dirlinks");
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
@@ -1554,6 +1564,7 @@ where
         numeric_ids,
         sparse,
         copy_links,
+        copy_dirlinks,
         devices,
         specials,
         relative,
@@ -1726,6 +1737,7 @@ where
         numeric_ids,
         sparse,
         copy_links,
+        copy_dirlinks,
         devices,
         specials,
         relative,
@@ -2047,6 +2059,7 @@ where
             times,
             numeric_ids: numeric_ids_option,
             copy_links,
+            copy_dirlinks,
             sparse,
             devices,
             specials,
@@ -2156,6 +2169,7 @@ where
         .numeric_ids(numeric_ids)
         .sparse(sparse)
         .copy_links(copy_links)
+        .copy_dirlinks(copy_dirlinks)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .verbosity(verbosity)
@@ -5551,6 +5565,29 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.copy_links, Some(true));
+    }
+
+    #[test]
+    fn parse_args_recognises_copy_dirlinks_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--copy-dirlinks"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.copy_dirlinks);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-k"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.copy_dirlinks);
     }
 
     #[test]

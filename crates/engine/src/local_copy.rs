@@ -1376,6 +1376,7 @@ pub struct LocalCopyOptions {
     compression_level: CompressionLevel,
     whole_file: bool,
     copy_links: bool,
+    copy_dirlinks: bool,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1417,6 +1418,7 @@ impl LocalCopyOptions {
             compression_level: CompressionLevel::Default,
             whole_file: true,
             copy_links: false,
+            copy_dirlinks: false,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1536,6 +1538,14 @@ impl LocalCopyOptions {
     #[doc(alias = "-L")]
     pub const fn copy_links(mut self, copy: bool) -> Self {
         self.copy_links = copy;
+        self
+    }
+
+    /// Treats symlinks to directories as directories when traversing the source tree.
+    #[must_use]
+    #[doc(alias = "--copy-dirlinks")]
+    pub const fn copy_dirlinks(mut self, copy: bool) -> Self {
+        self.copy_dirlinks = copy;
         self
     }
 
@@ -1842,6 +1852,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_links_enabled(&self) -> bool {
         self.copy_links
+    }
+
+    /// Reports whether symlinks to directories should be followed as directories.
+    #[must_use]
+    pub const fn copy_dirlinks_enabled(&self) -> bool {
+        self.copy_dirlinks
     }
 
     /// Returns the effective compression level when compression is enabled.
@@ -2458,6 +2474,10 @@ impl<'a> CopyContext<'a> {
 
     fn copy_links_enabled(&self) -> bool {
         self.options.copy_links_enabled()
+    }
+
+    fn copy_dirlinks_enabled(&self) -> bool {
+        self.options.copy_dirlinks_enabled()
     }
 
     fn whole_file_enabled(&self) -> bool {
@@ -4248,19 +4268,35 @@ fn copy_sources(
                     let relative = relative_root
                         .clone()
                         .unwrap_or_else(|| PathBuf::from(Path::new(name)));
-                    let followed_metadata =
-                        if file_type.is_symlink() && context.copy_links_enabled() {
-                            let target_metadata = follow_symlink_metadata(source_path)?;
-                            let target_type = target_metadata.file_type();
-                            Some((target_metadata, target_type))
-                        } else {
-                            None
-                        };
-
-                    let (effective_metadata, effective_type) = match &followed_metadata {
-                        Some((metadata, ty)) => (metadata, *ty),
-                        None => (&metadata, file_type),
+                    let followed_metadata = if file_type.is_symlink()
+                        && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+                    {
+                        match follow_symlink_metadata(source_path) {
+                            Ok(target_metadata) => Some(target_metadata),
+                            Err(error) => {
+                                if context.copy_links_enabled() {
+                                    return Err(error);
+                                }
+                                None
+                            }
+                        }
+                    } else {
+                        None
                     };
+
+                    let (effective_metadata, effective_type) =
+                        if let Some(ref target_metadata) = followed_metadata {
+                            let ty = target_metadata.file_type();
+                            if context.copy_links_enabled()
+                                || (context.copy_dirlinks_enabled() && ty.is_dir())
+                            {
+                                (target_metadata, ty)
+                            } else {
+                                (&metadata, file_type)
+                            }
+                        } else {
+                            (&metadata, file_type)
+                        };
 
                     if !context.allows(&relative, effective_type.is_dir()) {
                         continue;
@@ -4281,6 +4317,14 @@ fn copy_sources(
                             effective_metadata,
                             record_path,
                         )?;
+                    } else if effective_type.is_dir() {
+                        copy_directory_recursive(
+                            context,
+                            source_path,
+                            &target,
+                            effective_metadata,
+                            non_empty_path(relative.as_path()),
+                        )?;
                     } else if file_type.is_symlink() && !context.copy_links_enabled() {
                         copy_symlink(
                             context,
@@ -4289,14 +4333,6 @@ fn copy_sources(
                             &metadata,
                             metadata_options,
                             record_path,
-                        )?;
-                    } else if effective_type.is_dir() {
-                        copy_directory_recursive(
-                            context,
-                            source_path,
-                            &target,
-                            effective_metadata,
-                            non_empty_path(relative.as_path()),
                         )?;
                     } else if is_fifo(&effective_type) {
                         if !context.specials_enabled() {
@@ -4492,10 +4528,25 @@ fn copy_directory_recursive(
         let entry_type = entry_metadata.file_type();
         let mut metadata_override = None;
         let mut effective_type = entry_type;
-        if entry_type.is_symlink() && context.copy_links_enabled() {
-            let target_metadata = follow_symlink_metadata(entry.path.as_path())?;
-            effective_type = target_metadata.file_type();
-            metadata_override = Some(target_metadata);
+        if entry_type.is_symlink()
+            && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+        {
+            match follow_symlink_metadata(entry.path.as_path()) {
+                Ok(target_metadata) => {
+                    let target_type = target_metadata.file_type();
+                    if context.copy_links_enabled()
+                        || (context.copy_dirlinks_enabled() && target_type.is_dir())
+                    {
+                        effective_type = target_type;
+                        metadata_override = Some(target_metadata);
+                    }
+                }
+                Err(error) => {
+                    if context.copy_links_enabled() {
+                        return Err(error);
+                    }
+                }
+            }
         }
         let relative_path = match relative {
             Some(base) => base.join(Path::new(&file_name)),
@@ -4511,10 +4562,10 @@ fn copy_directory_recursive(
             EntryAction::CopyDirectory
         } else if effective_type.is_file() {
             EntryAction::CopyFile
-        } else if entry_type.is_symlink() && !context.copy_links_enabled() {
-            EntryAction::CopySymlink
         } else if effective_type.is_dir() {
             EntryAction::CopyDirectory
+        } else if entry_type.is_symlink() && !context.copy_links_enabled() {
+            EntryAction::CopySymlink
         } else if is_fifo(&effective_type) {
             if context.specials_enabled() {
                 EntryAction::CopyFifo
@@ -7155,6 +7206,59 @@ mod tests {
         assert!(metadata.file_type().is_dir());
         let inner = dest_dir.join("inner.txt");
         assert_eq!(fs::read(&inner).expect("read inner"), b"dir data");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_copy_dirlinks_follows_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let target_dir = temp.path().join("referenced-dir");
+        fs::create_dir(&target_dir).expect("create target dir");
+        fs::write(target_dir.join("inner.txt"), b"dir data").expect("write inner");
+
+        let link = temp.path().join("dir-link");
+        symlink(&target_dir, &link).expect("create dir link");
+        let dest_dir = temp.path().join("dest-dir");
+
+        let operands = vec![link.into_os_string(), dest_dir.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default().copy_dirlinks(true);
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let metadata = fs::symlink_metadata(&dest_dir).expect("dest metadata");
+        assert!(metadata.file_type().is_dir());
+        let inner = dest_dir.join("inner.txt");
+        assert_eq!(fs::read(&inner).expect("read inner"), b"dir data");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_copy_dirlinks_preserves_file_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let target_file = temp.path().join("target.txt");
+        fs::write(&target_file, b"payload").expect("write target");
+
+        let link = temp.path().join("file-link");
+        symlink(&target_file, &link).expect("create file link");
+        let dest = temp.path().join("dest-link");
+
+        let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default().copy_dirlinks(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(summary.symlinks_copied(), 1);
+        let copied = fs::read_link(&dest).expect("read link");
+        assert_eq!(copied, target_file);
     }
 
     #[cfg(unix)]
