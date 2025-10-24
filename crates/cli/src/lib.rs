@@ -662,7 +662,30 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
 }
 
 /// Parsed command produced by [`parse_args`].
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgressMode {
+    PerFile,
+    Overall,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgressSetting {
+    Unspecified,
+    Disabled,
+    PerFile,
+    Overall,
+}
+
+impl ProgressSetting {
+    fn resolved(self) -> Option<ProgressMode> {
+        match self {
+            Self::PerFile => Some(ProgressMode::PerFile),
+            Self::Overall => Some(ProgressMode::Overall),
+            Self::Disabled | Self::Unspecified => None,
+        }
+    }
+}
+
 struct ParsedArgs {
     show_help: bool,
     show_version: bool,
@@ -694,7 +717,7 @@ struct ParsedArgs {
     relative: Option<bool>,
     implied_dirs: Option<bool>,
     verbosity: u8,
-    progress: bool,
+    progress: ProgressSetting,
     stats: bool,
     partial: bool,
     remove_source_files: bool,
@@ -1422,19 +1445,25 @@ where
         None
     };
     let verbosity = matches.get_count("verbose") as u8;
-    let mut progress = matches.get_flag("progress");
+    let progress_flag = matches.get_flag("progress");
+    let no_progress_flag = matches.get_flag("no-progress");
+    let mut progress_setting = if progress_flag {
+        ProgressSetting::PerFile
+    } else {
+        ProgressSetting::Unspecified
+    };
     let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
-    if matches.get_flag("no-progress") {
-        progress = false;
+    if no_progress_flag {
+        progress_setting = ProgressSetting::Disabled;
     }
     if matches.get_flag("no-partial") {
         partial = false;
     }
     if matches.get_count("partial-progress") > 0 {
         partial = true;
-        if !matches.get_flag("no-progress") {
-            progress = true;
+        if !no_progress_flag {
+            progress_setting = ProgressSetting::PerFile;
         }
     }
     let remove_source_files =
@@ -1530,7 +1559,7 @@ where
         relative,
         implied_dirs,
         verbosity,
-        progress,
+        progress: progress_setting,
         stats,
         partial,
         remove_source_files,
@@ -1702,7 +1731,7 @@ where
         relative,
         implied_dirs,
         verbosity,
-        progress,
+        progress: initial_progress,
         stats,
         partial,
         remove_source_files,
@@ -1791,7 +1820,7 @@ where
     };
 
     let mut compress = compress_flag;
-    let mut progress = progress;
+    let mut progress_setting = initial_progress;
     let mut stats = stats;
 
     if !info.is_empty() {
@@ -1805,8 +1834,9 @@ where
                     return 0;
                 }
 
-                if let Some(value) = settings.progress {
-                    progress = value;
+                match settings.progress {
+                    ProgressSetting::Unspecified => {}
+                    value => progress_setting = value,
                 }
                 if let Some(value) = settings.stats {
                     stats = value;
@@ -1821,6 +1851,8 @@ where
             }
         }
     }
+
+    let progress_mode = progress_setting.resolved();
 
     let bandwidth_limit = match bwlimit {
         Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
@@ -2021,7 +2053,7 @@ where
             relative,
             implied_dirs: implied_dirs_option,
             verbosity,
-            progress,
+            progress: progress_mode.is_some(),
             stats,
             partial,
             remove_source_files,
@@ -2127,7 +2159,7 @@ where
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .verbosity(verbosity)
-        .progress(progress)
+        .progress(progress_mode.is_some())
         .stats(stats)
         .partial(partial)
         .remove_source_files(remove_source_files)
@@ -2238,12 +2270,12 @@ where
         };
     }
 
-    let mut live_progress = if progress {
+    let mut live_progress = if let Some(mode) = progress_mode {
         Some(with_output_writer(
             stdout,
             stderr,
             msgs_to_stderr,
-            LiveProgress::new,
+            |writer| LiveProgress::new(writer, mode),
         ))
     } else {
         None
@@ -2273,7 +2305,7 @@ where
                 emit_transfer_summary(
                     &summary,
                     verbosity,
-                    progress,
+                    progress_mode,
                     stats,
                     progress_rendered_live,
                     list_only,
@@ -2320,16 +2352,18 @@ struct LiveProgress<'a> {
     error: Option<io::Error>,
     active_path: Option<PathBuf>,
     line_active: bool,
+    mode: ProgressMode,
 }
 
 impl<'a> LiveProgress<'a> {
-    fn new(writer: &'a mut dyn Write) -> Self {
+    fn new(writer: &'a mut dyn Write, mode: ProgressMode) -> Self {
         Self {
             writer,
             rendered: false,
             error: None,
             active_path: None,
             line_active: false,
+            mode,
         }
     }
 
@@ -2362,49 +2396,84 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
 
-        let event = update.event();
         let total = update.total().max(update.index());
         let remaining = total.saturating_sub(update.index());
 
-        let write_result = (|| -> io::Result<()> {
-            let relative = event.relative_path();
-            let path_changed = self.active_path.as_deref() != Some(relative);
+        let write_result = match self.mode {
+            ProgressMode::PerFile => (|| -> io::Result<()> {
+                let event = update.event();
+                let relative = event.relative_path();
+                let path_changed = self.active_path.as_deref() != Some(relative);
 
-            if path_changed {
+                if path_changed {
+                    if self.line_active {
+                        writeln!(self.writer)?;
+                        self.line_active = false;
+                    }
+                    writeln!(self.writer, "{}", relative.display())?;
+                    self.active_path = Some(relative.to_path_buf());
+                }
+
+                let bytes = event.bytes_transferred();
+                let size_field = format!("{:>15}", format_progress_bytes(bytes));
+                let percent = format_progress_percent(bytes, update.total_bytes());
+                let percent_field = format!("{:>4}", percent);
+                let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
+                let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
+                let xfr_index = update.index();
+
                 if self.line_active {
+                    write!(self.writer, "\r")?;
+                }
+
+                write!(
+                    self.writer,
+                    "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+                )?;
+
+                if update.is_final() {
                     writeln!(self.writer)?;
                     self.line_active = false;
+                    self.active_path = None;
+                } else {
+                    self.line_active = true;
                 }
-                writeln!(self.writer, "{}", relative.display())?;
-                self.active_path = Some(relative.to_path_buf());
-            }
+                Ok(())
+            })(),
+            ProgressMode::Overall => (|| -> io::Result<()> {
+                let bytes = update.overall_transferred();
+                let size_field = format!("{:>15}", format_progress_bytes(bytes));
+                let percent_field = format!(
+                    "{:>4}",
+                    format_progress_percent(bytes, update.overall_total_bytes())
+                );
+                let rate_field = format!(
+                    "{:>12}",
+                    format_progress_rate(bytes, update.overall_elapsed())
+                );
+                let elapsed_field =
+                    format!("{:>11}", format_progress_elapsed(update.overall_elapsed()));
+                let xfr_index = update.index();
 
-            let bytes = event.bytes_transferred();
-            let size_field = format!("{:>15}", format_progress_bytes(bytes));
-            let percent = format_progress_percent(bytes, update.total_bytes());
-            let percent_field = format!("{:>4}", percent);
-            let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
-            let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
-            let xfr_index = update.index();
+                if self.line_active {
+                    write!(self.writer, "\r")?;
+                }
 
-            if self.line_active {
-                write!(self.writer, "\r")?;
-            }
+                write!(
+                    self.writer,
+                    "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+                )?;
 
-            write!(
-                self.writer,
-                "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
-            )?;
-
-            if update.is_final() {
-                writeln!(self.writer)?;
-                self.line_active = false;
+                if update.remaining() == 0 && update.is_final() {
+                    writeln!(self.writer)?;
+                    self.line_active = false;
+                } else {
+                    self.line_active = true;
+                }
                 self.active_path = None;
-            } else {
-                self.line_active = true;
-            }
-            Ok(())
-        })();
+                Ok(())
+            })(),
+        };
 
         match write_result {
             Ok(()) => {
@@ -2419,7 +2488,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
 fn emit_transfer_summary(
     summary: &ClientSummary,
     verbosity: u8,
-    progress: bool,
+    progress_mode: Option<ProgressMode>,
     stats: bool,
     progress_already_rendered: bool,
     list_only: bool,
@@ -2463,7 +2532,7 @@ fn emit_transfer_summary(
 
     let progress_rendered = if progress_already_rendered {
         true
-    } else if progress && !events.is_empty() {
+    } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
         emit_progress(events, writer)?
     } else {
         false
@@ -3068,21 +3137,27 @@ fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
     }
 }
 
+impl Default for ProgressSetting {
+    fn default() -> Self {
+        Self::Unspecified
+    }
+}
+
 #[derive(Default)]
 struct InfoFlagSettings {
-    progress: Option<bool>,
+    progress: ProgressSetting,
     stats: Option<bool>,
     help_requested: bool,
 }
 
 impl InfoFlagSettings {
     fn enable_all(&mut self) {
-        self.progress = Some(true);
+        self.progress = ProgressSetting::PerFile;
         self.stats = Some(true);
     }
 
     fn disable_all(&mut self) {
-        self.progress = Some(false);
+        self.progress = ProgressSetting::Disabled;
         self.stats = Some(false);
     }
 
@@ -3101,12 +3176,16 @@ impl InfoFlagSettings {
                 self.disable_all();
                 Ok(())
             }
-            "progress" | "progress1" | "progress2" => {
-                self.progress = Some(true);
+            "progress" | "progress1" => {
+                self.progress = ProgressSetting::PerFile;
+                Ok(())
+            }
+            "progress2" => {
+                self.progress = ProgressSetting::Overall;
                 Ok(())
             }
             "progress0" | "noprogress" | "-progress" => {
-                self.progress = Some(false);
+                self.progress = ProgressSetting::Disabled;
                 Ok(())
             }
             "stats" | "stats1" => {
@@ -4615,8 +4694,9 @@ mod tests {
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
-        assert!(rendered.contains("info-fifo.in"));
+        assert!(!rendered.contains("info-fifo.in"));
         assert!(rendered.contains("to-chk=0/1"));
+        assert!(rendered.contains("0.00kB/s"));
 
         let metadata = std::fs::symlink_metadata(&destination).expect("stat destination");
         assert!(metadata.file_type().is_fifo());
