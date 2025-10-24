@@ -1231,6 +1231,43 @@ fn session_handshake_into_conversion_matches_method_for_binary() {
 }
 
 #[test]
+fn session_handshake_into_parts_aliases_method_for_binary() {
+    let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
+    let transport = MemoryTransport::new(&binary_handshake_bytes(remote_version));
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("binary handshake succeeds");
+
+    let via_alias = handshake.clone().into_parts();
+    let via_method = handshake.into_stream_parts();
+
+    assert_eq!(via_alias.decision(), NegotiationPrologue::Binary);
+    assert_eq!(via_alias.decision(), via_method.decision());
+    assert_eq!(
+        via_alias.negotiated_protocol(),
+        via_method.negotiated_protocol()
+    );
+    assert_eq!(via_alias.remote_protocol(), via_method.remote_protocol());
+    assert_eq!(
+        via_alias.remote_advertised_protocol(),
+        via_method.remote_advertised_protocol()
+    );
+    assert_eq!(
+        via_alias.local_advertised_protocol(),
+        via_method.local_advertised_protocol()
+    );
+    assert_eq!(via_alias.server_greeting(), via_method.server_greeting());
+    assert_eq!(
+        via_alias.stream().buffered(),
+        via_method.stream().buffered()
+    );
+    assert_eq!(
+        via_alias.stream().sniffed_prefix_len(),
+        via_method.stream().sniffed_prefix_len()
+    );
+}
+
+#[test]
 fn session_handshake_parts_clone_preserves_legacy_stream_state() {
     let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
 
@@ -1318,6 +1355,42 @@ fn session_handshake_into_conversion_matches_method_for_legacy() {
     assert_eq!(reconstructed.decision(), NegotiationPrologue::LegacyAscii);
     assert_eq!(reconstructed.negotiated_protocol(), negotiated);
     assert!(reconstructed.server_greeting().is_some());
+}
+
+#[test]
+fn session_handshake_into_parts_aliases_method_for_legacy() {
+    let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
+
+    let handshake =
+        negotiate_session(transport, ProtocolVersion::NEWEST).expect("legacy handshake succeeds");
+
+    let via_alias = handshake.clone().into_parts();
+    let via_method = handshake.into_stream_parts();
+
+    assert_eq!(via_alias.decision(), NegotiationPrologue::LegacyAscii);
+    assert_eq!(via_alias.decision(), via_method.decision());
+    assert_eq!(
+        via_alias.negotiated_protocol(),
+        via_method.negotiated_protocol()
+    );
+    assert_eq!(via_alias.remote_protocol(), via_method.remote_protocol());
+    assert_eq!(
+        via_alias.remote_advertised_protocol(),
+        via_method.remote_advertised_protocol()
+    );
+    assert_eq!(
+        via_alias.local_advertised_protocol(),
+        via_method.local_advertised_protocol()
+    );
+    assert_eq!(via_alias.server_greeting(), via_method.server_greeting());
+    assert_eq!(
+        via_alias.stream().buffered(),
+        via_method.stream().buffered()
+    );
+    assert_eq!(
+        via_alias.stream().sniffed_prefix_len(),
+        via_method.stream().sniffed_prefix_len()
+    );
 }
 
 #[test]
