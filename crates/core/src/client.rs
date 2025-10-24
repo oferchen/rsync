@@ -316,6 +316,7 @@ pub struct ClientConfig {
     copy_dirlinks: bool,
     relative_paths: bool,
     implied_dirs: bool,
+    mkpath: bool,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -362,6 +363,7 @@ impl Default for ClientConfig {
             copy_dirlinks: false,
             relative_paths: false,
             implied_dirs: true,
+            mkpath: false,
             verbosity: 0,
             progress: false,
             stats: false,
@@ -655,6 +657,13 @@ impl ClientConfig {
         self.implied_dirs
     }
 
+    /// Returns whether destination path components should be created when missing.
+    #[must_use]
+    #[doc(alias = "--mkpath")]
+    pub const fn mkpath(&self) -> bool {
+        self.mkpath
+    }
+
     /// Returns the requested verbosity level.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -741,6 +750,7 @@ pub struct ClientConfigBuilder {
     copy_dirlinks: bool,
     relative_paths: bool,
     implied_dirs: Option<bool>,
+    mkpath: bool,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -1073,6 +1083,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables destination path creation prior to copying.
+    #[must_use]
+    #[doc(alias = "--mkpath")]
+    pub const fn mkpath(mut self, mkpath: bool) -> Self {
+        self.mkpath = mkpath;
+        self
+    }
+
     /// Sets the verbosity level requested by the caller.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -1201,6 +1219,7 @@ impl ClientConfigBuilder {
             copy_dirlinks: self.copy_dirlinks,
             relative_paths: self.relative_paths,
             implied_dirs: self.implied_dirs.unwrap_or(true),
+            mkpath: self.mkpath,
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
@@ -1744,6 +1763,8 @@ pub struct RemoteFallbackArgs {
     pub relative: Option<bool>,
     /// Optional `--implied-dirs`/`--no-implied-dirs` toggle.
     pub implied_dirs: Option<bool>,
+    /// Enables `--mkpath`.
+    pub mkpath: bool,
     /// Verbosity level translated into repeated `-v` flags.
     pub verbosity: u8,
     /// Enables `--progress`.
@@ -1892,6 +1913,7 @@ where
         specials,
         relative,
         implied_dirs,
+        mkpath,
         verbosity,
         progress,
         stats,
@@ -2008,6 +2030,9 @@ where
         "--no-implied-dirs",
         implied_dirs,
     );
+    if mkpath {
+        command_args.push(OsString::from("--mkpath"));
+    }
     push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
     #[cfg(feature = "acl")]
     push_toggle(&mut command_args, "--acls", "--no-acls", acls);
@@ -2918,6 +2943,57 @@ where
 
     let filter_program = compile_filter_program(config.filter_rules())?;
 
+    let mut options = {
+        let mut options = LocalCopyOptions::default();
+        if config.delete_mode().is_enabled() || config.delete_excluded() {
+            options = options.delete(true);
+        }
+        options = match config.delete_mode() {
+            DeleteMode::Before => options.delete_before(true),
+            DeleteMode::After => options.delete_after(true),
+            DeleteMode::Delay => options.delete_after(true),
+            DeleteMode::During | DeleteMode::Disabled => options,
+        };
+        options = options
+            .delete_excluded(config.delete_excluded())
+            .remove_source_files(config.remove_source_files())
+            .bandwidth_limit(
+                config
+                    .bandwidth_limit()
+                    .map(|limit| limit.bytes_per_second()),
+            )
+            .with_default_compression_level(config.compression_setting().level_or_default())
+            .whole_file(config.whole_file())
+            .compress(config.compress())
+            .with_compression_level_override(config.compression_level())
+            .owner(config.preserve_owner())
+            .group(config.preserve_group())
+            .permissions(config.preserve_permissions())
+            .times(config.preserve_times())
+            .omit_dir_times(config.omit_dir_times())
+            .checksum(config.checksum())
+            .size_only(config.size_only())
+            .ignore_existing(config.ignore_existing())
+            .update(config.update())
+            .with_filter_program(filter_program.clone())
+            .numeric_ids(config.numeric_ids())
+            .sparse(config.sparse())
+            .copy_links(config.copy_links())
+            .copy_dirlinks(config.copy_dirlinks())
+            .devices(config.preserve_devices())
+            .specials(config.preserve_specials())
+            .relative_paths(config.relative_paths())
+            .implied_dirs(config.implied_dirs())
+            .mkpath(config.mkpath())
+            .inplace(config.inplace())
+            .partial(config.partial())
+            .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()));
+        #[cfg(feature = "acl")]
+        let options = options.acls(config.preserve_acls());
+        #[cfg(feature = "xattr")]
+        let options = options.xattrs(config.preserve_xattrs());
+        options
+    };
     let mut options = build_local_copy_options(&config, filter_program);
     let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun
@@ -3140,6 +3216,7 @@ exit 42
             specials: None,
             relative: None,
             implied_dirs: None,
+            mkpath: false,
             verbosity: 0,
             progress: false,
             stats: false,
@@ -3589,6 +3666,17 @@ exit 42
     }
 
     #[test]
+    fn builder_sets_mkpath_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .mkpath(true)
+            .build();
+
+        assert!(config.mkpath());
+        assert!(!ClientConfig::default().mkpath());
+    }
+
+    #[test]
     fn builder_sets_inplace() {
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -3804,6 +3892,39 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_mkpath_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.mkpath = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--mkpath"));
     }
 
     #[cfg(unix)]
