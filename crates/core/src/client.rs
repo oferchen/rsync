@@ -1667,6 +1667,8 @@ pub struct RemoteFallbackArgs {
     pub size_only: bool,
     /// Enables `--ignore-existing`.
     pub ignore_existing: bool,
+    /// Enables `--update`.
+    pub update: bool,
     /// Enables `--compress`.
     pub compress: bool,
     /// Enables `--no-compress` when `true` and compression is otherwise disabled.
@@ -1828,6 +1830,7 @@ where
         checksum,
         size_only,
         ignore_existing,
+        update,
         compress,
         compress_disabled,
         compress_level,
@@ -1907,6 +1910,9 @@ where
     }
     if ignore_existing {
         command_args.push(OsString::from("--ignore-existing"));
+    }
+    if update {
+        command_args.push(OsString::from("--update"));
     }
     if compress {
         command_args.push(OsString::from("--compress"));
@@ -3041,6 +3047,7 @@ exit 42
             checksum: false,
             size_only: false,
             ignore_existing: false,
+            update: false,
             compress: false,
             compress_disabled: false,
             compress_level: None,
