@@ -2849,6 +2849,15 @@ fn deny_module(
     stream.flush()
 }
 
+fn send_daemon_ok(
+    stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
+) -> io::Result<()> {
+    let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
+    write_limited(stream, limiter, ok.as_bytes())?;
+    stream.flush()
+}
+
 fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
@@ -2939,6 +2948,7 @@ fn respond_with_module_request(
             }
 
             apply_module_timeout(reader.get_mut(), module)?;
+            let mut acknowledged = false;
             if module.requires_authentication() {
                 match perform_module_authentication(reader, limiter, module, peer_ip)? {
                     AuthenticationStatus::Denied => {
@@ -2961,8 +2971,14 @@ fn respond_with_module_request(
                                 request,
                             );
                         }
+                        send_daemon_ok(reader.get_mut(), limiter)?;
+                        acknowledged = true;
                     }
                 }
+            }
+
+            if !acknowledged {
+                send_daemon_ok(reader.get_mut(), limiter)?;
             }
 
             let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request);
@@ -5444,6 +5460,10 @@ mod tests {
         stream.flush().expect("flush credentials");
 
         line.clear();
+        reader.read_line(&mut line).expect("post-auth acknowledgement");
+        assert_eq!(line, "@RSYNCD: OK\n");
+
+        line.clear();
         reader.read_line(&mut line).expect("unavailable message");
         assert_eq!(
             line.trim_end(),
@@ -6139,6 +6159,10 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("capabilities");
         assert_eq!(line, "@RSYNCD: CAP modules\n");
+
+        line.clear();
+        reader.read_line(&mut line).expect("module acknowledgement");
+        assert_eq!(line, "@RSYNCD: OK\n");
 
         line.clear();
         reader.read_line(&mut line).expect("module response");
