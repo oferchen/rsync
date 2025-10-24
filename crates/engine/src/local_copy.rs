@@ -2017,7 +2017,7 @@ impl LocalCopyOptions {
 
     /// Returns the configured partial directory when present.
     #[must_use]
-    pub fn partial_directory(&self) -> Option<&Path> {
+    pub fn partial_directory_path(&self) -> Option<&Path> {
         self.partial_dir.as_deref()
     }
 
@@ -2637,7 +2637,7 @@ impl<'a> CopyContext<'a> {
     }
 
     fn partial_directory(&self) -> Option<&Path> {
-        self.options.partial_directory()
+        self.options.partial_directory_path()
     }
 
     fn inplace_enabled(&self) -> bool {
@@ -5154,11 +5154,8 @@ fn copy_file(
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
     } else {
-        let (new_guard, file) = DestinationWriteGuard::new(
-            destination,
-            partial_enabled,
-            context.partial_directory(),
-        )?;
+        let (new_guard, file) =
+            DestinationWriteGuard::new(destination, partial_enabled, context.partial_directory())?;
         guard = Some(new_guard);
         file
     };
@@ -5267,12 +5264,13 @@ fn partial_directory_destination_path(
     let base_dir = if partial_dir.is_absolute() {
         partial_dir.to_path_buf()
     } else {
-        let parent = destination.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let parent = destination
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         parent.join(partial_dir)
     };
-    fs::create_dir_all(&base_dir).map_err(|error| {
-        LocalCopyError::io("create partial directory", base_dir.clone(), error)
-    })?;
+    fs::create_dir_all(&base_dir)
+        .map_err(|error| LocalCopyError::io("create partial directory", base_dir.clone(), error))?;
     let file_name = destination
         .file_name()
         .map(|name| name.to_os_string())
@@ -8750,12 +8748,9 @@ mod tests {
         let destination = destination_dir.join("file.txt");
         let partial_dir = temp.path().join("partials");
 
-        let (guard, mut file) = DestinationWriteGuard::new(
-            destination.as_path(),
-            true,
-            Some(partial_dir.as_path()),
-        )
-        .expect("guard");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir.as_path()))
+                .expect("guard");
         let temp_path = guard.temp_path.clone();
         file.write_all(b"committed payload").expect("write payload");
         drop(file);
