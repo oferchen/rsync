@@ -167,6 +167,9 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+use std::time::Instant;
+
 use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
@@ -239,6 +242,7 @@ const HELP_TEXT: &str = concat!(
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
+    "  --pid-file FILE    Write the daemon PID to FILE for process supervision.\n",
     "  --bwlimit=RATE     Limit per-connection bandwidth in KiB/s (0 = unlimited).\n",
     "  --no-bwlimit       Remove any per-connection bandwidth limit configured so far.\n",
     "\n",
@@ -547,6 +551,8 @@ struct RuntimeOptions {
     log_file: Option<PathBuf>,
     log_file_configured: bool,
     global_refuse_options: Option<Vec<String>>,
+    pid_file: Option<PathBuf>,
+    pid_file_from_config: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -564,6 +570,8 @@ impl Default for RuntimeOptions {
             log_file: None,
             log_file_configured: false,
             global_refuse_options: None,
+            pid_file: None,
+            pid_file_from_config: false,
         }
     }
 }
@@ -607,6 +615,8 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv6)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
                 options.set_log_file(PathBuf::from(value))?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
+                options.set_pid_file(PathBuf::from(value))?;
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -653,6 +663,23 @@ impl RuntimeOptions {
 
         self.log_file = Some(path);
         self.log_file_configured = true;
+        Ok(())
+    }
+
+    fn set_pid_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.pid_file {
+            if !self.pid_file_from_config {
+                return Err(duplicate_argument("--pid-file"));
+            }
+
+            if existing == &path {
+                self.pid_file_from_config = false;
+                return Ok(());
+            }
+        }
+
+        self.pid_file = Some(path);
+        self.pid_file_from_config = false;
         Ok(())
     }
 
@@ -740,6 +767,10 @@ impl RuntimeOptions {
             self.inherit_global_refuse_options(options, &origin)?;
         }
 
+        if let Some((pid_file, origin)) = parsed.pid_file {
+            self.set_config_pid_file(pid_file, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -796,6 +827,11 @@ impl RuntimeOptions {
         self.log_file.as_ref()
     }
 
+    #[cfg(test)]
+    fn pid_file(&self) -> Option<&Path> {
+        self.pid_file.as_deref()
+    }
+
     fn inherit_global_refuse_options(
         &mut self,
         options: Vec<String>,
@@ -817,6 +853,31 @@ impl RuntimeOptions {
         }
 
         self.global_refuse_options = Some(options);
+        Ok(())
+    }
+
+    fn set_config_pid_file(
+        &mut self,
+        path: PathBuf,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.pid_file {
+            if self.pid_file_from_config {
+                if existing == &path {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'pid file' directive in global section",
+                ));
+            }
+
+            return Ok(());
+        }
+
+        self.pid_file = Some(path);
+        self.pid_file_from_config = true;
         Ok(())
     }
 
@@ -879,6 +940,7 @@ struct ParsedConfigModules {
     modules: Vec<ModuleDefinition>,
     global_refuse_options: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
     motd_lines: Vec<String>,
+    pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -911,6 +973,7 @@ fn parse_config_modules_inner(
     let mut global_refuse_directives = Vec::new();
     let mut global_refuse_line: Option<usize> = None;
     let mut motd_lines = Vec::new();
+    let mut pid_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1202,6 +1265,38 @@ fn parse_config_modules_inner(
                 "motd" => {
                     motd_lines.push(value.trim_end_matches(['\r', '\n']).to_string());
                 }
+                "pid file" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'pid file' directive must not be empty",
+                        ));
+                    }
+
+                    let resolved = resolve_config_relative_path(path, trimmed);
+                    if let Some((existing, origin)) = &pid_file {
+                        if existing != &resolved {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'pid file' directive in global section (previously defined on line {})",
+                                    origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        pid_file = Some((
+                            resolved,
+                            ConfigDirectiveOrigin {
+                                path: canonical.clone(),
+                                line: line_number,
+                            },
+                        ));
+                    }
+                }
                 _ => {
                     return Err(config_parse_error(
                         path,
@@ -1220,6 +1315,7 @@ fn parse_config_modules_inner(
             modules,
             global_refuse_options: global_refuse_directives,
             motd_lines,
+            pid_file,
         })
     })();
 
@@ -2262,8 +2358,15 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         motd_lines,
         bandwidth_limit,
         log_file,
+        pid_file,
         ..
     } = options;
+
+    let pid_guard = if let Some(path) = pid_file {
+        Some(PidFileGuard::create(path)?)
+    } else {
+        None
+    };
 
     let log_sink = if let Some(path) = log_file {
         Some(open_log_sink(&path)?)
@@ -2340,7 +2443,41 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         log_message(log, &message);
     }
 
+    drop(pid_guard);
+
     result
+}
+
+struct PidFileGuard {
+    path: PathBuf,
+}
+
+impl PidFileGuard {
+    fn create(path: PathBuf) -> Result<Self, DaemonError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|error| pid_file_error(&path, error))?;
+            }
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| pid_file_error(&path, error))?;
+        writeln!(file, "{}", std::process::id()).map_err(|error| pid_file_error(&path, error))?;
+        file.sync_all()
+            .map_err(|error| pid_file_error(&path, error))?;
+
+        Ok(Self { path })
+    }
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 type WorkerResult = Result<(), (Option<SocketAddr>, io::Error)>;
@@ -2370,7 +2507,14 @@ fn drain_workers(workers: &mut Vec<thread::JoinHandle<WorkerResult>>) -> Result<
 fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonError> {
     match handle.join() {
         Ok(Ok(())) => Ok(()),
-        Ok(Err((peer, error))) => Err(stream_error(peer, "serve legacy handshake", error)),
+        Ok(Err((peer, error))) => {
+            let kind = error.kind();
+            if is_connection_closed_error(kind) {
+                Ok(())
+            } else {
+                Err(stream_error(peer, "serve legacy handshake", error))
+            }
+        }
         Err(panic) => {
             let description = match panic.downcast::<String>() {
                 Ok(message) => *message,
@@ -2383,6 +2527,15 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
             Err(stream_error(None, "serve legacy handshake", error))
         }
     }
+}
+
+fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+    )
 }
 
 fn configure_stream(stream: &TcpStream) -> io::Result<()> {
@@ -3036,6 +3189,17 @@ fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
         rsync_error!(
             FEATURE_UNAVAILABLE_EXIT_CODE,
             format!("failed to open log file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to write pid file '{}': {}", path.display(), error)
         )
         .with_role(Role::Daemon),
     )
@@ -4097,6 +4261,33 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_parse_pid_file_argument() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--pid-file"),
+            OsString::from("/var/run/oc-rsyncd.pid"),
+        ])
+        .expect("parse pid file argument");
+
+        assert_eq!(
+            options.pid_file(),
+            Some(Path::new("/var/run/oc-rsyncd.pid"))
+        );
+    }
+
+    #[test]
+    fn runtime_options_reject_duplicate_pid_file_argument() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--pid-file"),
+            OsString::from("/var/run/one.pid"),
+            OsString::from("--pid-file"),
+            OsString::from("/var/run/two.pid"),
+        ])
+        .expect_err("duplicate pid file should fail");
+
+        assert!(error.message().to_string().contains("--pid-file"));
+    }
+
+    #[test]
     fn runtime_options_ipv6_sets_default_bind_address() {
         let options =
             RuntimeOptions::parse(&[OsString::from("--ipv6")]).expect("parse --ipv6 succeeds");
@@ -4193,6 +4384,48 @@ mod tests {
         assert!(modules[1].bandwidth_limit().is_none());
         assert!(modules[1].listable());
         assert!(modules.iter().all(ModuleDefinition::use_chroot));
+    }
+
+    #[test]
+    fn runtime_options_loads_pid_file_from_config() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "pid file = daemon.pid\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with pid file");
+
+        let expected = dir.path().join("daemon.pid");
+        assert_eq!(options.pid_file(), Some(expected.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_config_pid_file_respects_cli_override() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "pid file = config.pid\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let cli_pid = PathBuf::from("/var/run/override.pid");
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--pid-file"),
+            cli_pid.as_os_str().to_os_string(),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with cli override");
+
+        assert_eq!(options.pid_file(), Some(cli_pid.as_path()));
     }
 
     #[test]
@@ -5647,6 +5880,55 @@ mod tests {
         drop(reader);
         let result = handle.join().expect("daemon thread");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_daemon_writes_and_removes_pid_file() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let temp = tempdir().expect("pid dir");
+        let pid_path = temp.path().join("oc-rsyncd.pid");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--pid-file"),
+                pid_path.as_os_str().to_os_string(),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let pid_clone = pid_path.clone();
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let start = Instant::now();
+        while !pid_clone.exists() {
+            if start.elapsed() > Duration::from_secs(5) {
+                panic!("pid file not created");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+
+        let expected_greeting = legacy_daemon_greeting();
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("greeting");
+        assert_eq!(line, expected_greeting);
+
+        stream.write_all(b"#list\n").expect("send list request");
+        stream.flush().expect("flush list request");
+
+        drop(reader);
+        drop(stream);
+
+        let result = handle.join().expect("daemon thread");
+        assert!(result.is_ok());
+        assert!(!pid_path.exists());
     }
 
     #[test]
