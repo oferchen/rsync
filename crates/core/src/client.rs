@@ -1615,6 +1615,8 @@ pub struct RemoteFallbackArgs {
     pub times: Option<bool>,
     /// Optional `--numeric-ids`/`--no-numeric-ids` toggle.
     pub numeric_ids: Option<bool>,
+    /// Optional `--copy-links`/`--no-copy-links` toggle.
+    pub copy_links: Option<bool>,
     /// Optional `--sparse`/`--no-sparse` toggle.
     pub sparse: Option<bool>,
     /// Optional `--devices`/`--no-devices` toggle.
@@ -1753,6 +1755,7 @@ where
         perms,
         times,
         numeric_ids,
+        copy_links,
         sparse,
         devices,
         specials,
@@ -1841,6 +1844,12 @@ where
         "--numeric-ids",
         "--no-numeric-ids",
         numeric_ids,
+    );
+    push_toggle(
+        &mut command_args,
+        "--copy-links",
+        "--no-copy-links",
+        copy_links,
     );
     push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
@@ -2838,6 +2847,7 @@ exit 42
             perms: None,
             times: None,
             numeric_ids: None,
+            copy_links: None,
             sparse: None,
             devices: None,
             specials: None,
@@ -3301,6 +3311,55 @@ exit 42
             String::from_utf8(stderr).expect("stderr utf8"),
             "fallback stderr\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_copy_links_toggle() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.copy_links = Some(true);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--copy-links"));
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.copy_links = Some(false);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--no-copy-links"));
     }
 
     #[cfg(unix)]

@@ -2014,6 +2014,7 @@ where
             perms,
             times,
             numeric_ids: numeric_ids_option,
+            copy_links,
             sparse,
             devices,
             specials,
