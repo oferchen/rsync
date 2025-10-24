@@ -54,8 +54,8 @@ The following parity milestones remain unmet and are tracked in
 `docs/differences.md` and `docs/gaps.md`:
 
 - CLI, core orchestration, and daemon server binaries.
-- Delta-transfer engine, metadata/ACL handling, filter grammar, and
-  compression layers.
+- Delta-transfer engine integration with transports, expanded filter grammar,
+  and end-to-end compression for networked transfers.
 - Golden parity harness, interop matrix, packaging artifacts, and coverage gate
   defined in the production scope.
 
