@@ -73,6 +73,7 @@
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
 //! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
+use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
@@ -2498,7 +2499,7 @@ where
             .into_iter()
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
-    let mut merge_stack = Vec::new();
+    let mut merge_stack = HashSet::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     for filter in filters {
         match parse_filter_directive(filter.as_os_str()) {
@@ -4222,7 +4223,7 @@ fn apply_merge_directive(
     directive: MergeDirective,
     base_dir: &Path,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
@@ -4249,12 +4250,11 @@ fn apply_merge_directive(
         resolved_path.clone()
     };
 
-    if visited.contains(&guard_key) {
+    if !visited.insert(guard_key.clone()) {
         let text = format!("recursive filter merge detected for '{display}'");
         return Err(rsync_error!(1, text).with_role(Role::Client));
     }
 
-    visited.push(guard_key);
     let next_base_storage = if is_stdin {
         None
     } else {
@@ -4283,7 +4283,7 @@ fn apply_merge_directive(
             visited,
         )
     })();
-    visited.pop();
+    visited.remove(&guard_key);
     if result.is_ok() && options.excludes_self() && !is_stdin {
         let mut rule = FilterRuleSpec::exclude(original_source_text);
         rule.apply_dir_merge_overrides(&options);
@@ -4328,7 +4328,7 @@ fn parse_merge_contents(
     base_dir: &Path,
     display: &str,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
         let mut tokens = contents.split_whitespace();
@@ -4430,7 +4430,7 @@ fn process_merge_directive(
     base_dir: &Path,
     display: &str,
     destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
 ) -> Result<(), Message> {
     match parse_filter_directive(OsStr::new(directive)) {
         Ok(FilterDirective::Rule(mut rule)) => {
@@ -4950,6 +4950,7 @@ mod tests {
     use rsync_core::client::FilterRuleKind;
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
+    use std::collections::HashSet;
     use std::ffi::{OsStr, OsString};
     use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
@@ -7978,7 +7979,7 @@ mod tests {
         std::fs::write(&grand, b"+ grand\n").expect("write grand");
 
         let mut rules = Vec::new();
-        let mut visited = Vec::new();
+        let mut visited = HashSet::new();
         let directive = MergeDirective::new(OsString::from("outer.rules"), None)
             .with_options(DirMergeOptions::default().allow_list_clearing(true));
         super::apply_merge_directive(directive, temp.path(), &mut rules, &mut visited)
@@ -8001,7 +8002,7 @@ mod tests {
         std::fs::write(&path, b"alpha\n!\nbeta\n").expect("write filters");
 
         let mut rules = vec![FilterRuleSpec::exclude("existing".to_string())];
-        let mut visited = Vec::new();
+        let mut visited = HashSet::new();
         let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include))
             .with_options(
                 DirMergeOptions::default()
