@@ -80,6 +80,7 @@
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
 //! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -89,7 +90,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use std::{env, error::Error};
 
 use base64::Engine as _;
@@ -2435,6 +2436,9 @@ pub struct ClientProgressUpdate {
     index: usize,
     total_bytes: Option<u64>,
     final_update: bool,
+    overall_transferred: u64,
+    overall_total_bytes: Option<u64>,
+    overall_elapsed: Duration,
 }
 
 impl ClientProgressUpdate {
@@ -2473,6 +2477,24 @@ impl ClientProgressUpdate {
     pub const fn is_final(&self) -> bool {
         self.final_update
     }
+
+    /// Returns the aggregate number of bytes transferred across the entire transfer.
+    #[must_use]
+    pub const fn overall_transferred(&self) -> u64 {
+        self.overall_transferred
+    }
+
+    /// Returns the total number of bytes expected for the entire transfer, when known.
+    #[must_use]
+    pub const fn overall_total_bytes(&self) -> Option<u64> {
+        self.overall_total_bytes
+    }
+
+    /// Returns the elapsed time since the transfer began.
+    #[must_use]
+    pub const fn overall_elapsed(&self) -> Duration {
+        self.overall_elapsed
+    }
 }
 
 /// Observer invoked for each progress update generated during client execution.
@@ -2497,6 +2519,10 @@ struct ClientProgressForwarder<'a> {
     observer: &'a mut dyn ClientProgressObserver,
     total: usize,
     emitted: usize,
+    overall_total_bytes: Option<u64>,
+    overall_transferred: u64,
+    overall_start: Instant,
+    in_flight: HashMap<PathBuf, u64>,
 }
 
 impl<'a> ClientProgressForwarder<'a> {
@@ -2522,10 +2548,17 @@ impl<'a> ClientProgressForwarder<'a> {
             })
             .count();
 
+        let summary = preview_report.summary();
+        let total_bytes = summary.total_source_bytes();
+
         Ok(Self {
             observer,
             total,
             emitted: 0,
+            overall_total_bytes: (total_bytes > 0).then_some(total_bytes),
+            overall_transferred: 0,
+            overall_start: Instant::now(),
+            in_flight: HashMap::new(),
         })
     }
 
@@ -2551,6 +2584,13 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             None
         };
 
+        let path = event.relative_path().to_path_buf();
+        let previous = self.in_flight.remove(&path).unwrap_or_default();
+        let additional = event.bytes_transferred().saturating_sub(previous);
+        if additional > 0 {
+            self.overall_transferred = self.overall_transferred.saturating_add(additional);
+        }
+
         let update = ClientProgressUpdate {
             event,
             total: self.total,
@@ -2558,6 +2598,9 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             index,
             total_bytes,
             final_update: true,
+            overall_transferred: self.overall_transferred,
+            overall_total_bytes: self.overall_total_bytes,
+            overall_elapsed: self.overall_start.elapsed(),
         };
 
         self.observer.on_progress(&update);
@@ -2576,6 +2619,16 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             progress.elapsed(),
         );
 
+        let entry = self
+            .in_flight
+            .entry(progress.relative_path().to_path_buf())
+            .or_insert(0);
+        let additional = progress.bytes_transferred().saturating_sub(*entry);
+        if additional > 0 {
+            self.overall_transferred = self.overall_transferred.saturating_add(additional);
+            *entry = (*entry).saturating_add(additional);
+        }
+
         let update = ClientProgressUpdate {
             event,
             total: self.total,
@@ -2583,6 +2636,9 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             index,
             total_bytes: progress.total_bytes(),
             final_update: false,
+            overall_transferred: self.overall_transferred,
+            overall_total_bytes: self.overall_total_bytes,
+            overall_elapsed: self.overall_start.elapsed(),
         };
 
         self.observer.on_progress(&update);
