@@ -1829,6 +1829,12 @@ pub struct RemoteFallbackArgs {
     /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
+    /// Optional override for the remote rsync executable.
+    ///
+    /// When populated the helper forwards `--rsync-path` to the fallback command so upstream
+    /// rsync executes the specified program on the remote system. The option is ignored when
+    /// remote operands are absent because local transfers never invoke the fallback binary.
+    pub rsync_path: Option<OsString>,
     /// Remaining operands to forward to the fallback binary.
     pub remainder: Vec<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
@@ -1947,6 +1953,7 @@ where
         out_format,
         no_motd,
         fallback_binary,
+        rsync_path,
         mut remainder,
         #[cfg(feature = "acl")]
         acls,
@@ -2170,6 +2177,11 @@ where
     if let Some(shell) = remote_shell {
         command_args.push(OsString::from("-e"));
         command_args.push(shell);
+    }
+
+    if let Some(path) = rsync_path {
+        command_args.push(OsString::from("--rsync-path"));
+        command_args.push(path);
     }
 
     command_args.append(&mut remainder);
@@ -3223,6 +3235,7 @@ exit 42
             out_format: None,
             no_motd: false,
             fallback_binary: None,
+            rsync_path: None,
             remainder: Vec::new(),
             #[cfg(feature = "acl")]
             acls: None,
