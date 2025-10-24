@@ -3748,6 +3748,10 @@ impl MergeDirective {
     fn options(&self) -> &DirMergeOptions {
         &self.options
     }
+
+    fn enforced_kind(&self) -> Option<FilterRuleKind> {
+        self.enforced_kind
+    }
 }
 
 fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -> DirMergeOptions {
@@ -4241,6 +4245,7 @@ fn apply_merge_directive(
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
+    let original_source_text = os_string_to_pattern(directive.source().to_os_string());
     let is_stdin = directive.source() == OsStr::new("-");
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
@@ -4282,7 +4287,6 @@ fn apply_merge_directive(
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
-    let options = directive.options().clone();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
             read_merge_from_standard_input()?
