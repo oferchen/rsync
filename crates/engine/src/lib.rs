@@ -77,7 +77,9 @@ pub mod local_copy;
 pub mod signature;
 
 pub use delta::{
-    SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
+    DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayout,
+    SignatureLayoutError, SignatureLayoutParams, apply_delta, calculate_signature_layout,
+    generate_delta,
 };
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,

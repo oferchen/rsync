@@ -66,8 +66,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::BandwidthLimiter;
+use rsync_checksums::RollingChecksum;
 use rsync_checksums::strong::Md5;
-use rsync_checksums::{RollingChecksum, RollingDigest};
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "acl")]
@@ -81,7 +81,7 @@ use rsync_meta::{
 };
 use rsync_protocol::ProtocolVersion;
 
-use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
+use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
 use crate::signature::{
     SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
@@ -2949,7 +2949,7 @@ impl<'a> CopyContext<'a> {
             }
 
             let digest = rolling.digest();
-            if let Some(block_index) = index.find_match(digest, &window, &mut scratch) {
+            if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
                     self.flush_literal_chunk(
@@ -5199,73 +5199,6 @@ fn destination_is_newer(source: &fs::Metadata, destination: &fs::Metadata) -> bo
     }
 }
 
-struct DeltaSignatureIndex {
-    block_length: usize,
-    strong_length: usize,
-    algorithm: SignatureAlgorithm,
-    blocks: Vec<SignatureBlock>,
-    lookup: HashMap<(u16, u16, usize), Vec<usize>>,
-}
-
-impl DeltaSignatureIndex {
-    fn new(
-        block_length: usize,
-        strong_length: usize,
-        algorithm: SignatureAlgorithm,
-        blocks: Vec<SignatureBlock>,
-        lookup: HashMap<(u16, u16, usize), Vec<usize>>,
-    ) -> Self {
-        Self {
-            block_length,
-            strong_length,
-            algorithm,
-            blocks,
-            lookup,
-        }
-    }
-
-    fn block_length(&self) -> usize {
-        self.block_length
-    }
-
-    fn block(&self, index: usize) -> &SignatureBlock {
-        &self.blocks[index]
-    }
-
-    fn find_match(
-        &self,
-        digest: RollingDigest,
-        window: &VecDeque<u8>,
-        scratch: &mut Vec<u8>,
-    ) -> Option<usize> {
-        if window.len() != self.block_length {
-            return None;
-        }
-
-        let key = (digest.sum1(), digest.sum2(), digest.len());
-        let candidates = self.lookup.get(&key)?;
-        scratch.clear();
-        let (front, back) = window.as_slices();
-        scratch.extend_from_slice(front);
-        scratch.extend_from_slice(back);
-
-        for &index in candidates {
-            let block = &self.blocks[index];
-            if block.len() != scratch.len() {
-                continue;
-            }
-            let strong = self
-                .algorithm
-                .compute_truncated(scratch.as_slice(), self.strong_length);
-            if strong.as_slice() == block.strong() {
-                return Some(index);
-            }
-        }
-
-        None
-    }
-}
-
 fn build_delta_signature(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -5304,34 +5237,10 @@ fn build_delta_signature(
         Err(_) => return Ok(None),
     };
 
-    let block_length = layout.block_length().get() as usize;
-    let strong_length = usize::from(layout.strong_sum_length().get());
-    let mut lookup: HashMap<(u16, u16, usize), Vec<usize>> = HashMap::new();
-    let mut has_full_blocks = false;
-    let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
-    for (index, block) in blocks.iter().enumerate() {
-        if block.len() != block_length {
-            continue;
-        }
-        has_full_blocks = true;
-        let digest = block.rolling();
-        lookup
-            .entry((digest.sum1(), digest.sum2(), block.len()))
-            .or_insert_with(Vec::new)
-            .push(index);
+    match DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4) {
+        Some(index) => Ok(Some(index)),
+        None => Ok(None),
     }
-
-    if !has_full_blocks {
-        return Ok(None);
-    }
-
-    Ok(Some(DeltaSignatureIndex::new(
-        block_length,
-        strong_length,
-        SignatureAlgorithm::Md4,
-        blocks,
-        lookup,
-    )))
 }
 
 fn should_skip_copy(

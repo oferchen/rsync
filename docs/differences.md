@@ -43,14 +43,17 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Transfer engine and metadata pipeline incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, symbolic links, device nodes, FIFOs, extended
-    attributes, and (when the feature is enabled) POSIX ACLs. Delta transfer
-    and compression remain unavailable. Remote orchestration is still missing,
-    preventing the client from negotiating network transports.
-  - *Removal plan*: Extend the engine with delta-transfer support and integrate
-    full filter semantics alongside `compress` and enhanced metadata handling
-    from `rsync_meta`.
-    Wire the resulting pipeline into both client and daemon orchestration and
-    validate it via the parity harness.
+    attributes, and (when the feature is enabled) POSIX ACLs. Delta-token
+    generation and application are now available via
+    [`DeltaGenerator`](../crates/engine/src/delta/generator.rs) and
+    [`apply_delta`](../crates/engine/src/delta/script.rs), but compression and
+    remote orchestration remain unavailable. The client still spawns the system
+    `rsync` for network transfers because the freshly added delta pipeline has
+    not yet been integrated with protocol or transport layers.
+  - *Removal plan*: Wire the delta pipeline into the client/daemon transfer
+    flow, add compression and the remaining filter semantics, and validate the
+    combined behaviour via the parity harness before dropping the fallback
+    dependency.
 - **Interop harness and packaging automation incomplete**
   - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix.
     Packaging metadata for `cargo-deb`/`cargo-rpm` now installs both binaries, a
