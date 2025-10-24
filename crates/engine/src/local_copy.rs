@@ -3586,7 +3586,7 @@ fn parse_filter_directive_line(
         if remainder.is_empty() {
             return Err(FilterParseError::new("filter directive missing pattern"));
         }
-        let rule = FilterRule::include(remainder.to_string()).with_receiver(false);
+        let rule = FilterRule::show(remainder.to_string());
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
@@ -3594,7 +3594,7 @@ fn parse_filter_directive_line(
         if remainder.is_empty() {
             return Err(FilterParseError::new("filter directive missing pattern"));
         }
-        let rule = FilterRule::exclude(remainder.to_string()).with_receiver(false);
+        let rule = FilterRule::hide(remainder.to_string());
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 

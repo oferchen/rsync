@@ -136,6 +136,44 @@ impl FilterRule {
         }
     }
 
+    /// Creates a sender-only include rule equivalent to `show PATTERN`.
+    ///
+    /// # Examples
+    /// ```
+    /// use rsync_filters::FilterRule;
+    /// let rule = FilterRule::show("logs/**");
+    /// assert!(rule.applies_to_sender());
+    /// assert!(!rule.applies_to_receiver());
+    /// ```
+    #[must_use]
+    pub fn show(pattern: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::Include,
+            pattern: pattern.into(),
+            applies_to_sender: true,
+            applies_to_receiver: false,
+        }
+    }
+
+    /// Creates a sender-only exclude rule equivalent to `hide PATTERN`.
+    ///
+    /// # Examples
+    /// ```
+    /// use rsync_filters::FilterRule;
+    /// let rule = FilterRule::hide("*.bak");
+    /// assert!(rule.applies_to_sender());
+    /// assert!(!rule.applies_to_receiver());
+    /// ```
+    #[must_use]
+    pub fn hide(pattern: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::Exclude,
+            pattern: pattern.into(),
+            applies_to_sender: true,
+            applies_to_receiver: false,
+        }
+    }
+
     /// Returns the rule action.
     #[must_use]
     pub const fn action(&self) -> FilterAction {
@@ -651,5 +689,19 @@ mod tests {
         let set = FilterSet::from_rules(rules).expect("compiled");
         assert!(set.allows(Path::new("keep.txt"), false));
         assert!(!set.allows_deletion(Path::new("keep.txt"), false));
+    }
+
+    #[test]
+    fn show_rule_applies_only_to_sender() {
+        let set = FilterSet::from_rules([FilterRule::show("visible/**")]).expect("compiled");
+        assert!(set.allows(Path::new("visible/file.txt"), false));
+        assert!(set.allows_deletion(Path::new("visible/file.txt"), false));
+    }
+
+    #[test]
+    fn hide_rule_applies_only_to_sender() {
+        let set = FilterSet::from_rules([FilterRule::hide("hidden/**")]).expect("compiled");
+        assert!(!set.allows(Path::new("hidden/file.txt"), false));
+        assert!(set.allows_deletion(Path::new("hidden/file.txt"), false));
     }
 }
