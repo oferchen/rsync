@@ -141,7 +141,7 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge FILE', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
@@ -1199,7 +1199,7 @@ fn clap_command() -> ClapCommand {
             Arg::new("filter")
                 .long("filter")
                 .value_name("RULE")
-                .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE').")
+                .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'merge[,MODS] FILE', and 'dir-merge[,MODS] FILE').")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -2429,10 +2429,11 @@ where
     for filter in filters {
         match parse_filter_directive(filter.as_os_str()) {
             Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
-            Ok(FilterDirective::Merge(source)) => {
+            Ok(FilterDirective::Merge { source, options }) => {
                 if let Err(message) = apply_merge_directive(
                     source,
                     merge_base.as_path(),
+                    options,
                     &mut filter_rules,
                     &mut merge_stack,
                 ) {
@@ -3629,7 +3630,10 @@ fn os_string_to_pattern(value: OsString) -> String {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum FilterDirective {
     Rule(FilterRuleSpec),
-    Merge(OsString),
+    Merge {
+        source: OsString,
+        options: DirMergeOptions,
+    },
     Clear,
 }
 
@@ -3670,35 +3674,148 @@ fn parse_filter_shorthand(
     Some(Ok(FilterDirective::Rule(builder(pattern.to_string()))))
 }
 
+fn parse_merge_modifiers(
+    modifiers: &str,
+    directive: &str,
+) -> Result<(DirMergeOptions, bool), Message> {
+    let mut options = DirMergeOptions::default();
+    let mut enforced: Option<DirMergeEnforcedKind> = None;
+    let mut saw_include = false;
+    let mut saw_exclude = false;
+    let mut assume_cvsignore = false;
+
+    for modifier in modifiers.chars() {
+        let lower = modifier.to_ascii_lowercase();
+        match lower {
+            '-' => {
+                if saw_include {
+                    let message = rsync_error!(
+                        1,
+                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
+                saw_exclude = true;
+                enforced = Some(DirMergeEnforcedKind::Exclude);
+            }
+            '+' => {
+                if saw_exclude {
+                    let message = rsync_error!(
+                        1,
+                        format!("filter merge directive '{directive}' mixes '+' and '-' modifiers")
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
+                saw_include = true;
+                enforced = Some(DirMergeEnforcedKind::Include);
+            }
+            'c' => {
+                if saw_include {
+                    let message = rsync_error!(
+                        1,
+                        format!("filter merge directive '{directive}' mixes '+/C' modifiers")
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
+                saw_exclude = true;
+                enforced = Some(DirMergeEnforcedKind::Exclude);
+                options = options
+                    .use_whitespace()
+                    .allow_comments(false)
+                    .allow_list_clearing(true)
+                    .inherit(false);
+                assume_cvsignore = true;
+            }
+            'e' => {
+                options = options.exclude_filter_file(true);
+            }
+            'n' => {
+                options = options.inherit(false);
+            }
+            'w' => {
+                options = options.use_whitespace().allow_comments(false);
+            }
+            's' => {
+                options = options.sender_modifier();
+            }
+            'r' => {
+                options = options.receiver_modifier();
+            }
+            '/' => {
+                options = options.anchor_root(true);
+            }
+            _ => {
+                let message = rsync_error!(
+                    1,
+                    format!(
+                        "filter merge directive '{directive}' uses unsupported modifier '{}'",
+                        modifier
+                    )
+                )
+                .with_role(Role::Client);
+                return Err(message);
+            }
+        }
+    }
+
+    options = options
+        .with_enforced_kind(enforced)
+        .allow_list_clearing(true);
+    Ok((options, assume_cvsignore))
+}
+
 fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
     let trimmed_leading = text.trim_start();
 
     if let Some(rest) = trimmed_leading.strip_prefix("merge") {
-        let remainder = rest.trim_start();
+        let mut remainder = rest;
+        let mut options = DirMergeOptions::default();
+        let mut assumed_cvsignore = false;
 
-        if remainder.starts_with(',') {
-            let message = rsync_error!(
-                1,
-                format!(
-                    "filter merge directive '{trimmed_leading}' uses unsupported modifiers; this build accepts only 'merge FILE'"
+        if let Some(after_comma) = remainder.strip_prefix(',') {
+            let mut end = 0;
+            for (idx, ch) in after_comma.char_indices() {
+                if ch.is_ascii_whitespace() || ch == '_' {
+                    break;
+                }
+                end = idx + ch.len_utf8();
+            }
+            let (mods, after_mods) = after_comma.split_at(end);
+            let (parsed_options, infer_cvsignore) = parse_merge_modifiers(mods, trimmed_leading)?;
+            options = parsed_options;
+            assumed_cvsignore = infer_cvsignore;
+            remainder = after_mods;
+        }
+
+        // Upstream rsync permits list-clearing directives in merge files by default.
+        options = options.allow_list_clearing(true);
+
+        let path_text = remainder
+            .trim_start_matches(|ch: char| ch.is_ascii_whitespace() || ch == '_')
+            .trim_end();
+        let path_text = if path_text.is_empty() {
+            if assumed_cvsignore {
+                ".cvsignore"
+            } else {
+                let message = rsync_error!(
+                    1,
+                    format!("filter merge directive '{trimmed_leading}' is missing a file path")
                 )
-            )
-            .with_role(Role::Client);
-            return Err(message);
-        }
+                .with_role(Role::Client);
+                return Err(message);
+            }
+        } else {
+            path_text
+        };
 
-        let path_text = remainder.trim();
-        if path_text.is_empty() {
-            let message = rsync_error!(
-                1,
-                format!("filter merge directive '{trimmed_leading}' is missing a file path")
-            )
-            .with_role(Role::Client);
-            return Err(message);
-        }
-
-        return Ok(FilterDirective::Merge(OsString::from(path_text)));
+        return Ok(FilterDirective::Merge {
+            source: OsString::from(path_text),
+            options,
+        });
     }
 
     let trimmed = trimmed_leading.trim_end();
@@ -3979,6 +4096,7 @@ fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
 fn apply_merge_directive(
     source: OsString,
     base_dir: &Path,
+    options: DirMergeOptions,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
@@ -4024,42 +4142,218 @@ fn apply_merge_directive(
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
 
+    let original_source_text = source.to_string_lossy().into_owned();
     let result = (|| -> Result<(), Message> {
-        let entries = load_filter_file_patterns(&resolved_path)?;
-        for entry in entries {
-            match parse_filter_directive(OsStr::new(entry.as_str())) {
-                Ok(FilterDirective::Rule(rule)) => destination.push(rule),
-                Ok(FilterDirective::Merge(nested)) => {
-                    apply_merge_directive(nested, next_base, destination, visited).map_err(
-                        |error| {
-                            let detail = error.to_string();
-                            rsync_error!(
-                                1,
-                                format!("failed to process merge file '{display}': {detail}")
-                            )
-                            .with_role(Role::Client)
-                        },
-                    )?;
-                }
-                Ok(FilterDirective::Clear) => destination.clear(),
-                Err(error) => {
-                    let detail = error.to_string();
-                    return Err(
-                        rsync_error!(
-                            1,
-                            format!(
-                                "failed to parse filter rule '{entry}' from merge file '{display}': {detail}"
-                            )
-                        )
-                        .with_role(Role::Client),
-                    );
-                }
-            }
+        let contents = if is_stdin {
+            read_merge_from_standard_input()?
+        } else {
+            read_merge_file(&resolved_path)?
+        };
+
+        parse_merge_contents(
+            &contents,
+            &options,
+            next_base,
+            &display,
+            destination,
+            visited,
+        )?;
+
+        if options.excludes_self() && !is_stdin {
+            let mut rule = FilterRuleSpec::exclude(original_source_text.clone());
+            rule.apply_dir_merge_overrides(&options);
+            destination.push(rule);
         }
+
         Ok(())
     })();
     visited.pop();
     result
+}
+
+fn read_merge_file(path: &Path) -> Result<String, Message> {
+    fs::read_to_string(path).map_err(|error| {
+        let text = format!("failed to read filter file '{}': {}", path.display(), error);
+        rsync_error!(1, text).with_role(Role::Client)
+    })
+}
+
+fn read_merge_from_standard_input() -> Result<String, Message> {
+    #[cfg(test)]
+    if let Some(data) = take_filter_stdin_input() {
+        return String::from_utf8(data).map_err(|error| {
+            let text = format!(
+                "failed to read filter patterns from standard input: {}",
+                error
+            );
+            rsync_error!(1, text).with_role(Role::Client)
+        });
+    }
+
+    let mut buffer = String::new();
+    io::stdin().read_to_string(&mut buffer).map_err(|error| {
+        let text = format!(
+            "failed to read filter patterns from standard input: {}",
+            error
+        );
+        rsync_error!(1, text).with_role(Role::Client)
+    })?;
+    Ok(buffer)
+}
+
+fn parse_merge_contents(
+    contents: &str,
+    options: &DirMergeOptions,
+    base_dir: &Path,
+    display: &str,
+    destination: &mut Vec<FilterRuleSpec>,
+    visited: &mut Vec<PathBuf>,
+) -> Result<(), Message> {
+    if options.uses_whitespace() {
+        let mut tokens = contents.split_whitespace();
+        while let Some(token) = tokens.next() {
+            if token.is_empty() {
+                continue;
+            }
+
+            if token == "!" {
+                if options.list_clear_allowed() {
+                    destination.clear();
+                    continue;
+                }
+                let message = rsync_error!(
+                    1,
+                    format!("list-clearing '!' is not permitted in merge file '{display}'")
+                )
+                .with_role(Role::Client);
+                return Err(message);
+            }
+
+            if let Some(kind) = options.enforced_kind() {
+                let mut rule = match kind {
+                    DirMergeEnforcedKind::Include => FilterRuleSpec::include(token.to_string()),
+                    DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(token.to_string()),
+                };
+                rule.apply_dir_merge_overrides(options);
+                destination.push(rule);
+                continue;
+            }
+
+            let lower = token.to_ascii_lowercase();
+            let directive = if merge_directive_requires_argument(&lower) {
+                let Some(arg) = tokens.next() else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter merge directive '{}' in '{}' is missing a pattern",
+                            token, display
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                };
+                format!("{token} {arg}")
+            } else {
+                token.to_string()
+            };
+
+            process_merge_directive(&directive, options, base_dir, display, destination, visited)?;
+        }
+        return Ok(());
+    }
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if options.allows_comments() && trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed.starts_with(';') && options.allows_comments() {
+            continue;
+        }
+
+        if trimmed == "!" {
+            if options.list_clear_allowed() {
+                destination.clear();
+                continue;
+            }
+            let message = rsync_error!(
+                1,
+                format!("list-clearing '!' is not permitted in merge file '{display}'")
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+
+        if let Some(kind) = options.enforced_kind() {
+            let mut rule = match kind {
+                DirMergeEnforcedKind::Include => FilterRuleSpec::include(trimmed.to_string()),
+                DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(trimmed.to_string()),
+            };
+            rule.apply_dir_merge_overrides(options);
+            destination.push(rule);
+            continue;
+        }
+
+        process_merge_directive(trimmed, options, base_dir, display, destination, visited)?;
+    }
+
+    Ok(())
+}
+
+fn process_merge_directive(
+    directive: &str,
+    options: &DirMergeOptions,
+    base_dir: &Path,
+    display: &str,
+    destination: &mut Vec<FilterRuleSpec>,
+    visited: &mut Vec<PathBuf>,
+) -> Result<(), Message> {
+    match parse_filter_directive(OsStr::new(directive)) {
+        Ok(FilterDirective::Rule(mut rule)) => {
+            rule.apply_dir_merge_overrides(options);
+            destination.push(rule);
+        }
+        Ok(FilterDirective::Merge {
+            source,
+            options: nested,
+        }) => {
+            apply_merge_directive(source, base_dir, nested, destination, visited).map_err(
+                |error| {
+                    let detail = error.to_string();
+                    rsync_error!(
+                        1,
+                        format!("failed to process merge file '{display}': {detail}")
+                    )
+                    .with_role(Role::Client)
+                },
+            )?;
+        }
+        Ok(FilterDirective::Clear) => destination.clear(),
+        Err(error) => {
+            let detail = error.to_string();
+            let message = rsync_error!(
+                1,
+                format!(
+                    "failed to parse filter rule '{}' from merge file '{}': {}",
+                    directive, display, detail
+                )
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_directive_requires_argument(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "merge" | "include" | "exclude" | "show" | "hide" | "protect"
+    ) || keyword.starts_with("dir-merge")
 }
 
 fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, Message> {
@@ -6889,10 +7183,34 @@ mod tests {
     fn parse_filter_directive_accepts_merge() {
         let directive =
             parse_filter_directive(OsStr::new("merge filters.txt")).expect("merge directive");
-        assert_eq!(
-            directive,
-            FilterDirective::Merge(OsString::from("filters.txt"))
-        );
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from("filters.txt"));
+        assert_eq!(options.enforced_kind(), None);
+        assert!(options.inherit_rules());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_with_remove_modifier() {
+        let directive = parse_filter_directive(OsStr::new("merge,- filters.txt"))
+            .expect("merge with '-' parses");
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from("filters.txt"));
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_with_include_modifier() {
+        let directive = parse_filter_directive(OsStr::new("merge,+ filters.txt"))
+            .expect("merge with '+' parses");
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from("filters.txt"));
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
     }
 
     #[test]
@@ -6904,11 +7222,66 @@ mod tests {
     }
 
     #[test]
-    fn parse_filter_directive_rejects_merge_with_modifiers() {
-        let error = parse_filter_directive(OsStr::new("merge,- filters"))
-            .expect_err("unsupported modifiers should error");
+    fn parse_filter_directive_accepts_merge_cvs_modifier_without_path() {
+        let directive =
+            parse_filter_directive(OsStr::new("merge,C")).expect("merge with 'C' modifier parses");
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from(".cvsignore"));
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+        assert!(options.uses_whitespace());
+        assert!(options.list_clear_allowed());
+        assert!(!options.allows_comments());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_exclude_modifier() {
+        let directive = parse_filter_directive(OsStr::new("merge,e local.rules"))
+            .expect("merge with 'e' parses");
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from("local.rules"));
+        assert!(options.excludes_self());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_sender_and_receiver_modifiers() {
+        let directive =
+            parse_filter_directive(OsStr::new("merge,s rules")).expect("merge with 's' parses");
+        let FilterDirective::Merge { source, options } = directive else {
+            panic!("expected merge directive");
+        };
+        assert_eq!(source, OsString::from("rules"));
+        assert!(options.applies_to_sender());
+        assert!(!options.applies_to_receiver());
+
+        let directive =
+            parse_filter_directive(OsStr::new("merge,r rules")).expect("merge with 'r' parses");
+        let FilterDirective::Merge { options, .. } = directive else {
+            panic!("expected merge directive");
+        };
+        assert!(!options.applies_to_sender());
+        assert!(options.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_anchor_modifier() {
+        let directive =
+            parse_filter_directive(OsStr::new("merge,/ rules")).expect("merge with '/' parses");
+        let FilterDirective::Merge { options, .. } = directive else {
+            panic!("expected merge directive");
+        };
+        assert!(options.anchor_root_enabled());
+    }
+
+    #[test]
+    fn parse_filter_directive_rejects_merge_with_conflicting_modifiers() {
+        let error = parse_filter_directive(OsStr::new("merge,+- filters"))
+            .expect_err("conflicting modifiers should error");
         let rendered = error.to_string();
-        assert!(rendered.contains("unsupported modifiers"));
+        assert!(rendered.contains("mixes '+' and '-' modifiers"));
     }
 
     #[test]
@@ -7508,6 +7881,7 @@ mod tests {
         super::apply_merge_directive(
             OsString::from("outer.rules"),
             temp.path(),
+            DirMergeOptions::default(),
             &mut rules,
             &mut visited,
         )
@@ -7519,6 +7893,99 @@ mod tests {
             .map(|rule| rule.pattern().to_string())
             .collect();
         assert_eq!(patterns, vec!["outer", "child", "grand"]);
+    }
+
+    #[test]
+    fn apply_merge_directive_honours_merge_overrides() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("filters.rules");
+        std::fs::write(&file, b"pattern\n").expect("write merge file");
+
+        let mut rules = Vec::new();
+        let mut visited = Vec::new();
+        let options = DirMergeOptions::default()
+            .with_enforced_kind(Some(DirMergeEnforcedKind::Include))
+            .sender_modifier()
+            .anchor_root(true);
+
+        super::apply_merge_directive(
+            OsString::from("filters.rules"),
+            temp.path(),
+            options,
+            &mut rules,
+            &mut visited,
+        )
+        .expect("merge succeeds");
+
+        assert!(visited.is_empty());
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        assert_eq!(rule.pattern(), "/pattern");
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn apply_merge_directive_whitespace_parser_handles_list_clear() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("filters.rules");
+        std::fs::write(&file, b"foo ! bar baz").expect("write merge file");
+
+        let mut rules = Vec::new();
+        let mut visited = Vec::new();
+        let options = DirMergeOptions::default()
+            .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+            .use_whitespace()
+            .allow_list_clearing(true);
+
+        super::apply_merge_directive(
+            OsString::from("filters.rules"),
+            temp.path(),
+            options,
+            &mut rules,
+            &mut visited,
+        )
+        .expect("merge succeeds");
+
+        let patterns: Vec<_> = rules
+            .iter()
+            .map(|rule| rule.pattern().to_string())
+            .collect();
+        assert_eq!(patterns, vec!["bar", "baz"]);
+    }
+
+    #[test]
+    fn apply_merge_directive_rejects_unexpected_list_clear() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let file = temp.path().join("filters.rules");
+        std::fs::write(&file, b"foo ! bar").expect("write merge file");
+
+        let mut rules = Vec::new();
+        let mut visited = Vec::new();
+        let options = DirMergeOptions::default()
+            .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+            .use_whitespace();
+
+        let error = super::apply_merge_directive(
+            OsString::from("filters.rules"),
+            temp.path(),
+            options,
+            &mut rules,
+            &mut visited,
+        )
+        .expect_err("list clear should error");
+
+        assert!(
+            error
+                .to_string()
+                .contains("list-clearing '!' is not permitted")
+        );
     }
 
     #[test]
