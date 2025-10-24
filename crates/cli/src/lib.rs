@@ -169,6 +169,7 @@ const HELP_TEXT: &str = concat!(
     "      --stats      Output transfer statistics after completion.\n",
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
+    "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
     "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
@@ -208,7 +209,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -790,6 +791,7 @@ struct ParsedArgs {
     name_overridden: bool,
     stats: bool,
     partial: bool,
+    partial_dir: Option<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
     msgs_to_stderr: bool,
@@ -1079,6 +1081,14 @@ fn clap_command() -> ClapCommand {
                 .help("Discard partially transferred files on error.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("partial"),
+        )
+        .arg(
+            Arg::new("partial-dir")
+                .long("partial-dir")
+                .value_name("DIR")
+                .help("Store partially transferred files in DIR.")
+                .value_parser(OsStringValueParser::new())
+                .overrides_with("no-partial"),
         )
         .arg(
             Arg::new("whole-file")
@@ -1620,11 +1630,18 @@ where
     };
     let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
+    let mut partial_dir = matches
+        .get_one::<OsString>("partial-dir")
+        .map(|value| PathBuf::from(value));
+    if partial_dir.is_some() {
+        partial = true;
+    }
     if no_progress_flag {
         progress_setting = ProgressSetting::Disabled;
     }
     if matches.get_flag("no-partial") {
         partial = false;
+        partial_dir = None;
     }
     if matches.get_count("partial-progress") > 0 {
         partial = true;
@@ -1733,6 +1750,7 @@ where
         name_overridden,
         stats,
         partial,
+        partial_dir,
         remove_source_files,
         inplace,
         msgs_to_stderr,
@@ -1959,6 +1977,7 @@ where
         name_overridden: initial_name_overridden,
         stats,
         partial,
+        partial_dir,
         remove_source_files,
         inplace,
         msgs_to_stderr,
@@ -2313,6 +2332,7 @@ where
             progress: progress_mode.is_some(),
             stats,
             partial,
+            partial_dir: partial_dir.clone(),
             remove_source_files,
             inplace,
             msgs_to_stderr,
@@ -2424,6 +2444,7 @@ where
         .progress(progress_mode.is_some())
         .stats(stats)
         .partial(partial)
+        .partial_directory(partial_dir.clone())
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
         .whole_file(whole_file_option.unwrap_or(true))
@@ -6098,6 +6119,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_partial_dir_and_enables_partial() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--partial-dir=.rsync-partial"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.partial);
+        assert_eq!(
+            parsed.partial_dir.as_deref(),
+            Some(Path::new(".rsync-partial"))
+        );
+    }
+
+    #[test]
+    fn parse_args_allows_no_partial_to_clear_partial_dir() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--partial-dir=.rsync-partial"),
+            OsString::from("--no-partial"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.partial);
+        assert!(parsed.partial_dir.is_none());
+    }
+
+    #[test]
     fn parse_args_recognises_devices_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -8669,6 +8722,56 @@ exit 0
 
         let copied = std::fs::read(&files_copy_path).expect("read copied file list");
         assert_eq!(copied, b"alpha\nbeta\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_partial_dir_argument() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let partial_dir = temp.path().join("partials");
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!(
+                "--partial-dir={}",
+                partial_dir.display()
+            )),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--partial"));
+        assert!(recorded.lines().any(|line| line == "--partial-dir"));
+        assert!(recorded
+            .lines()
+            .any(|line| line == partial_dir.display().to_string()));
+
+        // Ensure destination operand still forwarded correctly alongside partial dir args.
+        assert!(recorded
+            .lines()
+            .any(|line| line == dest_path.display().to_string()));
     }
 
     #[cfg(unix)]

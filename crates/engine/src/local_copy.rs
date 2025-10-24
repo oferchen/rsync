@@ -1393,6 +1393,7 @@ pub struct LocalCopyOptions {
     ignore_existing: bool,
     update: bool,
     partial: bool,
+    partial_dir: Option<PathBuf>,
     inplace: bool,
     collect_events: bool,
     relative_paths: bool,
@@ -1436,6 +1437,7 @@ impl LocalCopyOptions {
             ignore_existing: false,
             update: false,
             partial: false,
+            partial_dir: None,
             inplace: false,
             collect_events: false,
             relative_paths: false,
@@ -1721,6 +1723,17 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Selects the directory used to retain partial files when transfers fail.
+    #[must_use]
+    #[doc(alias = "--partial-dir")]
+    pub fn partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.partial_dir = directory.map(Into::into);
+        if self.partial_dir.is_some() {
+            self.partial = true;
+        }
+        self
+    }
+
     /// Requests in-place destination updates.
     #[must_use]
     #[doc(alias = "--inplace")]
@@ -1999,7 +2012,13 @@ impl LocalCopyOptions {
     /// Reports whether partial transfer handling has been requested.
     #[must_use]
     pub const fn partial_enabled(&self) -> bool {
-        self.partial
+        self.partial || self.partial_dir.is_some()
+    }
+
+    /// Returns the configured partial directory when present.
+    #[must_use]
+    pub fn partial_directory(&self) -> Option<&Path> {
+        self.partial_dir.as_deref()
     }
 
     /// Reports whether in-place destination updates have been requested.
@@ -2615,6 +2634,10 @@ impl<'a> CopyContext<'a> {
 
     fn partial_enabled(&self) -> bool {
         self.options.partial_enabled()
+    }
+
+    fn partial_directory(&self) -> Option<&Path> {
+        self.options.partial_directory()
     }
 
     fn inplace_enabled(&self) -> bool {
@@ -4984,7 +5007,11 @@ fn copy_file(
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
     } else {
-        let (new_guard, file) = DestinationWriteGuard::new(destination, partial_enabled)?;
+        let (new_guard, file) = DestinationWriteGuard::new(
+            destination,
+            partial_enabled,
+            context.partial_directory(),
+        )?;
         guard = Some(new_guard);
         file
     };
@@ -5086,6 +5113,26 @@ fn partial_destination_path(destination: &Path) -> PathBuf {
     destination.with_file_name(partial_name)
 }
 
+fn partial_directory_destination_path(
+    destination: &Path,
+    partial_dir: &Path,
+) -> Result<PathBuf, LocalCopyError> {
+    let base_dir = if partial_dir.is_absolute() {
+        partial_dir.to_path_buf()
+    } else {
+        let parent = destination.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        parent.join(partial_dir)
+    };
+    fs::create_dir_all(&base_dir).map_err(|error| {
+        LocalCopyError::io("create partial directory", base_dir.clone(), error)
+    })?;
+    let file_name = destination
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| OsStr::new("partial").to_os_string());
+    Ok(base_dir.join(file_name))
+}
+
 fn temporary_destination_path(destination: &Path, unique: usize) -> PathBuf {
     let file_name = destination
         .file_name()
@@ -5103,9 +5150,17 @@ struct DestinationWriteGuard {
 }
 
 impl DestinationWriteGuard {
-    fn new(destination: &Path, partial: bool) -> Result<(Self, fs::File), LocalCopyError> {
+    fn new(
+        destination: &Path,
+        partial: bool,
+        partial_dir: Option<&Path>,
+    ) -> Result<(Self, fs::File), LocalCopyError> {
         if partial {
-            let temp_path = partial_destination_path(destination);
+            let temp_path = if let Some(dir) = partial_dir {
+                partial_directory_destination_path(destination, dir)?
+            } else {
+                partial_destination_path(destination)
+            };
             if let Err(error) = fs::remove_file(&temp_path) {
                 if error.kind() != io::ErrorKind::NotFound {
                     return Err(LocalCopyError::io(
@@ -5174,6 +5229,14 @@ impl DestinationWriteGuard {
                 })?;
                 fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
                     LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), rename_error)
+                })?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                fs::copy(&self.temp_path, &self.final_path).map_err(|copy_error| {
+                    LocalCopyError::io(self.finalise_action(), self.final_path.clone(), copy_error)
+                })?;
+                fs::remove_file(&self.temp_path).map_err(|remove_error| {
+                    LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), remove_error)
                 })?;
             }
             Err(error) => {
@@ -8441,5 +8504,53 @@ mod tests {
         let target_root = dest.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert_eq!(summary.items_deleted(), 0);
+    }
+
+    #[test]
+    fn destination_write_guard_uses_custom_partial_directory() {
+        let temp = tempdir().expect("tempdir");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&destination_dir).expect("dest dir");
+        let destination = destination_dir.join("file.txt");
+        let partial_dir = Path::new(".custom-partial");
+
+        let (guard, mut file) =
+            DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir))
+                .expect("guard");
+        let temp_path = guard.temp_path.clone();
+        file.write_all(b"partial payload").expect("write partial");
+        drop(file);
+
+        drop(guard);
+
+        let expected_base = destination_dir.join(partial_dir);
+        assert!(temp_path.starts_with(&expected_base));
+        assert!(temp_path.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn destination_write_guard_commit_moves_from_partial_directory() {
+        let temp = tempdir().expect("tempdir");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&destination_dir).expect("dest dir");
+        let destination = destination_dir.join("file.txt");
+        let partial_dir = temp.path().join("partials");
+
+        let (guard, mut file) = DestinationWriteGuard::new(
+            destination.as_path(),
+            true,
+            Some(partial_dir.as_path()),
+        )
+        .expect("guard");
+        let temp_path = guard.temp_path.clone();
+        file.write_all(b"committed payload").expect("write payload");
+        drop(file);
+
+        guard.commit().expect("commit succeeds");
+
+        assert!(!temp_path.exists());
+        let committed = fs::read(&destination).expect("read committed file");
+        assert_eq!(committed, b"committed payload");
     }
 }

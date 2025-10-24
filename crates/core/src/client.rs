@@ -320,6 +320,7 @@ pub struct ClientConfig {
     progress: bool,
     stats: bool,
     partial: bool,
+    partial_dir: Option<PathBuf>,
     inplace: bool,
     force_event_collection: bool,
     preserve_devices: bool,
@@ -365,6 +366,7 @@ impl Default for ClientConfig {
             progress: false,
             stats: false,
             partial: false,
+            partial_dir: None,
             inplace: false,
             force_event_collection: false,
             preserve_devices: false,
@@ -683,6 +685,13 @@ impl ClientConfig {
         self.partial
     }
 
+    /// Returns the optional directory used to store partial files.
+    #[must_use]
+    #[doc(alias = "--partial-dir")]
+    pub fn partial_directory(&self) -> Option<&Path> {
+        self.partial_dir.as_deref()
+    }
+
     /// Reports whether destination updates should be performed in place.
     #[must_use]
     #[doc(alias = "--inplace")]
@@ -736,6 +745,7 @@ pub struct ClientConfigBuilder {
     progress: bool,
     stats: bool,
     partial: bool,
+    partial_dir: Option<PathBuf>,
     inplace: bool,
     force_event_collection: bool,
     preserve_devices: bool,
@@ -1099,6 +1109,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the directory used to store partial files when transfers fail.
+    #[must_use]
+    #[doc(alias = "--partial-dir")]
+    pub fn partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.partial_dir = directory.map(Into::into);
+        if self.partial_dir.is_some() {
+            self.partial = true;
+        }
+        self
+    }
+
     /// Enables or disables in-place updates for destination files.
     #[must_use]
     #[doc(alias = "--inplace")]
@@ -1184,6 +1205,7 @@ impl ClientConfigBuilder {
             progress: self.progress,
             stats: self.stats,
             partial: self.partial,
+            partial_dir: self.partial_dir,
             inplace: self.inplace,
             force_event_collection: self.force_event_collection,
             preserve_devices: self.preserve_devices,
@@ -1709,6 +1731,8 @@ pub struct RemoteFallbackArgs {
     pub stats: bool,
     /// Enables `--partial`.
     pub partial: bool,
+    /// Optional directory forwarded via `--partial-dir`.
+    pub partial_dir: Option<PathBuf>,
     /// Enables `--remove-source-files`.
     pub remove_source_files: bool,
     /// Optional `--inplace`/`--no-inplace` toggle.
@@ -1851,6 +1875,7 @@ where
         progress,
         stats,
         partial,
+        partial_dir,
         remove_source_files,
         inplace,
         msgs_to_stderr,
@@ -1985,6 +2010,10 @@ where
     }
     if partial {
         command_args.push(OsString::from("--partial"));
+    }
+    if let Some(dir) = partial_dir {
+        command_args.push(OsString::from("--partial-dir"));
+        command_args.push(dir.into_os_string());
     }
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
@@ -2910,7 +2939,8 @@ where
             .relative_paths(config.relative_paths())
             .implied_dirs(config.implied_dirs())
             .inplace(config.inplace())
-            .partial(config.partial());
+            .partial(config.partial())
+            .partial_directory(config.partial_directory().map(|path| path.to_path_buf()));
         #[cfg(feature = "acl")]
         let options = options.acls(config.preserve_acls());
         #[cfg(feature = "xattr")]
@@ -3068,6 +3098,7 @@ exit 42
             progress: false,
             stats: false,
             partial: false,
+            partial_dir: None,
             remove_source_files: false,
             inplace: None,
             msgs_to_stderr: false,
@@ -3705,6 +3736,42 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_partial_dir_argument() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.partial = true;
+        args.partial_dir = Some(PathBuf::from(".rsync-partial"));
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--partial"));
+        assert!(captured.lines().any(|line| line == "--partial-dir"));
+        assert!(captured.lines().any(|line| line == ".rsync-partial"));
     }
 
     #[cfg(unix)]
