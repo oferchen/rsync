@@ -4202,6 +4202,50 @@ exit 42
     }
 
     #[test]
+    fn module_list_request_decodes_percent_encoded_host() {
+        let operands = vec![OsString::from("rsync://example%2Ecom/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "example.com");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_supports_ipv6_zone_identifier() {
+        let operands = vec![OsString::from("rsync://[fe80::1%25eth0]/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_supports_raw_ipv6_zone_identifier() {
+        let operands = vec![OsString::from("[fe80::1%eth0]::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
+    fn module_list_request_rejects_truncated_percent_encoding() {
+        let operands = vec![OsString::from("rsync://example%2/")];
+        let error = ModuleListRequest::from_operands(&operands)
+            .expect_err("truncated percent encoding should fail");
+        assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("invalid percent-encoding in daemon host")
+        );
+    }
+
+    #[test]
     fn daemon_address_trims_host_whitespace() {
         let address =
             DaemonAddress::new("  example.com  ".to_string(), 873).expect("address trims host");
@@ -5114,14 +5158,16 @@ fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
         let port = port
             .parse::<u16>()
             .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
-        let address = DaemonAddress::new(host.to_string(), port)?;
+        let host = decode_host_component(host)?;
+        let address = DaemonAddress::new(host, port)?;
         return Ok(ParsedDaemonTarget {
             address,
             username: username.map(|value| value.to_owned()),
         });
     }
 
-    let address = DaemonAddress::new(input.to_string(), DEFAULT_PORT)?;
+    let host = decode_host_component(input)?;
+    let address = DaemonAddress::new(host, DEFAULT_PORT)?;
     Ok(ParsedDaemonTarget {
         address,
         username: username.map(|value| value.to_owned()),
@@ -5201,8 +5247,10 @@ fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), 
         )
     })?;
 
+    let decoded = decode_host_component(addr)?;
+
     if remainder.is_empty() {
-        return Ok((addr.to_string(), default_port));
+        return Ok((decoded, default_port));
     }
 
     let port = remainder
@@ -5216,7 +5264,60 @@ fn parse_bracketed_host(host: &str, default_port: u16) -> Result<(String, u16), 
         .parse::<u16>()
         .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
 
-    Ok((addr.to_string(), port))
+    Ok((decoded, port))
+}
+
+fn decode_host_component(input: &str) -> Result<String, ClientError> {
+    if !input.contains('%') {
+        return Ok(input.to_string());
+    }
+
+    let mut decoded = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(invalid_percent_encoding_error());
+            }
+
+            let hi = hex_value(bytes[index + 1]);
+            let lo = hex_value(bytes[index + 2]);
+
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                decoded.push((hi << 4) | lo);
+                index += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).map_err(|_| {
+        daemon_error(
+            "daemon host contains invalid UTF-8 after percent-decoding",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(10 + byte - b'a'),
+        b'A'..=b'F' => Some(10 + byte - b'A'),
+        _ => None,
+    }
+}
+
+fn invalid_percent_encoding_error() -> ClientError {
+    daemon_error(
+        "invalid percent-encoding in daemon host",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
 }
 
 fn split_host_port(input: &str) -> Option<(&str, &str)> {
