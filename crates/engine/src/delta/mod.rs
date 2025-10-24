@@ -68,8 +68,23 @@
 //!
 //! - [`crate::local_copy`] will integrate these helpers as the delta-transfer
 //!   pipeline evolves.
+//! - [`crate::delta::generator::DeltaGenerator`] exposes the delta-token
+//!   generator that complements the layout helpers.
+//! - [`crate::delta::script::apply_delta`] applies delta streams to recreate
+//!   target payloads.
 //! - Upstream `generator.c::sum_sizes_sqroot()` for the reference C
 //!   implementation this module mirrors.
+
+/// Delta-token generation pipeline.
+pub mod generator;
+/// Signature index used by the delta engine for fast lookups.
+pub mod index;
+/// Delta script representation and application helpers.
+pub mod script;
+
+pub use generator::{DeltaGenerator, generate_delta};
+pub use index::DeltaSignatureIndex;
+pub use script::{DeltaScript, DeltaToken, apply_delta};
 
 use core::fmt;
 use core::num::{NonZeroU8, NonZeroU32};
@@ -160,65 +175,68 @@ impl SignatureLayout {
         self.remainder
     }
 
-    /// Returns the number of blocks required to describe the file.
+    /// Returns the number of blocks in the layout.
     #[must_use]
     pub const fn block_count(self) -> u64 {
         self.block_count
     }
 
-    /// Returns the length of the strong checksum in bytes.
+    /// Returns the strong checksum length in bytes.
     #[must_use]
     pub const fn strong_sum_length(self) -> NonZeroU8 {
         self.strong_sum_length
     }
 }
 
-/// Errors returned when computing a signature layout fails.
+/// Errors produced when calculating signature layouts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SignatureLayoutError {
-    /// The supplied file length exceeded the range representable by upstream rsync.
-    FileLengthOverflow(u64),
-    /// The resulting block count exceeded the range supported by upstream rsync.
+    /// File length exceeded [`i64::MAX`], which upstream rsync rejects.
+    FileTooLarge {
+        /// Length in bytes of the file being processed.
+        length: u64,
+    },
+    /// Number of blocks exceeded [`i32::MAX`].
     BlockCountOverflow {
         /// Block length that triggered the overflow.
         block_length: u32,
-        /// Number of blocks required for the file, exceeding [`i32::MAX`].
-        block_count: u64,
+        /// Block count produced by the sizing heuristic.
+        blocks: u64,
     },
 }
 
 impl fmt::Display for SignatureLayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FileLengthOverflow(len) => write!(
-                f,
-                "file length {} exceeds the supported range for signature generation",
-                len
-            ),
-            Self::BlockCountOverflow {
+            SignatureLayoutError::FileTooLarge { length } => {
+                write!(f, "file length {length} exceeds i64::MAX")
+            }
+            SignatureLayoutError::BlockCountOverflow {
                 block_length,
-                block_count,
-            } => write!(
-                f,
-                "block count {} derived from block length {} exceeds i32::MAX",
-                block_count, block_length
-            ),
+                blocks,
+            } => {
+                write!(
+                    f,
+                    "block count {blocks} derived from block length {block_length} exceeds i32::MAX"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for SignatureLayoutError {}
 
-/// Calculates the signature layout for a file using upstream rsync's heuristics.
+/// Calculates the signature layout for a file using rsync's heuristics.
 #[doc(alias = "--block-size")]
 #[doc(alias = "sum_sizes_sqroot")]
+#[allow(clippy::cast_possible_truncation)]
 pub fn calculate_signature_layout(
     params: SignatureLayoutParams,
 ) -> Result<SignatureLayout, SignatureLayoutError> {
     if params.file_length() > i64::MAX as u64 {
-        return Err(SignatureLayoutError::FileLengthOverflow(
-            params.file_length(),
-        ));
+        return Err(SignatureLayoutError::FileTooLarge {
+            length: params.file_length(),
+        });
     }
 
     let mut block_length = match params.forced_block_length() {
@@ -226,22 +244,21 @@ pub fn calculate_signature_layout(
         None => derive_block_length(params.file_length(), params.protocol()),
     };
 
-    let max_block_length = if params.protocol().as_u8() < 30 {
+    let max_block = if params.protocol().as_u8() < 30 {
         OLD_MAX_BLOCK_SIZE
     } else {
         MAX_BLOCK_SIZE
     };
 
-    if block_length > max_block_length {
-        block_length = max_block_length;
+    if block_length > max_block {
+        block_length = max_block;
     }
 
-    // Safety: block_length is clamped to be at least BLOCK_SIZE and therefore non-zero.
-    let block_length_nz = NonZeroU32::new(block_length).expect("block length must be non-zero");
+    let block_length_non_zero =
+        NonZeroU32::new(block_length).expect("block length must be non-zero after clamping");
 
-    let block_length_u64 = u64::from(block_length);
-    let remainder = (params.file_length() % block_length_u64) as u32;
-    let mut block_count = params.file_length() / block_length_u64;
+    let mut block_count = params.file_length() / u64::from(block_length);
+    let remainder = (params.file_length() % u64::from(block_length)) as u32;
     if remainder != 0 {
         block_count = block_count.saturating_add(1);
     }
@@ -249,7 +266,7 @@ pub fn calculate_signature_layout(
     if block_count > i32::MAX as u64 {
         return Err(SignatureLayoutError::BlockCountOverflow {
             block_length,
-            block_count,
+            blocks: block_count,
         });
     }
 
@@ -261,7 +278,7 @@ pub fn calculate_signature_layout(
     );
 
     Ok(SignatureLayout {
-        block_length: block_length_nz,
+        block_length: block_length_non_zero,
         remainder,
         block_count,
         strong_sum_length,
@@ -436,6 +453,6 @@ mod tests {
     fn file_length_overflow_is_reported() {
         let params = params(u64::MAX, None, 32, 16);
         let error = calculate_signature_layout(params).expect_err("overflow");
-        assert!(matches!(error, SignatureLayoutError::FileLengthOverflow(_)));
+        assert!(matches!(error, SignatureLayoutError::FileTooLarge { .. }));
     }
 }
