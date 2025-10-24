@@ -2281,7 +2281,6 @@ where
             include_from: include_from.clone(),
             filters: filters.clone(),
             info_flags: fallback_info_flags,
-            info_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
