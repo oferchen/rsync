@@ -1803,7 +1803,8 @@ where
         match delete_mode {
             DeleteMode::Before => command_args.push(OsString::from("--delete-before")),
             DeleteMode::After => command_args.push(OsString::from("--delete-after")),
-            DeleteMode::During | DeleteMode::Disabled => {}
+            DeleteMode::During => command_args.push(OsString::from("--delete-during")),
+            DeleteMode::Disabled => {}
         }
     }
     if delete_excluded {
