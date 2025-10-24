@@ -8043,6 +8043,7 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--delete"));
+        assert!(args.contains(&"--delete-during"));
         assert!(!args.contains(&"--delete-before"));
         assert!(!args.contains(&"--delete-after"));
     }
