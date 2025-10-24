@@ -81,6 +81,7 @@
 //! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
 use std::collections::HashMap;
+use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -94,7 +95,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{env, error::Error};
 
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
@@ -5081,6 +5082,94 @@ exit 42
     }
 
     #[test]
+    fn run_module_list_via_proxy_connects_through_tunnel() {
+        let responses = vec!["@RSYNCD: OK\n", "theta\n", "@RSYNCD: EXIT\n"];
+        let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
+        let (proxy_addr, request_rx, proxy_handle) = spawn_stub_proxy(daemon_addr, None);
+
+        let _env_lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set(
+            "RSYNC_PROXY",
+            &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
+        );
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
+                .expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "theta");
+
+        let captured = request_rx.recv().expect("proxy request");
+        assert!(
+            captured
+                .lines()
+                .next()
+                .is_some_and(|line| line.starts_with("CONNECT "))
+        );
+
+        proxy_handle.join().expect("proxy thread");
+        daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn run_module_list_via_proxy_includes_auth_header() {
+        let responses = vec!["@RSYNCD: OK\n", "iota\n", "@RSYNCD: EXIT\n"];
+        let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
+        let expected_header = "Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=";
+        let (proxy_addr, request_rx, proxy_handle) =
+            spawn_stub_proxy(daemon_addr, Some(expected_header));
+
+        let _env_lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set(
+            "RSYNC_PROXY",
+            &format!("user:secret@{}:{}", proxy_addr.ip(), proxy_addr.port()),
+        );
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
+                .expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "iota");
+
+        let captured = request_rx.recv().expect("proxy request");
+        assert!(captured.contains(expected_header));
+
+        proxy_handle.join().expect("proxy thread");
+        daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_invalid_proxy_configuration() {
+        let _env_lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_PROXY", "invalid-proxy");
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(String::from("localhost"), 873).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let error = run_module_list(request).expect_err("invalid proxy should fail");
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY must be in HOST:PORT form")
+        );
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -5447,6 +5536,95 @@ exit 42
         assert!(rendered.contains("host rules"));
 
         handle.join().expect("server thread");
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                #[allow(unsafe_code)]
+                unsafe {
+                    env::set_var(self.key, value);
+                }
+            } else {
+                #[allow(unsafe_code)]
+                unsafe {
+                    env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    fn spawn_stub_proxy(
+        target: std::net::SocketAddr,
+        expected_header: Option<&'static str>,
+    ) -> (
+        std::net::SocketAddr,
+        mpsc::Receiver<String>,
+        thread::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy");
+        let addr = listener.local_addr().expect("proxy addr");
+        let (tx, rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream);
+                let mut captured = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).expect("read request line") == 0 {
+                        break;
+                    }
+                    captured.push_str(&line);
+                    if line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                }
+
+                if let Some(expected) = expected_header {
+                    assert!(captured.contains(expected), "missing proxy header");
+                }
+
+                tx.send(captured).expect("send captured request");
+
+                let mut client_stream = reader.into_inner();
+                let mut server_stream = TcpStream::connect(target).expect("connect daemon");
+                client_stream
+                    .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                    .expect("write proxy response");
+
+                let mut client_clone = client_stream.try_clone().expect("clone client");
+                let mut server_clone = server_stream.try_clone().expect("clone server");
+
+                let forward = thread::spawn(move || {
+                    let _ = io::copy(&mut client_clone, &mut server_stream);
+                });
+                let backward = thread::spawn(move || {
+                    let _ = io::copy(&mut server_clone, &mut client_stream);
+                });
+
+                let _ = forward.join();
+                let _ = backward.join();
+            }
+        });
+
+        (addr, rx, handle)
     }
 
     fn spawn_stub_daemon(
@@ -6167,8 +6345,307 @@ impl ModuleListEntry {
 }
 
 /// Performs a daemon module listing by connecting to the supplied address.
+///
+/// The helper honours the `RSYNC_PROXY` environment variable, establishing an
+/// HTTP `CONNECT` tunnel through the specified proxy before negotiating with
+/// the daemon when the variable is set. This mirrors the behaviour of
+/// upstream rsync.
 pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientError> {
     run_module_list_with_options(request, ModuleListOptions::default())
+}
+
+fn open_daemon_stream(
+    addr: &DaemonAddress,
+    timeout: Option<Duration>,
+) -> Result<TcpStream, ClientError> {
+    match load_daemon_proxy()? {
+        Some(proxy) => connect_via_proxy(addr, &proxy, timeout),
+        None => connect_direct(addr, timeout),
+    }
+}
+
+fn connect_direct(
+    addr: &DaemonAddress,
+    timeout: Option<Duration>,
+) -> Result<TcpStream, ClientError> {
+    let stream = TcpStream::connect((addr.host.as_str(), addr.port))
+        .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
+
+    if let Some(duration) = timeout {
+        stream
+            .set_read_timeout(Some(duration))
+            .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+        stream
+            .set_write_timeout(Some(duration))
+            .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+    }
+
+    Ok(stream)
+}
+
+fn connect_via_proxy(
+    addr: &DaemonAddress,
+    proxy: &ProxyConfig,
+    timeout: Option<Duration>,
+) -> Result<TcpStream, ClientError> {
+    let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
+        .map_err(|error| socket_error("connect to", proxy.display(), error))?;
+
+    if let Some(duration) = timeout {
+        stream
+            .set_read_timeout(Some(duration))
+            .map_err(|error| socket_error("configure", proxy.display(), error))?;
+        stream
+            .set_write_timeout(Some(duration))
+            .map_err(|error| socket_error("configure", proxy.display(), error))?;
+    }
+
+    establish_proxy_tunnel(&mut stream, addr, proxy)?;
+
+    Ok(stream)
+}
+
+fn establish_proxy_tunnel(
+    stream: &mut TcpStream,
+    addr: &DaemonAddress,
+    proxy: &ProxyConfig,
+) -> Result<(), ClientError> {
+    let mut request = String::new();
+    request.push_str("CONNECT ");
+    request.push_str(addr.host());
+    request.push(':');
+    request.push_str(&addr.port().to_string());
+    request.push_str(" HTTP/1.0\r\n");
+
+    if let Some(header) = proxy.authorization_header() {
+        request.push_str("Proxy-Authorization: Basic ");
+        request.push_str(&header);
+        request.push_str("\r\n");
+    }
+
+    request.push_str("\r\n");
+
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| socket_error("write to", proxy.display(), error))?;
+    stream
+        .flush()
+        .map_err(|error| socket_error("flush", proxy.display(), error))?;
+
+    let mut line = Vec::with_capacity(128);
+    read_proxy_line(stream, &mut line, proxy.display())?;
+    let status = String::from_utf8(line.clone())
+        .map_err(|_| proxy_response_error("proxy status line contained invalid UTF-8"))?;
+    line.clear();
+
+    if !status.starts_with("HTTP/") {
+        return Err(proxy_response_error(format!(
+            "proxy response did not start with HTTP/: {status}"
+        )));
+    }
+
+    let mut parts = status.split_whitespace();
+    let _ = parts.next();
+    let code = parts.next().ok_or_else(|| {
+        proxy_response_error(format!("proxy response missing status code: {status}"))
+    })?;
+
+    if !code.starts_with('2') {
+        return Err(proxy_response_error(format!(
+            "proxy rejected CONNECT with status {status}"
+        )));
+    }
+
+    loop {
+        read_proxy_line(stream, &mut line, proxy.display())?;
+        if line.is_empty() {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+struct ProxyConfig {
+    host: String,
+    port: u16,
+    credentials: Option<ProxyCredentials>,
+}
+
+impl ProxyConfig {
+    fn display(&self) -> SocketAddrDisplay<'_> {
+        SocketAddrDisplay {
+            host: &self.host,
+            port: self.port,
+        }
+    }
+
+    fn authorization_header(&self) -> Option<String> {
+        self.credentials
+            .as_ref()
+            .map(ProxyCredentials::authorization_value)
+    }
+}
+
+struct ProxyCredentials {
+    username: String,
+    password: String,
+}
+
+impl ProxyCredentials {
+    fn new(username: String, password: String) -> Self {
+        Self { username, password }
+    }
+
+    fn authorization_value(&self) -> String {
+        let mut bytes = Vec::with_capacity(self.username.len() + self.password.len() + 1);
+        bytes.extend_from_slice(self.username.as_bytes());
+        bytes.push(b':');
+        bytes.extend_from_slice(self.password.as_bytes());
+        STANDARD.encode(bytes)
+    }
+}
+
+fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
+    match env::var("RSYNC_PROXY") {
+        Ok(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            parse_proxy_spec(trimmed).map(Some)
+        }
+        Err(VarError::NotPresent) => Ok(None),
+        Err(VarError::NotUnicode(_)) => Err(proxy_configuration_error(
+            "RSYNC_PROXY value must be valid UTF-8",
+        )),
+    }
+}
+
+fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return Err(proxy_configuration_error(
+            "RSYNC_PROXY must specify a proxy host",
+        ));
+    }
+
+    let (credentials, remainder) = if let Some(idx) = trimmed.rfind('@') {
+        let (userinfo, host_part) = trimmed.split_at(idx);
+        if userinfo.is_empty() {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY user information must be non-empty when '@' is present",
+            ));
+        }
+
+        let mut segments = userinfo.splitn(2, ':');
+        let username = segments.next().unwrap();
+        let password = segments.next().ok_or_else(|| {
+            proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
+        })?;
+
+        let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
+        (Some(credentials), &host_part[1..])
+    } else {
+        (None, trimmed)
+    };
+
+    let (host, port) = parse_proxy_host_port(remainder)?;
+
+    Ok(ProxyConfig {
+        host,
+        port,
+        credentials,
+    })
+}
+
+fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
+    if input.is_empty() {
+        return Err(proxy_configuration_error(
+            "RSYNC_PROXY must specify a proxy host and port",
+        ));
+    }
+
+    if let Some(rest) = input.strip_prefix('[') {
+        let (host, port) = parse_bracketed_host(rest, 0).map_err(|_| {
+            proxy_configuration_error("RSYNC_PROXY contains an invalid bracketed host")
+        })?;
+        if port == 0 {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY bracketed host must include a port",
+            ));
+        }
+        return Ok((host, port));
+    }
+
+    let idx = input
+        .rfind(':')
+        .ok_or_else(|| proxy_configuration_error("RSYNC_PROXY must be in HOST:PORT form"))?;
+    let host = &input[..idx];
+    let port_text = &input[idx + 1..];
+
+    if port_text.is_empty() {
+        return Err(proxy_configuration_error(
+            "RSYNC_PROXY must include a proxy port",
+        ));
+    }
+
+    let host = decode_host_component(host).map_err(|_| {
+        proxy_configuration_error("RSYNC_PROXY proxy host contains invalid percent-encoding")
+    })?;
+    let port = port_text
+        .parse::<u16>()
+        .map_err(|_| proxy_configuration_error("RSYNC_PROXY specified an invalid port"))?;
+
+    Ok((host, port))
+}
+
+fn proxy_configuration_error(text: impl Into<String>) -> ClientError {
+    let message = rsync_error!(SOCKET_IO_EXIT_CODE, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn proxy_response_error(text: impl Into<String>) -> ClientError {
+    let message =
+        rsync_error!(SOCKET_IO_EXIT_CODE, "proxy error: {}", text.into()).with_role(Role::Client);
+    ClientError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn read_proxy_line(
+    stream: &mut TcpStream,
+    buffer: &mut Vec<u8>,
+    proxy: SocketAddrDisplay<'_>,
+) -> Result<(), ClientError> {
+    buffer.clear();
+
+    loop {
+        let mut byte = [0u8; 1];
+        match stream.read(&mut byte) {
+            Ok(0) => {
+                return Err(proxy_response_error(
+                    "proxy closed the connection during CONNECT negotiation",
+                ));
+            }
+            Ok(_) => {
+                buffer.push(byte[0]);
+                if byte[0] == b'\n' {
+                    while matches!(buffer.last(), Some(b'\n' | b'\r')) {
+                        buffer.pop();
+                    }
+                    break;
+                }
+                if buffer.len() > 4096 {
+                    return Err(proxy_response_error(
+                        "proxy response line exceeded 4096 bytes",
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(socket_error("read from", proxy, error)),
+        }
+    }
+
+    Ok(())
 }
 
 /// Performs a daemon module listing using caller-provided options.
@@ -6219,15 +6696,8 @@ pub fn run_module_list_with_password_and_options(
     let mut auth_context: Option<DaemonAuthContext> = None;
     let suppress_motd = options.suppresses_motd();
 
-    let stream = TcpStream::connect((addr.host.as_str(), addr.port))
-        .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
     let effective_timeout = timeout.effective(DAEMON_SOCKET_TIMEOUT);
-    stream
-        .set_read_timeout(effective_timeout)
-        .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
-    stream
-        .set_write_timeout(effective_timeout)
-        .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+    let stream = open_daemon_stream(addr, effective_timeout)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
