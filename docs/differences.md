@@ -40,20 +40,21 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.
-- **Transfer engine and metadata pipeline incomplete**
+- **Transfer engine integration incomplete**
   - *Impact*: The `rsync_engine` crate provides deterministic local copies for
     regular files, directories, symbolic links, device nodes, FIFOs, extended
-    attributes, and (when the feature is enabled) POSIX ACLs. Delta-token
-    generation and application are now available via
+    attributes, and (when enabled) POSIX ACLs. Delta-token generation and
+    application are available via
     [`DeltaGenerator`](../crates/engine/src/delta/generator.rs) and
-    [`apply_delta`](../crates/engine/src/delta/script.rs), but compression and
-    remote orchestration remain unavailable. The client still spawns the system
-    `rsync` for network transfers because the freshly added delta pipeline has
-    not yet been integrated with protocol or transport layers.
+    [`apply_delta`](../crates/engine/src/delta/script.rs), and local copies honour
+    compression toggles for bandwidth limiting and statistics through
+    [`CountingZlibEncoder`](../crates/engine/src/local_copy.rs). The client still
+    spawns the system `rsync` for network transfers because the delta pipeline
+    has not yet been wired into the protocol and transport layers, and the
+    broader filter grammar remains a work in progress.
   - *Removal plan*: Wire the delta pipeline into the client/daemon transfer
-    flow, add compression and the remaining filter semantics, and validate the
-    combined behaviour via the parity harness before dropping the fallback
-    dependency.
+    flow, finish the remaining filter semantics, and validate the combined
+    behaviour via the parity harness before dropping the fallback dependency.
 - **Interop harness and packaging automation incomplete**
   - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix.
     Packaging metadata for `cargo-deb`/`cargo-rpm` now installs both binaries, a
