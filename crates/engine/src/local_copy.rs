@@ -2139,6 +2139,7 @@ pub struct LocalCopySummary {
     fifos_created: u64,
     items_deleted: u64,
     sources_removed: u64,
+    transferred_file_size: u64,
     bytes_copied: u64,
     compressed_bytes: u64,
     compression_used: bool,
@@ -2246,10 +2247,16 @@ impl LocalCopySummary {
         self.sources_removed
     }
 
-    /// Returns the aggregate number of bytes written for copied files.
+    /// Returns the aggregate number of literal bytes written for copied files.
     #[must_use]
     pub const fn bytes_copied(&self) -> u64 {
         self.bytes_copied
+    }
+
+    /// Returns the aggregate size of files that were rewritten or created.
+    #[must_use]
+    pub const fn transferred_file_size(&self) -> u64 {
+        self.transferred_file_size
     }
 
     /// Returns the aggregate number of compressed bytes that would be sent when compression is enabled.
@@ -2294,9 +2301,10 @@ impl LocalCopySummary {
         self.file_list_transfer
     }
 
-    fn record_file(&mut self, bytes: u64, compressed: Option<u64>) {
+    fn record_file(&mut self, file_size: u64, literal_bytes: u64, compressed: Option<u64>) {
         self.files_copied = self.files_copied.saturating_add(1);
-        self.bytes_copied = self.bytes_copied.saturating_add(bytes);
+        self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
+        self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
         if let Some(compressed_bytes) = compressed {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
@@ -2412,6 +2420,29 @@ struct CopyContext<'a> {
     timeout: Option<Duration>,
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FileCopyOutcome {
+    literal_bytes: u64,
+    compressed_bytes: Option<u64>,
+}
+
+impl FileCopyOutcome {
+    fn new(literal_bytes: u64, compressed_bytes: Option<u64>) -> Self {
+        Self {
+            literal_bytes,
+            compressed_bytes,
+        }
+    }
+
+    fn literal_bytes(self) -> u64 {
+        self.literal_bytes
+    }
+
+    fn compressed_bytes(self) -> Option<u64> {
+        self.compressed_bytes
+    }
 }
 
 struct DeferredDeletion {
@@ -2839,7 +2870,7 @@ impl<'a> CopyContext<'a> {
         delta: Option<&DeltaSignatureIndex>,
         total_size: u64,
         start: Instant,
-    ) -> Result<Option<u64>, LocalCopyError> {
+    ) -> Result<FileCopyOutcome, LocalCopyError> {
         if let Some(index) = delta {
             return self.copy_file_contents_with_delta(
                 reader,
@@ -2926,7 +2957,7 @@ impl<'a> CopyContext<'a> {
             self.register_progress();
         }
 
-        if let Some(encoder) = compressor {
+        let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
@@ -2938,10 +2969,12 @@ impl<'a> CopyContext<'a> {
                     limiter.register(bounded);
                 }
             }
-            Ok(Some(compressed_total))
+            FileCopyOutcome::new(total_bytes, Some(compressed_total))
         } else {
-            Ok(None)
-        }
+            FileCopyOutcome::new(total_bytes, None)
+        };
+
+        Ok(outcome)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2958,7 +2991,7 @@ impl<'a> CopyContext<'a> {
         index: &DeltaSignatureIndex,
         total_size: u64,
         start: Instant,
-    ) -> Result<Option<u64>, LocalCopyError> {
+    ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut destination_reader = fs::File::open(destination).map_err(|error| {
             LocalCopyError::io(
                 "read existing destination",
@@ -2973,6 +3006,7 @@ impl<'a> CopyContext<'a> {
         };
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
+        let mut literal_bytes = 0u64;
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
         let mut pending_literals = Vec::with_capacity(index.block_length());
         let mut scratch = Vec::with_capacity(index.block_length());
@@ -3025,6 +3059,7 @@ impl<'a> CopyContext<'a> {
                         destination,
                     )?;
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
+                    literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
                     self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
                     pending_literals.clear();
                 }
@@ -3069,6 +3104,7 @@ impl<'a> CopyContext<'a> {
                 destination,
             )?;
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
+            literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
             self.notify_progress(relative, Some(total_size), total_bytes, start.elapsed());
         }
 
@@ -3083,7 +3119,7 @@ impl<'a> CopyContext<'a> {
             self.register_progress();
         }
 
-        if let Some(encoder) = compressor {
+        let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
@@ -3094,10 +3130,12 @@ impl<'a> CopyContext<'a> {
                     limiter.register(bounded);
                 }
             }
-            Ok(Some(compressed_total))
+            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
-            Ok(None)
-        }
+            FileCopyOutcome::new(literal_bytes, None)
+        };
+
+        Ok(outcome)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4992,7 +5030,9 @@ fn copy_file(
             ));
         }
 
-        context.summary_mut().record_file(file_size, None);
+        context
+            .summary_mut()
+            .record_file(file_size, file_size, None);
         context.record(LocalCopyRecord::new(
             record_path.clone(),
             LocalCopyAction::DataCopied,
@@ -5182,8 +5222,8 @@ fn copy_file(
 
     drop(writer);
 
-    let compressed = match copy_result {
-        Ok(compressed) => {
+    let outcome = match copy_result {
+        Ok(outcome) => {
             if let Err(timeout_error) = context.enforce_timeout() {
                 if let Some(guard) = guard.take() {
                     guard.discard();
@@ -5200,7 +5240,7 @@ fn copy_file(
                 guard.commit()?;
             }
 
-            compressed
+            outcome
         }
         Err(error) => {
             if let Some(guard) = guard.take() {
@@ -5229,7 +5269,10 @@ fn copy_file(
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.hard_links.record(metadata, destination);
     let elapsed = start.elapsed();
-    context.summary_mut().record_file(file_size, compressed);
+    let compressed_bytes = outcome.compressed_bytes();
+    context
+        .summary_mut()
+        .record_file(file_size, outcome.literal_bytes(), compressed_bytes);
     context.summary_mut().record_elapsed(elapsed);
     context.record(LocalCopyRecord::new(
         record_path.clone(),

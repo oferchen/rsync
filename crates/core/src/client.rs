@@ -1580,6 +1580,12 @@ impl ClientSummary {
         self.stats.bytes_copied()
     }
 
+    /// Returns the aggregate size of files that were rewritten or created.
+    #[must_use]
+    pub fn transferred_file_size(&self) -> u64 {
+        self.stats.transferred_file_size()
+    }
+
     /// Returns the number of bytes that would be sent after applying compression.
     #[must_use]
     pub fn compressed_bytes(&self) -> Option<u64> {
