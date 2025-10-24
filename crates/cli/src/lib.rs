@@ -147,6 +147,7 @@ const HELP_TEXT: &str = concat!(
     "  -z, --compress  Enable compression during transfers (no effect for local copies).\n",
     "      --no-compress  Disable compression.\n",
     "      --compress-level=NUM  Set compression level NUM (0 disables compression).\n",
+    "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
@@ -196,7 +197,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 /// Human-readable list of the options recognised by this development build.
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete, --delete-before, --delete-during, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --out-format, --stats, --partial, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 /// Timestamp format used for `--list-only` output.
 const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
@@ -707,6 +708,7 @@ struct ParsedArgs {
     filters: Vec<OsString>,
     files_from: Vec<OsString>,
     from0: bool,
+    info: Vec<OsString>,
     xattrs: Option<bool>,
     no_motd: bool,
     password_file: Option<OsString>,
@@ -1243,6 +1245,15 @@ fn clap_command() -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("info")
+                .long("info")
+                .value_name("FLAGS")
+                .help("Adjust informational messages; use --info=help for details.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new())
+                .value_delimiter(','),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -1477,6 +1488,10 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
+    let info = matches
+        .remove_many::<OsString>("info")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let ignore_existing = matches.get_flag("ignore-existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
@@ -1529,6 +1544,7 @@ where
         filters,
         files_from,
         from0,
+        info,
         acls,
         xattrs,
         no_motd,
@@ -1677,6 +1693,7 @@ where
         filters,
         files_from,
         from0,
+        info,
         numeric_ids,
         sparse,
         copy_links,
@@ -1774,6 +1791,36 @@ where
     };
 
     let mut compress = compress_flag;
+    let mut progress = progress;
+    let mut stats = stats;
+
+    if !info.is_empty() {
+        match parse_info_flags(&info) {
+            Ok(settings) => {
+                if settings.help_requested {
+                    if stdout.write_all(INFO_HELP_TEXT.as_bytes()).is_err() {
+                        let _ = write!(stderr.writer_mut(), "{INFO_HELP_TEXT}");
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                if let Some(value) = settings.progress {
+                    progress = value;
+                }
+                if let Some(value) = settings.stats {
+                    stats = value;
+                }
+            }
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
+    }
 
     let bandwidth_limit = match bwlimit {
         Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
@@ -3017,6 +3064,101 @@ fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
         }
     }
 }
+
+#[derive(Default)]
+struct InfoFlagSettings {
+    progress: Option<bool>,
+    stats: Option<bool>,
+    help_requested: bool,
+}
+
+impl InfoFlagSettings {
+    fn enable_all(&mut self) {
+        self.progress = Some(true);
+        self.stats = Some(true);
+    }
+
+    fn disable_all(&mut self) {
+        self.progress = Some(false);
+        self.stats = Some(false);
+    }
+
+    fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
+        let lower = token.to_ascii_lowercase();
+        match lower.as_str() {
+            "help" => {
+                self.help_requested = true;
+                Ok(())
+            }
+            "all" | "1" => {
+                self.enable_all();
+                Ok(())
+            }
+            "none" | "0" => {
+                self.disable_all();
+                Ok(())
+            }
+            "progress" | "progress1" | "progress2" => {
+                self.progress = Some(true);
+                Ok(())
+            }
+            "progress0" | "noprogress" | "-progress" => {
+                self.progress = Some(false);
+                Ok(())
+            }
+            "stats" | "stats1" => {
+                self.stats = Some(true);
+                Ok(())
+            }
+            "stats0" | "nostats" | "-stats" => {
+                self.stats = Some(false);
+                Ok(())
+            }
+            _ => Err(info_flag_error(display)),
+        }
+    }
+}
+
+fn info_flag_error(display: &str) -> Message {
+    rsync_error!(
+        1,
+        format!(
+            "invalid --info flag '{display}': supported flags are all, none, progress, progress2, progress0, stats, and stats0"
+        )
+    )
+    .with_role(Role::Client)
+}
+
+fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
+    let mut settings = InfoFlagSettings::default();
+    for value in values {
+        let text = value.to_string_lossy();
+        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        let display = if trimmed.is_empty() {
+            text.as_ref()
+        } else {
+            trimmed
+        };
+
+        if trimmed.is_empty() {
+            return Err(rsync_error!(1, "--info flag must not be empty").with_role(Role::Client));
+        }
+
+        settings.apply(trimmed, display)?;
+    }
+
+    Ok(settings)
+}
+
+const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
+    all         Enable all informational output currently implemented.\n\
+    none        Disable all informational output handled by this build.\n\
+    progress    Enable per-file progress updates.\n\
+    progress2   Enable overall transfer progress.\n\
+    progress0   Disable progress reporting.\n\
+    stats       Enable transfer statistics.\n\
+    stats0      Disable transfer statistics.\n\
+Flags may also be written with 'no' prefixes (for example, --info=noprogress).\n";
 
 #[derive(Debug)]
 struct UnsupportedOption {
@@ -4425,6 +4567,43 @@ mod tests {
         assert!(metadata.file_type().is_fifo());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn info_progress2_enables_progress_output() {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::os::unix::fs::FileTypeExt;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("info-fifo.in");
+        mknodat(
+            CWD,
+            &source,
+            FileType::Fifo,
+            Mode::from_bits_truncate(0o600),
+            makedev(0, 0),
+        )
+        .expect("mkfifo");
+
+        let destination = tmp.path().join("info-fifo.out");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--info=progress2"),
+            OsString::from("--specials"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
+        assert!(rendered.contains("info-fifo.in"));
+        assert!(rendered.contains("to-chk=0/1"));
+
+        let metadata = std::fs::symlink_metadata(&destination).expect("stat destination");
+        assert!(metadata.file_type().is_fifo());
+    }
+
     #[test]
     fn progress_with_verbose_inserts_separator_before_totals() {
         use tempfile::tempdir;
@@ -4492,6 +4671,84 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             payload
         );
+    }
+
+    #[test]
+    fn info_stats_enables_summary_block() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("info-stats.txt");
+        let destination = tmp.path().join("info-stats.out");
+        let payload = b"statistics";
+        std::fs::write(&source, payload).expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--info=stats"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("stats output is UTF-8");
+        let expected_size = payload.len();
+        assert!(rendered.contains("Number of files: 1 (reg: 1)"));
+        assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
+        assert!(rendered.contains("Literal data:"));
+        assert!(rendered.contains("\n\nsent"));
+        assert!(rendered.contains("total size is"));
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            payload
+        );
+    }
+
+    #[test]
+    fn info_none_disables_progress_output() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("info-none.txt");
+        let destination = tmp.path().join("info-none.out");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("--info=none"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stdout utf8");
+        assert!(!rendered.contains("to-chk"));
+        assert!(rendered.trim().is_empty());
+    }
+
+    #[test]
+    fn info_help_lists_supported_flags() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(stdout, INFO_HELP_TEXT.as_bytes());
+    }
+
+    #[test]
+    fn info_rejects_unknown_flag() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=unknown")]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(rendered.contains("invalid --info flag"));
     }
 
     #[test]
