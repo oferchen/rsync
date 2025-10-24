@@ -2207,23 +2207,13 @@ where
 
     let fallback_args = if fallback_required {
         let mut fallback_info_flags = info.clone();
-        if protect_args.unwrap_or(false) {
-            let has_progress_flag = fallback_info_flags.iter().any(|value| {
-                let lower = value.to_string_lossy().to_ascii_lowercase();
-                lower.starts_with("progress") || lower == "noprogress" || lower == "-progress"
-            });
-            if !has_progress_flag {
-                fallback_info_flags.push(OsString::from("progress2"));
-            }
-        }
-        let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
-        let mut info_flags = info.clone();
         if protect_args.unwrap_or(false)
             && matches!(progress_setting, ProgressSetting::Unspecified)
-            && !info_flags_include_progress(&info_flags)
+            && !info_flags_include_progress(&fallback_info_flags)
         {
-            info_flags.push(OsString::from("progress2"));
+            fallback_info_flags.push(OsString::from("progress2"));
         }
+        let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
         let daemon_password = match password_file.as_deref() {
             Some(path) if path == Path::new("-") => match load_password_file(path) {
                 Ok(bytes) => Some(bytes),
@@ -2281,7 +2271,6 @@ where
             include_from: include_from.clone(),
             filters: filters.clone(),
             info_flags: fallback_info_flags,
-            info_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
@@ -3551,10 +3540,11 @@ fn info_flags_include_progress(flags: &[OsString]) -> bool {
             .filter(|token| !token.is_empty())
             .any(|token| {
                 let normalized = token.to_ascii_lowercase();
-                let stripped = normalized
+                let without_dash = normalized.strip_prefix('-').unwrap_or(&normalized);
+                let stripped = without_dash
                     .strip_prefix("no-")
-                    .or_else(|| normalized.strip_prefix("no"))
-                    .unwrap_or(&normalized);
+                    .or_else(|| without_dash.strip_prefix("no"))
+                    .unwrap_or(without_dash);
                 stripped.starts_with("progress")
             })
     })
