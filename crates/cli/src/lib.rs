@@ -2461,9 +2461,6 @@ fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> 
             let size = format_list_size(metadata.length());
             let timestamp = format_list_timestamp(metadata.modified());
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if metadata.kind().is_directory() && !rendered.ends_with('/') {
-                rendered.push('/');
-            }
             if metadata.kind().is_symlink() {
                 if let Some(target) = metadata.symlink_target() {
                     rendered.push_str(" -> ");
@@ -2473,11 +2470,7 @@ fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> 
 
             writeln!(stdout, "{permissions} {size} {timestamp} {rendered}")?;
         } else {
-            let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if matches!(event.kind(), ClientEventKind::DirectoryCreated) && !rendered.ends_with('/')
-            {
-                rendered.push('/');
-            }
+            let rendered = event.relative_path().to_string_lossy().into_owned();
             writeln!(
                 stdout,
                 "?????????? {:>15} {} {rendered}",
@@ -8436,6 +8429,41 @@ exit 0
             assert!(rendered.contains("link.txt -> file.txt"));
         }
         assert!(!destination_dir.join("file.txt").exists());
+    }
+
+    #[test]
+    fn list_only_formats_directory_without_trailing_slash() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("src");
+        let dest_dir = tmp.path().join("dst");
+        fs::create_dir(&source_dir).expect("create src dir");
+        fs::create_dir(&dest_dir).expect("create dest dir");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            source_dir.clone().into_os_string(),
+            dest_dir.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+        let mut directory_line = None;
+        for line in rendered.lines() {
+            if line.ends_with("src") {
+                directory_line = Some(line.to_string());
+                break;
+            }
+        }
+
+        let directory_line = directory_line.expect("directory entry present");
+        assert!(directory_line.starts_with('d'));
+        assert!(!directory_line.ends_with('/'));
     }
 
     #[test]
