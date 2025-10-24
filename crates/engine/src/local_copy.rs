@@ -1726,7 +1726,7 @@ impl LocalCopyOptions {
     /// Selects the directory used to retain partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
-    pub fn partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+    pub fn with_partial_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
         self.partial_dir = directory.map(Into::into);
         if self.partial_dir.is_some() {
             self.partial = true;
