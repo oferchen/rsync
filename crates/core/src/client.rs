@@ -2943,57 +2943,6 @@ where
 
     let filter_program = compile_filter_program(config.filter_rules())?;
 
-    let mut options = {
-        let mut options = LocalCopyOptions::default();
-        if config.delete_mode().is_enabled() || config.delete_excluded() {
-            options = options.delete(true);
-        }
-        options = match config.delete_mode() {
-            DeleteMode::Before => options.delete_before(true),
-            DeleteMode::After => options.delete_after(true),
-            DeleteMode::Delay => options.delete_after(true),
-            DeleteMode::During | DeleteMode::Disabled => options,
-        };
-        options = options
-            .delete_excluded(config.delete_excluded())
-            .remove_source_files(config.remove_source_files())
-            .bandwidth_limit(
-                config
-                    .bandwidth_limit()
-                    .map(|limit| limit.bytes_per_second()),
-            )
-            .with_default_compression_level(config.compression_setting().level_or_default())
-            .whole_file(config.whole_file())
-            .compress(config.compress())
-            .with_compression_level_override(config.compression_level())
-            .owner(config.preserve_owner())
-            .group(config.preserve_group())
-            .permissions(config.preserve_permissions())
-            .times(config.preserve_times())
-            .omit_dir_times(config.omit_dir_times())
-            .checksum(config.checksum())
-            .size_only(config.size_only())
-            .ignore_existing(config.ignore_existing())
-            .update(config.update())
-            .with_filter_program(filter_program.clone())
-            .numeric_ids(config.numeric_ids())
-            .sparse(config.sparse())
-            .copy_links(config.copy_links())
-            .copy_dirlinks(config.copy_dirlinks())
-            .devices(config.preserve_devices())
-            .specials(config.preserve_specials())
-            .relative_paths(config.relative_paths())
-            .implied_dirs(config.implied_dirs())
-            .mkpath(config.mkpath())
-            .inplace(config.inplace())
-            .partial(config.partial())
-            .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()));
-        #[cfg(feature = "acl")]
-        let options = options.acls(config.preserve_acls());
-        #[cfg(feature = "xattr")]
-        let options = options.xattrs(config.preserve_xattrs());
-        options
-    };
     let mut options = build_local_copy_options(&config, filter_program);
     let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun
