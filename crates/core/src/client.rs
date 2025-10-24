@@ -1879,6 +1879,12 @@ pub struct RemoteFallbackArgs {
     /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
+    /// Optional override for the remote rsync executable.
+    ///
+    /// When populated the helper forwards `--rsync-path` to the fallback command so upstream
+    /// rsync executes the specified program on the remote system. The option is ignored when
+    /// remote operands are absent because local transfers never invoke the fallback binary.
+    pub rsync_path: Option<OsString>,
     /// Remaining operands to forward to the fallback binary.
     pub remainder: Vec<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
@@ -1999,6 +2005,7 @@ where
         out_format,
         no_motd,
         fallback_binary,
+        rsync_path,
         mut remainder,
         #[cfg(feature = "acl")]
         acls,
@@ -2227,6 +2234,11 @@ where
     if let Some(shell) = remote_shell {
         command_args.push(OsString::from("-e"));
         command_args.push(shell);
+    }
+
+    if let Some(path) = rsync_path {
+        command_args.push(OsString::from("--rsync-path"));
+        command_args.push(path);
     }
 
     command_args.append(&mut remainder);
@@ -3284,6 +3296,7 @@ exit 42
             out_format: None,
             no_motd: false,
             fallback_binary: None,
+            rsync_path: None,
             remainder: Vec::new(),
             #[cfg(feature = "acl")]
             acls: None,
@@ -5257,8 +5270,134 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_accepts_http_scheme() {
+        let proxy =
+            parse_proxy_spec("http://user:secret@proxy.example:8080").expect("http proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 8080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpzZWNyZXQ="))
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_decodes_percent_encoded_credentials() {
+        let proxy = parse_proxy_spec("http://user%3Aname:p%40ss%25word@proxy.example:1080")
+            .expect("percent-encoded proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 1080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpuYW1lOnBAc3Mld29yZA=="))
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_accepts_https_scheme() {
+        let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 3128);
+        assert!(proxy.authorization_header().is_none());
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_unknown_scheme() {
+        let error = match parse_proxy_spec("socks5://proxy:1080") {
+            Ok(_) => panic!("invalid proxy scheme should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY scheme must be http:// or https://")
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_path_component() {
+        let error = match parse_proxy_spec("http://proxy.example:3128/path") {
+            Ok(_) => panic!("proxy specification with path should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY must not include a path component")
+        );
+    }
+
+    #[test]
+    fn parse_proxy_spec_rejects_invalid_percent_encoding_in_credentials() {
+        let error = match parse_proxy_spec("user%zz:secret@proxy.example:8080") {
+            Ok(_) => panic!("invalid percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY username contains invalid percent-encoding")
+        );
+
+        let error = match parse_proxy_spec("user:secret%@proxy.example:8080") {
+            Ok(_) => panic!("truncated percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY password contains truncated percent-encoding")
+        );
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let error = run_module_list(request).expect_err("daemon error should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(error.message().to_string().contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_daemon_error_without_colon() {
+        let responses = vec!["@ERROR unavailable\n", "@RSYNCD: EXIT\n"];
+        let (addr, handle) = spawn_stub_daemon(responses);
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let error = run_module_list(request).expect_err("daemon error should surface");
+        assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(error.message().to_string().contains("unavailable"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
+        let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
         let request = ModuleListRequest {
@@ -5914,6 +6053,29 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     }
 
     Ok(Some(line))
+}
+
+fn legacy_daemon_error_payload(line: &str) -> Option<String> {
+    if let Some(payload) = parse_legacy_error_message(line) {
+        return Some(payload.to_string());
+    }
+
+    let trimmed = line.trim_matches(['\r', '\n']).trim_start();
+    let Some(remainder) = strip_prefix_ignore_ascii_case(trimmed, "@ERROR") else {
+        return None;
+    };
+
+    if let Some(ch) = remainder.chars().next() {
+        if ch != ':' && !ch.is_ascii_whitespace() {
+            return None;
+        }
+    }
+
+    let payload = remainder
+        .trim_start_matches(|ch: char| ch == ':' || ch.is_ascii_whitespace())
+        .trim();
+
+    Some(payload.to_string())
 }
 
 /// Target daemon address used for module listing requests.
@@ -6617,8 +6779,33 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
         ));
     }
 
-    let (credentials, remainder) = if let Some(idx) = trimmed.rfind('@') {
-        let (userinfo, host_part) = trimmed.split_at(idx);
+    let mut remainder = trimmed;
+    if let Some(idx) = trimmed.find("://") {
+        let (scheme, rest_with_separator) = trimmed.split_at(idx);
+        let rest = &rest_with_separator[3..];
+        if rest.is_empty() {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY must specify a proxy host",
+            ));
+        }
+
+        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+            return Err(proxy_configuration_error(
+                "RSYNC_PROXY scheme must be http:// or https://",
+            ));
+        }
+
+        remainder = rest;
+    }
+
+    if remainder.contains('/') {
+        return Err(proxy_configuration_error(
+            "RSYNC_PROXY must not include a path component",
+        ));
+    }
+
+    let (credentials, remainder) = if let Some(idx) = remainder.rfind('@') {
+        let (userinfo, host_part) = remainder.split_at(idx);
         if userinfo.is_empty() {
             return Err(proxy_configuration_error(
                 "RSYNC_PROXY user information must be non-empty when '@' is present",
@@ -6631,10 +6818,12 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
             proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
         })?;
 
-        let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
+        let username = decode_proxy_component(username, "username")?;
+        let password = decode_proxy_component(password, "password")?;
+        let credentials = ProxyCredentials::new(username, password);
         (Some(credentials), &host_part[1..])
     } else {
-        (None, trimmed)
+        (None, remainder)
     };
 
     let (host, port) = parse_proxy_host_port(remainder)?;
@@ -6685,6 +6874,50 @@ fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
         .map_err(|_| proxy_configuration_error("RSYNC_PROXY specified an invalid port"))?;
 
     Ok((host, port))
+}
+
+fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
+    if !input.contains('%') {
+        return Ok(input.to_string());
+    }
+
+    let mut decoded = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains truncated percent-encoding"
+                )));
+            }
+
+            let hi = hex_value(bytes[index + 1]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+            let lo = hex_value(bytes[index + 2]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).map_err(|_| {
+        proxy_configuration_error(format!(
+            "RSYNC_PROXY {field} contains invalid UTF-8 after percent-decoding"
+        ))
+    })
 }
 
 fn proxy_configuration_error(text: impl Into<String>) -> ClientError {
@@ -6809,11 +7042,8 @@ pub fn run_module_list_with_password_and_options(
     while let Some(line) = read_trimmed_line(&mut reader)
         .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
     {
-        if let Some(payload) = parse_legacy_error_message(&line) {
-            return Err(daemon_error(
-                payload.to_string(),
-                PARTIAL_TRANSFER_EXIT_CODE,
-            ));
+        if let Some(payload) = legacy_daemon_error_payload(&line) {
+            return Err(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
         }
 
         if let Some(payload) = parse_legacy_warning_message(&line) {

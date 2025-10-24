@@ -125,6 +125,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
+    "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
     "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
     "      --secluded-args  Alias of --protect-args.\n",
@@ -217,6 +218,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --append, --no-append, --append-verify, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -806,6 +808,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
+    rsync_path: Option<OsString>,
     protect_args: Option<bool>,
     archive: bool,
     delete_mode: DeleteMode,
@@ -934,6 +937,15 @@ fn clap_command() -> ClapCommand {
                 .short('e')
                 .value_name("COMMAND")
                 .help("Use remote shell COMMAND for remote transfers.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("rsync-path")
+                .long("rsync-path")
+                .value_name("PROGRAM")
+                .help("Use PROGRAM as the remote rsync executable during remote transfers.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -1559,6 +1571,9 @@ where
         .remove_one::<OsString>("rsh")
         .filter(|value| !value.is_empty())
         .or_else(|| env::var_os("RSYNC_RSH").filter(|value| !value.is_empty()));
+    let rsync_path = matches
+        .remove_one::<OsString>("rsync-path")
+        .filter(|value| !value.is_empty());
     let protect_args = if matches.get_flag("no-protect-args") {
         Some(false)
     } else if matches.get_flag("protect-args") {
@@ -1833,6 +1848,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        rsync_path,
         protect_args,
         archive,
         delete_mode,
@@ -2056,6 +2072,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        rsync_path,
         protect_args,
         archive,
         delete_mode,
@@ -2463,6 +2480,7 @@ where
             dry_run,
             list_only,
             remote_shell: remote_shell.clone(),
+            rsync_path: rsync_path.clone(),
             protect_args,
             archive,
             delete: delete_for_fallback,
@@ -2532,6 +2550,21 @@ where
     let numeric_ids = numeric_ids_option.unwrap_or(false);
 
     if !fallback_required {
+        if rsync_path.is_some() {
+            let message = rsync_error!(
+                1,
+                "the --rsync-path option may only be used with remote connections"
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --rsync-path option may only be used with remote connections"
+                );
+            }
+            return 1;
+        }
+
         if desired_protocol.is_some() {
             let message = rsync_error!(
                 1,
@@ -8962,6 +8995,44 @@ mod tests {
     }
 
     #[test]
+    fn remote_daemon_listing_with_rsync_path_does_not_spawn_fallback() {
+        use tempfile::tempdir;
+
+        let (addr, handle) =
+            spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let marker_path = temp.path().join("marker.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "invoked" > "$MARKER_FILE"
+exit 99
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _marker_guard = EnvGuard::set("MARKER_FILE", marker_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            OsString::from(url.clone()),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("module"));
+        assert!(!marker_path.exists());
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
     fn remote_daemon_listing_respects_protocol_cap() {
         let (addr, handle) = spawn_stub_daemon_with_protocol(
             vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"],
@@ -10732,6 +10803,42 @@ exit 0
     }
 
     #[test]
+    fn remote_fallback_forwards_rsync_path_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--rsync-path"));
+        assert!(recorded.lines().any(|line| line == "/opt/custom/rsync"));
+    }
+
+    #[test]
     fn remote_fallback_reads_rsync_rsh_env() {
         use tempfile::tempdir;
 
@@ -10803,6 +10910,31 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "ssh -p 2222"));
         assert!(!recorded.lines().any(|line| line == "ssh -p 2200"));
+    }
+
+    #[test]
+    fn rsync_path_requires_remote_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        std::fs::write(&source, b"content").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let message = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(
+            message.contains("the --rsync-path option may only be used with remote connections")
+        );
+        assert!(!dest.exists());
     }
 
     #[cfg(all(unix, feature = "acl"))]

@@ -18,6 +18,7 @@
 //!
 //! ```
 //! use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+//! use std::io::Write;
 //!
 //! let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
 //! encoder.write(b"payload").unwrap();
@@ -46,6 +47,19 @@
 //! assert_eq!(decoded, b"highly compressible payload");
 //! assert_eq!(decoder.bytes_read(), decoded.len() as u64);
 //! assert!(compressed_len as usize <= compressed.len());
+//! ```
+//!
+//! Forward compressed bytes into a caller-provided sink while tracking the
+//! compressed length:
+//!
+//! ```
+//! use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+//! use std::io::Write;
+//!
+//! let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+//! encoder.write_all(b"payload").unwrap();
+//! let (compressed, bytes) = encoder.finish_into_inner().unwrap();
+//! assert_eq!(bytes as usize, compressed.len());
 //! ```
 
 use std::{
@@ -144,19 +158,42 @@ impl std::error::Error for CompressionLevelError {}
 ///
 /// The encoder implements [`std::io::Write`], enabling integration with APIs
 /// such as [`std::io::copy`], [`write!`](std::write), and
-/// [`std::io::Write::write_all`]. Compressed bytes are discarded after being
-/// counted, matching upstream rsync's bandwidth accounting path where the
-/// payload itself is forwarded separately.
-pub struct CountingZlibEncoder {
-    inner: FlateEncoder<CountingWriter>,
+/// [`std::io::Write::write_all`]. By default compressed bytes are discarded
+/// after being counted, matching upstream rsync's bandwidth accounting path
+/// where the payload itself is forwarded separately. Callers that need to
+/// forward the compressed stream can construct the encoder with an explicit
+/// sink via [`CountingZlibEncoder::with_sink`] so the counted bytes are written
+/// into the provided writer.
+pub struct CountingZlibEncoder<W = CountingSink>
+where
+    W: Write,
+{
+    inner: FlateEncoder<CountingWriter<W>>,
 }
 
-impl CountingZlibEncoder {
+impl CountingZlibEncoder<CountingSink> {
     /// Creates a new encoder that counts the compressed output produced by zlib.
     #[must_use]
     pub fn new(level: CompressionLevel) -> Self {
+        Self::with_sink(CountingSink::default(), level)
+    }
+
+    /// Completes the stream and returns the total number of compressed bytes generated.
+    pub fn finish(self) -> io::Result<u64> {
+        let (_sink, bytes) = self.finish_into_inner()?;
+        Ok(bytes)
+    }
+}
+
+impl<W> CountingZlibEncoder<W>
+where
+    W: Write,
+{
+    /// Creates a new encoder that forwards compressed bytes into `sink`.
+    #[must_use]
+    pub fn with_sink(sink: W, level: CompressionLevel) -> Self {
         Self {
-            inner: FlateEncoder::new(CountingWriter::default(), level.into()),
+            inner: FlateEncoder::new(CountingWriter::new(sink), level.into()),
         }
     }
 
@@ -171,14 +208,34 @@ impl CountingZlibEncoder {
         self.inner.get_ref().bytes()
     }
 
-    /// Completes the stream and returns the total number of compressed bytes generated.
-    pub fn finish(self) -> io::Result<u64> {
+    /// Provides immutable access to the underlying sink.
+    #[must_use]
+    pub fn get_ref(&self) -> &W {
+        self.inner.get_ref().inner_ref()
+    }
+
+    /// Provides mutable access to the underlying sink.
+    #[must_use]
+    pub fn get_mut(&mut self) -> &mut W {
+        self.inner.get_mut().inner_mut()
+    }
+
+    /// Completes the stream, returning the sink and the total number of compressed bytes produced.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O errors reported by the underlying writer or zlib
+    /// during stream finalisation.
+    pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
         let writer = self.inner.finish()?;
-        Ok(writer.bytes())
+        Ok(writer.into_parts())
     }
 }
 
-impl Write for CountingZlibEncoder {
+impl<W> Write for CountingZlibEncoder<W>
+where
+    W: Write,
+{
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.inner.write(buf)
     }
@@ -201,13 +258,76 @@ impl Write for CountingZlibEncoder {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct CountingWriter {
+/// Sink used by [`CountingZlibEncoder`] when callers do not supply their own writer.
+///
+/// The sink discards all bytes while allowing the encoder to keep track of the
+/// compressed length. It is exposed so downstream crates can use it in generic
+/// contexts that reference the encoder's default type parameter.
+pub struct CountingSink;
+
+impl Write for CountingSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        Ok(bufs.iter().map(|slice| slice.len()).sum())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct CountingWriter<W> {
+    inner: W,
     bytes: u64,
 }
 
-impl CountingWriter {
+impl<W> CountingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, bytes: 0 }
+    }
+
     fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    fn inner_ref(&self) -> &W {
+        &self.inner
+    }
+
+    fn inner_mut(&mut self) -> &mut W {
+        &mut self.inner
+    }
+
+    fn into_parts(self) -> (W, u64) {
+        (self.inner, self.bytes)
+    }
+
+    fn saturating_add_bytes(&mut self, written: usize) {
+        self.bytes = self.bytes.saturating_add(written as u64);
+    }
+}
+
+impl<W> Write for CountingWriter<W>
+where
+    W: Write,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.saturating_add_bytes(written);
+        Ok(written)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let written = self.inner.write_vectored(bufs)?;
+        self.saturating_add_bytes(written);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -269,17 +389,6 @@ where
         let read = self.inner.read_vectored(bufs)?;
         self.bytes = self.bytes.saturating_add(read as u64);
         Ok(read)
-    }
-}
-
-impl Write for CountingWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.bytes = self.bytes.saturating_add(buf.len() as u64);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 
@@ -374,6 +483,19 @@ mod tests {
         let compressed = compress_to_vec(payload, CompressionLevel::Best).expect("compress");
         let decoded = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn counting_encoder_forwards_to_sink() {
+        let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+        encoder.write(b"payload").expect("compress payload");
+        let (sink, bytes) = encoder
+            .finish_into_inner()
+            .expect("finish compression stream");
+        assert!(bytes > 0);
+        assert!(!sink.is_empty());
+        let decoded = decompress_to_vec(&sink).expect("decompress");
+        assert_eq!(decoded, b"payload");
     }
 
     #[test]
