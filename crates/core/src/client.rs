@@ -1664,6 +1664,12 @@ pub struct RemoteFallbackArgs {
     pub from0: bool,
     /// Optional path provided via `--password-file`.
     pub password_file: Option<PathBuf>,
+    /// Optional daemon password supplied via `--password-file=-`.
+    ///
+    /// When populated the helper writes the password to the fallback
+    /// process' standard input so callers do not need to re-enter
+    /// credentials after the CLI has already consumed them.
+    pub daemon_password: Option<Vec<u8>>,
     /// Optional protocol override forwarded via `--protocol`.
     pub protocol: Option<ProtocolVersion>,
     /// Timeout applied to the spawned process via `--timeout`.
@@ -1780,6 +1786,7 @@ where
         file_list_entries,
         from0,
         password_file,
+        mut daemon_password,
         protocol,
         timeout,
         out_format,
@@ -1980,7 +1987,11 @@ where
 
     let mut command = Command::new(&binary);
     command.args(&command_args);
-    command.stdin(Stdio::inherit());
+    if daemon_password.is_some() {
+        command.stdin(Stdio::piped());
+    } else {
+        command.stdin(Stdio::inherit());
+    }
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
@@ -1990,6 +2001,29 @@ where
             Path::new(&binary).display()
         ))
     })?;
+
+    if let Some(mut password) = daemon_password.take() {
+        if !password.ends_with(b"\n") {
+            password.push(b'\n');
+        }
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| fallback_error("fallback rsync did not expose a writable stdin"))?;
+
+        stdin.write_all(&password).map_err(|error| {
+            fallback_error(format!(
+                "failed to write password to fallback rsync stdin: {error}"
+            ))
+        })?;
+
+        stdin.flush().map_err(|error| {
+            fallback_error(format!(
+                "failed to flush password to fallback rsync stdin: {error}"
+            ))
+        })?;
+    }
 
     let (sender, receiver) = mpsc::channel();
     let mut stdout_thread = child
@@ -2927,6 +2961,7 @@ exit 42
             file_list_entries: Vec::new(),
             from0: false,
             password_file: None,
+            daemon_password: None,
             protocol: None,
             timeout: TransferTimeout::Default,
             out_format: None,
@@ -3367,6 +3402,44 @@ exit 42
             String::from_utf8(stderr).expect("stderr utf8"),
             "fallback stderr\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_writes_password_to_stdin() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("password.txt");
+        let script_path = temp.path().join("capture-password.sh");
+        let script = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\ncat > \"$OUTPUT\"\n"
+        );
+        fs::write(&script_path, script).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.password_file = Some(PathBuf::from("-"));
+        args.daemon_password = Some(b"topsecret".to_vec());
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert_eq!(exit, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let captured = fs::read(&capture_path).expect("captured password");
+        assert_eq!(captured, b"topsecret\n");
     }
 
     #[cfg(unix)]
