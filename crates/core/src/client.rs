@@ -1985,8 +1985,8 @@ impl ClientSummary {
 
     /// Returns the aggregate number of bytes sent during the transfer.
     #[must_use]
-    pub const fn bytes_sent(&self) -> u64 {
-        0
+    pub fn bytes_sent(&self) -> u64 {
+        self.stats.bytes_sent()
     }
 
     /// Returns the aggregate size of files that were rewritten or created.
