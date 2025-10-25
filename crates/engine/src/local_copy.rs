@@ -83,11 +83,8 @@ use rsync_meta::sync_acls;
 use rsync_meta::sync_xattrs;
 use rsync_meta::{
     apply_directory_metadata_with_options, apply_file_metadata_with_options,
-    apply_symlink_metadata_with_options, create_device_node, create_fifo, MetadataError,
-    MetadataOptions,
-    ChmodModifiers, MetadataError, MetadataOptions, apply_directory_metadata_with_options,
-    apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
-    create_fifo,
+    apply_symlink_metadata_with_options, create_device_node, create_fifo, ChmodModifiers,
+    MetadataError, MetadataOptions,
 };
 use rsync_protocol::ProtocolVersion;
 
