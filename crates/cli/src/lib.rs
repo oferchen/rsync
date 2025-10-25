@@ -224,7 +224,6 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --link-dest, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
@@ -1182,14 +1181,6 @@ fn clap_command() -> ClapCommand {
                 .overrides_with("no-partial"),
         )
         .arg(
-            Arg::new("link-dest")
-                .long("link-dest")
-                .value_name("DIR")
-                .help("Create hard links to matching files in DIR when possible.")
-                .action(ArgAction::Append)
-                .value_parser(OsStringValueParser::new()),
-        )
-        .arg(
             Arg::new("whole-file")
                 .long("whole-file")
                 .short('W')
@@ -1837,6 +1828,10 @@ where
                 .collect()
         })
         .unwrap_or_default();
+    let link_destinations: Vec<OsString> = link_dests
+        .iter()
+        .map(|path| path.clone().into_os_string())
+        .collect();
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
     let append_verify_flag = matches.get_flag("append-verify");
@@ -1887,10 +1882,6 @@ where
         .unwrap_or_default();
     let copy_destinations = matches
         .remove_many::<OsString>("copy-dest")
-        .map(|values| values.collect())
-        .unwrap_or_default();
-    let link_destinations = matches
-        .remove_many::<OsString>("link-dest")
         .map(|values| values.collect())
         .unwrap_or_default();
     let exclude_from = matches
@@ -10352,6 +10343,56 @@ exit 0
     #[cfg(unix)]
     #[test]
     fn remote_fallback_forwards_link_dest_arguments() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--link-dest"),
+            OsString::from("baseline"),
+            OsString::from("--link-dest"),
+            OsString::from("/var/cache"),
+            OsString::from("--link-dest=link"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().filter(|line| *line == "--link-dest").count() >= 2);
+        assert!(recorded.lines().any(|line| line == "baseline"));
+        assert!(recorded.lines().any(|line| line == "/var/cache"));
+        assert!(recorded.lines().any(|line| line == "--link-dest=link"));
+        assert!(recorded.lines().any(|line| line == "--link-dest"));
+        assert!(recorded.lines().any(|line| line == "link"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn remote_fallback_forwards_reference_destinations() {
         use tempfile::tempdir;
 
