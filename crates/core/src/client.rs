@@ -2087,6 +2087,8 @@ pub struct RemoteFallbackArgs {
     pub list_only: bool,
     /// Supplies the remote shell command forwarded via `-e`/`--rsh`.
     pub remote_shell: Option<OsString>,
+    /// Additional options forwarded to the remote rsync invocation via `--remote-option`/`-M`.
+    pub remote_options: Vec<OsString>,
     /// Controls whether remote shell arguments are protected from expansion.
     ///
     /// When `Some(true)` the fallback command receives `--protect-args`,
@@ -2304,6 +2306,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        remote_options,
         protect_args,
         archive,
         delete,
@@ -2651,6 +2654,11 @@ where
 
     if no_motd {
         command_args.push(OsString::from("--no-motd"));
+    }
+
+    for option in remote_options {
+        command_args.push(OsString::from("--remote-option"));
+        command_args.push(option);
     }
 
     if let Some(shell) = remote_shell {
@@ -3714,6 +3722,7 @@ exit 42
             dry_run: false,
             list_only: false,
             remote_shell: None,
+            remote_options: Vec::new(),
             protect_args: None,
             address_mode: AddressMode::Default,
             archive: false,
