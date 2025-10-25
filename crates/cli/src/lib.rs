@@ -77,29 +77,32 @@
 use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
+use std::num::{IntErrorKind, NonZeroU64, NonZeroU8};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 
-use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
+use clap::{builder::OsStringValueParser, Arg, ArgAction, Command as ClapCommand};
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
-        ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
+        run_client_or_fallback, run_module_list_with_password_and_options, AddressMode,
+        BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
+        ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
         FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
-        RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
-        run_module_list_with_password_and_options,
+        RemoteFallbackContext, TransferTimeout,
     },
     message::{Message, Role},
     rsync_error,
@@ -107,7 +110,7 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
+use time::{format_description::FormatItem, macros::format_description, OffsetDateTime};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t, uid_t};
 
 /// Maximum exit code representable by a Unix process.
@@ -2179,7 +2182,11 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
         daemon_args.push(arg.clone());
     }
 
-    if found { Some(daemon_args) } else { None }
+    if found {
+        Some(daemon_args)
+    } else {
+        None
+    }
 }
 
 /// Returns `true` when the invocation requests server mode.
@@ -2203,27 +2210,168 @@ where
     let mut command = Command::new(&fallback);
     command.args(args.iter().skip(1));
     command.stdin(Stdio::inherit());
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
 
-    match command.status() {
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let text = format!(
+                "failed to launch fallback rsync binary '{}': {error}",
+                Path::new(&fallback).display()
+            );
+            write_server_fallback_error(stderr, text);
+            return 1;
+        }
+    };
+
+    let (sender, receiver) = mpsc::channel();
+    let mut stdout_thread = child
+        .stdout
+        .take()
+        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stdout, sender.clone()));
+    let mut stderr_thread = child
+        .stderr
+        .take()
+        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stderr, sender.clone()));
+    drop(sender);
+
+    let mut stdout_open = stdout_thread.is_some();
+    let mut stderr_open = stderr_thread.is_some();
+
+    while stdout_open || stderr_open {
+        match receiver.recv() {
+            Ok(ServerStreamMessage::Data(ServerStreamKind::Stdout, data)) => {
+                if let Err(error) = stdout.write_all(&data) {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        format!("failed to forward fallback stdout: {error}"),
+                    );
+                    return 1;
+                }
+            }
+            Ok(ServerStreamMessage::Data(ServerStreamKind::Stderr, data)) => {
+                if let Err(error) = stderr.write_all(&data) {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        format!("failed to forward fallback stderr: {error}"),
+                    );
+                    return 1;
+                }
+            }
+            Ok(ServerStreamMessage::Error(ServerStreamKind::Stdout, error)) => {
+                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                write_server_fallback_error(
+                    stderr,
+                    format!("failed to read stdout from fallback rsync: {error}"),
+                );
+                return 1;
+            }
+            Ok(ServerStreamMessage::Error(ServerStreamKind::Stderr, error)) => {
+                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                write_server_fallback_error(
+                    stderr,
+                    format!("failed to read stderr from fallback rsync: {error}"),
+                );
+                return 1;
+            }
+            Ok(ServerStreamMessage::Finished(kind)) => match kind {
+                ServerStreamKind::Stdout => stdout_open = false,
+                ServerStreamKind::Stderr => stderr_open = false,
+            },
+            Err(_) => break,
+        }
+    }
+
+    join_server_thread(&mut stdout_thread);
+    join_server_thread(&mut stderr_thread);
+
+    match child.wait() {
         Ok(status) => status
             .code()
             .map(|code| code.clamp(0, MAX_EXIT_CODE))
             .unwrap_or(1),
         Err(error) => {
-            let mut sink = MessageSink::new(stderr);
-            let text = format!(
-                "failed to launch fallback rsync binary '{}': {error}",
-                Path::new(&fallback).display()
+            write_server_fallback_error(
+                stderr,
+                format!("failed to wait for fallback rsync process: {error}"),
             );
-            let mut message = rsync_error!(1, "{}", text);
-            message = message.with_role(Role::Client);
-            if write_message(&message, &mut sink).is_err() {
-                let _ = writeln!(sink.writer_mut(), "{}", text);
-            }
             1
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ServerStreamKind {
+    Stdout,
+    Stderr,
+}
+
+enum ServerStreamMessage {
+    Data(ServerStreamKind, Vec<u8>),
+    Error(ServerStreamKind, io::Error),
+    Finished(ServerStreamKind),
+}
+
+fn spawn_server_reader<R>(
+    mut reader: R,
+    kind: ServerStreamKind,
+    sender: mpsc::Sender<ServerStreamMessage>,
+) -> thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut buffer = vec![0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(ServerStreamMessage::Finished(kind));
+                    break;
+                }
+                Ok(n) => {
+                    if sender
+                        .send(ServerStreamMessage::Data(kind, buffer[..n].to_vec()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    let _ = sender.send(ServerStreamMessage::Error(kind, error));
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn join_server_thread(handle: &mut Option<thread::JoinHandle<()>>) {
+    if let Some(join) = handle.take() {
+        let _ = join.join();
+    }
+}
+
+fn terminate_server_process(
+    child: &mut Child,
+    stdout_thread: &mut Option<thread::JoinHandle<()>>,
+    stderr_thread: &mut Option<thread::JoinHandle<()>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    join_server_thread(stdout_thread);
+    join_server_thread(stderr_thread);
+}
+
+fn write_server_fallback_error<Err: Write>(stderr: &mut Err, text: impl fmt::Display) {
+    let mut sink = MessageSink::new(stderr);
+    let mut message = rsync_error!(1, "{}", text);
+    message = message.with_role(Role::Client);
+    if write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{}", text);
     }
 }
 
@@ -6139,7 +6287,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -6271,7 +6419,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn progress_reports_unknown_totals_with_placeholder() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -6309,7 +6457,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn info_progress2_enables_progress_output() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -7121,7 +7269,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn transfer_request_with_perms_preserves_mode() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
 
@@ -8909,7 +9057,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_times_preserves_timestamp() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9562,7 +9710,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_no_times_overrides_archive() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9591,7 +9739,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9633,7 +9781,7 @@ mod tests {
 
     #[test]
     fn checksum_with_no_times_preserves_existing_destination() {
-        use filetime::{FileTime, set_file_mtime};
+        use filetime::{set_file_mtime, FileTime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9951,11 +10099,9 @@ exit 99
             run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
-        assert!(
-            String::from_utf8(stdout)
-                .expect("modules")
-                .contains("module")
-        );
+        assert!(String::from_utf8(stdout)
+            .expect("modules")
+            .contains("module"));
 
         let rendered_err = String::from_utf8(stderr).expect("warnings are UTF-8");
         assert!(rendered_err.contains("@WARNING: Maintenance"));
@@ -10021,8 +10167,8 @@ exit 99
 
     #[test]
     fn module_list_uses_password_file_for_authentication() {
-        use base64::Engine as _;
         use base64::engine::general_purpose::STANDARD_NO_PAD;
+        use base64::Engine as _;
         use rsync_checksums::strong::Md5;
         use tempfile::tempdir;
 
@@ -10074,8 +10220,8 @@ exit 99
 
     #[test]
     fn module_list_reads_password_from_stdin() {
-        use base64::Engine as _;
         use base64::engine::general_purpose::STANDARD_NO_PAD;
+        use base64::Engine as _;
         use rsync_checksums::strong::Md5;
 
         let challenge = "stdin-test";
@@ -10613,6 +10759,45 @@ exit 37
 
     #[cfg(unix)]
     #[test]
+    fn server_mode_forwards_output_to_provided_handles() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("server_output.sh");
+
+        let script = r#"#!/bin/sh
+set -eu
+printf 'fallback stdout line\n'
+printf 'fallback stderr line\n' >&2
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit_code = run(
+            [
+                OsString::from("oc-rsync"),
+                OsString::from("--server"),
+                OsString::from("--sender"),
+                OsString::from("."),
+                OsString::from("dest"),
+            ],
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(exit_code, 0);
+        assert!(stdout.ends_with(b"fallback stdout line\n"));
+        assert!(stderr.ends_with(b"fallback stderr line\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn remote_operands_invoke_fallback_binary() {
         use tempfile::tempdir;
 
@@ -10862,18 +11047,14 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--partial"));
         assert!(recorded.lines().any(|line| line == "--partial-dir"));
-        assert!(
-            recorded
-                .lines()
-                .any(|line| line == partial_dir.display().to_string())
-        );
+        assert!(recorded
+            .lines()
+            .any(|line| line == partial_dir.display().to_string()));
 
         // Ensure destination operand still forwarded correctly alongside partial dir args.
-        assert!(
-            recorded
-                .lines()
-                .any(|line| line == dest_path.display().to_string())
-        );
+        assert!(recorded
+            .lines()
+            .any(|line| line == dest_path.display().to_string()));
     }
 
     #[cfg(unix)]
@@ -10926,11 +11107,9 @@ exit 0
         assert!(recorded.lines().any(|line| line == "--link-dest=link"));
         assert!(recorded.lines().any(|line| line == "--link-dest"));
         assert!(recorded.lines().any(|line| line == "link"));
-        assert!(
-            recorded
-                .lines()
-                .any(|line| line == dest_path.display().to_string())
-        );
+        assert!(recorded
+            .lines()
+            .any(|line| line == dest_path.display().to_string()));
     }
 
     #[cfg(unix)]
@@ -10972,11 +11151,9 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--link-dest=baseline"));
-        assert!(
-            recorded
-                .lines()
-                .any(|line| line == "--link-dest=/var/cache")
-        );
+        assert!(recorded
+            .lines()
+            .any(|line| line == "--link-dest=/var/cache"));
         assert!(recorded.lines().any(|line| line == "--compare-dest"));
         assert!(recorded.lines().any(|line| line == "compare"));
         assert!(recorded.lines().any(|line| line == "--copy-dest"));
@@ -12392,7 +12569,7 @@ exit 0
 
     #[test]
     fn list_only_matches_rsync_format_for_regular_file() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
@@ -12446,7 +12623,7 @@ exit 0
 
     #[test]
     fn list_only_formats_special_permission_bits_like_rsync() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
