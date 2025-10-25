@@ -136,6 +136,8 @@ const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 /// Exit code returned when a daemon violates the protocol.
 const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
+/// Exit code returned when the `--max-delete` limit stops deletions.
+const MAX_DELETE_EXIT_CODE: i32 = 25;
 /// Timeout applied to daemon sockets to avoid hanging handshakes when the caller
 /// does not provide an override.
 const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
@@ -364,6 +366,7 @@ pub struct ClientConfig {
     dry_run: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
+    max_delete: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -427,6 +430,7 @@ impl Default for ClientConfig {
             dry_run: false,
             delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
+            max_delete: None,
             remove_source_files: false,
             bandwidth_limit: None,
             preserve_owner: false,
@@ -633,6 +637,13 @@ impl ClientConfig {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(&self) -> bool {
         self.delete_excluded
+    }
+
+    /// Returns the configured maximum number of deletions, if any.
+    #[must_use]
+    #[doc(alias = "--max-delete")]
+    pub const fn max_delete(&self) -> Option<u64> {
+        self.max_delete
     }
 
     /// Returns whether the sender should remove source files after transfer.
@@ -944,6 +955,7 @@ pub struct ClientConfigBuilder {
     dry_run: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
+    max_delete: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -1090,6 +1102,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Sets the maximum number of deletions permitted during execution.
+    #[must_use]
+    #[doc(alias = "--max-delete")]
+    pub const fn max_delete(mut self, limit: Option<u64>) -> Self {
+        self.max_delete = limit;
         self
     }
 
@@ -1601,6 +1621,7 @@ impl ClientConfigBuilder {
             dry_run: self.dry_run,
             delete_mode: self.delete_mode,
             delete_excluded: self.delete_excluded,
+            max_delete: self.max_delete,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
@@ -2193,6 +2214,8 @@ pub struct RemoteFallbackArgs {
     pub delete_mode: DeleteMode,
     /// Enables `--delete-excluded`.
     pub delete_excluded: bool,
+    /// Limits deletions via `--max-delete`.
+    pub max_delete: Option<u64>,
     /// Enables `--checksum`.
     pub checksum: bool,
     /// Enables `--size-only`.
@@ -2408,6 +2431,7 @@ where
         delete,
         delete_mode,
         delete_excluded,
+        max_delete,
         checksum,
         size_only,
         ignore_existing,
@@ -2504,6 +2528,11 @@ where
     }
     if delete_excluded {
         command_args.push(OsString::from("--delete-excluded"));
+    }
+    if let Some(limit) = max_delete {
+        let mut arg = OsString::from("--max-delete=");
+        arg.push(limit.to_string());
+        command_args.push(arg);
     }
     if checksum {
         command_args.push(OsString::from("--checksum"));
@@ -3681,6 +3710,7 @@ fn build_local_copy_options(
     };
     options = options
         .delete_excluded(config.delete_excluded())
+        .max_deletions(config.max_delete())
         .remove_source_files(config.remove_source_files())
         .bandwidth_limit(
             config
@@ -3860,6 +3890,7 @@ exit 42
             delete: false,
             delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
+            max_delete: None,
             checksum: false,
             size_only: false,
             ignore_existing: false,
@@ -4128,6 +4159,17 @@ exit 42
 
         assert!(config.delete_excluded());
         assert!(!ClientConfig::default().delete_excluded());
+    }
+
+    #[test]
+    fn builder_sets_max_delete_limit() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .max_delete(Some(4))
+            .build();
+
+        assert_eq!(config.max_delete(), Some(4));
+        assert_eq!(ClientConfig::default().max_delete(), None);
     }
 
     #[test]
@@ -4703,6 +4745,17 @@ exit 42
 
         let captured = fs::read(&capture_path).expect("captured password");
         assert_eq!(captured, b"topsecret\n");
+    }
+
+    #[test]
+    fn map_local_copy_error_reports_delete_limit() {
+        let mapped = map_local_copy_error(LocalCopyError::delete_limit_exceeded(2));
+        assert_eq!(mapped.exit_code(), MAX_DELETE_EXIT_CODE);
+        let rendered = mapped.message().to_string();
+        assert!(
+            rendered.contains("Deletions stopped due to --max-delete limit (2 entries skipped)"),
+            "unexpected diagnostic: {rendered}"
+        );
     }
 
     #[test]
@@ -7281,6 +7334,15 @@ fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             );
             let message = rsync_error!(exit_code, text).with_role(Role::Client);
             ClientError::new(exit_code, message)
+        }
+        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            let noun = if skipped == 1 { "entry" } else { "entries" };
+            let text = format!(
+                "Deletions stopped due to --max-delete limit ({} {noun} skipped)",
+                skipped
+            );
+            let message = rsync_error!(MAX_DELETE_EXIT_CODE, text).with_role(Role::Client);
+            ClientError::new(MAX_DELETE_EXIT_CODE, message)
         }
     }
 }

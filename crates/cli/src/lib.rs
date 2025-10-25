@@ -148,6 +148,7 @@ const HELP_TEXT: &str = concat!(
     "      --delete-delay  Defer deletions until after transfers while computing them during the run.\n",
     "      --delete-after  Remove destination files after transfers complete.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
+    "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
@@ -244,6 +245,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -857,6 +859,7 @@ struct ParsedArgs {
     update: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
+    max_delete: Option<OsString>,
     compress: bool,
     no_compress: bool,
     compress_level: Option<OsString>,
@@ -1431,6 +1434,14 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("max-delete")
+                .long("max-delete")
+                .value_name("NUM")
+                .help("Limit the number of deletions that may occur.")
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("exclude")
                 .long("exclude")
                 .value_name("PATTERN")
@@ -1812,6 +1823,7 @@ where
     let delete_delay_flag = matches.get_flag("delete-delay");
     let delete_after_flag = matches.get_flag("delete-after");
     let delete_excluded = matches.get_flag("delete-excluded");
+    let max_delete = matches.remove_one::<OsString>("max-delete");
 
     let delete_mode_conflicts = [
         delete_before_flag,
@@ -1843,6 +1855,9 @@ where
     };
 
     if delete_excluded && !delete_mode.is_enabled() {
+        delete_mode = DeleteMode::During;
+    }
+    if max_delete.is_some() && !delete_mode.is_enabled() {
         delete_mode = DeleteMode::During;
     }
     let compress_flag = matches.get_flag("compress");
@@ -2135,6 +2150,7 @@ where
         update,
         remainder,
         bwlimit,
+        max_delete,
         compress,
         no_compress,
         compress_level,
@@ -2516,6 +2532,7 @@ where
         update,
         remainder: raw_remainder,
         bwlimit,
+        max_delete,
         compress: compress_flag,
         no_compress,
         compress_level,
@@ -2778,6 +2795,19 @@ where
         None => None,
     };
 
+    let max_delete_limit = match max_delete {
+        Some(ref value) => match parse_max_delete_argument(value.as_os_str()) {
+            Ok(limit) => Some(limit),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
     let compress_level_setting = match compress_level {
         Some(ref value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
@@ -2976,7 +3006,8 @@ where
         {
             fallback_info_flags.push(OsString::from("progress2"));
         }
-        let delete_for_fallback = delete_mode.is_enabled() || delete_excluded;
+        let delete_for_fallback =
+            delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some();
         let daemon_password = match password_file.as_deref() {
             Some(path) if path == Path::new("-") => match load_password_file(path) {
                 Ok(bytes) => Some(bytes),
@@ -3000,6 +3031,7 @@ where
             delete: delete_for_fallback,
             delete_mode,
             delete_excluded,
+            max_delete: max_delete_limit,
             checksum,
             size_only,
             ignore_existing,
@@ -3206,8 +3238,9 @@ where
         .address_mode(address_mode)
         .dry_run(dry_run)
         .list_only(list_only)
-        .delete(delete_mode.is_enabled() || delete_excluded)
+        .delete(delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some())
         .delete_excluded(delete_excluded)
+        .max_delete(max_delete_limit)
         .bandwidth_limit(bandwidth_limit)
         .compression_setting(compression_setting)
         .compress(compress)
@@ -4331,6 +4364,51 @@ fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
             };
             Err(
                 rsync_error!(1, format!("invalid timeout '{}': {}", display, detail))
+                    .with_role(Role::Client),
+            )
+        }
+    }
+}
+
+fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(rsync_error!(1, "--max-delete value must not be empty").with_role(Role::Client));
+    }
+
+    if trimmed.starts_with('-') {
+        return Err(rsync_error!(
+            1,
+            format!(
+                "invalid --max-delete '{}': deletion limit must be non-negative",
+                display
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
+
+    match normalized.parse::<u64>() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let detail = match error.kind() {
+                IntErrorKind::InvalidDigit => "deletion limit must be an unsigned integer",
+                IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
+                    "deletion limit exceeds the supported range"
+                }
+                IntErrorKind::Empty => "--max-delete value must not be empty",
+                _ => "deletion limit is invalid",
+            };
+            Err(
+                rsync_error!(1, format!("invalid --max-delete '{}': {}", display, detail))
                     .with_role(Role::Client),
             )
         }
@@ -8548,6 +8626,47 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_max_delete_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--max-delete=12"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.max_delete, Some(OsString::from("12")));
+    }
+
+    #[test]
+    fn parse_max_delete_argument_accepts_zero() {
+        let limit = parse_max_delete_argument(OsStr::new("0")).expect("parse max-delete");
+        assert_eq!(limit, 0);
+    }
+
+    #[test]
+    fn parse_max_delete_argument_rejects_negative() {
+        let error =
+            parse_max_delete_argument(OsStr::new("-4")).expect_err("negative limit should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("deletion limit must be non-negative"),
+            "diagnostic missing detail: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_max_delete_argument_rejects_non_numeric() {
+        let error = parse_max_delete_argument(OsStr::new("abc"))
+            .expect_err("non-numeric limit should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("deletion limit must be an unsigned integer"),
+            "diagnostic missing unsigned message: {rendered}"
+        );
+    }
+
+    #[test]
     fn timeout_argument_zero_disables_timeout() {
         let timeout = parse_timeout_argument(OsStr::new("0")).expect("parse timeout");
         assert_eq!(timeout, TransferTimeout::Disabled);
@@ -12196,6 +12315,44 @@ exit 0
         assert!(!args.contains(&"--delete-before"));
         assert!(!args.contains(&"--delete-after"));
         assert!(!args.contains(&"--delete-during"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_max_delete_limit() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--max-delete=5"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--delete"));
+        assert!(args.iter().any(|value| *value == "--max-delete=5"));
     }
 
     #[cfg(unix)]

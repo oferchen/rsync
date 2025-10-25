@@ -422,6 +422,8 @@ const INVALID_OPERAND_EXIT_CODE: i32 = 23;
 const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
 /// Exit code returned when the transfer exceeds the configured timeout.
 const TIMEOUT_EXIT_CODE: i32 = 30;
+/// Exit code returned when the `--max-delete` limit stops deletions.
+const MAX_DELETE_EXIT_CODE: i32 = 25;
 
 /// Ordered list of filter rules and per-directory merge directives.
 #[derive(Clone, Debug, Default)]
@@ -1533,6 +1535,7 @@ pub struct LocalCopyOptions {
     delete: bool,
     delete_timing: DeleteTiming,
     delete_excluded: bool,
+    max_deletions: Option<u64>,
     remove_source_files: bool,
     preallocate: bool,
     bandwidth_limit: Option<NonZeroU64>,
@@ -1592,6 +1595,7 @@ impl LocalCopyOptions {
             delete: false,
             delete_timing: DeleteTiming::default(),
             delete_excluded: false,
+            max_deletions: None,
             remove_source_files: false,
             preallocate: false,
             bandwidth_limit: None,
@@ -1769,6 +1773,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Limits the number of deletions performed during a transfer.
+    #[must_use]
+    #[doc(alias = "--max-delete")]
+    pub const fn max_deletions(mut self, limit: Option<u64>) -> Self {
+        self.max_deletions = limit;
         self
     }
 
@@ -2176,6 +2188,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
         self.delete
+    }
+
+    /// Returns the configured maximum number of deletions, if any.
+    #[must_use]
+    pub const fn max_deletion_limit(&self) -> Option<u64> {
+        self.max_deletions
     }
 
     /// Returns the configured deletion timing when deletion sweeps are enabled.
@@ -3645,6 +3663,10 @@ impl<'a> CopyContext<'a> {
         &mut self.summary
     }
 
+    fn summary(&self) -> &LocalCopySummary {
+        &self.summary
+    }
+
     fn record(&mut self, record: LocalCopyRecord) {
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
@@ -5055,6 +5077,12 @@ impl LocalCopyError {
         Self::new(LocalCopyErrorKind::InvalidArgument(reason))
     }
 
+    /// Constructs an error indicating that the deletion limit was exceeded.
+    #[must_use]
+    pub fn delete_limit_exceeded(skipped: u64) -> Self {
+        Self::new(LocalCopyErrorKind::DeleteLimitExceeded { skipped })
+    }
+
     /// Constructs an I/O error with action context.
     #[must_use]
     pub fn io(action: &'static str, path: PathBuf, source: io::Error) -> Self {
@@ -5080,6 +5108,7 @@ impl LocalCopyError {
                 INVALID_OPERAND_EXIT_CODE
             }
             LocalCopyErrorKind::Timeout { .. } => TIMEOUT_EXIT_CODE,
+            LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
         }
     }
 
@@ -5120,6 +5149,14 @@ impl fmt::Display for LocalCopyError {
                     duration.as_secs_f64()
                 )
             }
+            LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+                let noun = if *skipped == 1 { "entry" } else { "entries" };
+                write!(
+                    f,
+                    "Deletions stopped due to --max-delete limit ({} {noun} skipped)",
+                    skipped
+                )
+            }
         }
     }
 }
@@ -5153,6 +5190,11 @@ pub enum LocalCopyErrorKind {
     Timeout {
         /// Duration of inactivity that triggered the timeout.
         duration: Duration,
+    },
+    /// Deletions were halted because the configured limit was exceeded.
+    DeleteLimitExceeded {
+        /// Number of entries that were skipped after reaching the limit.
+        skipped: u64,
     },
 }
 
@@ -7807,6 +7849,7 @@ fn delete_extraneous_entries(
     relative: Option<&Path>,
     source_entries: &[OsString],
 ) -> Result<(), LocalCopyError> {
+    let mut skipped_due_to_limit = 0u64;
     let mut keep = HashSet::with_capacity(source_entries.len());
     for name in source_entries {
         keep.insert(name.clone());
@@ -7850,6 +7893,13 @@ fn delete_extraneous_entries(
             continue;
         }
 
+        if let Some(limit) = context.options().max_deletion_limit() {
+            if context.summary().items_deleted() >= limit {
+                skipped_due_to_limit = skipped_due_to_limit.saturating_add(1);
+                continue;
+            }
+        }
+
         if context.mode().is_dry_run() {
             context.summary_mut().record_deletion();
             context.record(LocalCopyRecord::new(
@@ -7875,6 +7925,10 @@ fn delete_extraneous_entries(
             None,
         ));
         context.register_progress();
+    }
+
+    if skipped_due_to_limit > 0 {
+        return Err(LocalCopyError::delete_limit_exceeded(skipped_due_to_limit));
     }
 
     Ok(())
@@ -10656,6 +10710,74 @@ mod tests {
         assert!(target.is_file());
         assert_eq!(summary.files_copied(), 1);
         assert!(summary.items_deleted() >= 1);
+    }
+
+    #[test]
+    fn execute_with_max_delete_limit_enforced() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write source file");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create destination root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra-1.txt"), b"extra").expect("write extra 1");
+        fs::write(dest_root.join("extra-2.txt"), b"extra").expect("write extra 2");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .max_deletions(Some(1));
+
+        let error = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect_err("max-delete should stop deletions");
+
+        match error.kind() {
+            LocalCopyErrorKind::DeleteLimitExceeded { skipped } => assert_eq!(*skipped, 1),
+            other => panic!("unexpected error kind: {other:?}"),
+        }
+
+        let remaining = [
+            dest_root.join("extra-1.txt").exists(),
+            dest_root.join("extra-2.txt").exists(),
+        ];
+        assert!(remaining.iter().copied().any(|exists| exists));
+        assert!(remaining.iter().copied().any(|exists| !exists));
+    }
+
+    #[test]
+    fn execute_with_max_delete_limit_in_dry_run_reports_error() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("obsolete.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .max_deletions(Some(0));
+
+        let error = plan
+            .execute_with_options(LocalCopyExecution::DryRun, options)
+            .expect_err("dry-run should stop deletions when limit is zero");
+
+        match error.kind() {
+            LocalCopyErrorKind::DeleteLimitExceeded { skipped } => assert_eq!(*skipped, 1),
+            other => panic!("unexpected error kind: {other:?}"),
+        }
+
+        assert!(dest_root.join("obsolete.txt").exists());
     }
 
     #[test]
