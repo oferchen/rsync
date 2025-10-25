@@ -1534,6 +1534,7 @@ pub struct LocalCopyOptions {
     remove_source_files: bool,
     preallocate: bool,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_burst: Option<NonZeroU64>,
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
     compression_level: CompressionLevel,
@@ -1590,6 +1591,7 @@ impl LocalCopyOptions {
             remove_source_files: false,
             preallocate: false,
             bandwidth_limit: None,
+            bandwidth_burst: None,
             compress: false,
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
@@ -1772,6 +1774,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--bwlimit")]
     pub const fn bandwidth_limit(mut self, limit: Option<NonZeroU64>) -> Self {
         self.bandwidth_limit = limit;
+        self
+    }
+
+    /// Applies an optional burst limit expressed in bytes per read.
+    #[must_use]
+    #[doc(alias = "--bwlimit")]
+    pub const fn bandwidth_burst(mut self, burst: Option<NonZeroU64>) -> Self {
+        self.bandwidth_burst = burst;
         self
     }
 
@@ -2190,6 +2200,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn bandwidth_limit_bytes(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    /// Returns the configured burst size in bytes, if any.
+    #[must_use]
+    pub const fn bandwidth_burst_bytes(&self) -> Option<NonZeroU64> {
+        self.bandwidth_burst
     }
 
     /// Returns whether compression is enabled for payload handling.
@@ -2975,7 +2991,10 @@ impl<'a> CopyContext<'a> {
         observer: Option<&'a mut dyn LocalCopyRecordHandler>,
         destination_root: PathBuf,
     ) -> Self {
-        let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
+        let burst = options.bandwidth_burst_bytes();
+        let limiter = options
+            .bandwidth_limit_bytes()
+            .map(|limit| BandwidthLimiter::with_burst(limit, burst));
         let collect_events = options.events_enabled();
         let filter_program = options.filter_program().cloned();
         let dir_merge_layers = filter_program
