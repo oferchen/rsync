@@ -6186,15 +6186,6 @@ fn copy_file(
         destination_previously_existed,
     );
 
-    if !delay_updates_enabled {
-        apply_file_metadata_with_options(destination, metadata, metadata_options)
-            .map_err(map_metadata_error)?;
-        #[cfg(feature = "xattr")]
-        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
-        #[cfg(feature = "acl")]
-        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
-    }
-
     let hard_link_path = if delay_updates_enabled {
         staging_path_for_links.as_deref().unwrap_or(destination)
     } else {
