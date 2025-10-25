@@ -85,6 +85,9 @@ use rsync_meta::{
     apply_directory_metadata_with_options, apply_file_metadata_with_options,
     apply_symlink_metadata_with_options, create_device_node, create_fifo, MetadataError,
     MetadataOptions,
+    ChmodModifiers, MetadataError, MetadataOptions, apply_directory_metadata_with_options,
+    apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
+    create_fifo,
 };
 use rsync_protocol::ProtocolVersion;
 
@@ -1574,6 +1577,7 @@ pub struct LocalCopyOptions {
     preserve_xattrs: bool,
     link_dests: Vec<LinkDestEntry>,
     reference_directories: Vec<ReferenceDirectory>,
+    chmod: Option<ChmodModifiers>,
 }
 
 impl LocalCopyOptions {
@@ -1629,6 +1633,7 @@ impl LocalCopyOptions {
             preserve_xattrs: false,
             link_dests: Vec::new(),
             reference_directories: Vec::new(),
+            chmod: None,
         }
     }
 
@@ -1656,6 +1661,13 @@ impl LocalCopyOptions {
                 self.link_dests.push(LinkDestEntry::new(path));
             }
         }
+        self
+    }
+
+    /// Configures chmod modifiers that should be applied after metadata preservation.
+    #[must_use]
+    pub fn with_chmod(mut self, modifiers: Option<ChmodModifiers>) -> Self {
+        self.chmod = modifiers;
         self
     }
 
@@ -2238,6 +2250,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
+    }
+
+    /// Returns the configured chmod modifiers, if any.
+    #[must_use]
+    pub fn chmod(&self) -> Option<&ChmodModifiers> {
+        self.chmod.as_ref()
     }
 
     /// Reports whether permissions should be preserved.
@@ -3023,7 +3041,7 @@ impl<'a> CopyContext<'a> {
         relative: &Path,
         source: &Path,
         metadata: &fs::Metadata,
-        metadata_options: MetadataOptions,
+        metadata_options: &MetadataOptions,
         size_only: bool,
         checksum: bool,
     ) -> Result<Option<PathBuf>, LocalCopyError> {
@@ -3151,6 +3169,7 @@ impl<'a> CopyContext<'a> {
             .numeric_ids(self.options.numeric_ids_enabled())
             .with_owner_override(self.options.owner_override())
             .with_group_override(self.options.group_override())
+            .with_chmod(self.options.chmod().cloned())
     }
 
     fn copy_links_enabled(&self) -> bool {
@@ -5303,7 +5322,7 @@ fn copy_sources(
                             source_path,
                             &target,
                             &metadata,
-                            metadata_options,
+                            &metadata_options,
                             record_path,
                         )?;
                     } else if is_fifo(&effective_type) {
@@ -5316,7 +5335,7 @@ fn copy_sources(
                             source_path,
                             &target,
                             effective_metadata,
-                            metadata_options,
+                            &metadata_options,
                             record_path,
                         )?;
                     } else if is_device(&effective_type) {
@@ -5329,7 +5348,7 @@ fn copy_sources(
                             source_path,
                             &target,
                             effective_metadata,
-                            metadata_options,
+                            &metadata_options,
                             record_path,
                         )?;
                     } else {
@@ -5684,7 +5703,7 @@ fn copy_directory_recursive(
                     planned.entry.path.as_path(),
                     &target_path,
                     entry_metadata,
-                    metadata_options,
+                    &metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
                 kept_any = true;
@@ -5697,7 +5716,7 @@ fn copy_directory_recursive(
                     planned.entry.path.as_path(),
                     &target_path,
                     entry_metadata,
-                    metadata_options,
+                    &metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
                 kept_any = true;
@@ -5710,7 +5729,7 @@ fn copy_directory_recursive(
                     planned.entry.path.as_path(),
                     &target_path,
                     entry_metadata,
-                    metadata_options,
+                    &metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
                 kept_any = true;
@@ -5798,7 +5817,7 @@ fn find_reference_action(
     relative: &Path,
     source: &Path,
     metadata: &fs::Metadata,
-    metadata_options: MetadataOptions,
+    metadata_options: &MetadataOptions,
     size_only: bool,
     checksum: bool,
 ) -> Result<Option<ReferenceDecision>, LocalCopyError> {
@@ -6081,7 +6100,7 @@ fn copy_file(
         relative_for_link,
         source,
         metadata,
-        metadata_options,
+        &metadata_options,
         size_only_enabled,
         checksum_enabled,
     )? {
@@ -6216,7 +6235,7 @@ fn copy_file(
             record_path.as_path(),
             source,
             metadata,
-            metadata_options,
+            &metadata_options,
             size_only_enabled,
             checksum_enabled,
         )? {
@@ -6296,8 +6315,12 @@ fn copy_file(
                     if degrade_to_copy {
                         copy_source_override = Some(path);
                     } else if copy_source_override.is_none() {
-                        apply_file_metadata_with_options(destination, metadata, metadata_options)
-                            .map_err(map_metadata_error)?;
+                        apply_file_metadata_with_options(
+                            destination,
+                            metadata,
+                            metadata_options.clone(),
+                        )
+                        .map_err(map_metadata_error)?;
                         #[cfg(feature = "xattr")]
                         sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
                         #[cfg(feature = "acl")]
@@ -6339,11 +6362,11 @@ fn copy_file(
             metadata,
             destination,
             existing,
-            metadata_options,
+            &metadata_options,
             size_only_enabled,
             checksum_enabled,
         ) {
-            apply_file_metadata_with_options(destination, metadata, metadata_options)
+            apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
             sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
@@ -6982,7 +7005,7 @@ fn should_skip_copy(
     source: &fs::Metadata,
     destination_path: &Path,
     destination: &fs::Metadata,
-    options: MetadataOptions,
+    options: &MetadataOptions,
     size_only: bool,
     checksum: bool,
 ) -> bool {
@@ -7085,7 +7108,7 @@ fn copy_fifo(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    metadata_options: MetadataOptions,
+    metadata_options: &MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     context.enforce_timeout()?;
@@ -7196,7 +7219,7 @@ fn copy_fifo(
         CreatedEntryKind::Fifo,
         destination_previously_existed,
     );
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
+    apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
@@ -7225,7 +7248,7 @@ fn copy_device(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    metadata_options: MetadataOptions,
+    metadata_options: &MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     context.enforce_timeout()?;
@@ -7336,7 +7359,7 @@ fn copy_device(
         CreatedEntryKind::Device,
         destination_previously_existed,
     );
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
+    apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
@@ -7508,7 +7531,7 @@ fn copy_symlink(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    metadata_options: MetadataOptions,
+    metadata_options: &MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     context.enforce_timeout()?;
@@ -7612,7 +7635,7 @@ fn copy_symlink(
         destination_previously_existed,
     );
 
-    apply_symlink_metadata_with_options(destination, metadata, metadata_options)
+    apply_symlink_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
@@ -7914,6 +7937,16 @@ mod tests {
         let context =
             CopyContext::new(LocalCopyExecution::Apply, options, None, PathBuf::from("."));
         assert!(context.metadata_options().numeric_ids_enabled());
+    }
+
+    #[test]
+    fn metadata_options_carry_chmod_modifiers() {
+        let modifiers = ChmodModifiers::parse("a+rw").expect("chmod parses");
+        let options = LocalCopyOptions::default().with_chmod(Some(modifiers.clone()));
+        let context =
+            CopyContext::new(LocalCopyExecution::Apply, options, None, PathBuf::from("."));
+
+        assert_eq!(context.metadata_options().chmod(), Some(&modifiers));
     }
 
     #[test]
@@ -9479,6 +9512,33 @@ mod tests {
         let dest_mtime = FileTime::from_last_modification_time(&metadata);
         assert_eq!(dest_atime, atime);
         assert_eq!(dest_mtime, mtime);
+        assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_applies_chmod_modifiers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        fs::write(&source, b"payload").expect("write source");
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o666)).expect("set perms");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let modifiers = ChmodModifiers::parse("Fgo-w").expect("chmod parses");
+        let options = LocalCopyOptions::default().with_chmod(Some(modifiers));
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let metadata = fs::metadata(&destination).expect("dest metadata");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
         assert_eq!(summary.files_copied(), 1);
     }
 

@@ -18,6 +18,7 @@ rsync-logging = { path = "../logging" }
 rsync-daemon = { path = "../daemon" }
 rsync-protocol = { path = "../protocol" }
 rsync-compress = { path = "../compress" }
+rsync-meta = { path = "../meta" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
 tempfile = "3.10"
 users = "0.11"
