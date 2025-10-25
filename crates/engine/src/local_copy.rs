@@ -2897,6 +2897,8 @@ impl<'a> CopyContext<'a> {
         }
 
         Ok(None)
+    }
+
     fn reference_directories(&self) -> &[ReferenceDirectory] {
         self.options.reference_directories()
     }
