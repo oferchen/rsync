@@ -681,7 +681,7 @@ enum FilterInstruction {
 #[derive(Clone, Debug, Default)]
 struct FilterSegment {
     include_exclude: Vec<CompiledRule>,
-    protect: Vec<CompiledRule>,
+    protect_risk: Vec<CompiledRule>,
 }
 
 impl FilterSegment {
@@ -690,15 +690,15 @@ impl FilterSegment {
             rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
                 self.include_exclude.push(CompiledRule::new(rule)?);
             }
-            rsync_filters::FilterAction::Protect => {
-                self.protect.push(CompiledRule::new(rule)?);
+            rsync_filters::FilterAction::Protect | rsync_filters::FilterAction::Risk => {
+                self.protect_risk.push(CompiledRule::new(rule)?);
             }
         }
         Ok(())
     }
 
     fn is_empty(&self) -> bool {
-        self.include_exclude.is_empty() && self.protect.is_empty()
+        self.include_exclude.is_empty() && self.protect_risk.is_empty()
     }
 
     fn apply(
@@ -731,14 +731,19 @@ impl FilterSegment {
             }
         }
 
-        for rule in &self.protect {
+        for rule in &self.protect_risk {
             if rule.matches(path, is_dir) {
                 let applies = match context {
                     FilterContext::Transfer => rule.applies_to_sender,
                     FilterContext::Deletion => rule.applies_to_receiver,
                 };
                 if applies {
-                    outcome.protect();
+                    match rule.action {
+                        rsync_filters::FilterAction::Protect => outcome.protect(),
+                        rsync_filters::FilterAction::Risk => outcome.unprotect(),
+                        rsync_filters::FilterAction::Include
+                        | rsync_filters::FilterAction::Exclude => {}
+                    }
                 }
             }
         }
@@ -781,6 +786,10 @@ impl FilterOutcome {
     fn protect(&mut self) {
         self.protected = true;
     }
+
+    fn unprotect(&mut self) {
+        self.protected = false;
+    }
 }
 
 impl Default for FilterOutcome {
@@ -817,7 +826,9 @@ impl CompiledRule {
         if directory_only
             || matches!(
                 action,
-                rsync_filters::FilterAction::Exclude | rsync_filters::FilterAction::Protect
+                rsync_filters::FilterAction::Exclude
+                    | rsync_filters::FilterAction::Protect
+                    | rsync_filters::FilterAction::Risk
             )
         {
             descendant_patterns.insert(format!("{}/**", core_pattern));
@@ -4201,6 +4212,9 @@ fn parse_filter_directive_line(
             'p' => {
                 return handle_keyword(remainder, FilterRule::protect);
             }
+            'r' => {
+                return handle_keyword(remainder, FilterRule::risk);
+            }
             's' => {
                 if remainder.is_empty() {
                     return Err(FilterParseError::new("filter directive missing pattern"));
@@ -4245,6 +4259,10 @@ fn parse_filter_directive_line(
 
     if keyword.eq_ignore_ascii_case("protect") {
         return handle_keyword(remainder, FilterRule::protect);
+    }
+
+    if keyword.eq_ignore_ascii_case("risk") {
+        return handle_keyword(remainder, FilterRule::risk);
     }
 
     if keyword.eq_ignore_ascii_case("merge") {
@@ -7750,6 +7768,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_risk_requires_receiver() {
+        let rule = match parse_filter_directive_line("risk cache/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_shorthand_risk_requires_receiver() {
+        let rule = match parse_filter_directive_line("R cache/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
     fn parse_filter_directive_dir_merge_without_modifiers() {
         let directive = parse_filter_directive_line("dir-merge .rsync-filter")
             .expect("parse")
@@ -10225,6 +10265,41 @@ mod tests {
         let target_root = dest.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert_eq!(summary.items_deleted(), 0);
+    }
+
+    #[test]
+    fn delete_risk_rule_overrides_protection() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let target_root = dest.join("source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(target_root.join("keep.txt"), b"keep").expect("write keep");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([
+            rsync_filters::FilterRule::protect("keep.txt"),
+            rsync_filters::FilterRule::risk("keep.txt"),
+        ])
+        .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .filters(Some(filters));
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(!target_root.join("keep.txt").exists());
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]
