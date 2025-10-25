@@ -1053,6 +1053,7 @@ impl RuntimeOptions {
         self.reverse_lookup
     }
 
+    #[cfg(test)]
     fn lock_file(&self) -> Option<&Path> {
         self.lock_file.as_deref()
     }
