@@ -4860,6 +4860,7 @@ fn append_filter_rules_from_files(
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
             FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
             FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
+            FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
             FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
         }));
     }
@@ -9101,6 +9102,7 @@ mod tests {
             FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
             FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
             FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
+            FilterRuleKind::Risk => Some(EngineFilterRule::risk(rule.pattern())),
             FilterRuleKind::ExcludeIfPresent => None,
             FilterRuleKind::DirMerge => None,
         });
@@ -10694,7 +10696,13 @@ exit 0
         assert!(stderr.is_empty());
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        assert!(recorded.lines().filter(|line| *line == "--link-dest").count() >= 2);
+        assert!(
+            recorded
+                .lines()
+                .filter(|line| *line == "--link-dest")
+                .count()
+                >= 2
+        );
         assert!(recorded.lines().any(|line| line == "baseline"));
         assert!(recorded.lines().any(|line| line == "/var/cache"));
         assert!(recorded.lines().any(|line| line == "--link-dest=link"));

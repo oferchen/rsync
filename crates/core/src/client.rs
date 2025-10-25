@@ -1514,6 +1514,8 @@ pub enum FilterRuleKind {
     Exclude,
     /// Protect matching destination paths from deletion.
     Protect,
+    /// Remove protection for matching destination paths.
+    Risk,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
     /// Exclude directories containing a specific marker file.
@@ -1569,12 +1571,12 @@ impl FilterRuleSpec {
         }
     }
 
-    /// Creates a receiver-only include rule equivalent to `risk PATTERN` or `R PATTERN`.
+    /// Creates a receiver-only risk rule equivalent to `risk PATTERN` or `R PATTERN`.
     #[must_use]
     #[doc(alias = "R")]
     pub fn risk(pattern: impl Into<String>) -> Self {
         Self {
-            kind: FilterRuleKind::Include,
+            kind: FilterRuleKind::Risk,
             pattern: pattern.into(),
             dir_merge_options: None,
             applies_to_sender: false,
@@ -6545,6 +6547,10 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
             )),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern().to_string())
+                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
+            )),
+            FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
+                EngineFilterRule::risk(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
             FilterRuleKind::DirMerge => {
