@@ -1234,6 +1234,23 @@ fn parse_config_modules_inner(
                     if !included.global_refuse_options.is_empty() {
                         global_refuse_directives.extend(included.global_refuse_options);
                     }
+
+                    if let Some((included_pid_file, origin)) = included.pid_file {
+                        if let Some((existing, existing_origin)) = &pid_file {
+                            if existing != &included_pid_file {
+                                return Err(config_parse_error(
+                                    path,
+                                    line_number,
+                                    format!(
+                                        "duplicate 'pid file' directive in global section (previously defined on line {})",
+                                        existing_origin.line
+                                    ),
+                                ));
+                            }
+                        } else {
+                            pid_file = Some((included_pid_file, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
