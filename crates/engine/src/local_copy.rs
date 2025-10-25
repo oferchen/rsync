@@ -1572,6 +1572,7 @@ pub struct LocalCopyOptions {
     append: bool,
     append_verify: bool,
     collect_events: bool,
+    preserve_hard_links: bool,
     relative_paths: bool,
     devices: bool,
     specials: bool,
@@ -1631,6 +1632,7 @@ impl LocalCopyOptions {
             append: false,
             append_verify: false,
             collect_events: false,
+            preserve_hard_links: false,
             relative_paths: false,
             devices: false,
             specials: false,
@@ -1671,6 +1673,20 @@ impl LocalCopyOptions {
             }
         }
         self
+    }
+
+    /// Enables or disables hard-link preservation for identical inodes.
+    #[must_use]
+    #[doc(alias = "--hard-links")]
+    pub const fn hard_links(mut self, preserve: bool) -> Self {
+        self.preserve_hard_links = preserve;
+        self
+    }
+
+    /// Returns `true` when hard-link preservation is enabled.
+    #[must_use]
+    pub const fn hard_links_enabled(&self) -> bool {
+        self.preserve_hard_links
     }
 
     /// Configures chmod modifiers that should be applied after metadata preservation.
@@ -3084,6 +3100,20 @@ impl<'a> CopyContext<'a> {
         &self.options
     }
 
+    fn record_hard_link(&mut self, metadata: &fs::Metadata, destination: &Path) {
+        if self.options.hard_links_enabled() {
+            self.hard_links.record(metadata, destination);
+        }
+    }
+
+    fn existing_hard_link_target(&self, metadata: &fs::Metadata) -> Option<PathBuf> {
+        if self.options.hard_links_enabled() {
+            self.hard_links.existing_target(metadata)
+        } else {
+            None
+        }
+    }
+
     fn delay_updates_enabled(&self) -> bool {
         self.options.delay_updates_enabled()
     }
@@ -3122,7 +3152,7 @@ impl<'a> CopyContext<'a> {
         }
         #[cfg(not(any(feature = "xattr", feature = "acl")))]
         let _ = mode;
-        self.hard_links.record(metadata, destination);
+        self.record_hard_link(metadata, destination);
         remove_source_entry_if_requested(self, source, relative, file_type)?;
         Ok(())
     }
@@ -3181,7 +3211,7 @@ impl<'a> CopyContext<'a> {
     fn register_deferred_update(&mut self, update: DeferredUpdate) {
         let metadata = update.metadata.clone();
         let destination = update.destination.clone();
-        self.hard_links.record(&metadata, destination.as_path());
+        self.record_hard_link(&metadata, destination.as_path());
         self.deferred_updates.push(update);
     }
 
@@ -6481,7 +6511,7 @@ fn copy_file(
         if let Some(existing) = existing_metadata.as_ref() {
             if destination_is_newer(metadata, existing) {
                 context.summary_mut().record_regular_file_skipped_newer();
-                context.hard_links.record(metadata, destination);
+                context.record_hard_link(metadata, destination);
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
                 context.record(LocalCopyRecord::new(
@@ -6499,7 +6529,7 @@ fn copy_file(
 
     if context.ignore_existing_enabled() && existing_metadata.is_some() {
         context.summary_mut().record_regular_file_ignored_existing();
-        context.hard_links.record(metadata, destination);
+        context.record_hard_link(metadata, destination);
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
@@ -6572,7 +6602,7 @@ fn copy_file(
             }
         }
 
-        context.hard_links.record(metadata, destination);
+        context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
@@ -6594,7 +6624,7 @@ fn copy_file(
     }
     let mut copy_source_override: Option<PathBuf> = None;
 
-    if let Some(existing_target) = context.hard_links.existing_target(metadata) {
+    if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         let mut attempted_commit = false;
         loop {
             match create_hard_link(&existing_target, destination) {
@@ -6635,7 +6665,7 @@ fn copy_file(
             }
         }
 
-        context.hard_links.record(metadata, destination);
+        context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
@@ -6753,7 +6783,7 @@ fn copy_file(
                         sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
                         #[cfg(feature = "acl")]
                         sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
-                        context.hard_links.record(metadata, destination);
+                        context.record_hard_link(metadata, destination);
                         context.summary_mut().record_hard_link();
                         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                         let total_bytes = Some(metadata_snapshot.len());
@@ -6800,7 +6830,7 @@ fn copy_file(
             sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
             #[cfg(feature = "acl")]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
-            context.hard_links.record(metadata, destination);
+            context.record_hard_link(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
@@ -6958,7 +6988,7 @@ fn copy_file(
     } else {
         destination
     };
-    context.hard_links.record(metadata, hard_link_path);
+    context.record_hard_link(metadata, hard_link_path);
     let elapsed = start.elapsed();
     let compressed_bytes = outcome.compressed_bytes();
     context
@@ -9152,7 +9182,10 @@ mod tests {
         let operands = vec![source.clone().into_os_string(), destination_operand];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let summary = plan.execute().expect("copy succeeds");
+        let options = LocalCopyOptions::default().hard_links(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
 
         let copied = dest_dir.join(source.file_name().expect("source name"));
         assert_eq!(fs::read(copied).expect("read copied"), b"payload");
@@ -9172,7 +9205,10 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let summary = plan.execute().expect("copy succeeds");
+        let options = LocalCopyOptions::default().hard_links(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
 
         assert_eq!(fs::read(destination).expect("read dest"), b"example");
         assert_eq!(summary.files_copied(), 1);
@@ -9427,7 +9463,10 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let summary = plan.execute().expect("copy succeeds");
+        let options = LocalCopyOptions::default().hard_links(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
         assert_eq!(
             fs::read(dest_root.join("nested").join("file.txt")).expect("read"),
             b"tree"
@@ -9760,7 +9799,10 @@ mod tests {
         let operands = vec![link.into_os_string(), dest_link.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let summary = plan.execute().expect("copy succeeds");
+        let options = LocalCopyOptions::default().hard_links(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
         let copied = fs::read_link(dest_link).expect("read copied link");
         assert_eq!(copied, target);
         assert_eq!(summary.symlinks_copied(), 1);
@@ -10930,7 +10972,10 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let summary = plan.execute().expect("copy succeeds");
+        let options = LocalCopyOptions::default().hard_links(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
 
         let dest_a = dest_root.join("file-a");
         let dest_b = dest_root.join("file-b");
@@ -10943,6 +10988,41 @@ mod tests {
         assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
         assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
         assert!(summary.hard_links_created() >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_without_hard_links_materialises_independent_files() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        let file_a = source_root.join("file-a");
+        let file_b = source_root.join("file-b");
+        fs::write(&file_a, b"shared").expect("write source file");
+        fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+        let dest_root = temp.path().join("dest");
+        let operands = vec![
+            source_root.into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan.execute().expect("copy succeeds");
+
+        let dest_a = dest_root.join("file-a");
+        let dest_b = dest_root.join("file-b");
+        let metadata_a = fs::metadata(&dest_a).expect("metadata a");
+        let metadata_b = fs::metadata(&dest_b).expect("metadata b");
+
+        assert_ne!(metadata_a.ino(), metadata_b.ino());
+        assert_eq!(metadata_a.nlink(), 1);
+        assert_eq!(metadata_b.nlink(), 1);
+        assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
+        assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
+        assert_eq!(summary.hard_links_created(), 0);
     }
 
     #[cfg(unix)]
@@ -10966,6 +11046,7 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
         let options = LocalCopyOptions::default()
+            .hard_links(true)
             .partial(true)
             .delay_updates(true);
         let summary = plan

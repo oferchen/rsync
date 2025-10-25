@@ -160,6 +160,8 @@ const HELP_TEXT: &str = concat!(
     "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
     "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
     "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
+    "  -H, --hard-links  Preserve hard links between files.\n",
+    "      --no-hard-links  Disable hard link preservation.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
@@ -242,6 +244,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
@@ -869,6 +872,7 @@ struct ParsedArgs {
     omit_dir_times: Option<bool>,
     acls: Option<bool>,
     numeric_ids: Option<bool>,
+    hard_links: Option<bool>,
     sparse: Option<bool>,
     copy_links: Option<bool>,
     copy_dirlinks: bool,
@@ -1134,6 +1138,14 @@ fn clap_command() -> ClapCommand {
                 .conflicts_with("no-copy-links"),
         )
         .arg(
+            Arg::new("hard-links")
+                .long("hard-links")
+                .short('H')
+                .help("Preserve hard links between files.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-hard-links"),
+        )
+        .arg(
             Arg::new("copy-dirlinks")
                 .long("copy-dirlinks")
                 .short('k')
@@ -1154,6 +1166,13 @@ fn clap_command() -> ClapCommand {
                 .help("Preserve symlinks instead of following them.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("copy-links"),
+        )
+        .arg(
+            Arg::new("no-hard-links")
+                .long("no-hard-links")
+                .help("Disable hard link preservation.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("hard-links"),
         )
         .arg(
             Arg::new("safe-links")
@@ -1911,6 +1930,13 @@ where
     } else {
         None
     };
+    let hard_links = if matches.get_flag("no-hard-links") {
+        Some(false)
+    } else if matches.get_flag("hard-links") {
+        Some(true)
+    } else {
+        None
+    };
     let sparse = if matches.get_flag("sparse") {
         Some(true)
     } else if matches.get_flag("no-sparse") {
@@ -2136,6 +2162,7 @@ where
         times,
         omit_dir_times,
         numeric_ids,
+        hard_links,
         sparse,
         copy_links,
         copy_dirlinks,
@@ -2531,6 +2558,7 @@ where
         info,
         debug,
         numeric_ids,
+        hard_links,
         sparse,
         copy_links,
         copy_dirlinks,
@@ -3019,6 +3047,7 @@ where
             times,
             omit_dir_times,
             numeric_ids: numeric_ids_option,
+            hard_links,
             copy_links,
             copy_dirlinks,
             keep_dirlinks,
@@ -3171,6 +3200,7 @@ where
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
+    let preserve_hard_links = hard_links.unwrap_or(false);
     let sparse = sparse.unwrap_or(false);
     let copy_links = copy_links.unwrap_or(false);
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
@@ -3230,6 +3260,7 @@ where
         .ignore_existing(ignore_existing)
         .update(update)
         .numeric_ids(numeric_ids)
+        .hard_links(preserve_hard_links)
         .sparse(sparse)
         .copy_links(copy_links)
         .copy_dirlinks(copy_dirlinks)
@@ -7869,6 +7900,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_hard_links_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--hard-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.hard_links, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-hard-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.hard_links, Some(false));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-H"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.hard_links, Some(true));
+    }
+
+    #[test]
     fn parse_args_recognises_copy_dirlinks_flag() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -11737,6 +11801,63 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
         assert!(!args.contains(&"--whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_hard_links_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--hard-links"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--hard-links"));
+        assert!(!args.contains(&"--no-hard-links"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-hard-links"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-hard-links"));
+        assert!(!args.contains(&"--hard-links"));
     }
 
     #[cfg(unix)]
