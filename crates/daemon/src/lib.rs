@@ -182,7 +182,7 @@ use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{BandwidthLimiter, BandwidthParseError, parse_bandwidth_argument},
     message::{Message, Role},
-    rsync_error, rsync_info,
+    rsync_error, rsync_info, rsync_warning,
     version::{RUST_VERSION, VersionInfoReport},
 };
 use rsync_logging::MessageSink;
@@ -190,6 +190,8 @@ use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     format_legacy_daemon_message, parse_legacy_daemon_message,
 };
+
+mod systemd;
 
 /// Exit code used when daemon functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -2684,6 +2686,22 @@ fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::
     sink.write(message)
 }
 
+fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io::Error) {
+    if let Some(sink) = log {
+        let payload = format!("failed to notify systemd about {}: {}", context, error);
+        let message = rsync_warning!(payload).with_role(Role::Daemon);
+        log_message(sink, &message);
+    }
+}
+
+fn format_connection_status(active: usize) -> String {
+    match active {
+        0 => String::from("Idle; waiting for connections"),
+        1 => String::from("Serving 1 connection"),
+        count => format!("Serving {count} connections"),
+    }
+}
+
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let RuntimeOptions {
         bind_address,
@@ -2729,6 +2747,12 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
     let local_addr = listener.local_addr().unwrap_or(requested_addr);
 
+    let notifier = systemd::ServiceNotifier::new();
+    let ready_status = format!("Listening on {}", local_addr);
+    if let Err(error) = notifier.ready(Some(&ready_status)) {
+        log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
+    }
+
     if let Some(log) = log_sink.as_ref() {
         let text = format!(
             "rsyncd version {} starting, listening on port {}",
@@ -2742,9 +2766,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let mut served = 0usize;
     let mut workers: Vec<thread::JoinHandle<WorkerResult>> = Vec::new();
     let max_sessions = max_sessions.map(NonZeroUsize::get);
+    let mut active_connections = 0usize;
 
     loop {
         reap_finished_workers(&mut workers)?;
+
+        let current_active = workers.len();
+        if current_active != active_connections {
+            let status = format_connection_status(current_active);
+            if let Err(error) = notifier.status(&status) {
+                log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
+            }
+            active_connections = current_active;
+        }
 
         match listener.accept() {
             Ok((stream, peer_addr)) => {
@@ -2767,6 +2801,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 });
                 workers.push(handle);
                 served = served.saturating_add(1);
+
+                let current_active = workers.len();
+                if current_active != active_connections {
+                    let status = format_connection_status(current_active);
+                    if let Err(error) = notifier.status(&status) {
+                        log_sd_notify_failure(
+                            log_sink.as_ref(),
+                            "connection status update",
+                            &error,
+                        );
+                    }
+                    active_connections = current_active;
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                 continue;
@@ -2778,12 +2825,27 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
         if let Some(limit) = max_sessions {
             if served >= limit {
+                if let Err(error) = notifier.status("Draining worker threads") {
+                    log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
+                }
                 break;
             }
         }
     }
 
     let result = drain_workers(&mut workers);
+
+    let shutdown_status = match served {
+        0 => String::from("No connections handled; shutting down"),
+        1 => String::from("Served 1 connection; shutting down"),
+        count => format!("Served {count} connections; shutting down"),
+    };
+    if let Err(error) = notifier.status(&shutdown_status) {
+        log_sd_notify_failure(log_sink.as_ref(), "shutdown status", &error);
+    }
+    if let Err(error) = notifier.stopping() {
+        log_sd_notify_failure(log_sink.as_ref(), "service shutdown", &error);
+    }
 
     if let Some(log) = log_sink.as_ref() {
         let text = format!("rsyncd version {} shutting down", RUST_VERSION);
@@ -4424,6 +4486,13 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
+    }
+
+    #[test]
+    fn connection_status_messages_describe_active_sessions() {
+        assert_eq!(format_connection_status(0), "Idle; waiting for connections");
+        assert_eq!(format_connection_status(1), "Serving 1 connection");
+        assert_eq!(format_connection_status(3), "Serving 3 connections");
     }
 
     #[allow(unsafe_code)]
