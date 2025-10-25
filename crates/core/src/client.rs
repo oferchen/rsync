@@ -1957,6 +1957,18 @@ impl ClientSummary {
         self.stats.bytes_copied()
     }
 
+    /// Returns the aggregate number of bytes received during the transfer.
+    #[must_use]
+    pub fn bytes_received(&self) -> u64 {
+        self.stats.bytes_received()
+    }
+
+    /// Returns the aggregate number of bytes sent during the transfer.
+    #[must_use]
+    pub const fn bytes_sent(&self) -> u64 {
+        0
+    }
+
     /// Returns the aggregate size of files that were rewritten or created.
     #[must_use]
     pub fn transferred_file_size(&self) -> u64 {

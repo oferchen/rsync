@@ -81,7 +81,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::{IntErrorKind, NonZeroU64, NonZeroU8};
+use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
@@ -92,17 +92,17 @@ use std::time::{Duration, SystemTime};
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 
-use clap::{builder::OsStringValueParser, Arg, ArgAction, Command as ClapCommand};
+use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        run_client_or_fallback, run_module_list_with_password_and_options, AddressMode,
-        BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
-        ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
+        AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
+        ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
         FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
-        RemoteFallbackContext, TransferTimeout,
+        RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
+        run_module_list_with_password_and_options,
     },
     message::{Message, Role},
     rsync_error,
@@ -110,7 +110,7 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-use time::{format_description::FormatItem, macros::format_description, OffsetDateTime};
+use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t, uid_t};
 
 /// Maximum exit code representable by a Unix process.
@@ -2189,11 +2189,7 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
         daemon_args.push(arg.clone());
     }
 
-    if found {
-        Some(daemon_args)
-    } else {
-        None
-    }
+    if found { Some(daemon_args) } else { None }
 }
 
 /// Returns `true` when the invocation requests server mode.
@@ -3796,7 +3792,8 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let deleted = summary.items_deleted();
     let literal_bytes = summary.bytes_copied();
     let transferred_size = summary.transferred_file_size();
-    let compressed = summary.compressed_bytes().unwrap_or(literal_bytes);
+    let bytes_sent = summary.bytes_sent();
+    let bytes_received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
     let matched_bytes = transferred_size.saturating_sub(literal_bytes);
     let file_list_size = summary.file_list_size();
@@ -3850,8 +3847,8 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
         stdout,
         "File list transfer time: {file_list_transfer:.3} seconds"
     )?;
-    writeln!(stdout, "Total bytes sent: {compressed}")?;
-    writeln!(stdout, "Total bytes received: 0")?;
+    writeln!(stdout, "Total bytes sent: {bytes_sent}")?;
+    writeln!(stdout, "Total bytes received: {bytes_received}")?;
     writeln!(stdout)?;
 
     emit_totals(summary, stdout)
@@ -3871,10 +3868,8 @@ fn format_stat_categories(categories: &[(&str, u64)]) -> String {
 
 /// Emits the summary lines reported by verbose transfers.
 fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
-    let sent = summary
-        .compressed_bytes()
-        .unwrap_or_else(|| summary.bytes_copied());
-    let received = 0u64;
+    let sent = summary.bytes_sent();
+    let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
     let elapsed = summary.total_elapsed();
     let seconds = elapsed.as_secs_f64();
@@ -6283,7 +6278,7 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
         assert!(rendered.contains("file.txt"));
         assert!(!rendered.contains("Total transferred"));
-        assert!(rendered.contains("sent 7 bytes  received 0 bytes"));
+        assert!(rendered.contains("sent 0 bytes  received 7 bytes"));
         assert!(rendered.contains("total size is 7  speedup is 1.00"));
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
@@ -6294,7 +6289,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -6426,7 +6421,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn progress_reports_unknown_totals_with_placeholder() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -6464,7 +6459,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn info_progress2_enables_progress_output() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -6559,7 +6554,7 @@ mod tests {
         assert!(rendered.contains("File list size: 0"));
         assert!(rendered.contains("File list generation time:"));
         assert!(rendered.contains("File list transfer time:"));
-        assert!(rendered.contains("Total bytes received: 0"));
+        assert!(rendered.contains(&format!("Total bytes received: {expected_size}")));
         assert!(rendered.contains("\n\nsent"));
         assert!(rendered.contains("total size is"));
         assert_eq!(
@@ -7276,7 +7271,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn transfer_request_with_perms_preserves_mode() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
 
@@ -9064,7 +9059,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_times_preserves_timestamp() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9717,7 +9712,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_no_times_overrides_archive() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9746,7 +9741,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9788,7 +9783,7 @@ mod tests {
 
     #[test]
     fn checksum_with_no_times_preserves_existing_destination() {
-        use filetime::{set_file_mtime, FileTime};
+        use filetime::{FileTime, set_file_mtime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -10106,9 +10101,11 @@ exit 99
             run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
-        assert!(String::from_utf8(stdout)
-            .expect("modules")
-            .contains("module"));
+        assert!(
+            String::from_utf8(stdout)
+                .expect("modules")
+                .contains("module")
+        );
 
         let rendered_err = String::from_utf8(stderr).expect("warnings are UTF-8");
         assert!(rendered_err.contains("@WARNING: Maintenance"));
@@ -10174,8 +10171,8 @@ exit 99
 
     #[test]
     fn module_list_uses_password_file_for_authentication() {
-        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use rsync_checksums::strong::Md5;
         use tempfile::tempdir;
 
@@ -10227,8 +10224,8 @@ exit 99
 
     #[test]
     fn module_list_reads_password_from_stdin() {
-        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use rsync_checksums::strong::Md5;
 
         let challenge = "stdin-test";
@@ -11054,14 +11051,18 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--partial"));
         assert!(recorded.lines().any(|line| line == "--partial-dir"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == partial_dir.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == partial_dir.display().to_string())
+        );
 
         // Ensure destination operand still forwarded correctly alongside partial dir args.
-        assert!(recorded
-            .lines()
-            .any(|line| line == dest_path.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
@@ -11114,9 +11115,11 @@ exit 0
         assert!(recorded.lines().any(|line| line == "--link-dest=link"));
         assert!(recorded.lines().any(|line| line == "--link-dest"));
         assert!(recorded.lines().any(|line| line == "link"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == dest_path.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
@@ -11158,9 +11161,11 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--link-dest=baseline"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == "--link-dest=/var/cache"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == "--link-dest=/var/cache")
+        );
         assert!(recorded.lines().any(|line| line == "--compare-dest"));
         assert!(recorded.lines().any(|line| line == "compare"));
         assert!(recorded.lines().any(|line| line == "--copy-dest"));
@@ -12576,7 +12581,7 @@ exit 0
 
     #[test]
     fn list_only_matches_rsync_format_for_regular_file() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
@@ -12630,7 +12635,7 @@ exit 0
 
     #[test]
     fn list_only_formats_special_permission_bits_like_rsync() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;

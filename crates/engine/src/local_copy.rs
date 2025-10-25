@@ -2541,6 +2541,7 @@ pub struct LocalCopySummary {
     sources_removed: u64,
     transferred_file_size: u64,
     bytes_copied: u64,
+    bytes_received: u64,
     compressed_bytes: u64,
     compression_used: bool,
     total_source_bytes: u64,
@@ -2653,6 +2654,12 @@ impl LocalCopySummary {
         self.bytes_copied
     }
 
+    /// Returns the aggregate number of bytes received during the transfer.
+    #[must_use]
+    pub const fn bytes_received(&self) -> u64 {
+        self.bytes_received
+    }
+
     /// Returns the aggregate size of files that were rewritten or created.
     #[must_use]
     pub const fn transferred_file_size(&self) -> u64 {
@@ -2705,6 +2712,8 @@ impl LocalCopySummary {
         self.files_copied = self.files_copied.saturating_add(1);
         self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
         self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
+        let received = compressed.unwrap_or(literal_bytes);
+        self.bytes_received = self.bytes_received.saturating_add(received);
         if let Some(compressed_bytes) = compressed {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
