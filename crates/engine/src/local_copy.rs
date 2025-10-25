@@ -1582,6 +1582,9 @@ pub struct LocalCopyOptions {
     timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
+    backup: bool,
+    backup_dir: Option<PathBuf>,
+    backup_suffix: OsString,
     link_dests: Vec<LinkDestEntry>,
     reference_directories: Vec<ReferenceDirectory>,
     chmod: Option<ChmodModifiers>,
@@ -1590,7 +1593,7 @@ pub struct LocalCopyOptions {
 impl LocalCopyOptions {
     /// Creates a new [`LocalCopyOptions`] value with defaults applied.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             delete: false,
             delete_timing: DeleteTiming::default(),
@@ -1642,6 +1645,9 @@ impl LocalCopyOptions {
             timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
+            backup: false,
+            backup_dir: None,
+            backup_suffix: OsString::from("~"),
             link_dests: Vec::new(),
             reference_directories: Vec::new(),
             chmod: None,
@@ -1654,6 +1660,42 @@ impl LocalCopyOptions {
     pub fn with_link_dest(mut self, path: PathBuf) -> Self {
         if !path.as_os_str().is_empty() {
             self.link_dests.push(LinkDestEntry::new(path));
+        }
+        self
+    }
+
+    /// Enables or disables creation of backups prior to overwriting or deleting entries.
+    #[must_use]
+    #[doc(alias = "--backup")]
+    #[doc(alias = "-b")]
+    pub const fn backup(mut self, enabled: bool) -> Self {
+        self.backup = enabled;
+        self
+    }
+
+    /// Configures the optional directory that should receive backup entries.
+    #[must_use]
+    #[doc(alias = "--backup-dir")]
+    pub fn with_backup_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.backup_dir = directory.map(Into::into);
+        if self.backup_dir.is_some() {
+            self.backup = true;
+        }
+        self
+    }
+
+    /// Overrides the suffix appended to backup file names.
+    #[must_use]
+    #[doc(alias = "--suffix")]
+    pub fn with_backup_suffix<S: Into<OsString>>(mut self, suffix: Option<S>) -> Self {
+        match suffix {
+            Some(value) => {
+                self.backup_suffix = value.into();
+                self.backup = true;
+            }
+            None => {
+                self.backup_suffix = OsString::from("~");
+            }
         }
         self
     }
@@ -2492,6 +2534,24 @@ impl LocalCopyOptions {
         &self.reference_directories
     }
 
+    /// Reports whether backups should be created before overwriting or deleting entries.
+    #[must_use]
+    pub const fn backup_enabled(&self) -> bool {
+        self.backup
+    }
+
+    /// Returns the configured backup directory, if any.
+    #[must_use]
+    pub fn backup_directory(&self) -> Option<&Path> {
+        self.backup_dir.as_deref()
+    }
+
+    /// Returns the suffix appended to backup file names.
+    #[must_use]
+    pub fn backup_suffix(&self) -> &OsStr {
+        &self.backup_suffix
+    }
+
     /// Reports whether in-place destination updates have been requested.
     #[must_use]
     pub const fn inplace_enabled(&self) -> bool {
@@ -3236,6 +3296,68 @@ impl<'a> CopyContext<'a> {
         for update in updates {
             self.finalize_deferred_update(update)?;
         }
+        Ok(())
+    }
+
+    fn backup_existing_entry(
+        &mut self,
+        destination: &Path,
+        relative: Option<&Path>,
+        file_type: fs::FileType,
+    ) -> Result<(), LocalCopyError> {
+        if !self.options.backup_enabled() || self.mode.is_dry_run() {
+            return Ok(());
+        }
+
+        if file_type.is_dir() {
+            return Ok(());
+        }
+
+        let backup_path = compute_backup_path(
+            self.destination_root(),
+            destination,
+            relative,
+            self.options.backup_directory(),
+            self.options.backup_suffix(),
+        );
+
+        if let Some(parent) = backup_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    LocalCopyError::io("create backup directory", parent.to_path_buf(), error)
+                })?;
+            }
+        }
+
+        match fs::rename(destination, &backup_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                if let Err(remove_error) = fs::remove_file(&backup_path) {
+                    if remove_error.kind() != io::ErrorKind::NotFound {
+                        return Err(LocalCopyError::io(
+                            "remove existing backup",
+                            backup_path.clone(),
+                            remove_error,
+                        ));
+                    }
+                }
+                fs::rename(destination, &backup_path).map_err(|rename_error| {
+                    LocalCopyError::io("create backup", backup_path.clone(), rename_error)
+                })?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                copy_entry_to_backup(destination, &backup_path, file_type)?;
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "create backup",
+                    backup_path.clone(),
+                    error,
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -6554,6 +6676,10 @@ fn copy_file(
     let compress_enabled = context.compress_enabled();
     let relative_for_link = relative.unwrap_or(record_path.as_path());
 
+    if let Some(existing) = existing_metadata.as_ref() {
+        context.backup_existing_entry(destination, relative, existing.file_type())?;
+    }
+
     if let Some(link_target) = context.link_dest_target(
         relative_for_link,
         source,
@@ -6567,13 +6693,7 @@ fn copy_file(
             match fs::hard_link(&link_target, destination) {
                 Ok(()) => break,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                    fs::remove_file(destination).map_err(|remove_error| {
-                        LocalCopyError::io(
-                            "remove existing destination",
-                            destination.to_path_buf(),
-                            remove_error,
-                        )
-                    })?;
+                    remove_existing_destination(destination)?;
                     fs::hard_link(&link_target, destination).map_err(|link_error| {
                         LocalCopyError::io(
                             "create hard link",
@@ -6630,13 +6750,7 @@ fn copy_file(
             match create_hard_link(&existing_target, destination) {
                 Ok(()) => break,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                    fs::remove_file(destination).map_err(|remove_error| {
-                        LocalCopyError::io(
-                            "remove existing destination",
-                            destination.to_path_buf(),
-                            remove_error,
-                        )
-                    })?;
+                    remove_existing_destination(destination)?;
                     create_hard_link(&existing_target, destination).map_err(|link_error| {
                         LocalCopyError::io(
                             "create hard link",
@@ -6724,13 +6838,7 @@ fn copy_file(
                 }
                 ReferenceDecision::Link(path) => {
                     if existing_metadata.is_some() {
-                        fs::remove_file(destination).map_err(|error| {
-                            LocalCopyError::io(
-                                "remove existing destination",
-                                destination.to_path_buf(),
-                                error,
-                            )
-                        })?;
+                        remove_existing_destination(destination)?;
                     }
 
                     let link_result = create_hard_link(&path, destination);
@@ -6738,13 +6846,7 @@ fn copy_file(
                     match link_result {
                         Ok(()) => {}
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                            fs::remove_file(destination).map_err(|remove_error| {
-                                LocalCopyError::io(
-                                    "remove existing destination",
-                                    destination.to_path_buf(),
-                                    remove_error,
-                                )
-                            })?;
+                            remove_existing_destination(destination)?;
                             create_hard_link(&path, destination).map_err(|link_error| {
                                 LocalCopyError::io(
                                     "create hard link",
@@ -7202,6 +7304,93 @@ fn partial_directory_destination_path(
     Ok(base_dir.join(file_name))
 }
 
+fn compute_backup_path(
+    destination_root: &Path,
+    destination: &Path,
+    relative: Option<&Path>,
+    backup_dir: Option<&Path>,
+    suffix: &OsStr,
+) -> PathBuf {
+    let relative_path = if let Some(rel) = relative {
+        rel.to_path_buf()
+    } else if let Ok(stripped) = destination.strip_prefix(destination_root) {
+        if stripped.as_os_str().is_empty() {
+            destination
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(destination))
+        } else {
+            stripped.to_path_buf()
+        }
+    } else if let Some(name) = destination.file_name() {
+        PathBuf::from(name)
+    } else {
+        PathBuf::from(destination)
+    };
+
+    let mut backup_name = relative_path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| OsString::from("backup"));
+    if !suffix.is_empty() {
+        backup_name.push(suffix);
+    }
+
+    let mut base = if let Some(dir) = backup_dir {
+        let mut base = if dir.is_absolute() {
+            dir.to_path_buf()
+        } else {
+            destination_root.join(dir)
+        };
+        if let Some(parent) = relative_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                base = base.join(parent);
+            }
+        }
+        base
+    } else {
+        destination
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+
+    base.push(backup_name);
+    base
+}
+
+fn copy_entry_to_backup(
+    source: &Path,
+    backup_path: &Path,
+    file_type: fs::FileType,
+) -> Result<(), LocalCopyError> {
+    if file_type.is_file() {
+        fs::copy(source, backup_path).map_err(|error| {
+            LocalCopyError::io("create backup", backup_path.to_path_buf(), error)
+        })?;
+    } else if file_type.is_symlink() {
+        let target = fs::read_link(source).map_err(|error| {
+            LocalCopyError::io("read symbolic link", source.to_path_buf(), error)
+        })?;
+        create_symlink(&target, source, backup_path).map_err(|error| {
+            LocalCopyError::io("create symbolic link", backup_path.to_path_buf(), error)
+        })?;
+    }
+    Ok(())
+}
+
+fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(LocalCopyError::io(
+            "remove existing destination",
+            path.to_path_buf(),
+            error,
+        )),
+    }
+}
+
 fn temporary_destination_path(destination: &Path, unique: usize) -> PathBuf {
     let file_name = destination
         .file_name()
@@ -7293,13 +7482,7 @@ impl DestinationWriteGuard {
         match fs::rename(&self.temp_path, &self.final_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                fs::remove_file(&self.final_path).map_err(|remove_error| {
-                    LocalCopyError::io(
-                        "remove existing destination",
-                        self.final_path.clone(),
-                        remove_error,
-                    )
-                })?;
+                remove_existing_destination(&self.final_path)?;
                 fs::rename(&self.temp_path, &self.final_path).map_err(|rename_error| {
                     LocalCopyError::io(self.finalise_action(), self.temp_path.clone(), rename_error)
                 })?;
@@ -7655,13 +7838,8 @@ fn copy_fifo(
                 ));
             }
 
-            fs::remove_file(destination).map_err(|error| {
-                LocalCopyError::io(
-                    "remove existing destination",
-                    destination.to_path_buf(),
-                    error,
-                )
-            })?;
+            context.backup_existing_entry(destination, relative, existing.file_type())?;
+            remove_existing_destination(destination)?;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -7795,13 +7973,8 @@ fn copy_device(
                 ));
             }
 
-            fs::remove_file(destination).map_err(|error| {
-                LocalCopyError::io(
-                    "remove existing destination",
-                    destination.to_path_buf(),
-                    error,
-                )
-            })?;
+            context.backup_existing_entry(destination, relative, existing.file_type())?;
+            remove_existing_destination(destination)?;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -7914,6 +8087,7 @@ fn delete_extraneous_entries(
             continue;
         }
 
+        context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         remove_extraneous_path(path, file_type)?;
         context.summary_mut().record_deletion();
         context.record(LocalCopyRecord::new(
@@ -8136,13 +8310,8 @@ fn copy_symlink(
             }
 
             if !mode.is_dry_run() {
-                fs::remove_file(destination).map_err(|error| {
-                    LocalCopyError::io(
-                        "remove existing destination",
-                        destination.to_path_buf(),
-                        error,
-                    )
-                })?;
+                context.backup_existing_entry(destination, relative, file_type)?;
+                remove_existing_destination(destination)?;
             }
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -8472,6 +8641,34 @@ mod tests {
         let options = LocalCopyOptions::default().delete_delay(true);
         assert!(options.delete_delay_enabled());
         assert!(!LocalCopyOptions::default().delete_delay_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_backup_round_trip() {
+        let options = LocalCopyOptions::default().backup(true);
+        assert!(options.backup_enabled());
+        assert!(!LocalCopyOptions::default().backup_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_backup_directory_enables_backup() {
+        let options =
+            LocalCopyOptions::default().with_backup_directory(Some(PathBuf::from("backups")));
+        assert!(options.backup_enabled());
+        assert_eq!(
+            options.backup_directory(),
+            Some(std::path::Path::new("backups"))
+        );
+        assert!(LocalCopyOptions::default().backup_directory().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_backup_suffix_round_trip() {
+        let options = LocalCopyOptions::default().with_backup_suffix(Some(".bak"));
+        assert!(options.backup_enabled());
+        assert_eq!(options.backup_suffix(), OsStr::new(".bak"));
+        assert_eq!(LocalCopyOptions::default().backup_suffix(), OsStr::new("~"));
+        assert!(!LocalCopyOptions::default().backup_enabled());
     }
 
     #[test]
@@ -11805,6 +12002,156 @@ mod tests {
         assert!(target_root.join("keep.txt").exists());
         assert!(!target_root.join("skip.tmp").exists());
         assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn backup_creation_uses_default_suffix() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let source_file = source.join("file.txt");
+        fs::write(&source_file, b"updated").expect("write source");
+
+        let dest_root = dest.join("source");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        let existing = dest_root.join("file.txt");
+        fs::write(&existing, b"original").expect("write dest");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().backup(true);
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let backup = dest_root.join("file.txt~");
+        assert!(backup.exists(), "backup missing at {}", backup.display());
+        assert_eq!(fs::read(&backup).expect("read backup"), b"original");
+        assert_eq!(
+            fs::read(dest_root.join("file.txt")).expect("read dest"),
+            b"updated"
+        );
+    }
+
+    #[test]
+    fn backup_creation_respects_custom_suffix() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let source_file = source.join("file.txt");
+        fs::write(&source_file, b"replacement").expect("write source");
+
+        let dest_root = dest.join("source");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        let existing = dest_root.join("file.txt");
+        fs::write(&existing, b"baseline").expect("write dest");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().with_backup_suffix(Some(".bak"));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let backup = dest_root.join("file.txt.bak");
+        assert!(backup.exists());
+        assert_eq!(fs::read(&backup).expect("read backup"), b"baseline");
+        assert_eq!(
+            fs::read(dest_root.join("file.txt")).expect("read dest"),
+            b"replacement"
+        );
+    }
+
+    #[test]
+    fn backup_creation_uses_relative_backup_directory() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let source_file = source.join("dir").join("file.txt");
+        fs::create_dir_all(source_file.parent().unwrap()).expect("create nested source");
+        fs::write(&source_file, b"new contents").expect("write source");
+
+        let dest_root = dest.join("source");
+        let existing_parent = dest_root.join("dir");
+        fs::create_dir_all(&existing_parent).expect("create dest root");
+        let existing = existing_parent.join("file.txt");
+        fs::write(&existing, b"old contents").expect("write dest");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options =
+            LocalCopyOptions::default().with_backup_directory(Some(PathBuf::from("backups")));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let backup = dest
+            .join("backups")
+            .join("source")
+            .join("dir")
+            .join("file.txt~");
+        assert!(backup.exists());
+        assert_eq!(fs::read(&backup).expect("read backup"), b"old contents");
+        assert_eq!(
+            fs::read(dest_root.join("dir").join("file.txt")).expect("read dest"),
+            b"new contents"
+        );
+    }
+
+    #[test]
+    fn backup_creation_uses_absolute_backup_directory() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        let backup_root = temp.path().join("backups");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let source_file = source.join("file.txt");
+        fs::write(&source_file, b"replacement").expect("write source");
+
+        let dest_root = dest.join("source");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        let existing = dest_root.join("file.txt");
+        fs::write(&existing, b"retained").expect("write dest");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .with_backup_directory(Some(backup_root.as_path().to_path_buf()))
+            .with_backup_suffix(Some(".bak"));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let backup = backup_root.join("source").join("file.txt.bak");
+        assert!(backup.exists());
+        assert_eq!(fs::read(&backup).expect("read backup"), b"retained");
+        assert_eq!(
+            fs::read(dest_root.join("file.txt")).expect("read dest"),
+            b"replacement"
+        );
     }
 
     #[test]

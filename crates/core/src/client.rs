@@ -404,6 +404,9 @@ pub struct ClientConfig {
     stats: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    backup: bool,
+    backup_dir: Option<PathBuf>,
+    backup_suffix: Option<OsString>,
     delay_updates: bool,
     inplace: bool,
     append: bool,
@@ -468,6 +471,9 @@ impl Default for ClientConfig {
             stats: false,
             partial: false,
             partial_dir: None,
+            backup: false,
+            backup_dir: None,
+            backup_suffix: None,
             delay_updates: false,
             inplace: false,
             append: false,
@@ -946,6 +952,27 @@ impl ClientConfig {
     pub const fn collect_events(&self) -> bool {
         self.force_event_collection || self.verbosity > 0 || self.progress || self.list_only
     }
+
+    /// Reports whether backups should be created before overwriting or deleting entries.
+    #[must_use]
+    #[doc(alias = "--backup")]
+    pub const fn backup(&self) -> bool {
+        self.backup
+    }
+
+    /// Returns the configured backup directory when `--backup-dir` is supplied.
+    #[must_use]
+    #[doc(alias = "--backup-dir")]
+    pub fn backup_directory(&self) -> Option<&Path> {
+        self.backup_dir.as_deref()
+    }
+
+    /// Returns the suffix appended to backup entries when specified.
+    #[must_use]
+    #[doc(alias = "--suffix")]
+    pub fn backup_suffix(&self) -> Option<&OsStr> {
+        self.backup_suffix.as_deref()
+    }
 }
 
 /// Builder used to assemble a [`ClientConfig`].
@@ -993,6 +1020,9 @@ pub struct ClientConfigBuilder {
     stats: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    backup: bool,
+    backup_dir: Option<PathBuf>,
+    backup_suffix: Option<OsString>,
     delay_updates: bool,
     inplace: bool,
     append: bool,
@@ -1481,6 +1511,37 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables creation of backups before overwriting or deleting entries.
+    #[must_use]
+    #[doc(alias = "--backup")]
+    #[doc(alias = "-b")]
+    pub const fn backup(mut self, backup: bool) -> Self {
+        self.backup = backup;
+        self
+    }
+
+    /// Configures the optional directory that should receive backup entries.
+    #[must_use]
+    #[doc(alias = "--backup-dir")]
+    pub fn backup_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.backup_dir = directory.map(Into::into);
+        if self.backup_dir.is_some() {
+            self.backup = true;
+        }
+        self
+    }
+
+    /// Overrides the suffix appended to backup file names.
+    #[must_use]
+    #[doc(alias = "--suffix")]
+    pub fn backup_suffix<S: Into<OsString>>(mut self, suffix: Option<S>) -> Self {
+        self.backup_suffix = suffix.map(Into::into);
+        if self.backup_suffix.is_some() {
+            self.backup = true;
+        }
+        self
+    }
+
     /// Configures the directory used to store partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -1659,6 +1720,9 @@ impl ClientConfigBuilder {
             stats: self.stats,
             partial: self.partial,
             partial_dir: self.partial_dir,
+            backup: self.backup,
+            backup_dir: self.backup_dir,
+            backup_suffix: self.backup_suffix,
             delay_updates: self.delay_updates,
             inplace: self.inplace,
             append: self.append,
@@ -2286,6 +2350,12 @@ pub struct RemoteFallbackArgs {
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
+    /// Enables `--backup`.
+    pub backup: bool,
+    /// Optional directory forwarded via `--backup-dir`.
+    pub backup_dir: Option<PathBuf>,
+    /// Optional suffix forwarded via `--suffix`.
+    pub backup_suffix: Option<OsString>,
     /// Directories forwarded via repeated `--link-dest` flags.
     pub link_dests: Vec<PathBuf>,
     /// Enables `--remove-source-files`.
@@ -2467,6 +2537,9 @@ where
         preallocate,
         delay_updates,
         partial_dir,
+        backup,
+        backup_dir,
+        backup_suffix,
         link_dests,
         remove_source_files,
         append,
@@ -2528,6 +2601,17 @@ where
     }
     if delete_excluded {
         command_args.push(OsString::from("--delete-excluded"));
+    }
+    if backup {
+        command_args.push(OsString::from("--backup"));
+    }
+    if let Some(dir) = backup_dir {
+        command_args.push(OsString::from("--backup-dir"));
+        command_args.push(dir.into_os_string());
+    }
+    if let Some(suffix) = backup_suffix {
+        command_args.push(OsString::from("--suffix"));
+        command_args.push(suffix);
     }
     if let Some(limit) = max_delete {
         let mut arg = OsString::from("--max-delete=");
@@ -3757,6 +3841,9 @@ fn build_local_copy_options(
         .append(config.append())
         .append_verify(config.append_verify())
         .partial(config.partial())
+        .backup(config.backup())
+        .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
+        .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
         .delay_updates(config.delay_updates())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .delay_updates(config.delay_updates())
@@ -3926,6 +4013,9 @@ exit 42
             preallocate: false,
             delay_updates: false,
             partial_dir: None,
+            backup: false,
+            backup_dir: None,
+            backup_suffix: None,
             link_dests: Vec::new(),
             remove_source_files: false,
             append: None,
@@ -4029,6 +4119,51 @@ exit 42
             .build();
         assert!(cleared.append());
         assert!(!cleared.append_verify());
+    }
+
+    #[test]
+    fn builder_backup_round_trip() {
+        let enabled = ClientConfig::builder().backup(true).build();
+        assert!(enabled.backup());
+
+        let disabled = ClientConfig::builder().build();
+        assert!(!disabled.backup());
+    }
+
+    #[test]
+    fn builder_backup_directory_implies_backup() {
+        let config = ClientConfig::builder()
+            .backup_directory(Some(PathBuf::from("backups")))
+            .build();
+
+        assert!(config.backup());
+        assert_eq!(
+            config.backup_directory(),
+            Some(std::path::Path::new("backups"))
+        );
+
+        let cleared = ClientConfig::builder()
+            .backup_directory(None::<PathBuf>)
+            .build();
+        assert!(!cleared.backup());
+        assert!(cleared.backup_directory().is_none());
+    }
+
+    #[test]
+    fn builder_backup_suffix_implies_backup() {
+        let config = ClientConfig::builder()
+            .backup_suffix(Some(OsString::from(".bak")))
+            .build();
+
+        assert!(config.backup());
+        assert_eq!(config.backup_suffix(), Some(OsStr::new(".bak")));
+
+        let cleared = ClientConfig::builder()
+            .backup(true)
+            .backup_suffix(None::<OsString>)
+            .build();
+        assert!(cleared.backup());
+        assert_eq!(cleared.backup_suffix(), None);
     }
 
     #[test]
@@ -4860,6 +4995,83 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_backup_arguments() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.backup = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--backup"));
+        assert!(!captured.lines().any(|line| line == "--backup-dir"));
+        assert!(!captured.lines().any(|line| line == "--suffix"));
+
+        fs::write(&capture_path, b"").expect("truncate capture");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.backup = true;
+        args.backup_dir = Some(PathBuf::from("backups"));
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--backup"));
+        assert!(captured.lines().any(|line| line == "--backup-dir"));
+        assert!(captured.lines().any(|line| line == "backups"));
+
+        fs::write(&capture_path, b"").expect("truncate capture");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.backup = true;
+        args.backup_suffix = Some(OsString::from(".bak"));
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--backup"));
+        assert!(captured.lines().any(|line| line == "--suffix"));
+        assert!(captured.lines().any(|line| line == ".bak"));
     }
 
     #[cfg(unix)]
