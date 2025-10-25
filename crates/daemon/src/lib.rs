@@ -981,6 +981,8 @@ impl RuntimeOptions {
 
         if let Some((reverse_lookup, origin)) = parsed.reverse_lookup {
             self.set_reverse_lookup_from_config(reverse_lookup, &origin)?;
+        }
+
         if let Some((lock_file, origin)) = parsed.lock_file {
             self.set_config_lock_file(lock_file, &origin)?;
         }
@@ -1049,6 +1051,8 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn reverse_lookup(&self) -> bool {
         self.reverse_lookup
+    }
+
     fn lock_file(&self) -> Option<&Path> {
         self.lock_file.as_deref()
     }
@@ -1117,6 +1121,9 @@ impl RuntimeOptions {
 
         self.reverse_lookup = value;
         self.reverse_lookup_configured = true;
+        Ok(())
+    }
+
     fn set_config_lock_file(
         &mut self,
         path: PathBuf,
@@ -1578,6 +1585,19 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &reverse_lookup {
                         if *existing != parsed {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
+                                    existing_origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        reverse_lookup = Some((parsed, origin));
+                    }
+                }
                 "lock file" => {
                     let trimmed = value.trim();
                     if trimmed.is_empty() {
@@ -1589,34 +1609,24 @@ fn parse_config_modules_inner(
                     }
 
                     let resolved = resolve_config_relative_path(path, trimmed);
-                    if let Some((existing, origin)) = &lock_file {
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &lock_file {
                         if existing != &resolved {
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
+                                    "duplicate 'lock file' directive in global section (previously defined on line {})",
                                     existing_origin.line
                                 ),
                             ));
                         }
-                        continue;
-                    }
-
-                    reverse_lookup = Some((parsed, origin));
-                                    "duplicate 'lock file' directive in global section (previously defined on line {})",
-                                    origin.line
-                                ),
-                            ));
-                        }
                     } else {
-                        lock_file = Some((
-                            resolved,
-                            ConfigDirectiveOrigin {
-                                path: canonical.clone(),
-                                line: line_number,
-                            },
-                        ));
+                        lock_file = Some((resolved, origin));
                     }
                 }
                 _ => {
@@ -4779,6 +4789,9 @@ mod tests {
         assert!(resolved.is_none());
         assert!(!module.permits(peer, resolved));
         clear_test_hostname_overrides();
+    }
+
+    #[test]
     fn connection_limiter_enforces_limits_across_guards() {
         let temp = tempdir().expect("lock dir");
         let lock_path = temp.path().join("daemon.lock");
