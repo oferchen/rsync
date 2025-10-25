@@ -160,7 +160,7 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -168,7 +168,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use std::time::Instant;
 
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
@@ -2994,7 +2994,27 @@ fn handle_session(
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
 ) -> io::Result<()> {
-    let style = detect_session_style(&stream)?;
+    let fallback_binary = configured_fallback_binary();
+    if let Some(binary) = fallback_binary.clone() {
+        let delegated = stream
+            .try_clone()
+            .and_then(|clone| delegate_binary_session(clone, &binary, log_sink.as_ref()));
+        if delegated.is_ok() {
+            drop(stream);
+            return Ok(());
+        }
+
+        if let Some(log) = log_sink.as_ref() {
+            let text = format!(
+                "failed to delegate session to '{}'; continuing with internal handler",
+                Path::new(&binary).display()
+            );
+            let message = rsync_warning!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+    }
+
+    let style = detect_session_style(&stream, fallback_binary.is_some())?;
     configure_stream(&stream)?;
 
     let peer_host = if reverse_lookup {
@@ -3022,7 +3042,7 @@ fn handle_session(
     }
 }
 
-fn detect_session_style(stream: &TcpStream) -> io::Result<SessionStyle> {
+fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Result<SessionStyle> {
     stream.set_nonblocking(true)?;
     let mut peek_buf = [0u8; LEGACY_DAEMON_PREFIX_LEN];
     let decision = match stream.peek(&mut peek_buf) {
@@ -3033,6 +3053,9 @@ fn detect_session_style(stream: &TcpStream) -> io::Result<SessionStyle> {
             } else {
                 Ok(SessionStyle::Binary)
             }
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock && fallback_available => {
+            Ok(SessionStyle::Binary)
         }
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(SessionStyle::Legacy),
         Err(error) => Err(error),
@@ -3170,6 +3193,15 @@ fn handle_legacy_session(
 }
 
 fn handle_binary_session(
+    stream: TcpStream,
+    daemon_limit: Option<NonZeroU64>,
+    daemon_burst: Option<NonZeroU64>,
+    log_sink: Option<SharedLogSink>,
+) -> io::Result<()> {
+    handle_binary_session_internal(stream, daemon_limit, daemon_burst, log_sink)
+}
+
+fn handle_binary_session_internal(
     mut stream: TcpStream,
     daemon_limit: Option<NonZeroU64>,
     daemon_burst: Option<NonZeroU64>,
@@ -3208,6 +3240,134 @@ fn handle_binary_session(
         let message =
             rsync_info!("binary negotiation forwarded error frames").with_role(Role::Daemon);
         log_message(log, &message);
+    }
+
+    Ok(())
+}
+
+fn forward_client_to_child(
+    mut upstream: TcpStream,
+    mut child_stdin: ChildStdin,
+    done: Arc<AtomicBool>,
+) -> io::Result<u64> {
+    upstream.set_read_timeout(Some(Duration::from_millis(200)))?;
+    let mut forwarded = 0u64;
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        if done.load(Ordering::SeqCst) {
+            break;
+        }
+
+        match upstream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                child_stdin.write_all(&buffer[..count])?;
+                forwarded += u64::try_from(count).unwrap_or_default();
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(ref err)
+                if err.kind() == io::ErrorKind::WouldBlock
+                    || err.kind() == io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
+            Err(err) => {
+                if is_connection_closed_error(err.kind()) {
+                    break;
+                }
+
+                return Err(err);
+            }
+        }
+    }
+
+    child_stdin.flush()?;
+    Ok(forwarded)
+}
+
+fn delegate_binary_session(
+    stream: TcpStream,
+    binary: &OsString,
+    log_sink: Option<&SharedLogSink>,
+) -> io::Result<()> {
+    if let Some(log) = log_sink {
+        let text = format!(
+            "delegating binary session to '{}'",
+            Path::new(binary).display()
+        );
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    let mut command = ProcessCommand::new(binary);
+    command.arg("--daemon");
+    command.arg("--no-detach");
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::inherit());
+
+    let mut child = command.spawn()?;
+    let child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "fallback stdin unavailable"))?;
+    let mut child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "fallback stdout unavailable"))?;
+
+    let upstream = stream.try_clone()?;
+    let downstream = stream.try_clone()?;
+    let control_stream = stream;
+    let completion = Arc::new(AtomicBool::new(false));
+    let reader_completion = Arc::clone(&completion);
+    let writer_completion = Arc::clone(&completion);
+
+    let reader =
+        thread::spawn(move || forward_client_to_child(upstream, child_stdin, reader_completion));
+
+    let writer = thread::spawn(move || {
+        let mut downstream = downstream;
+        let result = io::copy(&mut child_stdout, &mut downstream);
+        writer_completion.store(true, Ordering::SeqCst);
+        result
+    });
+
+    let status = child.wait()?;
+    completion.store(true, Ordering::SeqCst);
+
+    let write_bytes = writer
+        .join()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to join writer thread"))??;
+
+    #[allow(unused_must_use)]
+    {
+        use std::net::Shutdown;
+        control_stream.shutdown(Shutdown::Both);
+    }
+
+    let read_bytes = reader
+        .join()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to join reader thread"))??;
+
+    if let Some(log) = log_sink {
+        let text =
+            format!("forwarded {read_bytes} bytes to fallback and received {write_bytes} bytes");
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    if !status.success() {
+        if let Some(log) = log_sink {
+            let text = format!(
+                "fallback daemon '{}' exited with status {}",
+                Path::new(binary).display(),
+                status
+            );
+            let message = rsync_warning!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
     }
 
     Ok(())
@@ -4389,11 +4549,18 @@ fn auto_delegate_system_rsync_enabled() -> bool {
     matches!(env_flag("OC_RSYNC_DAEMON_AUTO_DELEGATE"), Some(true))
 }
 
-fn fallback_binary_configured() -> bool {
+fn configured_fallback_binary() -> Option<OsString> {
     env::var_os("OC_RSYNC_DAEMON_FALLBACK")
         .filter(|value| !value.is_empty())
         .or_else(|| env::var_os("OC_RSYNC_FALLBACK").filter(|value| !value.is_empty()))
-        .is_some()
+}
+
+fn fallback_binary_configured() -> bool {
+    configured_fallback_binary().is_some()
+}
+
+fn fallback_binary() -> OsString {
+    configured_fallback_binary().unwrap_or_else(|| OsString::from("rsync"))
 }
 
 fn env_flag(name: &str) -> Option<bool> {
@@ -4420,10 +4587,7 @@ fn run_delegate_mode<Err>(args: &[OsString], stderr: &mut MessageSink<Err>) -> i
 where
     Err: Write,
 {
-    let binary = env::var_os("OC_RSYNC_DAEMON_FALLBACK")
-        .filter(|value| !value.is_empty())
-        .or_else(|| env::var_os("OC_RSYNC_FALLBACK").filter(|value| !value.is_empty()))
-        .unwrap_or_else(|| OsString::from("rsync"));
+    let binary = fallback_binary();
 
     let mut command = ProcessCommand::new(&binary);
     command.arg("--daemon");
@@ -4809,6 +4973,81 @@ mod tests {
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
         assert!(recorded.contains("--config /etc/rsyncd.conf"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_session_delegates_to_configured_fallback() {
+        use std::io::BufReader;
+
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+
+        let mut frames = Vec::new();
+        MessageFrame::new(
+            MessageCode::Error,
+            HANDSHAKE_ERROR_PAYLOAD.as_bytes().to_vec(),
+        )
+        .expect("frame")
+        .encode_into_writer(&mut frames)
+        .expect("encode error frame");
+        let exit_code = u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE).unwrap_or_default();
+        MessageFrame::new(MessageCode::ErrorExit, exit_code.to_be_bytes().to_vec())
+            .expect("exit frame")
+            .encode_into_writer(&mut frames)
+            .expect("encode exit frame");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes());
+        expected.extend_from_slice(&frames);
+        let expected_hex: String = expected.iter().map(|byte| format!("{byte:02x}")).collect();
+
+        let script_path = temp.path().join("binary-fallback.py");
+        let marker_path = temp.path().join("fallback.marker");
+        let script = "#!/usr/bin/env python3\n".to_string()
+            + "import os, sys, binascii\n"
+            + "marker = os.environ.get('FALLBACK_MARKER')\n"
+            + "if marker:\n"
+            + "    with open(marker, 'w', encoding='utf-8') as handle:\n"
+            + "        handle.write('delegated')\n"
+            + "sys.stdin.buffer.read(4)\n"
+            + "payload = binascii.unhexlify(os.environ['BINARY_RESPONSE_HEX'])\n"
+            + "sys.stdout.buffer.write(payload)\n"
+            + "sys.stdout.buffer.flush()\n";
+        write_executable_script(&script_path, &script);
+
+        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _marker = EnvGuard::set("FALLBACK_MARKER", marker_path.as_os_str());
+        let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        stream
+            .write_all(&u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes())
+            .expect("send handshake");
+        stream.flush().expect("flush handshake");
+
+        let mut response = Vec::new();
+        reader.read_to_end(&mut response).expect("read response");
+
+        assert_eq!(response, expected);
+        assert!(marker_path.exists());
+
+        handle.join().expect("daemon thread").expect("daemon run");
     }
 
     #[cfg(unix)]
