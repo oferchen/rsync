@@ -5248,7 +5248,8 @@ exit 42
     fn run_module_list_via_proxy_connects_through_tunnel() {
         let responses = vec!["@RSYNCD: OK\n", "theta\n", "@RSYNCD: EXIT\n"];
         let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
-        let (proxy_addr, request_rx, proxy_handle) = spawn_stub_proxy(daemon_addr, None);
+        let (proxy_addr, request_rx, proxy_handle) =
+            spawn_stub_proxy(daemon_addr, None, DEFAULT_PROXY_STATUS_LINE);
 
         let _env_lock = env_lock().lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(
@@ -5284,8 +5285,11 @@ exit 42
         let responses = vec!["@RSYNCD: OK\n", "iota\n", "@RSYNCD: EXIT\n"];
         let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
         let expected_header = "Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=";
-        let (proxy_addr, request_rx, proxy_handle) =
-            spawn_stub_proxy(daemon_addr, Some(expected_header));
+        let (proxy_addr, request_rx, proxy_handle) = spawn_stub_proxy(
+            daemon_addr,
+            Some(expected_header),
+            DEFAULT_PROXY_STATUS_LINE,
+        );
 
         let _env_lock = env_lock().lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(
@@ -5306,6 +5310,37 @@ exit 42
 
         let captured = request_rx.recv().expect("proxy request");
         assert!(captured.contains(expected_header));
+
+        proxy_handle.join().expect("proxy thread");
+        daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn run_module_list_accepts_lowercase_proxy_status_line() {
+        let responses = vec!["@RSYNCD: OK\n", "kappa\n", "@RSYNCD: EXIT\n"];
+        let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
+        let (proxy_addr, _request_rx, proxy_handle) = spawn_stub_proxy(
+            daemon_addr,
+            None,
+            LOWERCASE_PROXY_STATUS_LINE,
+        );
+
+        let _env_lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set(
+            "RSYNC_PROXY",
+            &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
+        );
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
+                .expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "kappa");
 
         proxy_handle.join().expect("proxy thread");
         daemon_handle.join().expect("daemon thread");
@@ -5919,9 +5954,13 @@ exit 42
         }
     }
 
+    const DEFAULT_PROXY_STATUS_LINE: &str = "HTTP/1.0 200 Connection established";
+    const LOWERCASE_PROXY_STATUS_LINE: &str = "http/1.1 200 Connection Established";
+
     fn spawn_stub_proxy(
         target: std::net::SocketAddr,
         expected_header: Option<&'static str>,
+        status_line: &'static str,
     ) -> (
         std::net::SocketAddr,
         mpsc::Receiver<String>,
@@ -5955,8 +5994,11 @@ exit 42
                 let mut client_stream = reader.into_inner();
                 let mut server_stream = TcpStream::connect(target).expect("connect daemon");
                 client_stream
-                    .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                    .write_all(status_line.as_bytes())
                     .expect("write proxy response");
+                client_stream
+                    .write_all(b"\r\n\r\n")
+                    .expect("terminate proxy status");
 
                 let mut client_clone = client_stream.try_clone().expect("clone client");
                 let mut server_clone = server_stream.try_clone().expect("clone server");
@@ -6843,13 +6885,17 @@ fn establish_proxy_tunnel(
         .map_err(|_| proxy_response_error("proxy status line contained invalid UTF-8"))?;
     line.clear();
 
-    if !status.starts_with("HTTP/") {
+    let trimmed_status = status.trim_start_matches(|ch: char| matches!(ch, ' ' | '\t'));
+    if !trimmed_status
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("HTTP/"))
+    {
         return Err(proxy_response_error(format!(
             "proxy response did not start with HTTP/: {status}"
         )));
     }
 
-    let mut parts = status.split_whitespace();
+    let mut parts = trimmed_status.split_whitespace();
     let _ = parts.next();
     let code = parts.next().ok_or_else(|| {
         proxy_response_error(format!("proxy response missing status code: {status}"))
