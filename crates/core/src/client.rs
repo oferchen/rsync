@@ -5733,11 +5733,12 @@ exit 42
 
         let command = OsString::from(
             "sh -c 'CONNECT_HOST=%H\n\
+             CONNECT_PORT=%P\n\
              printf \"@RSYNCD: 31.0\\n\"\n\
              read greeting\n\
              printf \"@RSYNCD: OK\\n\"\n\
              read request\n\
-             printf \"example\\t$CONNECT_HOST\\n@RSYNCD: EXIT\\n\"'",
+             printf \"example\\t$CONNECT_HOST:$CONNECT_PORT\\n@RSYNCD: EXIT\\n\"'",
         );
 
         let _prog_guard = EnvGuard::set_os("RSYNC_CONNECT_PROG", &command);
@@ -5754,7 +5755,27 @@ exit 42
         assert_eq!(list.entries().len(), 1);
         let entry = &list.entries()[0];
         assert_eq!(entry.name(), "example");
-        assert_eq!(entry.comment(), Some("example.com"));
+        assert_eq!(entry.comment(), Some("example.com:873"));
+    }
+
+    #[test]
+    fn connect_program_token_expansion_matches_upstream_rules() {
+        let template = OsString::from("netcat %H %P %%");
+        let config = ConnectProgramConfig::new(template, None).expect("config");
+        let rendered = config
+            .format_command("daemon.example", 10873)
+            .expect("rendered command");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert_eq!(rendered.as_bytes(), b"netcat daemon.example 10873 %");
+        }
+
+        #[cfg(not(unix))]
+        {
+            assert_eq!(rendered, OsString::from("netcat daemon.example 10873 %"));
+        }
     }
 
     #[test]
@@ -7691,7 +7712,7 @@ fn connect_via_program(
     program: &ConnectProgramConfig,
 ) -> Result<DaemonStream, ClientError> {
     let command = program
-        .format_command(addr.host())
+        .format_command(addr.host(), addr.port())
         .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
 
     let shell = program
@@ -7815,19 +7836,26 @@ impl ConnectProgramConfig {
         self.shell.as_ref()
     }
 
-    fn format_command(&self, host: &str) -> Result<OsString, String> {
+    /// Expands the configured template by substituting daemon metadata placeholders.
+    ///
+    /// `%H` is replaced with the daemon host, `%P` with the decimal TCP port, and `%%`
+    /// yields a literal percent sign.
+    fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
         #[cfg(unix)]
         {
             let template = self.template.as_bytes();
             let mut rendered = Vec::with_capacity(template.len() + host.len());
             let mut iter = template.iter().copied();
             let host_bytes = host.as_bytes();
+            let port_string = port.to_string();
+            let port_bytes = port_string.as_bytes();
 
             while let Some(byte) = iter.next() {
                 if byte == b'%' {
                     match iter.next() {
                         Some(b'%') => rendered.push(b'%'),
                         Some(b'H') => rendered.extend_from_slice(host_bytes),
+                        Some(b'P') => rendered.extend_from_slice(port_bytes),
                         Some(other) => {
                             rendered.push(b'%');
                             rendered.push(other);
@@ -7847,12 +7875,14 @@ impl ConnectProgramConfig {
             let template = self.template.as_os_str().to_string_lossy();
             let mut rendered = String::with_capacity(template.len() + host.len());
             let mut chars = template.chars();
+            let port_string = port.to_string();
 
             while let Some(ch) = chars.next() {
                 if ch == '%' {
                     match chars.next() {
                         Some('%') => rendered.push('%'),
                         Some('H') => rendered.push_str(host),
+                        Some('P') => rendered.push_str(&port_string),
                         Some(other) => {
                             rendered.push('%');
                             rendered.push(other);
