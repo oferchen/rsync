@@ -180,6 +180,7 @@ const HELP_TEXT: &str = concat!(
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
     "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
+    "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
     "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
@@ -223,6 +224,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --link-dest, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
@@ -850,6 +852,7 @@ struct ParsedArgs {
     stats: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    link_dests: Vec<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
     append: Option<bool>,
@@ -1177,6 +1180,14 @@ fn clap_command() -> ClapCommand {
                 .help("Store partially transferred files in DIR.")
                 .value_parser(OsStringValueParser::new())
                 .overrides_with("no-partial"),
+        )
+        .arg(
+            Arg::new("link-dest")
+                .long("link-dest")
+                .value_name("DIR")
+                .help("Create hard links to matching files in DIR when possible.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("whole-file")
@@ -1817,14 +1828,21 @@ where
             progress_setting = ProgressSetting::PerFile;
         }
     }
+    let link_dests: Vec<PathBuf> = matches
+        .remove_many::<OsString>("link-dest")
+        .map(|values| {
+            values
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default();
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
     let append_verify_flag = matches.get_flag("append-verify");
     let append_flag = matches.get_flag("append");
     let no_append_flag = matches.get_flag("no-append");
-    let append = if append_verify_flag {
-        Some(true)
-    } else if append_flag {
+    let append = if append_verify_flag || append_flag {
         Some(true)
     } else if no_append_flag {
         Some(false)
@@ -1952,6 +1970,7 @@ where
         stats,
         partial,
         partial_dir,
+        link_dests,
         remove_source_files,
         inplace,
         append,
@@ -2195,6 +2214,7 @@ where
         stats,
         partial,
         partial_dir,
+        link_dests,
         remove_source_files,
         inplace,
         append,
@@ -2641,6 +2661,7 @@ where
             stats,
             partial,
             partial_dir: partial_dir.clone(),
+            link_dests: link_dests.clone(),
             remove_source_files,
             append: append_for_fallback,
             append_verify,
@@ -2796,6 +2817,7 @@ where
         .debug_flags(debug_flags_list.clone())
         .partial(partial)
         .partial_directory(partial_dir.clone())
+        .extend_link_dests(link_dests.clone())
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
         .append(append.unwrap_or(false))
@@ -6594,7 +6616,7 @@ mod tests {
         let mut source_file = std::fs::File::create(&source).expect("create source");
         source_file.write_all(&[0x10]).expect("write leading byte");
         source_file
-            .seek(SeekFrom::Start(1 * 1024 * 1024))
+            .seek(SeekFrom::Start(1024 * 1024))
             .expect("seek to hole");
         source_file.write_all(&[0x20]).expect("write trailing byte");
         source_file.set_len(3 * 1024 * 1024).expect("extend source");
@@ -7247,6 +7269,23 @@ mod tests {
 
         assert!(!parsed.partial);
         assert!(parsed.partial_dir.is_none());
+    }
+
+    #[test]
+    fn parse_args_collects_link_dest_paths() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--link-dest=baseline"),
+            OsString::from("--link-dest=/var/cache"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            parsed.link_dests,
+            vec![PathBuf::from("baseline"), PathBuf::from("/var/cache")]
+        );
     }
 
     #[test]
@@ -10312,6 +10351,7 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn remote_fallback_forwards_link_dest_arguments() {
     fn remote_fallback_forwards_reference_destinations() {
         use tempfile::tempdir;
 
@@ -10334,6 +10374,8 @@ exit 0
 
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
+            OsString::from("--link-dest=baseline"),
+            OsString::from("--link-dest=/var/cache"),
             OsString::from("--compare-dest=compare"),
             OsString::from("--copy-dest=copy"),
             OsString::from("--link-dest=link"),
@@ -10346,6 +10388,12 @@ exit 0
         assert!(stderr.is_empty());
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--link-dest=baseline"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == "--link-dest=/var/cache")
+        );
         assert!(recorded.lines().any(|line| line == "--compare-dest"));
         assert!(recorded.lines().any(|line| line == "compare"));
         assert!(recorded.lines().any(|line| line == "--copy-dest"));
@@ -10553,11 +10601,11 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--whole-file"));
-        assert!(!args.iter().any(|arg| *arg == "--no-whole-file"));
+        assert!(!args.contains(&"--no-whole-file"));
         let dest_string = dest_path.display().to_string();
         assert!(args.contains(&"--whole-file"));
         assert!(!args.contains(&"--no-whole-file"));
-        assert!(args.iter().any(|arg| *arg == dest_string.as_str()));
+        assert!(args.contains(&dest_string.as_str()));
 
         std::fs::write(&args_path, b"").expect("truncate args file");
 
@@ -10575,7 +10623,7 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
-        assert!(!args.iter().any(|arg| *arg == "--whole-file"));
+        assert!(!args.contains(&"--whole-file"));
     }
 
     #[cfg(unix)]
@@ -11131,7 +11179,7 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
-        assert!(!args.iter().any(|arg| *arg == "--compress"));
+        assert!(!args.contains(&"--compress"));
         assert!(args.contains(&"--compress-level"));
         assert!(args.contains(&"0"));
         assert!(!args.contains(&"--whole-file"));
