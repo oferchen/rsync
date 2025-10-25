@@ -5727,6 +5727,11 @@ fn copy_file(
     let copy_source = copy_source_override.as_deref().unwrap_or(source);
     let mut reader = fs::File::open(copy_source)
         .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
+    if append_offset > 0 {
+        reader
+            .seek(SeekFrom::Start(append_offset))
+            .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
+    }
     let mut guard = None;
 
     let mut writer = if append_offset > 0 {
