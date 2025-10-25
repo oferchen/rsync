@@ -10,7 +10,8 @@
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
-//! `--bwlimit`, and `--sparse`) and delegates local copy operations to
+//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
+//! `--bwlimit`, `--append`, `--append-verify`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
@@ -28,7 +29,7 @@
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
 //! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
-//! `--delete-excluded`,
+//! `--delete-excluded`, `--compare-dest`, `--copy-dest`, `--link-dest`,
 //! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
@@ -125,6 +126,7 @@ const HELP_TEXT: &str = concat!(
     "  -h, --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
+    "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
     "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
     "      --secluded-args  Alias of --protect-args.\n",
@@ -147,6 +149,9 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
+    "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
+    "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
+    "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
@@ -160,6 +165,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-compress  Disable compression.\n",
     "      --compress-level=NUM  Set compression level NUM (0 disables compression).\n",
     "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
+    "      --debug=FLAGS  Adjust diagnostic output; use --debug=help for details.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
@@ -178,6 +184,9 @@ const HELP_TEXT: &str = concat!(
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
     "      --remove-source-files  Remove source files after a successful transfer.\n",
     "      --remove-sent-files   Alias of --remove-source-files.\n",
+    "      --append    Append data to existing destination files without rewriting preserved bytes.\n",
+    "      --no-append  Disable append mode for destination updates.\n",
+    "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
     "      --inplace    Write updated data directly to destination files.\n",
     "      --no-inplace Use temporary files when updating regular files.\n",
     "  -P              Equivalent to --partial --progress.\n",
@@ -215,6 +224,8 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -804,6 +815,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
+    rsync_path: Option<OsString>,
     protect_args: Option<bool>,
     archive: bool,
     delete_mode: DeleteMode,
@@ -842,6 +854,8 @@ struct ParsedArgs {
     partial_dir: Option<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
+    append: Option<bool>,
+    append_verify: bool,
     msgs_to_stderr: bool,
     itemize_changes: bool,
     whole_file: Option<bool>,
@@ -850,10 +864,14 @@ struct ParsedArgs {
     exclude_from: Vec<OsString>,
     include_from: Vec<OsString>,
     filters: Vec<OsString>,
+    compare_destinations: Vec<OsString>,
+    copy_destinations: Vec<OsString>,
+    link_destinations: Vec<OsString>,
     cvs_exclude: bool,
     files_from: Vec<OsString>,
     from0: bool,
     info: Vec<OsString>,
+    debug: Vec<OsString>,
     xattrs: Option<bool>,
     no_motd: bool,
     password_file: Option<OsString>,
@@ -931,6 +949,15 @@ fn clap_command() -> ClapCommand {
                 .short('e')
                 .value_name("COMMAND")
                 .help("Use remote shell COMMAND for remote transfers.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("rsync-path")
+                .long("rsync-path")
+                .value_name("PROGRAM")
+                .help("Use PROGRAM as the remote rsync executable during remote transfers.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
@@ -1183,6 +1210,32 @@ fn clap_command() -> ClapCommand {
                 .overrides_with("remove-source-files"),
         )
         .arg(
+            Arg::new("append")
+                .long("append")
+                .help(
+                    "Append data to existing destination files without rewriting preserved bytes.",
+                )
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-append")
+                .overrides_with("append-verify"),
+        )
+        .arg(
+            Arg::new("no-append")
+                .long("no-append")
+                .help("Disable append mode for destination updates.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("append")
+                .overrides_with("append-verify"),
+        )
+        .arg(
+            Arg::new("append-verify")
+                .long("append-verify")
+                .help("Append data while verifying that existing bytes match the sender.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("append")
+                .overrides_with("no-append"),
+        )
+        .arg(
             Arg::new("inplace")
                 .long("inplace")
                 .help("Write updated data directly to destination files.")
@@ -1270,6 +1323,30 @@ fn clap_command() -> ClapCommand {
                 .long("include-from")
                 .value_name("FILE")
                 .help("Read include patterns from FILE.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("compare-dest")
+                .long("compare-dest")
+                .value_name("DIR")
+                .help("Skip creating destination files that match DIR.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("copy-dest")
+                .long("copy-dest")
+                .value_name("DIR")
+                .help("Copy matching files from DIR instead of the source.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("link-dest")
+                .long("link-dest")
+                .value_name("DIR")
+                .help("Hard-link matching files from DIR into the destination.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -1503,6 +1580,15 @@ fn clap_command() -> ClapCommand {
                 .value_delimiter(','),
         )
         .arg(
+            Arg::new("debug")
+                .long("debug")
+                .value_name("FLAGS")
+                .help("Adjust diagnostic output; use --debug=help for details.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new())
+                .value_delimiter(','),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -1538,6 +1624,9 @@ where
         .remove_one::<OsString>("rsh")
         .filter(|value| !value.is_empty())
         .or_else(|| env::var_os("RSYNC_RSH").filter(|value| !value.is_empty()));
+    let rsync_path = matches
+        .remove_one::<OsString>("rsync-path")
+        .filter(|value| !value.is_empty());
     let protect_args = if matches.get_flag("no-protect-args") {
         Some(false)
     } else if matches.get_flag("protect-args") {
@@ -1732,6 +1821,18 @@ where
     }
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
+    let append_verify_flag = matches.get_flag("append-verify");
+    let append_flag = matches.get_flag("append");
+    let no_append_flag = matches.get_flag("no-append");
+    let append = if append_verify_flag {
+        Some(true)
+    } else if append_flag {
+        Some(true)
+    } else if no_append_flag {
+        Some(false)
+    } else {
+        None
+    };
     let inplace = if matches.get_flag("no-inplace") {
         Some(false)
     } else if matches.get_flag("inplace") {
@@ -1764,6 +1865,18 @@ where
         .remove_many::<OsString>("include")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let compare_destinations = matches
+        .remove_many::<OsString>("compare-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let copy_destinations = matches
+        .remove_many::<OsString>("copy-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let link_destinations = matches
+        .remove_many::<OsString>("link-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let exclude_from = matches
         .remove_many::<OsString>("exclude-from")
         .map(|values| values.collect())
@@ -1786,6 +1899,10 @@ where
         .remove_many::<OsString>("info")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let debug = matches
+        .remove_many::<OsString>("debug")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let ignore_existing = matches.get_flag("ignore-existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
@@ -1801,6 +1918,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        rsync_path,
         protect_args,
         archive,
         delete_mode,
@@ -1838,11 +1956,16 @@ where
         partial_dir,
         remove_source_files,
         inplace,
+        append,
+        append_verify: append_verify_flag,
         msgs_to_stderr,
         itemize_changes,
         whole_file,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -1850,6 +1973,7 @@ where
         files_from,
         from0,
         info,
+        debug,
         acls,
         xattrs,
         no_motd,
@@ -2023,6 +2147,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        rsync_path,
         protect_args,
         archive,
         delete_mode,
@@ -2045,6 +2170,9 @@ where
         acls,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -2052,6 +2180,7 @@ where
         files_from,
         from0,
         info,
+        debug,
         numeric_ids,
         sparse,
         copy_links,
@@ -2070,6 +2199,8 @@ where
         partial_dir,
         remove_source_files,
         inplace,
+        append,
+        append_verify,
         msgs_to_stderr,
         itemize_changes,
         whole_file,
@@ -2193,6 +2324,8 @@ where
     let mut name_level = initial_name_level;
     let mut name_overridden = initial_name_overridden;
 
+    let mut debug_flags_list = Vec::new();
+
     if !info.is_empty() {
         match parse_info_flags(&info) {
             Ok(settings) => {
@@ -2215,6 +2348,29 @@ where
                     name_level = level;
                     name_overridden = true;
                 }
+            }
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
+    }
+
+    if !debug.is_empty() {
+        match parse_debug_flags(&debug) {
+            Ok(settings) => {
+                if settings.help_requested {
+                    if stdout.write_all(DEBUG_HELP_TEXT.as_bytes()).is_err() {
+                        let _ = write!(stderr.writer_mut(), "{DEBUG_HELP_TEXT}");
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                debug_flags_list = settings.flags;
             }
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -2425,8 +2581,11 @@ where
     let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
     let fallback_required = requires_remote_fallback;
 
+    let append_for_fallback = if append_verify { Some(true) } else { append };
+
     let fallback_args = if fallback_required {
         let mut fallback_info_flags = info.clone();
+        let fallback_debug_flags = debug_flags_list.clone();
         if protect_args.unwrap_or(false)
             && matches!(progress_setting, ProgressSetting::Unspecified)
             && !info_flags_include_progress(&fallback_info_flags)
@@ -2451,6 +2610,7 @@ where
             dry_run,
             list_only,
             remote_shell: remote_shell.clone(),
+            rsync_path: rsync_path.clone(),
             protect_args,
             archive,
             delete: delete_for_fallback,
@@ -2484,6 +2644,8 @@ where
             partial,
             partial_dir: partial_dir.clone(),
             remove_source_files,
+            append: append_for_fallback,
+            append_verify,
             inplace,
             msgs_to_stderr,
             whole_file: whole_file_option,
@@ -2493,8 +2655,12 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            compare_destinations: compare_destinations.clone(),
+            copy_destinations: copy_destinations.clone(),
+            link_destinations: link_destinations.clone(),
             cvs_exclude,
             info_flags: fallback_info_flags,
+            debug_flags: fallback_debug_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
@@ -2519,6 +2685,21 @@ where
     let numeric_ids = numeric_ids_option.unwrap_or(false);
 
     if !fallback_required {
+        if rsync_path.is_some() {
+            let message = rsync_error!(
+                1,
+                "the --rsync-path option may only be used with remote connections"
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --rsync-path option may only be used with remote connections"
+                );
+            }
+            return 1;
+        }
+
         if desired_protocol.is_some() {
             let message = rsync_error!(
                 1,
@@ -2614,12 +2795,27 @@ where
         .verbosity(verbosity)
         .progress(progress_mode.is_some())
         .stats(stats)
+        .debug_flags(debug_flags_list.clone())
         .partial(partial)
         .partial_directory(partial_dir.clone())
         .remove_source_files(remove_source_files)
         .inplace(inplace.unwrap_or(false))
+        .append(append.unwrap_or(false))
+        .append_verify(append_verify)
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
+
+    for path in &compare_destinations {
+        builder = builder.compare_destination(PathBuf::from(path));
+    }
+
+    for path in &copy_destinations {
+        builder = builder.copy_destination(PathBuf::from(path));
+    }
+
+    for path in &link_destinations {
+        builder = builder.link_destination(PathBuf::from(path));
+    }
     #[cfg(feature = "acl")]
     {
         builder = builder.acls(preserve_acls);
@@ -3799,6 +3995,52 @@ fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
     Ok(settings)
 }
 
+struct DebugFlagSettings {
+    flags: Vec<OsString>,
+    help_requested: bool,
+}
+
+impl DebugFlagSettings {
+    fn push_flag(&mut self, flag: &str) {
+        self.flags.push(OsString::from(flag));
+    }
+}
+
+fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings, Message> {
+    let mut settings = DebugFlagSettings {
+        flags: Vec::new(),
+        help_requested: false,
+    };
+
+    for value in values {
+        let text = value.to_string_lossy();
+        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+
+        if trimmed.is_empty() {
+            return Err(debug_flag_empty_error());
+        }
+
+        for token in trimmed.split(',') {
+            let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
+            if token.is_empty() {
+                return Err(debug_flag_empty_error());
+            }
+
+            if token.eq_ignore_ascii_case("help") {
+                settings.help_requested = true;
+            } else {
+                settings.push_flag(token);
+            }
+        }
+    }
+
+    Ok(settings)
+}
+
+fn debug_flag_empty_error() -> Message {
+    rsync_error!(1, "--debug flag must not be empty").with_role(Role::Client)
+}
+
 fn info_flags_include_progress(flags: &[OsString]) -> bool {
     flags.iter().any(|value| {
         value
@@ -3830,6 +4072,18 @@ const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
     stats       Enable transfer statistics.\n\
     stats0      Disable transfer statistics.\n\
 Flags may also be written with 'no' prefixes (for example, --info=noprogress).\n";
+
+const DEBUG_HELP_TEXT: &str = "The following --debug flags are supported:\n\
+    all         Enable all diagnostic categories currently implemented.\n\
+    none        Disable diagnostic output.\n\
+    checksum    Trace checksum calculations and verification.\n\
+    deltas      Trace delta-transfer generation and token handling.\n\
+    events      Trace file-list discovery and generator events.\n\
+    fs          Trace filesystem metadata operations.\n\
+    io          Trace I/O buffering and transport exchanges.\n\
+    socket      Trace socket setup, negotiation, and pacing decisions.\n\
+Flags may be prefixed with 'no' or '-' to disable a category. Multiple flags\n\
+may be combined by separating them with commas.\n";
 
 #[derive(Debug)]
 struct UnsupportedOption {
@@ -5970,6 +6224,16 @@ mod tests {
     }
 
     #[test]
+    fn debug_help_lists_supported_flags() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--debug=help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(stdout, DEBUG_HELP_TEXT.as_bytes());
+    }
+
+    #[test]
     fn info_rejects_unknown_flag() {
         let (code, stdout, stderr) =
             run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=unknown")]);
@@ -5994,6 +6258,24 @@ mod tests {
         let flags = vec![OsString::from("progress,,stats")];
         let error = parse_info_flags(&flags).err().expect("parse should fail");
         assert!(error.to_string().contains("--info flag must not be empty"));
+    }
+
+    #[test]
+    fn debug_accepts_comma_separated_tokens() {
+        let flags = vec![OsString::from("checksum,io")];
+        let settings = parse_debug_flags(&flags).expect("flags parse");
+        assert!(!settings.help_requested);
+        assert_eq!(
+            settings.flags,
+            vec![OsString::from("checksum"), OsString::from("io")]
+        );
+    }
+
+    #[test]
+    fn debug_rejects_empty_segments() {
+        let flags = vec![OsString::from("checksum,,io")];
+        let error = parse_debug_flags(&flags).err().expect("parse should fail");
+        assert!(error.to_string().contains("--debug flag must not be empty"));
     }
 
     #[test]
@@ -7112,6 +7394,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_append_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(true));
+        assert!(!parsed.append_verify);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-append"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(false));
+        assert!(!parsed.append_verify);
+    }
+
+    #[test]
+    fn parse_args_recognises_append_verify_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append-verify"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.append, Some(true));
+        assert!(parsed.append_verify);
+    }
+
+    #[test]
     fn parse_args_recognises_whole_file_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -7248,6 +7569,26 @@ mod tests {
 
         assert_eq!(parsed.exclude_from, vec![OsString::from("excludes.txt")]);
         assert_eq!(parsed.include_from, vec![OsString::from("includes.txt")]);
+    }
+
+    #[test]
+    fn parse_args_collects_reference_destinations() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compare-dest"),
+            OsString::from("compare"),
+            OsString::from("--copy-dest"),
+            OsString::from("copy"),
+            OsString::from("--link-dest"),
+            OsString::from("link"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compare_destinations, vec![OsString::from("compare")]);
+        assert_eq!(parsed.copy_destinations, vec![OsString::from("copy")]);
+        assert_eq!(parsed.link_destinations, vec![OsString::from("link")]);
     }
 
     #[test]
@@ -8929,6 +9270,25 @@ mod tests {
     }
 
     #[test]
+    fn bwlimit_accepts_leading_plus_sign() {
+        let limit = parse_bandwidth_limit(OsStr::new("+2M"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 2_097_152);
+    }
+
+    #[test]
+    fn bwlimit_rejects_negative_values() {
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=-1")]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("--bwlimit=-1 is invalid"));
+    }
+
+    #[test]
     fn compress_level_invalid_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
@@ -9022,6 +9382,44 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("output is UTF-8");
         assert!(!rendered.contains("Welcome to the test daemon"));
         assert!(rendered.contains("module"));
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn remote_daemon_listing_with_rsync_path_does_not_spawn_fallback() {
+        use tempfile::tempdir;
+
+        let (addr, handle) =
+            spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
+
+        let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let marker_path = temp.path().join("marker.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "invoked" > "$MARKER_FILE"
+exit 99
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _marker_guard = EnvGuard::set("MARKER_FILE", marker_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            OsString::from(url.clone()),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("output is UTF-8");
+        assert!(rendered.contains("module"));
+        assert!(!marker_path.exists());
 
         handle.join().expect("server thread");
     }
@@ -9916,6 +10314,50 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn remote_fallback_forwards_reference_destinations() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compare-dest=compare"),
+            OsString::from("--copy-dest=copy"),
+            OsString::from("--link-dest=link"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--compare-dest"));
+        assert!(recorded.lines().any(|line| line == "compare"));
+        assert!(recorded.lines().any(|line| line == "--copy-dest"));
+        assert!(recorded.lines().any(|line| line == "copy"));
+        assert!(recorded.lines().any(|line| line == "--link-dest"));
+        assert!(recorded.lines().any(|line| line == "link"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn remote_fallback_forwards_compress_level() {
         use tempfile::tempdir;
 
@@ -10136,6 +10578,84 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-whole-file"));
         assert!(!args.iter().any(|arg| *arg == "--whole-file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_append_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--append"));
+        assert!(!args.contains(&"--append-verify"));
+        assert!(!args.contains(&"--no-append"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-append"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-append"));
+        assert!(!args.contains(&"--append"));
+        assert!(!args.contains(&"--append-verify"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--append-verify"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--append-verify"));
+        assert!(!args.contains(&"--append"));
+        assert!(!args.contains(&"--no-append"));
     }
 
     #[cfg(unix)]
@@ -10389,6 +10909,44 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--update"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_debug_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--debug=io,events"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--debug=io"));
+        assert!(args.contains(&"--debug=events"));
     }
 
     #[cfg(unix)]
@@ -10719,6 +11277,42 @@ exit 0
     }
 
     #[test]
+    fn remote_fallback_forwards_rsync_path_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--rsync-path"));
+        assert!(recorded.lines().any(|line| line == "/opt/custom/rsync"));
+    }
+
+    #[test]
     fn remote_fallback_reads_rsync_rsh_env() {
         use tempfile::tempdir;
 
@@ -10790,6 +11384,31 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "ssh -p 2222"));
         assert!(!recorded.lines().any(|line| line == "ssh -p 2200"));
+    }
+
+    #[test]
+    fn rsync_path_requires_remote_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        std::fs::write(&source, b"content").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--rsync-path=/opt/custom/rsync"),
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let message = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(
+            message.contains("the --rsync-path option may only be used with remote connections")
+        );
+        assert!(!dest.exists());
     }
 
     #[cfg(all(unix, feature = "acl"))]

@@ -88,7 +88,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -104,11 +104,13 @@ use rsync_engine::local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
     LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
     LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    ReferenceDirectory as EngineReferenceDirectory,
+    ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, ProtocolVersion, parse_legacy_daemon_message,
-    parse_legacy_error_message, parse_legacy_warning_message,
+    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, NegotiationError, ProtocolVersion,
+    parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
 };
 use rsync_transport::negotiate_legacy_daemon_session;
 #[cfg(test)]
@@ -122,7 +124,7 @@ use crate::{
 };
 
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 /// Exit code returned when client functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -288,6 +290,47 @@ impl Default for DeleteMode {
     }
 }
 
+/// Identifies the strategy applied to a reference directory entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceDirectoryKind {
+    /// Skip creating the destination when the referenced file matches.
+    Compare,
+    /// Copy data from the reference directory when the file matches.
+    Copy,
+    /// Create a hard link to the reference directory when the file matches.
+    Link,
+}
+
+/// Describes a reference directory consulted during local copy execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceDirectory {
+    kind: ReferenceDirectoryKind,
+    path: PathBuf,
+}
+
+impl ReferenceDirectory {
+    /// Creates a new reference directory entry.
+    #[must_use]
+    pub fn new(kind: ReferenceDirectoryKind, path: impl Into<PathBuf>) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+        }
+    }
+
+    /// Returns the kind associated with the reference directory entry.
+    #[must_use]
+    pub const fn kind(&self) -> ReferenceDirectoryKind {
+        self.kind
+    }
+
+    /// Returns the base path of the reference directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
@@ -314,6 +357,7 @@ pub struct ClientConfig {
     update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    debug_flags: Vec<OsString>,
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
@@ -326,11 +370,14 @@ pub struct ClientConfig {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -363,6 +410,7 @@ impl Default for ClientConfig {
             update: false,
             numeric_ids: false,
             filter_rules: Vec::new(),
+            debug_flags: Vec::new(),
             sparse: false,
             copy_links: false,
             copy_dirlinks: false,
@@ -375,11 +423,14 @@ impl Default for ClientConfig {
             partial: false,
             partial_dir: None,
             inplace: false,
+            append: false,
+            append_verify: false,
             force_event_collection: false,
             preserve_devices: false,
             preserve_specials: false,
             list_only: false,
             timeout: TransferTimeout::Default,
+            reference_directories: Vec::new(),
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -399,6 +450,16 @@ impl ClientConfig {
     #[must_use]
     pub fn transfer_args(&self) -> &[OsString] {
         &self.transfer_args
+    }
+
+    /// Returns the ordered reference directories supplied via `--compare-dest`,
+    /// `--copy-dest`, or `--link-dest`.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    #[doc(alias = "--copy-dest")]
+    #[doc(alias = "--link-dest")]
+    pub fn reference_directories(&self) -> &[ReferenceDirectory] {
+        &self.reference_directories
     }
 
     /// Reports whether transfers should be listed without mutating the destination.
@@ -434,6 +495,13 @@ impl ClientConfig {
     #[must_use]
     pub fn filter_rules(&self) -> &[FilterRuleSpec] {
         &self.filter_rules
+    }
+
+    /// Returns the debug categories requested via `--debug`.
+    #[must_use]
+    #[doc(alias = "--debug")]
+    pub fn debug_flags(&self) -> &[OsString] {
+        &self.debug_flags
     }
 
     /// Returns the configured transfer timeout.
@@ -725,6 +793,20 @@ impl ClientConfig {
         self.inplace
     }
 
+    /// Reports whether appended transfers are enabled.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(&self) -> bool {
+        self.append
+    }
+
+    /// Reports whether append verification is enabled.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(&self) -> bool {
+        self.append_verify
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {
@@ -764,6 +846,7 @@ pub struct ClientConfigBuilder {
     update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    debug_flags: Vec<OsString>,
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
@@ -776,11 +859,14 @@ pub struct ClientConfigBuilder {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -877,6 +963,35 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Adds a `--compare-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    pub fn compare_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            path,
+        ));
+        self
+    }
+
+    /// Adds a `--copy-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--copy-dest")]
+    pub fn copy_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, path));
+        self
+    }
+
+    /// Adds a `--link-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn link_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, path));
         self
     }
 
@@ -1182,6 +1297,30 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables append-only transfers for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(mut self, append: bool) -> Self {
+        self.append = append;
+        if !append {
+            self.append_verify = false;
+        }
+        self
+    }
+
+    /// Enables append verification for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(mut self, verify: bool) -> Self {
+        if verify {
+            self.append = true;
+            self.append_verify = true;
+        } else {
+            self.append_verify = false;
+        }
+        self
+    }
+
     /// Forces collection of transfer events regardless of verbosity.
     #[must_use]
     pub const fn force_event_collection(mut self, force: bool) -> Self {
@@ -1196,6 +1335,18 @@ impl ClientConfigBuilder {
     #[doc(alias = "-X")]
     pub const fn xattrs(mut self, preserve: bool) -> Self {
         self.preserve_xattrs = preserve;
+        self
+    }
+
+    /// Replaces the collected debug flags with the provided list.
+    #[must_use]
+    #[doc(alias = "--debug")]
+    pub fn debug_flags<I, S>(mut self, flags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.debug_flags = flags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -1251,6 +1402,7 @@ impl ClientConfigBuilder {
             update: self.update,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
+            debug_flags: self.debug_flags,
             sparse: self.sparse,
             copy_links: self.copy_links,
             copy_dirlinks: self.copy_dirlinks,
@@ -1263,11 +1415,14 @@ impl ClientConfigBuilder {
             partial: self.partial,
             partial_dir: self.partial_dir,
             inplace: self.inplace,
+            append: self.append,
+            append_verify: self.append_verify,
             force_event_collection: self.force_event_collection,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
             timeout: self.timeout,
+            reference_directories: self.reference_directories,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -1818,6 +1973,10 @@ pub struct RemoteFallbackArgs {
     pub partial_dir: Option<PathBuf>,
     /// Enables `--remove-source-files`.
     pub remove_source_files: bool,
+    /// Optional `--append`/`--no-append` toggle.
+    pub append: Option<bool>,
+    /// Enables `--append-verify`.
+    pub append_verify: bool,
     /// Optional `--inplace`/`--no-inplace` toggle.
     pub inplace: Option<bool>,
     /// Routes daemon messages to standard error via `--msgs2stderr`.
@@ -1836,10 +1995,18 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--compare-dest` flags.
+    pub compare_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--copy-dest` flags.
+    pub copy_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--link-dest` flags.
+    pub link_destinations: Vec<OsString>,
     /// Enables `--cvs-exclude` on the fallback binary.
     pub cvs_exclude: bool,
     /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
     pub info_flags: Vec<OsString>,
+    /// Values forwarded to the fallback binary via repeated `--debug=FLAGS` occurrences.
+    pub debug_flags: Vec<OsString>,
     /// Whether the original invocation used `--files-from`.
     pub files_from_used: bool,
     /// Entries collected from `--files-from` operands.
@@ -1867,6 +2034,12 @@ pub struct RemoteFallbackArgs {
     /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
+    /// Optional override for the remote rsync executable.
+    ///
+    /// When populated the helper forwards `--rsync-path` to the fallback command so upstream
+    /// rsync executes the specified program on the remote system. The option is ignored when
+    /// remote operands are absent because local transfers never invoke the fallback binary.
+    pub rsync_path: Option<OsString>,
     /// Remaining operands to forward to the fallback binary.
     pub remainder: Vec<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
@@ -1965,6 +2138,8 @@ where
         partial,
         partial_dir,
         remove_source_files,
+        append,
+        append_verify,
         inplace,
         msgs_to_stderr,
         whole_file,
@@ -1974,8 +2149,12 @@ where
         exclude_from,
         include_from,
         filters,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         cvs_exclude,
         info_flags,
+        debug_flags,
         files_from_used,
         file_list_entries,
         from0,
@@ -1986,6 +2165,7 @@ where
         out_format,
         no_motd,
         fallback_binary,
+        rsync_path,
         mut remainder,
         #[cfg(feature = "acl")]
         acls,
@@ -2119,6 +2299,11 @@ where
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
     }
+    if append_verify {
+        command_args.push(OsString::from("--append-verify"));
+    } else {
+        push_toggle(&mut command_args, "--append", "--no-append", append);
+    }
     if msgs_to_stderr {
         command_args.push(OsString::from("--msgs2stderr"));
     }
@@ -2165,8 +2350,29 @@ where
         command_args.push(filter);
     }
 
+    for path in compare_destinations {
+        command_args.push(OsString::from("--compare-dest"));
+        command_args.push(path);
+    }
+
+    for path in copy_destinations {
+        command_args.push(OsString::from("--copy-dest"));
+        command_args.push(path);
+    }
+
+    for path in link_destinations {
+        command_args.push(OsString::from("--link-dest"));
+        command_args.push(path);
+    }
+
     for flag in info_flags {
         let mut arg = OsString::from("--info=");
+        arg.push(&flag);
+        command_args.push(arg);
+    }
+
+    for flag in debug_flags {
+        let mut arg = OsString::from("--debug=");
         arg.push(&flag);
         command_args.push(arg);
     }
@@ -2215,6 +2421,11 @@ where
     if let Some(shell) = remote_shell {
         command_args.push(OsString::from("-e"));
         command_args.push(shell);
+    }
+
+    if let Some(path) = rsync_path {
+        command_args.push(OsString::from("--rsync-path"));
+        command_args.push(path);
     }
 
     command_args.append(&mut remainder);
@@ -3106,6 +3317,8 @@ fn build_local_copy_options(
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
         .inplace(config.inplace())
+        .append(config.append())
+        .append_verify(config.append_verify())
         .partial(config.partial())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .with_timeout(
@@ -3118,6 +3331,19 @@ fn build_local_copy_options(
     let options = options.acls(config.preserve_acls());
     #[cfg(feature = "xattr")]
     let options = options.xattrs(config.preserve_xattrs());
+
+    if !config.reference_directories().is_empty() {
+        let references = config.reference_directories().iter().map(|reference| {
+            let kind = match reference.kind() {
+                ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
+                ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
+            };
+            EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
+        });
+        options = options.extend_reference_directories(references);
+    }
+
     options
 }
 
@@ -3137,11 +3363,12 @@ where
 mod tests {
     use super::*;
     use rsync_compress::zlib::CompressionLevel;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -3164,7 +3391,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -3250,6 +3477,8 @@ exit 42
             partial: false,
             partial_dir: None,
             remove_source_files: false,
+            append: None,
+            append_verify: false,
             inplace: None,
             msgs_to_stderr: false,
             whole_file: None,
@@ -3259,8 +3488,12 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            compare_destinations: Vec::new(),
+            copy_destinations: Vec::new(),
+            link_destinations: Vec::new(),
             cvs_exclude: false,
             info_flags: Vec::new(),
+            debug_flags: Vec::new(),
             files_from_used: false,
             file_list_entries: Vec::new(),
             from0: false,
@@ -3271,6 +3504,7 @@ exit 42
             out_format: None,
             no_motd: false,
             fallback_binary: None,
+            rsync_path: None,
             remainder: Vec::new(),
             #[cfg(feature = "acl")]
             acls: None,
@@ -3305,6 +3539,32 @@ exit 42
         );
         assert!(config.has_transfer_request());
         assert!(!config.dry_run());
+    }
+
+    #[test]
+    fn builder_append_round_trip() {
+        let enabled = ClientConfig::builder().append(true).build();
+        assert!(enabled.append());
+        assert!(!enabled.append_verify());
+
+        let disabled = ClientConfig::builder().append(false).build();
+        assert!(!disabled.append());
+        assert!(!disabled.append_verify());
+    }
+
+    #[test]
+    fn builder_append_verify_implies_append() {
+        let verified = ClientConfig::builder().append_verify(true).build();
+        assert!(verified.append());
+        assert!(verified.append_verify());
+
+        let cleared = ClientConfig::builder()
+            .append(true)
+            .append_verify(true)
+            .append_verify(false)
+            .build();
+        assert!(cleared.append());
+        assert!(!cleared.append_verify());
     }
 
     #[test]
@@ -3496,6 +3756,23 @@ exit 42
 
         assert_eq!(config.timeout(), timeout);
         assert_eq!(ClientConfig::default().timeout(), TransferTimeout::Default);
+    }
+
+    #[test]
+    fn builder_collects_reference_directories() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compare_destination(PathBuf::from("compare"))
+            .copy_destination(PathBuf::from("copy"))
+            .link_destination(PathBuf::from("link"))
+            .build();
+
+        let references = config.reference_directories();
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].kind(), ReferenceDirectoryKind::Compare);
+        assert_eq!(references[1].kind(), ReferenceDirectoryKind::Copy);
+        assert_eq!(references[2].kind(), ReferenceDirectoryKind::Link);
+        assert_eq!(references[0].path(), PathBuf::from("compare").as_path());
     }
 
     #[test]
@@ -3920,6 +4197,62 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_reference_directory_flags() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.compare_destinations =
+            vec![OsString::from("compare-one"), OsString::from("compare-two")];
+        args.copy_destinations = vec![OsString::from("copy-one")];
+        args.link_destinations = vec![OsString::from("link-one"), OsString::from("link-two")];
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        let lines: Vec<&str> = captured.lines().collect();
+        let expected_pairs = [
+            ("--compare-dest", "compare-one"),
+            ("--compare-dest", "compare-two"),
+            ("--copy-dest", "copy-one"),
+            ("--link-dest", "link-one"),
+            ("--link-dest", "link-two"),
+        ];
+
+        for (flag, path) in expected_pairs {
+            assert!(
+                lines
+                    .windows(2)
+                    .any(|window| window[0] == flag && window[1] == path),
+                "missing pair {flag} {path} in {:?}",
+                lines
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -5014,6 +5347,36 @@ exit 42
     }
 
     #[test]
+    fn run_module_list_uses_connect_program_command() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
+        let command = OsString::from(
+            "sh -c 'CONNECT_HOST=%H\n\
+             printf \"@RSYNCD: 31.0\\n\"\n\
+             read greeting\n\
+             printf \"@RSYNCD: OK\\n\"\n\
+             read request\n\
+             printf \"example\\t$CONNECT_HOST\\n@RSYNCD: EXIT\\n\"'",
+        );
+
+        let _prog_guard = EnvGuard::set_os("RSYNC_CONNECT_PROG", &command);
+        let _shell_guard = EnvGuard::remove("RSYNC_SHELL");
+        let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new("example.com".to_string(), 873).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("connect program listing succeeds");
+        assert_eq!(list.entries().len(), 1);
+        let entry = &list.entries()[0];
+        assert_eq!(entry.name(), "example");
+        assert_eq!(entry.comment(), Some("example.com"));
+    }
+
+    #[test]
     fn run_module_list_collects_motd_after_acknowledgement() {
         let responses = vec![
             "@RSYNCD: OK\n",
@@ -5230,6 +5593,18 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_decodes_percent_encoded_credentials() {
+        let proxy = parse_proxy_spec("http://user%3Aname:p%40ss%25word@proxy.example:1080")
+            .expect("percent-encoded proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 1080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpuYW1lOnBAc3Mld29yZA=="))
+        );
+    }
+
+    #[test]
     fn parse_proxy_spec_accepts_https_scheme() {
         let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
         assert_eq!(proxy.host, "proxy.example");
@@ -5268,6 +5643,34 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_rejects_invalid_percent_encoding_in_credentials() {
+        let error = match parse_proxy_spec("user%zz:secret@proxy.example:8080") {
+            Ok(_) => panic!("invalid percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY username contains invalid percent-encoding")
+        );
+
+        let error = match parse_proxy_spec("user:secret%@proxy.example:8080") {
+            Ok(_) => panic!("truncated percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY password contains truncated percent-encoding")
+        );
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -5301,6 +5704,48 @@ exit 42
         assert!(error.message().to_string().contains("unavailable"));
 
         handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_converts_error_payload() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@ERROR module unavailable".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("module unavailable"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_converts_other_malformed_greetings() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@RSYNCD? unexpected".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("@RSYNCD? unexpected"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_propagates_other_failures() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = mapped.message().to_string();
+        assert!(rendered.contains("timed out"));
+        assert!(rendered.contains("negotiate with"));
     }
 
     #[test]
@@ -5686,6 +6131,24 @@ exit 42
             }
             Self { key, previous }
         }
+
+        fn set_os(key: &'static str, value: &OsStr) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::remove_var(key);
+            }
+            Self { key, previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -5805,6 +6268,9 @@ exit 42
                 .expect("write response");
         }
         reader.get_mut().flush().expect("flush response");
+
+        let stream = reader.into_inner();
+        let _ = stream.shutdown(Shutdown::Both);
     }
 }
 
@@ -5984,6 +6450,30 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
         .trim();
 
     Some(payload.to_string())
+}
+
+fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
+    if let Some(mapped) = handshake_error_to_client_error(&error) {
+        mapped
+    } else {
+        socket_error("negotiate with", addr.socket_addr_display(), error)
+    }
+}
+
+fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
+    let negotiation_error = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<NegotiationError>())?;
+
+    if let Some(input) = negotiation_error.malformed_legacy_greeting() {
+        if let Some(payload) = legacy_daemon_error_payload(input) {
+            return Some(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
+        }
+
+        return Some(daemon_protocol_error(input));
+    }
+
+    None
 }
 
 /// Target daemon address used for module listing requests.
@@ -6514,11 +7004,17 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 fn open_daemon_stream(
     addr: &DaemonAddress,
     timeout: Option<Duration>,
-) -> Result<TcpStream, ClientError> {
-    match load_daemon_proxy()? {
-        Some(proxy) => connect_via_proxy(addr, &proxy, timeout),
-        None => connect_direct(addr, timeout),
+) -> Result<DaemonStream, ClientError> {
+    if let Some(program) = load_daemon_connect_program()? {
+        return connect_via_program(addr, &program);
     }
+
+    let stream = match load_daemon_proxy()? {
+        Some(proxy) => connect_via_proxy(addr, &proxy, timeout)?,
+        None => connect_direct(addr, timeout)?,
+    };
+
+    Ok(DaemonStream::tcp(stream))
 }
 
 fn connect_direct(
@@ -6621,6 +7117,230 @@ fn establish_proxy_tunnel(
     }
 
     Ok(())
+}
+
+fn connect_via_program(
+    addr: &DaemonAddress,
+    program: &ConnectProgramConfig,
+) -> Result<DaemonStream, ClientError> {
+    let command = program
+        .format_command(addr.host())
+        .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
+
+    let shell = program
+        .shell()
+        .cloned()
+        .unwrap_or_else(|| OsString::from("sh"));
+
+    let mut builder = Command::new(&shell);
+    builder.arg("-c").arg(&command);
+    builder.stdin(Stdio::piped());
+    builder.stdout(Stdio::piped());
+    builder.stderr(Stdio::inherit());
+    builder.env("RSYNC_PORT", addr.port().to_string());
+
+    let mut child = builder.spawn().map_err(|error| {
+        daemon_error(
+            format!(
+                "failed to spawn RSYNC_CONNECT_PROG using shell '{}': {error}",
+                Path::new(&shell).display()
+            ),
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    let stdin = child.stdin.take().ok_or_else(|| {
+        daemon_error(
+            "RSYNC_CONNECT_PROG command did not expose a writable stdin",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        daemon_error(
+            "RSYNC_CONNECT_PROG command did not expose a readable stdout",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    Ok(DaemonStream::program(ConnectProgramStream::new(
+        child, stdin, stdout,
+    )))
+}
+
+fn load_daemon_connect_program() -> Result<Option<ConnectProgramConfig>, ClientError> {
+    let Some(template) = env::var_os("RSYNC_CONNECT_PROG") else {
+        return Ok(None);
+    };
+
+    if template.is_empty() {
+        return Err(connect_program_configuration_error(
+            "RSYNC_CONNECT_PROG must not be empty",
+        ));
+    }
+
+    let shell = env::var_os("RSYNC_SHELL").filter(|value| !value.is_empty());
+
+    ConnectProgramConfig::new(template, shell)
+        .map(Some)
+        .map_err(|error| connect_program_configuration_error(error))
+}
+
+enum DaemonStream {
+    Tcp(TcpStream),
+    Program(ConnectProgramStream),
+}
+
+impl DaemonStream {
+    fn tcp(stream: TcpStream) -> Self {
+        Self::Tcp(stream)
+    }
+
+    fn program(stream: ConnectProgramStream) -> Self {
+        Self::Program(stream)
+    }
+}
+
+impl Read for DaemonStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buf),
+            Self::Program(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for DaemonStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buf),
+            Self::Program(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            Self::Program(stream) => stream.flush(),
+        }
+    }
+}
+
+struct ConnectProgramConfig {
+    template: OsString,
+    shell: Option<OsString>,
+}
+
+impl ConnectProgramConfig {
+    fn new(template: OsString, shell: Option<OsString>) -> Result<Self, String> {
+        if template.is_empty() {
+            return Err("RSYNC_CONNECT_PROG must not be empty".to_string());
+        }
+
+        if let Some(shell) = &shell {
+            if shell.is_empty() {
+                return Err("RSYNC_SHELL must not be empty".to_string());
+            }
+        }
+
+        Ok(Self { template, shell })
+    }
+
+    fn shell(&self) -> Option<&OsString> {
+        self.shell.as_ref()
+    }
+
+    fn format_command(&self, host: &str) -> Result<OsString, String> {
+        #[cfg(unix)]
+        {
+            let template = self.template.as_bytes();
+            let mut rendered = Vec::with_capacity(template.len() + host.len());
+            let mut iter = template.iter().copied();
+            let host_bytes = host.as_bytes();
+
+            while let Some(byte) = iter.next() {
+                if byte == b'%' {
+                    match iter.next() {
+                        Some(b'%') => rendered.push(b'%'),
+                        Some(b'H') => rendered.extend_from_slice(host_bytes),
+                        Some(other) => {
+                            rendered.push(b'%');
+                            rendered.push(other);
+                        }
+                        None => rendered.push(b'%'),
+                    }
+                } else {
+                    rendered.push(byte);
+                }
+            }
+
+            return Ok(OsString::from_vec(rendered));
+        }
+
+        #[cfg(not(unix))]
+        {
+            let template = self.template.as_os_str().to_string_lossy();
+            let mut rendered = String::with_capacity(template.len() + host.len());
+            let mut chars = template.chars();
+
+            while let Some(ch) = chars.next() {
+                if ch == '%' {
+                    match chars.next() {
+                        Some('%') => rendered.push('%'),
+                        Some('H') => rendered.push_str(host),
+                        Some(other) => {
+                            rendered.push('%');
+                            rendered.push(other);
+                        }
+                        None => rendered.push('%'),
+                    }
+                } else {
+                    rendered.push(ch);
+                }
+            }
+
+            return Ok(OsString::from(rendered));
+        }
+    }
+}
+
+struct ConnectProgramStream {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+}
+
+impl ConnectProgramStream {
+    fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
+        Self {
+            child,
+            stdin,
+            stdout,
+        }
+    }
+}
+
+impl Read for ConnectProgramStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stdout.read(buf)
+    }
+}
+
+impl Write for ConnectProgramStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stdin.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
+}
+
+impl Drop for ConnectProgramStream {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 struct ProxyConfig {
@@ -6726,7 +7446,9 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
             proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
         })?;
 
-        let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
+        let username = decode_proxy_component(username, "username")?;
+        let password = decode_proxy_component(password, "password")?;
+        let credentials = ProxyCredentials::new(username, password);
         (Some(credentials), &host_part[1..])
     } else {
         (None, remainder)
@@ -6782,6 +7504,50 @@ fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
     Ok((host, port))
 }
 
+fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
+    if !input.contains('%') {
+        return Ok(input.to_string());
+    }
+
+    let mut decoded = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains truncated percent-encoding"
+                )));
+            }
+
+            let hi = hex_value(bytes[index + 1]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+            let lo = hex_value(bytes[index + 2]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).map_err(|_| {
+        proxy_configuration_error(format!(
+            "RSYNC_PROXY {field} contains invalid UTF-8 after percent-decoding"
+        ))
+    })
+}
+
 fn proxy_configuration_error(text: impl Into<String>) -> ClientError {
     let message = rsync_error!(SOCKET_IO_EXIT_CODE, "{}", text.into()).with_role(Role::Client);
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
@@ -6791,6 +7557,12 @@ fn proxy_response_error(text: impl Into<String>) -> ClientError {
     let message =
         rsync_error!(SOCKET_IO_EXIT_CODE, "proxy error: {}", text.into()).with_role(Role::Client);
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
+    let message =
+        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 fn read_proxy_line(
@@ -6882,7 +7654,7 @@ pub fn run_module_list_with_password_and_options(
     let stream = open_daemon_stream(addr, effective_timeout)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
-        .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
+        .map_err(|error| map_daemon_handshake_error(error, addr))?;
     let stream = handshake.into_stream();
     let mut reader = BufReader::new(stream);
 
