@@ -5474,6 +5474,16 @@ exit 42
     }
 
     #[test]
+    fn map_daemon_handshake_error_converts_plain_invalid_data_error() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(io::ErrorKind::InvalidData, "@ERROR daemon unavailable");
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("daemon unavailable"));
+    }
+
+    #[test]
     fn map_daemon_handshake_error_converts_other_malformed_greetings() {
         let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
         let error = io::Error::new(
@@ -6208,7 +6218,10 @@ fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientE
     if let Some(mapped) = handshake_error_to_client_error(&error) {
         mapped
     } else {
-        socket_error("negotiate with", addr.socket_addr_display(), error)
+        match daemon_error_from_invalid_data(&error) {
+            Some(mapped) => mapped,
+            None => socket_error("negotiate with", addr.socket_addr_display(), error),
+        }
     }
 }
 
@@ -6223,6 +6236,26 @@ fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
         }
 
         return Some(daemon_protocol_error(input));
+    }
+
+    None
+}
+
+fn daemon_error_from_invalid_data(error: &io::Error) -> Option<ClientError> {
+    if error.kind() != io::ErrorKind::InvalidData {
+        return None;
+    }
+
+    let payload_candidates = error
+        .get_ref()
+        .map(|inner| inner.to_string())
+        .into_iter()
+        .chain(std::iter::once(error.to_string()));
+
+    for candidate in payload_candidates {
+        if let Some(payload) = legacy_daemon_error_payload(&candidate) {
+            return Some(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
+        }
     }
 
     None
