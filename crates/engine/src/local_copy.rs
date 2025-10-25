@@ -49,7 +49,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
@@ -1536,6 +1536,7 @@ pub struct LocalCopyOptions {
     specials: bool,
     implied_dirs: bool,
     mkpath: bool,
+    prune_empty_dirs: bool,
     timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
@@ -1588,6 +1589,7 @@ impl LocalCopyOptions {
             specials: false,
             implied_dirs: true,
             mkpath: false,
+            prune_empty_dirs: false,
             timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
@@ -2015,6 +2017,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Prunes directories that would otherwise be empty after filtering.
+    #[must_use]
+    #[doc(alias = "--prune-empty-dirs")]
+    #[doc(alias = "-m")]
+    pub const fn prune_empty_dirs(mut self, prune: bool) -> Self {
+        self.prune_empty_dirs = prune;
+        self
+    }
+
     /// Requests that device nodes be copied.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -2282,6 +2293,12 @@ impl LocalCopyOptions {
     #[doc(alias = "--mkpath")]
     pub const fn mkpath_enabled(&self) -> bool {
         self.mkpath
+    }
+
+    /// Returns whether empty directories should be pruned after filtering.
+    #[must_use]
+    pub const fn prune_empty_dirs_enabled(&self) -> bool {
+        self.prune_empty_dirs
     }
 
     /// Reports whether partial transfer handling has been requested.
@@ -3121,6 +3138,10 @@ impl<'a> CopyContext<'a> {
 
     fn mkpath_enabled(&self) -> bool {
         self.options.mkpath_enabled()
+    }
+
+    fn prune_empty_dirs_enabled(&self) -> bool {
+        self.options.prune_empty_dirs_enabled()
     }
 
     fn omit_dir_times_enabled(&self) -> bool {
@@ -5229,12 +5250,17 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     relative: Option<&Path>,
-) -> Result<(), LocalCopyError> {
+) -> Result<bool, LocalCopyError> {
+    #[cfg(any(feature = "acl", feature = "xattr"))]
     let mode = context.mode();
+    #[cfg(not(any(feature = "acl", feature = "xattr")))]
+    let _mode = context.mode();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
     #[cfg(feature = "acl")]
     let preserve_acls = context.acls_enabled();
+    let prune_enabled = context.prune_empty_dirs_enabled();
+
     let mut destination_missing = false;
 
     match fs::symlink_metadata(destination) {
@@ -5257,8 +5283,6 @@ fn copy_directory_recursive(
         }
     }
 
-    context.summary_mut().record_directory_total();
-
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());
@@ -5266,46 +5290,72 @@ fn copy_directory_recursive(
 
     let dir_merge_guard = context.enter_directory(source)?;
     if dir_merge_guard.is_excluded() {
-        return Ok(());
+        return Ok(false);
     }
     let _dir_merge_guard = dir_merge_guard;
 
-    if destination_missing {
-        if relative.is_some() {
-            context.summary_mut().record_directory();
+    let directory_ready = Cell::new(!destination_missing);
+    let mut created_directory_on_disk = false;
+    let creation_record_pending = destination_missing && relative.is_some();
+    let mut pending_record: Option<LocalCopyRecord> = None;
+    let metadata_record = relative.map(|rel| {
+        (
+            rel.to_path_buf(),
+            LocalCopyMetadata::from_metadata(metadata, None),
+        )
+    });
+
+    let mut kept_any = !prune_enabled;
+
+    let mut ensure_directory = |context: &mut CopyContext| -> Result<(), LocalCopyError> {
+        if directory_ready.get() {
+            return Ok(());
         }
 
-        if !mode.is_dry_run() {
+        if context.mode().is_dry_run() {
+            if !context.implied_dirs_enabled() {
+                if let Some(parent) = destination.parent() {
+                    context.prepare_parent_directory(parent)?;
+                }
+            }
+            directory_ready.set(true);
+        } else {
+            if let Some(parent) = destination.parent() {
+                context.prepare_parent_directory(parent)?;
+            }
             if context.implied_dirs_enabled() {
                 fs::create_dir_all(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
-                context.register_progress();
             } else {
                 fs::create_dir(destination).map_err(|error| {
                     LocalCopyError::io("create directory", destination.to_path_buf(), error)
                 })?;
-                context.register_progress();
             }
+            context.register_progress();
             context.register_created_path(destination, CreatedEntryKind::Directory, false);
-        } else if !context.implied_dirs_enabled() {
-            if let Some(parent) = destination.parent() {
-                context.prepare_parent_directory(parent)?;
+            directory_ready.set(true);
+            created_directory_on_disk = true;
+        }
+
+        if pending_record.is_none() {
+            if let Some((ref rel_path, ref snapshot)) = metadata_record {
+                pending_record = Some(LocalCopyRecord::new(
+                    rel_path.clone(),
+                    LocalCopyAction::DirectoryCreated,
+                    0,
+                    Some(snapshot.len()),
+                    Duration::default(),
+                    Some(snapshot.clone()),
+                ));
             }
         }
 
-        if let Some(rel) = relative {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-            let total_bytes = Some(metadata_snapshot.len());
-            context.record(LocalCopyRecord::new(
-                rel.to_path_buf(),
-                LocalCopyAction::DirectoryCreated,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
-        }
+        Ok(())
+    };
+
+    if !directory_ready.get() && !prune_enabled {
+        ensure_directory(context)?;
     }
 
     #[derive(Clone, Copy)]
@@ -5448,15 +5498,20 @@ fn copy_directory_recursive(
                 context.record_skipped_non_regular(record_relative);
             }
             EntryAction::CopyDirectory => {
-                copy_directory_recursive(
+                ensure_directory(context)?;
+                let child_kept = copy_directory_recursive(
                     context,
                     planned.entry.path.as_path(),
                     &target_path,
                     entry_metadata,
                     Some(planned.relative.as_path()),
                 )?;
+                if child_kept {
+                    kept_any = true;
+                }
             }
             EntryAction::CopyFile => {
+                ensure_directory(context)?;
                 copy_file(
                     context,
                     planned.entry.path.as_path(),
@@ -5464,8 +5519,10 @@ fn copy_directory_recursive(
                     entry_metadata,
                     Some(planned.relative.as_path()),
                 )?;
+                kept_any = true;
             }
             EntryAction::CopySymlink => {
+                ensure_directory(context)?;
                 let metadata_options = context.metadata_options();
                 copy_symlink(
                     context,
@@ -5475,8 +5532,10 @@ fn copy_directory_recursive(
                     metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
+                kept_any = true;
             }
             EntryAction::CopyFifo => {
+                ensure_directory(context)?;
                 let metadata_options = context.metadata_options();
                 copy_fifo(
                     context,
@@ -5486,8 +5545,10 @@ fn copy_directory_recursive(
                     metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
+                kept_any = true;
             }
             EntryAction::CopyDevice => {
+                ensure_directory(context)?;
                 let metadata_options = context.metadata_options();
                 copy_device(
                     context,
@@ -5497,15 +5558,14 @@ fn copy_directory_recursive(
                     metadata_options,
                     Some(planned.relative.as_path()),
                 )?;
+                kept_any = true;
             }
         }
     }
 
     if deletion_enabled {
         match delete_timing.unwrap_or(DeleteTiming::During) {
-            DeleteTiming::Before => {
-                // Deletions already performed prior to copying.
-            }
+            DeleteTiming::Before => {}
             DeleteTiming::During => {
                 delete_extraneous_entries(context, destination, relative, &keep_names)?;
             }
@@ -5514,6 +5574,28 @@ fn copy_directory_recursive(
                 context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
             }
         }
+    }
+
+    if prune_enabled && !kept_any {
+        if created_directory_on_disk {
+            fs::remove_dir(destination).map_err(|error| {
+                LocalCopyError::io("remove empty directory", destination.to_path_buf(), error)
+            })?;
+            if let Some(last) = context.created_entries.last() {
+                if last.path == destination {
+                    context.created_entries.pop();
+                }
+            }
+        }
+        return Ok(false);
+    }
+
+    context.summary_mut().record_directory_total();
+    if creation_record_pending {
+        context.summary_mut().record_directory();
+    }
+    if let Some(record) = pending_record {
+        context.record(record);
     }
 
     if !context.mode().is_dry_run() {
@@ -5530,7 +5612,7 @@ fn copy_directory_recursive(
         sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     }
 
-    Ok(())
+    Ok(true)
 }
 
 #[derive(Debug)]
@@ -10138,6 +10220,57 @@ mod tests {
         assert!(target_root.join("keep.txt").exists());
         assert!(!target_root.join("skip.tmp").exists());
         assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
+    fn execute_prunes_empty_directories_when_enabled() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest_without_prune = temp.path().join("dest_without_prune");
+        let dest_with_prune = temp.path().join("dest_with_prune");
+
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(source.join("empty")).expect("create empty dir");
+        fs::write(source.join("keep.txt"), b"payload").expect("write keep");
+        fs::write(source.join("empty").join("skip.tmp"), b"skip").expect("write skip");
+
+        fs::create_dir_all(&dest_without_prune).expect("create dest");
+        fs::create_dir_all(&dest_with_prune).expect("create dest");
+
+        let operands_without = vec![
+            source.clone().into_os_string(),
+            dest_without_prune.clone().into_os_string(),
+        ];
+        let plan_without = LocalCopyPlan::from_operands(&operands_without).expect("plan");
+        let filters_without = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options_without = LocalCopyOptions::default().filters(Some(filters_without));
+        let summary_without = plan_without
+            .execute_with_options(LocalCopyExecution::Apply, options_without)
+            .expect("copy succeeds");
+
+        let operands_with = vec![
+            source.into_os_string(),
+            dest_with_prune.clone().into_os_string(),
+        ];
+        let plan_with = LocalCopyPlan::from_operands(&operands_with).expect("plan");
+        let filters_with = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options_with = LocalCopyOptions::default()
+            .filters(Some(filters_with))
+            .prune_empty_dirs(true);
+        let summary_with = plan_with
+            .execute_with_options(LocalCopyExecution::Apply, options_with)
+            .expect("copy succeeds");
+
+        let target_without = dest_without_prune.join("source");
+        let target_with = dest_with_prune.join("source");
+
+        assert!(target_without.join("keep.txt").exists());
+        assert!(target_with.join("keep.txt").exists());
+        assert!(target_without.join("empty").is_dir());
+        assert!(!target_with.join("empty").exists());
+        assert!(summary_with.directories_created() < summary_without.directories_created());
     }
 
     #[test]
