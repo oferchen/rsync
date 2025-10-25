@@ -57,7 +57,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::num::{NonZeroU8, NonZeroU64};
+use std::num::{NonZeroU64, NonZeroU8};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::rc::Rc;
@@ -67,14 +67,14 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use rustix::{
     fd::AsFd,
-    fs::{FallocateFlags, fallocate},
+    fs::{fallocate, FallocateFlags},
     io::Errno,
 };
 
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::BandwidthLimiter;
-use rsync_checksums::RollingChecksum;
 use rsync_checksums::strong::Md5;
+use rsync_checksums::RollingChecksum;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "acl")]
@@ -82,15 +82,15 @@ use rsync_meta::sync_acls;
 #[cfg(feature = "xattr")]
 use rsync_meta::sync_xattrs;
 use rsync_meta::{
-    MetadataError, MetadataOptions, apply_directory_metadata_with_options,
-    apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
-    create_fifo,
+    apply_directory_metadata_with_options, apply_file_metadata_with_options,
+    apply_symlink_metadata_with_options, create_device_node, create_fifo, MetadataError,
+    MetadataOptions,
 };
 use rsync_protocol::ProtocolVersion;
 
-use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
+use crate::delta::{calculate_signature_layout, DeltaSignatureIndex, SignatureLayoutParams};
 use crate::signature::{
-    SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
+    generate_file_signature, SignatureAlgorithm, SignatureBlock, SignatureError,
 };
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
@@ -4903,7 +4903,11 @@ fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
         skip += 1;
     }
 
-    if skip > 0 { Some(skip) } else { None }
+    if skip > 0 {
+        Some(skip)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -5578,7 +5582,10 @@ fn copy_directory_recursive(
         let mut keep_name = true;
 
         let action = if !context.allows(&relative_path, effective_type.is_dir()) {
-            // Skip excluded entries while ensuring they are preserved during deletion sweeps.
+            // Skip excluded entries while optionally allowing deletion sweeps to remove them.
+            if context.options().delete_excluded_enabled() {
+                keep_name = false;
+            }
             EntryAction::SkipExcluded
         } else if entry_type.is_dir() {
             EntryAction::CopyDirectory
@@ -7823,10 +7830,10 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use filetime::{FileTime, set_file_mtime, set_file_times};
+    use filetime::{set_file_mtime, set_file_times, FileTime};
     use std::ffi::OsString;
     use std::io::{self, Seek, SeekFrom, Write};
-    use std::num::{NonZeroU8, NonZeroU64};
+    use std::num::{NonZeroU64, NonZeroU8};
     use std::path::Path;
     use std::thread;
     use std::time::Duration;
@@ -8227,11 +8234,9 @@ mod tests {
     #[test]
     fn parse_filter_directive_dir_merge_conflicting_modifiers_error() {
         let error = parse_filter_directive_line("dir-merge,+- rules").expect_err("conflict");
-        assert!(
-            error
-                .to_string()
-                .contains("cannot combine '+' and '-' modifiers")
-        );
+        assert!(error
+            .to_string()
+            .contains("cannot combine '+' and '-' modifiers"));
     }
 
     #[test]
@@ -8371,12 +8376,10 @@ mod tests {
     fn local_copy_options_xattrs_round_trip() {
         let options = LocalCopyOptions::default().xattrs(true);
         assert!(options.preserve_xattrs());
-        assert!(
-            !LocalCopyOptions::default()
-                .xattrs(true)
-                .xattrs(false)
-                .preserve_xattrs()
-        );
+        assert!(!LocalCopyOptions::default()
+            .xattrs(true)
+            .xattrs(false)
+            .preserve_xattrs());
     }
 
     #[cfg(unix)]
@@ -8582,7 +8585,7 @@ mod tests {
 
     #[test]
     fn execute_with_remove_source_files_preserves_unchanged_source() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
@@ -9233,12 +9236,10 @@ mod tests {
             fs::read(&copied_file).expect("read copied file"),
             b"payload"
         );
-        assert!(
-            fs::symlink_metadata(&destination_link)
-                .expect("destination link metadata")
-                .file_type()
-                .is_symlink()
-        );
+        assert!(fs::symlink_metadata(&destination_link)
+            .expect("destination link metadata")
+            .file_type()
+            .is_symlink());
         assert!(summary.directories_created() >= 1);
     }
 
@@ -9273,12 +9274,10 @@ mod tests {
                 LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
             )
         ));
-        assert!(
-            fs::symlink_metadata(&destination_link)
-                .expect("destination link metadata")
-                .file_type()
-                .is_symlink()
-        );
+        assert!(fs::symlink_metadata(&destination_link)
+            .expect("destination link metadata")
+            .file_type()
+            .is_symlink());
         assert!(!actual_destination.join("src-dir").join("file.txt").exists());
     }
 
@@ -9417,7 +9416,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_does_not_preserve_metadata_by_default() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempdir().expect("tempdir");
@@ -9450,7 +9449,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_preserves_metadata_when_requested() {
-        use filetime::{FileTime, set_file_times};
+        use filetime::{set_file_times, FileTime};
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempdir().expect("tempdir");
@@ -9486,7 +9485,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_preserves_ownership_when_requested() {
-        use rustix::fs::{AtFlags, chownat};
+        use rustix::fs::{chownat, AtFlags};
         use std::os::unix::fs::MetadataExt;
 
         if rustix::process::geteuid().as_raw() != 0 {
@@ -9531,8 +9530,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_copies_fifo() {
-        use filetime::{FileTime, set_file_times};
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use filetime::{set_file_times, FileTime};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -9590,8 +9589,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_copies_fifo_within_directory() {
-        use filetime::{FileTime, set_file_times};
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use filetime::{set_file_times, FileTime};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -9653,7 +9652,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_skips_fifo() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
 
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("source.pipe");
@@ -9684,7 +9683,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_records_skip_event() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
 
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("skip.pipe");
@@ -10256,7 +10255,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_inplace_succeeds_with_read_only_directory() {
-        use rustix::fs::{Mode, chmod};
+        use rustix::fs::{chmod, Mode};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -10761,6 +10760,42 @@ mod tests {
         fs::create_dir_all(&source).expect("create source");
         fs::create_dir_all(&dest).expect("create dest");
         fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+
+        let target_root = dest.join("source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+            .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .delete_excluded(true)
+            .filters(Some(filters));
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("skip.tmp").exists());
+        assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn delete_excluded_removes_matching_source_files() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+        fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source.join("skip.tmp"), b"skip source").expect("write skip source");
 
         let target_root = dest.join("source");
         fs::create_dir_all(&target_root).expect("create target root");
