@@ -2140,6 +2140,14 @@ impl ClientSummary {
         self.stats.bytes_copied()
     }
 
+    /// Returns the aggregate number of bytes reused from the destination instead of being
+    /// rewritten during the transfer.
+    #[must_use]
+    #[doc(alias = "--stats")]
+    pub fn matched_bytes(&self) -> u64 {
+        self.stats.matched_bytes()
+    }
+
     /// Returns the aggregate number of bytes received during the transfer.
     #[must_use]
     pub fn bytes_received(&self) -> u64 {
