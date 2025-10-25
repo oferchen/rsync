@@ -418,7 +418,7 @@ impl FilterDecision {
     }
 
     const fn allows_deletion_when_excluded_removed(self) -> bool {
-        !self.protected
+        !self.transfer_allowed && !self.protected
     }
 
     fn protect(&mut self) {
@@ -721,6 +721,14 @@ mod tests {
         let set = FilterSet::from_rules(rules).expect("compiled");
         assert!(set.allows_deletion(Path::new("backup/snap/info"), false));
         assert!(set.allows_deletion(Path::new("sub/backup/snap"), true));
+    }
+
+    #[test]
+    fn delete_excluded_only_removes_excluded_matches() {
+        let rules = [FilterRule::include("keep/**"), FilterRule::exclude("*.tmp")];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(set.allows_deletion_when_excluded_removed(Path::new("skip.tmp"), false));
+        assert!(!set.allows_deletion_when_excluded_removed(Path::new("keep/file.txt"), false));
     }
 
     #[test]
