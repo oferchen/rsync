@@ -16,6 +16,7 @@ rsync-compress = { path = "../compress" }
 rsync-protocol = { path = "../protocol" }
 rsync-bandwidth = { path = "../bandwidth" }
 globset = "0.4"
+rustix = { version = "0.38", features = ["fs", "process"] }
 
 [features]
 default = []
@@ -25,6 +26,5 @@ acl = ["rsync-meta/acl"]
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
-rustix = { version = "0.38", features = ["fs", "process"] }
 xattr = "1.3"
 rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }

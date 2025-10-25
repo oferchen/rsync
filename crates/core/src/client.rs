@@ -381,6 +381,7 @@ pub struct ClientConfig {
     ignore_existing: bool,
     update: bool,
     numeric_ids: bool,
+    preallocate: bool,
     filter_rules: Vec<FilterRuleSpec>,
     debug_flags: Vec<OsString>,
     sparse: bool,
@@ -437,6 +438,7 @@ impl Default for ClientConfig {
             ignore_existing: false,
             update: false,
             numeric_ids: false,
+            preallocate: false,
             filter_rules: Vec::new(),
             debug_flags: Vec::new(),
             sparse: false,
@@ -744,6 +746,12 @@ impl ClientConfig {
         self.numeric_ids
     }
 
+    /// Reports whether destination files should be preallocated before writing.
+    #[doc(alias = "--preallocate")]
+    pub const fn preallocate(&self) -> bool {
+        self.preallocate
+    }
+
     /// Reports whether sparse file handling has been requested.
     #[must_use]
     #[doc(alias = "--sparse")]
@@ -898,6 +906,7 @@ pub struct ClientConfigBuilder {
     ignore_existing: bool,
     update: bool,
     numeric_ids: bool,
+    preallocate: bool,
     filter_rules: Vec<FilterRuleSpec>,
     debug_flags: Vec<OsString>,
     sparse: bool,
@@ -1057,6 +1066,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--remove-sent-files")]
     pub const fn remove_source_files(mut self, remove: bool) -> Self {
         self.remove_source_files = remove;
+        self
+    }
+
+    /// Requests that destination files be preallocated before writing begins.
+    #[must_use]
+    #[doc(alias = "--preallocate")]
+    pub const fn preallocate(mut self, preallocate: bool) -> Self {
+        self.preallocate = preallocate;
         self
     }
 
@@ -1491,6 +1508,7 @@ impl ClientConfigBuilder {
             ignore_existing: self.ignore_existing,
             update: self.update,
             numeric_ids: self.numeric_ids,
+            preallocate: self.preallocate,
             filter_rules: self.filter_rules,
             debug_flags: self.debug_flags,
             sparse: self.sparse,
@@ -2077,6 +2095,8 @@ pub struct RemoteFallbackArgs {
     pub itemize_changes: bool,
     /// Enables `--partial`.
     pub partial: bool,
+    /// Enables `--preallocate`.
+    pub preallocate: bool,
     /// Enables `--delay-updates`.
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
@@ -2250,6 +2270,7 @@ where
         stats,
         itemize_changes,
         partial,
+        preallocate,
         delay_updates,
         partial_dir,
         link_dests,
@@ -2408,6 +2429,9 @@ where
     }
     if partial {
         command_args.push(OsString::from("--partial"));
+    }
+    if preallocate {
+        command_args.push(OsString::from("--preallocate"));
     }
     if delay_updates {
         command_args.push(OsString::from("--delay-updates"));
@@ -3439,6 +3463,7 @@ fn build_local_copy_options(
         .update(config.update())
         .with_filter_program(filter_program)
         .numeric_ids(config.numeric_ids())
+        .preallocate(config.preallocate())
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
@@ -3610,6 +3635,7 @@ exit 42
             stats: false,
             itemize_changes: false,
             partial: false,
+            preallocate: false,
             delay_updates: false,
             partial_dir: None,
             link_dests: Vec::new(),

@@ -192,6 +192,7 @@ const HELP_TEXT: &str = concat!(
     "      --append    Append data to existing destination files without rewriting preserved bytes.\n",
     "      --no-append  Disable append mode for destination updates.\n",
     "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
+    "      --preallocate  Preallocate destination files before writing.\n",
     "      --inplace    Write updated data directly to destination files.\n",
     "      --no-inplace Use temporary files when updating regular files.\n",
     "  -P              Equivalent to --partial --progress.\n",
@@ -228,7 +229,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --preallocate, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -855,6 +856,7 @@ struct ParsedArgs {
     name_overridden: bool,
     stats: bool,
     partial: bool,
+    preallocate: bool,
     delay_updates: bool,
     partial_dir: Option<PathBuf>,
     link_dests: Vec<PathBuf>,
@@ -1268,6 +1270,12 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .overrides_with("append")
                 .overrides_with("no-append"),
+        )
+        .arg(
+            Arg::new("preallocate")
+                .long("preallocate")
+                .help("Preallocate destination files before writing.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("inplace")
@@ -1841,6 +1849,7 @@ where
     };
     let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
+    let preallocate = matches.get_flag("preallocate");
     let mut delay_updates = matches.get_flag("delay-updates");
     let mut partial_dir = matches
         .get_one::<OsString>("partial-dir")
@@ -2007,6 +2016,7 @@ where
         name_overridden,
         stats,
         partial,
+        preallocate,
         delay_updates,
         partial_dir,
         link_dests,
@@ -2253,6 +2263,7 @@ where
         name_overridden: initial_name_overridden,
         stats,
         partial,
+        preallocate,
         delay_updates,
         partial_dir,
         link_dests,
@@ -2702,6 +2713,7 @@ where
             progress: progress_mode.is_some(),
             stats,
             partial,
+            preallocate,
             delay_updates,
             partial_dir: partial_dir.clone(),
             link_dests: link_dests.clone(),
@@ -2862,6 +2874,7 @@ where
         .stats(stats)
         .debug_flags(debug_flags_list.clone())
         .partial(partial)
+        .preallocate(preallocate)
         .delay_updates(delay_updates)
         .partial_directory(partial_dir.clone())
         .delay_updates(delay_updates)
@@ -7702,6 +7715,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_preallocate_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--preallocate"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.preallocate);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.preallocate);
+    }
+
+    #[test]
     fn parse_args_recognises_whole_file_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -11135,6 +11170,59 @@ exit 0
         assert!(args.contains(&"--append-verify"));
         assert!(!args.contains(&"--append"));
         assert!(!args.contains(&"--no-append"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_preallocate_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--preallocate"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--preallocate"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(!recorded.lines().any(|line| line == "--preallocate"));
     }
 
     #[cfg(unix)]
