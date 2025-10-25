@@ -72,7 +72,7 @@ impl WhoMask {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PermSpec {
     read: bool,
     write: bool,
@@ -84,23 +84,6 @@ struct PermSpec {
     copy_user: bool,
     copy_group: bool,
     copy_other: bool,
-}
-
-impl Default for PermSpec {
-    fn default() -> Self {
-        Self {
-            read: false,
-            write: false,
-            exec: false,
-            exec_if_conditional: false,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

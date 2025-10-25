@@ -207,7 +207,6 @@ fn sleep_for(duration: Duration) {
             .lock()
             .expect("lock recorded sleeps")
             .push(duration);
-        return;
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
