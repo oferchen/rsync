@@ -512,6 +512,8 @@ pub struct MetadataOptions {
     preserve_permissions: bool,
     preserve_times: bool,
     numeric_ids: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
 }
 
 impl MetadataOptions {
@@ -527,6 +529,8 @@ impl MetadataOptions {
             preserve_permissions: true,
             preserve_times: true,
             numeric_ids: false,
+            owner_override: None,
+            group_override: None,
         }
     }
 
@@ -568,6 +572,30 @@ impl MetadataOptions {
         self
     }
 
+    /// Applies an explicit ownership override using numeric identifiers.
+    ///
+    /// When set, the override takes precedence over [`Self::preserve_owner`]
+    /// and [`Self::numeric_ids`] by forcing the supplied UID regardless of the
+    /// source metadata. This mirrors the behaviour of rsync's `--chown`
+    /// receiver-side handling.
+    #[must_use]
+    pub const fn with_owner_override(mut self, owner: Option<u32>) -> Self {
+        self.owner_override = owner;
+        self
+    }
+
+    /// Applies an explicit group override using numeric identifiers.
+    ///
+    /// When set, the override takes precedence over [`Self::preserve_group`]
+    /// and [`Self::numeric_ids`] by forcing the supplied GID regardless of the
+    /// source metadata. This mirrors the behaviour of rsync's `--chown`
+    /// receiver-side handling.
+    #[must_use]
+    pub const fn with_group_override(mut self, group: Option<u32>) -> Self {
+        self.group_override = group;
+        self
+    }
+
     /// Reports whether ownership should be preserved.
     #[must_use]
     pub const fn owner(&self) -> bool {
@@ -597,6 +625,18 @@ impl MetadataOptions {
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
     }
+
+    /// Reports the configured ownership override if any.
+    #[must_use]
+    pub const fn owner_override(&self) -> Option<u32> {
+        self.owner_override
+    }
+
+    /// Reports the configured group override if any.
+    #[must_use]
+    pub const fn group_override(&self) -> Option<u32> {
+        self.group_override
+    }
 }
 
 impl Default for MetadataOptions {
@@ -613,16 +653,24 @@ fn set_owner_like(
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
-        if !options.owner() && !options.group() {
+        if options.owner_override().is_none()
+            && options.group_override().is_none()
+            && !options.owner()
+            && !options.group()
+        {
             return Ok(());
         }
 
-        let owner = if options.owner() {
+        let owner = if let Some(uid) = options.owner_override() {
+            Some(ownership::uid_from_raw(uid as RawUid))
+        } else if options.owner() {
             map_uid(metadata.uid() as RawUid, options.numeric_ids_enabled())
         } else {
             None
         };
-        let group = if options.group() {
+        let group = if let Some(gid) = options.group_override() {
+            Some(ownership::gid_from_raw(gid as RawGid))
+        } else if options.group() {
             map_gid(metadata.gid() as RawGid, options.numeric_ids_enabled())
         } else {
             None
@@ -645,7 +693,11 @@ fn set_owner_like(
 
     #[cfg(not(unix))]
     {
-        if options.owner() || options.group() {
+        if options.owner()
+            || options.group()
+            || options.owner_override().is_some()
+            || options.group_override().is_some()
+        {
             return Err(MetadataError::new(
                 "preserve ownership",
                 destination,
