@@ -15,7 +15,8 @@ referenced functionality ships and parity is verified by tests or goldens.
     `--append` and `--append-verify` reuse the native verification logic when the
     destination already contains a prefix of the incoming file. A `--dry-run` flag
     validates transfers without
-    mutating the destination, and `--delete` removes destination entries that
+    mutating the destination, and `--delete`, `--delete-after`, and
+    `--delete-delay` remove destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to
     list available modules and, when remote operands are supplied, spawns the
     system `rsync` binary (configurable via `OC_RSYNC_FALLBACK`) so full network
