@@ -109,6 +109,7 @@ use rsync_core::{
     version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
+use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t, uid_t};
@@ -219,6 +220,7 @@ const HELP_TEXT: &str = concat!(
     "      --group      Preserve file group (requires suitable privileges).\n",
     "      --no-group   Disable group preservation.\n",
     "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
+    "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
     "  -p, --perms      Preserve file permissions.\n",
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
@@ -238,6 +240,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -853,6 +856,7 @@ struct ParsedArgs {
     owner: Option<bool>,
     group: Option<bool>,
     chown: Option<OsString>,
+    chmod: Vec<OsString>,
     perms: Option<bool>,
     times: Option<bool>,
     omit_dir_times: Option<bool>,
@@ -1533,6 +1537,14 @@ fn clap_command() -> ClapCommand {
                 .num_args(1),
         )
         .arg(
+            Arg::new("chmod")
+                .long("chmod")
+                .value_name("SPEC")
+                .help("Apply chmod-style SPEC modifiers to received files.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("perms")
                 .long("perms")
                 .short('p')
@@ -1817,6 +1829,10 @@ where
         None
     };
     let chown = matches.remove_one::<OsString>("chown");
+    let chmod = matches
+        .remove_many::<OsString>("chmod")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let perms = if matches.get_flag("perms") {
         Some(true)
     } else if matches.get_flag("no-perms") {
@@ -2076,6 +2092,7 @@ where
         owner,
         group,
         chown,
+        chmod,
         perms,
         times,
         omit_dir_times,
@@ -2453,6 +2470,7 @@ where
         owner,
         group,
         chown,
+        chmod,
         perms,
         times,
         omit_dir_times,
@@ -2922,6 +2940,7 @@ where
             chown: chown_spec.clone(),
             owner,
             group,
+            chmod: chmod.clone(),
             perms,
             times,
             omit_dir_times,
@@ -3081,6 +3100,33 @@ where
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative = relative.unwrap_or(false);
 
+    let mut chmod_modifiers: Option<ChmodModifiers> = None;
+    for spec in &chmod {
+        let spec_text = spec.to_string_lossy();
+        let trimmed = spec_text.trim();
+        match ChmodModifiers::parse(trimmed) {
+            Ok(parsed) => {
+                if let Some(existing) = &mut chmod_modifiers {
+                    existing.extend(parsed);
+                } else {
+                    chmod_modifiers = Some(parsed);
+                }
+            }
+            Err(error) => {
+                let formatted = format!(
+                    "failed to parse --chmod specification '{}': {}",
+                    spec_text, error
+                );
+                let message = rsync_error!(1, formatted).with_role(Role::Client);
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
+    }
+
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
         .address_mode(address_mode)
@@ -3096,6 +3142,7 @@ where
         .owner_override(owner_override_value)
         .group(preserve_group)
         .group_override(group_override_value)
+        .chmod(chmod_modifiers.clone())
         .permissions(preserve_permissions)
         .times(preserve_times)
         .omit_dir_times(omit_dir_times_setting)
@@ -6269,6 +6316,28 @@ mod tests {
     }
 
     #[test]
+    fn run_reports_invalid_chmod_specification() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--chmod=a+q"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+        assert!(rendered.contains("failed to parse --chmod specification"));
+    }
+
+    #[test]
     fn transfer_request_copies_file() {
         use tempfile::tempdir;
 
@@ -7396,6 +7465,24 @@ mod tests {
         assert_eq!(parsed.perms, Some(false));
         assert_eq!(parsed.times, Some(false));
         assert_eq!(parsed.omit_dir_times, Some(false));
+    }
+
+    #[test]
+    fn parse_args_collects_chmod_values() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--chmod=Du+rwx"),
+            OsString::from("--chmod"),
+            OsString::from("Fgo-w"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            parsed.chmod,
+            vec![OsString::from("Du+rwx"), OsString::from("Fgo-w")]
+        );
     }
 
     #[test]

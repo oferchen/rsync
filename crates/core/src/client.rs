@@ -109,6 +109,7 @@ use rsync_engine::local_copy::{
     ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
+use rsync_meta::ChmodModifiers;
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, NegotiationError, ProtocolVersion,
     parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
@@ -371,6 +372,7 @@ pub struct ClientConfig {
     preserve_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
+    chmod: Option<ChmodModifiers>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -430,6 +432,7 @@ impl Default for ClientConfig {
             preserve_times: false,
             owner_override: None,
             group_override: None,
+            chmod: None,
             omit_dir_times: false,
             compress: false,
             compression_level: None,
@@ -650,6 +653,13 @@ impl ClientConfig {
     #[must_use]
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
+    }
+
+    /// Returns the configured chmod modifiers, if any.
+    #[must_use]
+    #[doc(alias = "--chmod")]
+    pub fn chmod(&self) -> Option<&ChmodModifiers> {
+        self.chmod.as_ref()
     }
 
     /// Reports whether permissions should be preserved.
@@ -915,6 +925,7 @@ pub struct ClientConfigBuilder {
     preserve_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
+    chmod: Option<ChmodModifiers>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -1135,6 +1146,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--chown")]
     pub const fn group_override(mut self, group: Option<u32>) -> Self {
         self.group_override = group;
+        self
+    }
+
+    /// Applies chmod modifiers that should be evaluated after metadata preservation.
+    #[must_use]
+    #[doc(alias = "--chmod")]
+    pub fn chmod(mut self, modifiers: Option<ChmodModifiers>) -> Self {
+        self.chmod = modifiers;
         self
     }
 
@@ -1536,6 +1555,7 @@ impl ClientConfigBuilder {
             preserve_times: self.preserve_times,
             owner_override: self.owner_override,
             group_override: self.group_override,
+            chmod: self.chmod,
             omit_dir_times: self.omit_dir_times,
             compress: self.compress,
             compression_level: self.compression_level,
@@ -2103,6 +2123,8 @@ pub struct RemoteFallbackArgs {
     pub owner: Option<bool>,
     /// Optional `--group`/`--no-group` toggle.
     pub group: Option<bool>,
+    /// Repeated `--chmod` specifications forwarded to the fallback binary.
+    pub chmod: Vec<OsString>,
     /// Optional `--perms`/`--no-perms` toggle.
     pub perms: Option<bool>,
     /// Optional `--times`/`--no-times` toggle.
@@ -2300,6 +2322,7 @@ where
         chown,
         owner,
         group,
+        chmod,
         perms,
         times,
         omit_dir_times,
@@ -2416,6 +2439,11 @@ where
 
     push_toggle(&mut command_args, "--owner", "--no-owner", owner);
     push_toggle(&mut command_args, "--group", "--no-group", group);
+    for spec in chmod {
+        let mut arg = OsString::from("--chmod=");
+        arg.push(&spec);
+        command_args.push(arg);
+    }
     push_toggle(&mut command_args, "--perms", "--no-perms", perms);
     push_toggle(&mut command_args, "--times", "--no-times", times);
     push_toggle(
@@ -3543,6 +3571,7 @@ fn build_local_copy_options(
         .with_owner_override(config.owner_override())
         .group(config.preserve_group())
         .with_group_override(config.group_override())
+        .with_chmod(config.chmod().cloned())
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
         .omit_dir_times(config.omit_dir_times())
@@ -3710,6 +3739,7 @@ exit 42
             chown: None,
             owner: None,
             group: None,
+            chmod: Vec::new(),
             perms: None,
             times: None,
             omit_dir_times: None,
@@ -4112,6 +4142,17 @@ exit 42
 
         assert!(config.preserve_times());
         assert!(!config.preserve_permissions());
+    }
+
+    #[test]
+    fn builder_sets_chmod_modifiers() {
+        let modifiers = ChmodModifiers::parse("a+rw").expect("chmod parses");
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .chmod(Some(modifiers.clone()))
+            .build();
+
+        assert_eq!(config.chmod(), Some(&modifiers));
     }
 
     #[test]
@@ -4535,6 +4576,42 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--no-keep-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_chmod_arguments() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.chmod = vec![OsString::from("Du+rwx"), OsString::from("Fgo-w")];
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--chmod=Du+rwx"));
+        assert!(captured.lines().any(|line| line == "--chmod=Fgo-w"));
     }
 
     #[cfg(unix)]
@@ -5669,6 +5746,34 @@ exit 42
     }
 
     #[test]
+    fn daemon_address_accepts_ipv6_zone_identifier() {
+        let address = DaemonAddress::new(String::from("fe80::1%eth0"), 873)
+            .expect("zone identifier accepted");
+        assert_eq!(address.host(), "fe80::1%eth0");
+        assert_eq!(address.port(), 873);
+
+        let display = format!("{}", address.socket_addr_display());
+        assert_eq!(display, "[fe80::1%eth0]:873");
+    }
+
+    #[test]
+    fn module_list_request_parses_ipv6_zone_identifier() {
+        let operands = vec![OsString::from("rsync://fe80::1%eth0/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request present");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+
+        let bracketed = vec![OsString::from("rsync://[fe80::1%25eth0]/")];
+        let request = ModuleListRequest::from_operands(&bracketed)
+            .expect("parse succeeds")
+            .expect("request present");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
     fn module_list_request_rejects_truncated_percent_encoding() {
         let operands = vec![OsString::from("rsync://example%2/")];
         let error = ModuleListRequest::from_operands(&operands)
@@ -6003,6 +6108,45 @@ exit 42
 
         proxy_handle.join().expect("proxy thread");
         daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn establish_proxy_tunnel_formats_ipv6_authority_without_brackets() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy listener");
+        let addr = listener.local_addr().expect("proxy addr");
+        let expected_line = "CONNECT fe80::1%eth0:873 HTTP/1.0\r\n";
+
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept proxy connection");
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read CONNECT request");
+            assert_eq!(line, expected_line);
+
+            line.clear();
+            reader.read_line(&mut line).expect("read blank line");
+            assert!(line == "\r\n" || line == "\n");
+
+            let mut stream = reader.into_inner();
+            stream
+                .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                .expect("write proxy response");
+            stream.flush().expect("flush proxy response");
+        });
+
+        let daemon_addr =
+            DaemonAddress::new(String::from("fe80::1%eth0"), 873).expect("daemon addr");
+        let proxy = ProxyConfig {
+            host: String::from("proxy.example"),
+            port: addr.port(),
+            credentials: None,
+        };
+
+        let mut stream = TcpStream::connect(addr).expect("connect to proxy listener");
+        establish_proxy_tunnel(&mut stream, &daemon_addr, &proxy)
+            .expect("tunnel negotiation succeeds");
+
+        handle.join().expect("proxy thread completes");
     }
 
     #[test]
@@ -7684,7 +7828,7 @@ fn establish_proxy_tunnel(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
-    let mut request = format!("CONNECT {} HTTP/1.0\r\n", addr.socket_addr_display());
+    let mut request = format!("CONNECT {}:{} HTTP/1.0\r\n", addr.host(), addr.port());
 
     if let Some(header) = proxy.authorization_header() {
         request.push_str("Proxy-Authorization: Basic ");
