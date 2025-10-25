@@ -104,6 +104,8 @@ use rsync_engine::local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
     LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
     LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    ReferenceDirectory as EngineReferenceDirectory,
+    ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -288,6 +290,47 @@ impl Default for DeleteMode {
     }
 }
 
+/// Identifies the strategy applied to a reference directory entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceDirectoryKind {
+    /// Skip creating the destination when the referenced file matches.
+    Compare,
+    /// Copy data from the reference directory when the file matches.
+    Copy,
+    /// Create a hard link to the reference directory when the file matches.
+    Link,
+}
+
+/// Describes a reference directory consulted during local copy execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceDirectory {
+    kind: ReferenceDirectoryKind,
+    path: PathBuf,
+}
+
+impl ReferenceDirectory {
+    /// Creates a new reference directory entry.
+    #[must_use]
+    pub fn new(kind: ReferenceDirectoryKind, path: impl Into<PathBuf>) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+        }
+    }
+
+    /// Returns the kind associated with the reference directory entry.
+    #[must_use]
+    pub const fn kind(&self) -> ReferenceDirectoryKind {
+        self.kind
+    }
+
+    /// Returns the base path of the reference directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
@@ -329,6 +372,7 @@ pub struct ClientConfig {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -376,6 +420,7 @@ impl Default for ClientConfig {
             preserve_specials: false,
             list_only: false,
             timeout: TransferTimeout::Default,
+            reference_directories: Vec::new(),
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -395,6 +440,16 @@ impl ClientConfig {
     #[must_use]
     pub fn transfer_args(&self) -> &[OsString] {
         &self.transfer_args
+    }
+
+    /// Returns the ordered reference directories supplied via `--compare-dest`,
+    /// `--copy-dest`, or `--link-dest`.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    #[doc(alias = "--copy-dest")]
+    #[doc(alias = "--link-dest")]
+    pub fn reference_directories(&self) -> &[ReferenceDirectory] {
+        &self.reference_directories
     }
 
     /// Reports whether transfers should be listed without mutating the destination.
@@ -763,6 +818,7 @@ pub struct ClientConfigBuilder {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -859,6 +915,35 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {
         self.delete_excluded = delete;
+        self
+    }
+
+    /// Adds a `--compare-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    pub fn compare_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            path,
+        ));
+        self
+    }
+
+    /// Adds a `--copy-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--copy-dest")]
+    pub fn copy_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, path));
+        self
+    }
+
+    /// Adds a `--link-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn link_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, path));
         self
     }
 
@@ -1232,6 +1317,7 @@ impl ClientConfigBuilder {
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
             timeout: self.timeout,
+            reference_directories: self.reference_directories,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -1798,6 +1884,12 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--compare-dest` flags.
+    pub compare_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--copy-dest` flags.
+    pub copy_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--link-dest` flags.
+    pub link_destinations: Vec<OsString>,
     /// Enables `--cvs-exclude` on the fallback binary.
     pub cvs_exclude: bool,
     /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
@@ -1935,6 +2027,9 @@ where
         exclude_from,
         include_from,
         filters,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         cvs_exclude,
         info_flags,
         files_from_used,
@@ -2118,6 +2213,21 @@ where
     for filter in filters {
         command_args.push(OsString::from("--filter"));
         command_args.push(filter);
+    }
+
+    for path in compare_destinations {
+        command_args.push(OsString::from("--compare-dest"));
+        command_args.push(path);
+    }
+
+    for path in copy_destinations {
+        command_args.push(OsString::from("--copy-dest"));
+        command_args.push(path);
+    }
+
+    for path in link_destinations {
+        command_args.push(OsString::from("--link-dest"));
+        command_args.push(path);
     }
 
     for flag in info_flags {
@@ -3071,6 +3181,19 @@ fn build_local_copy_options(
     let options = options.acls(config.preserve_acls());
     #[cfg(feature = "xattr")]
     let options = options.xattrs(config.preserve_xattrs());
+
+    if !config.reference_directories().is_empty() {
+        let references = config.reference_directories().iter().map(|reference| {
+            let kind = match reference.kind() {
+                ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
+                ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
+            };
+            EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
+        });
+        options = options.extend_reference_directories(references);
+    }
+
     options
 }
 
@@ -3095,6 +3218,7 @@ mod tests {
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -3117,7 +3241,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -3211,6 +3335,9 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            compare_destinations: Vec::new(),
+            copy_destinations: Vec::new(),
+            link_destinations: Vec::new(),
             cvs_exclude: false,
             info_flags: Vec::new(),
             files_from_used: false,
@@ -3448,6 +3575,23 @@ exit 42
 
         assert_eq!(config.timeout(), timeout);
         assert_eq!(ClientConfig::default().timeout(), TransferTimeout::Default);
+    }
+
+    #[test]
+    fn builder_collects_reference_directories() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compare_destination(PathBuf::from("compare"))
+            .copy_destination(PathBuf::from("copy"))
+            .link_destination(PathBuf::from("link"))
+            .build();
+
+        let references = config.reference_directories();
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].kind(), ReferenceDirectoryKind::Compare);
+        assert_eq!(references[1].kind(), ReferenceDirectoryKind::Copy);
+        assert_eq!(references[2].kind(), ReferenceDirectoryKind::Link);
+        assert_eq!(references[0].path(), PathBuf::from("compare").as_path());
     }
 
     #[test]
@@ -3872,6 +4016,62 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_reference_directory_flags() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.compare_destinations =
+            vec![OsString::from("compare-one"), OsString::from("compare-two")];
+        args.copy_destinations = vec![OsString::from("copy-one")];
+        args.link_destinations = vec![OsString::from("link-one"), OsString::from("link-two")];
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        let lines: Vec<&str> = captured.lines().collect();
+        let expected_pairs = [
+            ("--compare-dest", "compare-one"),
+            ("--compare-dest", "compare-two"),
+            ("--copy-dest", "copy-one"),
+            ("--link-dest", "link-one"),
+            ("--link-dest", "link-two"),
+        ];
+
+        for (flag, path) in expected_pairs {
+            assert!(
+                lines
+                    .windows(2)
+                    .any(|window| window[0] == flag && window[1] == path),
+                "missing pair {flag} {path} in {:?}",
+                lines
+            );
+        }
     }
 
     #[cfg(unix)]

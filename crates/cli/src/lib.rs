@@ -10,7 +10,7 @@
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
-//! `--bwlimit`, and `--sparse`) and delegates local copy operations to
+//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
@@ -28,7 +28,7 @@
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
 //! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
-//! `--delete-excluded`,
+//! `--delete-excluded`, `--compare-dest`, `--copy-dest`, `--link-dest`,
 //! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
@@ -147,6 +147,9 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
+    "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
+    "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
+    "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
@@ -213,7 +216,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -848,6 +851,9 @@ struct ParsedArgs {
     exclude_from: Vec<OsString>,
     include_from: Vec<OsString>,
     filters: Vec<OsString>,
+    compare_destinations: Vec<OsString>,
+    copy_destinations: Vec<OsString>,
+    link_destinations: Vec<OsString>,
     cvs_exclude: bool,
     files_from: Vec<OsString>,
     from0: bool,
@@ -1268,6 +1274,30 @@ fn clap_command() -> ClapCommand {
                 .long("include-from")
                 .value_name("FILE")
                 .help("Read include patterns from FILE.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("compare-dest")
+                .long("compare-dest")
+                .value_name("DIR")
+                .help("Skip creating destination files that match DIR.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("copy-dest")
+                .long("copy-dest")
+                .value_name("DIR")
+                .help("Copy matching files from DIR instead of the source.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("link-dest")
+                .long("link-dest")
+                .value_name("DIR")
+                .help("Hard-link matching files from DIR into the destination.")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -1753,6 +1783,18 @@ where
         .remove_many::<OsString>("include")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let compare_destinations = matches
+        .remove_many::<OsString>("compare-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let copy_destinations = matches
+        .remove_many::<OsString>("copy-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let link_destinations = matches
+        .remove_many::<OsString>("link-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let exclude_from = matches
         .remove_many::<OsString>("exclude-from")
         .map(|values| values.collect())
@@ -1831,6 +1873,9 @@ where
         whole_file,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -2032,6 +2077,9 @@ where
         acls,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -2455,6 +2503,9 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            compare_destinations: compare_destinations.clone(),
+            copy_destinations: copy_destinations.clone(),
+            link_destinations: link_destinations.clone(),
             cvs_exclude,
             info_flags: fallback_info_flags,
             files_from_used,
@@ -2564,6 +2615,18 @@ where
         .inplace(inplace.unwrap_or(false))
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
+
+    for path in &compare_destinations {
+        builder = builder.compare_destination(PathBuf::from(path));
+    }
+
+    for path in &copy_destinations {
+        builder = builder.copy_destination(PathBuf::from(path));
+    }
+
+    for path in &link_destinations {
+        builder = builder.link_destination(PathBuf::from(path));
+    }
     #[cfg(feature = "acl")]
     {
         builder = builder.acls(preserve_acls);
@@ -7113,6 +7176,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_reference_destinations() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compare-dest"),
+            OsString::from("compare"),
+            OsString::from("--copy-dest"),
+            OsString::from("copy"),
+            OsString::from("--link-dest"),
+            OsString::from("link"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compare_destinations, vec![OsString::from("compare")]);
+        assert_eq!(parsed.copy_destinations, vec![OsString::from("copy")]);
+        assert_eq!(parsed.link_destinations, vec![OsString::from("link")]);
+    }
+
+    #[test]
     fn parse_args_collects_files_from_paths() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -9755,6 +9838,50 @@ exit 0
                 .lines()
                 .any(|line| line == dest_path.display().to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_reference_destinations() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compare-dest=compare"),
+            OsString::from("--copy-dest=copy"),
+            OsString::from("--link-dest=link"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--compare-dest"));
+        assert!(recorded.lines().any(|line| line == "compare"));
+        assert!(recorded.lines().any(|line| line == "--copy-dest"));
+        assert!(recorded.lines().any(|line| line == "copy"));
+        assert!(recorded.lines().any(|line| line == "--link-dest"));
+        assert!(recorded.lines().any(|line| line == "link"));
     }
 
     #[cfg(unix)]
