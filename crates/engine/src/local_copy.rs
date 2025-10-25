@@ -1515,6 +1515,7 @@ pub struct LocalCopyOptions {
     whole_file: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    keep_dirlinks: bool,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1567,6 +1568,7 @@ impl LocalCopyOptions {
             whole_file: true,
             copy_links: false,
             copy_dirlinks: false,
+            keep_dirlinks: false,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1737,6 +1739,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--copy-dirlinks")]
     pub const fn copy_dirlinks(mut self, copy: bool) -> Self {
         self.copy_dirlinks = copy;
+        self
+    }
+
+    /// Keeps existing destination symlinks that point to directories.
+    #[must_use]
+    #[doc(alias = "--keep-dirlinks")]
+    pub const fn keep_dirlinks(mut self, keep: bool) -> Self {
+        self.keep_dirlinks = keep;
         self
     }
 
@@ -2145,6 +2155,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_dirlinks_enabled(&self) -> bool {
         self.copy_dirlinks
+    }
+
+    /// Reports whether existing destination directory symlinks should be preserved.
+    #[must_use]
+    pub const fn keep_dirlinks_enabled(&self) -> bool {
+        self.keep_dirlinks
     }
 
     /// Returns the effective compression level when compression is enabled.
@@ -3090,6 +3106,10 @@ impl<'a> CopyContext<'a> {
         self.options.copy_dirlinks_enabled()
     }
 
+    fn keep_dirlinks_enabled(&self) -> bool {
+        self.options.keep_dirlinks_enabled()
+    }
+
     fn whole_file_enabled(&self) -> bool {
         self.options.whole_file_enabled()
     }
@@ -3135,22 +3155,35 @@ impl<'a> CopyContext<'a> {
         self.options.omit_dir_times_enabled()
     }
 
-    fn prepare_parent_directory(&self, parent: &Path) -> Result<(), LocalCopyError> {
+    fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
         }
 
         let allow_creation = self.implied_dirs_enabled() || self.mkpath_enabled();
+        let keep_dirlinks = self.keep_dirlinks_enabled();
 
         if self.mode.is_dry_run() {
             match fs::symlink_metadata(parent) {
                 Ok(existing) => {
-                    if !existing.file_type().is_dir() {
-                        return Err(LocalCopyError::invalid_argument(
+                    let ty = existing.file_type();
+                    if ty.is_dir() {
+                        Ok(())
+                    } else if keep_dirlinks && ty.is_symlink() {
+                        follow_symlink_metadata(parent).and_then(|metadata| {
+                            if metadata.file_type().is_dir() {
+                                Ok(())
+                            } else {
+                                Err(LocalCopyError::invalid_argument(
+                                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                                ))
+                            }
+                        })
+                    } else {
+                        Err(LocalCopyError::invalid_argument(
                             LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
+                        ))
                     }
-                    Ok(())
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     if allow_creation {
@@ -3170,18 +3203,62 @@ impl<'a> CopyContext<'a> {
                 )),
             }
         } else if allow_creation {
-            fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-            })
-        } else {
             match fs::symlink_metadata(parent) {
                 Ok(existing) => {
-                    if !existing.file_type().is_dir() {
+                    let ty = existing.file_type();
+                    if ty.is_dir() {
+                        Ok(())
+                    } else if keep_dirlinks && ty.is_symlink() {
+                        let metadata = follow_symlink_metadata(parent)?;
+                        if metadata.file_type().is_dir() {
+                            Ok(())
+                        } else {
+                            Err(LocalCopyError::invalid_argument(
+                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                            ))
+                        }
+                    } else {
                         Err(LocalCopyError::invalid_argument(
                             LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
                         ))
-                    } else {
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        LocalCopyError::io(
+                            "create parent directory",
+                            parent.to_path_buf(),
+                            error,
+                        )
+                    })?;
+                    self.register_progress();
+                    Ok(())
+                }
+                Err(error) => Err(LocalCopyError::io(
+                    "create parent directory",
+                    parent.to_path_buf(),
+                    error,
+                )),
+            }
+        } else {
+            match fs::symlink_metadata(parent) {
+                Ok(existing) => {
+                    let ty = existing.file_type();
+                    if ty.is_dir() {
                         Ok(())
+                    } else if keep_dirlinks && ty.is_symlink() {
+                        let metadata = follow_symlink_metadata(parent)?;
+                        if metadata.file_type().is_dir() {
+                            Ok(())
+                        } else {
+                            Err(LocalCopyError::invalid_argument(
+                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                            ))
+                        }
+                    } else {
+                        Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ))
                     }
                 }
                 Err(error) => Err(LocalCopyError::io(
@@ -4774,6 +4851,7 @@ fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
 struct DestinationState {
     exists: bool,
     is_dir: bool,
+    symlink_to_dir: bool,
 }
 
 #[derive(Debug)]
@@ -4978,6 +5056,9 @@ fn copy_sources(
             let multiple_sources = plan.sources.len() > 1;
             let destination_path = plan.destination.path();
             let mut destination_state = query_destination_state(destination_path)?;
+            if context.keep_dirlinks_enabled() && destination_state.symlink_to_dir {
+                destination_state.is_dir = true;
+            }
 
             if plan.destination.force_directory() {
                 ensure_destination_directory(
@@ -5217,9 +5298,18 @@ fn query_destination_state(path: &Path) -> Result<DestinationState, LocalCopyErr
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             let file_type = metadata.file_type();
+            let symlink_to_dir = if file_type.is_symlink() {
+                follow_symlink_metadata(path)
+                    .map(|target| target.file_type().is_dir())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
             Ok(DestinationState {
                 exists: true,
                 is_dir: file_type.is_dir(),
+                symlink_to_dir,
             })
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DestinationState::default()),
@@ -5245,9 +5335,21 @@ fn copy_directory_recursive(
     let preserve_acls = context.acls_enabled();
     let mut destination_missing = false;
 
+    let keep_dirlinks = context.keep_dirlinks_enabled();
+
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
-            if !existing.file_type().is_dir() {
+            let file_type = existing.file_type();
+            if file_type.is_dir() {
+                // Directory already present; nothing to do.
+            } else if file_type.is_symlink() && keep_dirlinks {
+                let target_metadata = follow_symlink_metadata(destination)?;
+                if !target_metadata.file_type().is_dir() {
+                    return Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                    ));
+                }
+            } else {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
                 ));
@@ -8871,6 +8973,80 @@ mod tests {
         assert_eq!(summary.symlinks_copied(), 1);
         let copied = fs::read_link(&dest).expect("read link");
         assert_eq!(copied, target_file);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_keep_dirlinks_allows_destination_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src-dir");
+        fs::create_dir(&source_dir).expect("create source dir");
+        fs::write(source_dir.join("file.txt"), b"payload").expect("write source file");
+
+        let actual_destination = temp.path().join("actual-destination");
+        fs::create_dir(&actual_destination).expect("create destination dir");
+        let destination_link = temp.path().join("dest-link");
+        symlink(&actual_destination, &destination_link).expect("create destination link");
+
+        let operands = vec![
+            source_dir.clone().into_os_string(),
+            destination_link.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().keep_dirlinks(true),
+            )
+            .expect("copy succeeds");
+
+        let copied_file = actual_destination.join("src-dir").join("file.txt");
+        assert_eq!(fs::read(&copied_file).expect("read copied file"), b"payload");
+        assert!(fs::symlink_metadata(&destination_link)
+            .expect("destination link metadata")
+            .file_type()
+            .is_symlink());
+        assert!(summary.directories_created() >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_without_keep_dirlinks_rejects_destination_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src-dir");
+        fs::create_dir(&source_dir).expect("create source dir");
+        fs::write(source_dir.join("file.txt"), b"payload").expect("write source file");
+
+        let actual_destination = temp.path().join("actual-destination");
+        fs::create_dir(&actual_destination).expect("create destination dir");
+        let destination_link = temp.path().join("dest-link");
+        symlink(&actual_destination, &destination_link).expect("create destination link");
+
+        let operands = vec![source_dir.into_os_string(), destination_link.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let result = plan.execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default(),
+        );
+
+        let error = result.expect_err("keep-dirlinks disabled should reject destination symlink");
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(
+                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
+            )
+        ));
+        assert!(fs::symlink_metadata(&destination_link)
+            .expect("destination link metadata")
+            .file_type()
+            .is_symlink());
+        assert!(!actual_destination.join("src-dir").join("file.txt").exists());
     }
 
     #[test]
