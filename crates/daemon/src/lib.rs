@@ -3800,7 +3800,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
     let name = name_part.trim();
     ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_string()))?;
 
-    let (path_part, comment_part) = split_module_path_and_comment(remainder);
+    let (path_part, comment_part, options_part) = split_module_path_comment_and_options(remainder);
 
     let path_text = path_part.trim();
     if path_text.is_empty() {
@@ -3812,17 +3812,9 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         .map(|value| unescape_module_component(value.trim()))
         .filter(|value| !value.is_empty());
 
-    let path = PathBuf::from(&path_text);
-    if !path.is_absolute() {
-        return Err(config_error(format!(
-            "module path '{}' must be absolute when 'use chroot' is enabled",
-            path_text
-        )));
-    }
-
-    Ok(ModuleDefinition {
+    let mut module = ModuleDefinition {
         name: name.to_string(),
-        path,
+        path: PathBuf::from(&path_text),
         comment,
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
@@ -3838,32 +3830,226 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         listable: true,
         use_chroot: true,
         max_connections: None,
-    })
+    };
+
+    if let Some(options_text) = options_part {
+        apply_inline_module_options(options_text, &mut module)?;
+    }
+
+    if module.use_chroot && !module.path.is_absolute() {
+        return Err(config_error(format!(
+            "module path '{}' must be absolute when 'use chroot' is enabled",
+            path_text
+        )));
+    }
+
+    if module.auth_users.is_empty() {
+        return Ok(module);
+    }
+
+    if module.secrets_file.is_none() {
+        return Err(config_error(
+            "module specified 'auth users' but did not supply a secrets file".to_string(),
+        ));
+    }
+
+    Ok(module)
 }
 
-fn split_module_path_and_comment(value: &str) -> (&str, Option<&str>) {
-    let chars = value.char_indices();
+fn split_module_path_comment_and_options(value: &str) -> (&str, Option<&str>, Option<&str>) {
+    enum Segment {
+        Path,
+        Comment { start: usize },
+    }
+
+    let mut state = Segment::Path;
     let mut escape = false;
 
-    for (idx, ch) in chars {
+    for (idx, ch) in value.char_indices() {
         if escape {
             escape = false;
             continue;
         }
 
-        if ch == '\\' {
-            escape = true;
-            continue;
-        }
-
-        if ch == ',' {
-            let (path, rest) = value.split_at(idx);
-            let comment = rest.get(1..);
-            return (path, comment);
+        match ch {
+            '\\' => {
+                escape = true;
+            }
+            ';' => {
+                let options = value.get(idx + ch.len_utf8()..);
+                return match state {
+                    Segment::Path => {
+                        let path = &value[..idx];
+                        (path, None, options)
+                    }
+                    Segment::Comment { start } => {
+                        let comment = value.get(start..idx);
+                        let path = &value[..start - 1];
+                        (path, comment, options)
+                    }
+                };
+            }
+            ',' => {
+                if matches!(state, Segment::Path) {
+                    state = Segment::Comment {
+                        start: idx + ch.len_utf8(),
+                    };
+                }
+            }
+            _ => {}
         }
     }
 
-    (value, None)
+    match state {
+        Segment::Path => (value, None, None),
+        Segment::Comment { start } => (&value[..start - 1], value.get(start..), None),
+    }
+}
+
+fn split_inline_options(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut escape = false;
+
+    for ch in text.chars() {
+        if escape {
+            current.push(ch);
+            escape = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escape = true,
+            ';' => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current.trim().to_string());
+    }
+
+    parts.into_iter().filter(|part| !part.is_empty()).collect()
+}
+
+fn apply_inline_module_options(
+    options: &str,
+    module: &mut ModuleDefinition,
+) -> Result<(), DaemonError> {
+    let path = Path::new("--module");
+    let mut seen = HashSet::new();
+
+    for option in split_inline_options(options) {
+        let (key_raw, value_raw) = option
+            .split_once('=')
+            .ok_or_else(|| config_error(format!("module option '{option}' is missing '='")))?;
+
+        let key = key_raw.trim().to_ascii_lowercase();
+        if !seen.insert(key.clone()) {
+            return Err(config_error(format!("duplicate module option '{key_raw}'")));
+        }
+
+        let value = value_raw.trim();
+        match key.as_str() {
+            "read only" | "read-only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'read only'"))
+                })?;
+                module.read_only = parsed;
+            }
+            "list" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'list'"))
+                })?;
+                module.listable = parsed;
+            }
+            "numeric ids" | "numeric-ids" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
+                })?;
+                module.numeric_ids = parsed;
+            }
+            "use chroot" | "use-chroot" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
+                })?;
+                module.use_chroot = parsed;
+            }
+            "hosts allow" | "hosts-allow" => {
+                let patterns = parse_host_list(value, path, 0, "hosts allow")?;
+                module.hosts_allow = patterns;
+            }
+            "hosts deny" | "hosts-deny" => {
+                let patterns = parse_host_list(value, path, 0, "hosts deny")?;
+                module.hosts_deny = patterns;
+            }
+            "auth users" | "auth-users" => {
+                let users = parse_auth_user_list(value).map_err(|error| {
+                    config_error(format!("invalid 'auth users' directive: {error}"))
+                })?;
+                if users.is_empty() {
+                    return Err(config_error(
+                        "'auth users' option must list at least one user".to_string(),
+                    ));
+                }
+                module.auth_users = users;
+            }
+            "secrets file" | "secrets-file" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'secrets file' option must not be empty".to_string(),
+                    ));
+                }
+                module.secrets_file = Some(PathBuf::from(unescape_module_component(value)));
+            }
+            "bwlimit" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'bwlimit' option must not be empty".to_string(),
+                    ));
+                }
+                let limit = parse_runtime_bwlimit(&OsString::from(value))?;
+                module.bandwidth_limit = limit;
+            }
+            "refuse options" | "refuse-options" => {
+                let options = parse_refuse_option_list(value).map_err(|error| {
+                    config_error(format!("invalid 'refuse options' directive: {error}"))
+                })?;
+                module.refuse_options = options;
+            }
+            "uid" => {
+                let uid = parse_numeric_identifier(value)
+                    .ok_or_else(|| config_error(format!("invalid uid '{value}'")))?;
+                module.uid = Some(uid);
+            }
+            "gid" => {
+                let gid = parse_numeric_identifier(value)
+                    .ok_or_else(|| config_error(format!("invalid gid '{value}'")))?;
+                module.gid = Some(gid);
+            }
+            "timeout" => {
+                let timeout = parse_timeout_seconds(value)
+                    .ok_or_else(|| config_error(format!("invalid timeout '{value}'")))?;
+                module.timeout = timeout;
+            }
+            "max connections" | "max-connections" => {
+                let max = parse_max_connections_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid max connections value '{value}'"))
+                })?;
+                module.max_connections = max;
+            }
+            _ => {
+                return Err(config_error(format!(
+                    "unsupported module option '{key_raw}'"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn unescape_module_component(text: &str) -> String {
@@ -4706,6 +4892,98 @@ mod tests {
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].path, PathBuf::from("/var/log\\files"));
         assert_eq!(modules[0].comment.as_deref(), Some("Log share"));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_parses_inline_options() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from(
+                "mirror=./data;use-chroot=no;read-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/rsyncd.secrets;bwlimit=1m;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
+            ),
+        ])
+        .expect("parse module with inline options");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name(), "mirror");
+        assert_eq!(module.path, PathBuf::from("./data"));
+        assert!(module.read_only());
+        assert!(!module.listable());
+        assert!(module.numeric_ids());
+        assert!(!module.use_chroot());
+        assert!(module.permits(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)),
+            Some("host.example")
+        ));
+        assert_eq!(
+            module.auth_users(),
+            &[String::from("alice"), String::from("bob")]
+        );
+        assert_eq!(
+            module
+                .secrets_file()
+                .map(|path| path.to_string_lossy().into_owned()),
+            Some(String::from("/etc/rsyncd.secrets"))
+        );
+        assert_eq!(
+            module.bandwidth_limit().map(NonZeroU64::get),
+            Some(1_048_576)
+        );
+        assert_eq!(module.refused_options(), [String::from("compress")]);
+        assert_eq!(module.uid(), Some(1000));
+        assert_eq!(module.gid(), Some(2000));
+        assert_eq!(module.timeout().map(NonZeroU64::get), Some(600));
+        assert_eq!(module.max_connections().map(NonZeroU32::get), Some(5));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_rejects_unknown_inline_option() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs;unknown=true"),
+        ])
+        .expect_err("unknown option should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("unsupported module option")
+        );
+    }
+
+    #[test]
+    fn runtime_options_module_definition_requires_secrets_for_inline_auth_users() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("logs=/var/log;auth-users=alice"),
+        ])
+        .expect_err("missing secrets file should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("did not supply a secrets file")
+        );
+    }
+
+    #[test]
+    fn runtime_options_module_definition_rejects_duplicate_inline_option() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs;read-only=yes;read-only=no"),
+        ])
+        .expect_err("duplicate inline option should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate module option")
+        );
     }
 
     #[test]
