@@ -10,8 +10,8 @@
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
-//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
-//! `--bwlimit`, `--append`, `--append-verify`, and `--sparse`) and delegates local copy operations to
+//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
+//! `--append`/`--append-verify`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
