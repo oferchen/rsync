@@ -3874,7 +3874,8 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let deleted = summary.items_deleted();
     let literal_bytes = summary.bytes_copied();
     let transferred_size = summary.transferred_file_size();
-    let compressed = summary.compressed_bytes().unwrap_or(literal_bytes);
+    let bytes_sent = summary.bytes_sent();
+    let bytes_received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
     let matched_bytes = transferred_size.saturating_sub(literal_bytes);
     let file_list_size = summary.file_list_size();
@@ -3928,8 +3929,8 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
         stdout,
         "File list transfer time: {file_list_transfer:.3} seconds"
     )?;
-    writeln!(stdout, "Total bytes sent: {compressed}")?;
-    writeln!(stdout, "Total bytes received: 0")?;
+    writeln!(stdout, "Total bytes sent: {bytes_sent}")?;
+    writeln!(stdout, "Total bytes received: {bytes_received}")?;
     writeln!(stdout)?;
 
     emit_totals(summary, stdout)
@@ -3949,10 +3950,8 @@ fn format_stat_categories(categories: &[(&str, u64)]) -> String {
 
 /// Emits the summary lines reported by verbose transfers.
 fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
-    let sent = summary
-        .compressed_bytes()
-        .unwrap_or_else(|| summary.bytes_copied());
-    let received = 0u64;
+    let sent = summary.bytes_sent();
+    let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
     let elapsed = summary.total_elapsed();
     let seconds = elapsed.as_secs_f64();
@@ -6383,7 +6382,7 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
         assert!(rendered.contains("file.txt"));
         assert!(!rendered.contains("Total transferred"));
-        assert!(rendered.contains("sent 7 bytes  received 0 bytes"));
+        assert!(rendered.contains("sent 0 bytes  received 7 bytes"));
         assert!(rendered.contains("total size is 7  speedup is 1.00"));
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
@@ -6659,7 +6658,7 @@ mod tests {
         assert!(rendered.contains("File list size: 0"));
         assert!(rendered.contains("File list generation time:"));
         assert!(rendered.contains("File list transfer time:"));
-        assert!(rendered.contains("Total bytes received: 0"));
+        assert!(rendered.contains(&format!("Total bytes received: {expected_size}")));
         assert!(rendered.contains("\n\nsent"));
         assert!(rendered.contains("total size is"));
         assert_eq!(
