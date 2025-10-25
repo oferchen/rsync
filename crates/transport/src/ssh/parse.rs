@@ -51,7 +51,6 @@ impl fmt::Display for RemoteShellParseError {
 impl Error for RemoteShellParseError {}
 
 /// Parses a remote shell specification using rsync's quoting rules.
-#[must_use]
 pub fn parse_remote_shell(specification: &OsStr) -> Result<Vec<OsString>, RemoteShellParseError> {
     let bytes = specification_bytes(specification)?;
     let mut args = Vec::new();

@@ -167,6 +167,7 @@ const HELP_TEXT: &str = concat!(
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit=RATE  Limit I/O bandwidth (supports decimal, binary, and IEC units; 0 disables the limit).\n",
     "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
+    "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
     "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",
     "  -z, --compress  Compress file data during transfers.\n",
     "      --no-compress  Disable compression.\n",
@@ -241,6 +242,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --safe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -912,6 +914,7 @@ struct ParsedArgs {
     password_file: Option<OsString>,
     protocol: Option<OsString>,
     timeout: Option<OsString>,
+    contimeout: Option<OsString>,
     out_format: Option<OsString>,
 }
 
@@ -1663,6 +1666,15 @@ fn clap_command() -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("contimeout")
+                .long("contimeout")
+                .value_name("SECS")
+                .help("Set connection timeout in seconds (0 disables the limit).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("protocol")
                 .long("protocol")
                 .value_name("NUM")
@@ -2075,6 +2087,7 @@ where
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
+    let contimeout = matches.remove_one::<OsString>("contimeout");
     let out_format = matches.remove_one::<OsString>("out-format");
     let itemize_changes = matches.get_flag("itemize-changes");
     let no_motd = matches.get_flag("no-motd");
@@ -2156,6 +2169,7 @@ where
         password_file,
         protocol,
         timeout,
+        contimeout,
         out_format,
     })
 }
@@ -2535,6 +2549,7 @@ where
         password_file,
         protocol,
         timeout,
+        contimeout,
         out_format,
     } = parsed;
 
@@ -2573,6 +2588,20 @@ where
     };
 
     let timeout_setting = match timeout {
+        Some(value) => match parse_timeout_argument(value.as_os_str()) {
+            Ok(setting) => setting,
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => TransferTimeout::Default,
+    };
+
+    let connect_timeout_setting = match contimeout {
         Some(value) => match parse_timeout_argument(value.as_os_str()) {
             Ok(setting) => setting,
             Err(message) => {
@@ -2872,6 +2901,7 @@ where
                     list_options,
                     password_override,
                     timeout_setting,
+                    connect_timeout_setting,
                 ) {
                     Ok(list) => {
                         if render_module_list(stdout, stderr.writer_mut(), &list, no_motd).is_err()
@@ -3003,6 +3033,7 @@ where
             daemon_password,
             protocol: desired_protocol,
             timeout: timeout_setting,
+            connect_timeout: connect_timeout_setting,
             out_format: fallback_out_format.clone(),
             no_motd,
             address_mode,
@@ -3192,7 +3223,8 @@ where
         .append(append.unwrap_or(false))
         .append_verify(append_verify)
         .whole_file(whole_file_option.unwrap_or(true))
-        .timeout(timeout_setting);
+        .timeout(timeout_setting)
+        .connect_timeout(connect_timeout_setting);
 
     for path in &compare_destinations {
         builder = builder.compare_destination(PathBuf::from(path));
@@ -8441,6 +8473,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_contimeout_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--contimeout=45"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.contimeout, Some(OsString::from("45")));
+    }
+
+    #[test]
     fn timeout_argument_zero_disables_timeout() {
         let timeout = parse_timeout_argument(OsStr::new("0")).expect("parse timeout");
         assert_eq!(timeout, TransferTimeout::Disabled);
@@ -12378,6 +12423,7 @@ exit 0
             OsString::from(format!("--password-file={}", password_path.display())),
             OsString::from("--protocol=30"),
             OsString::from("--timeout=120"),
+            OsString::from("--contimeout=75"),
             OsString::from("rsync://remote/module"),
             dest_path.clone().into_os_string(),
         ]);
@@ -12395,6 +12441,8 @@ exit 0
         assert!(recorded.contains("30"));
         assert!(recorded.contains("--timeout"));
         assert!(recorded.contains("120"));
+        assert!(recorded.contains("--contimeout"));
+        assert!(recorded.contains("75"));
         assert!(recorded.contains("rsync://remote/module"));
         assert!(recorded.contains(&dest_display));
     }
