@@ -149,6 +149,9 @@ const HELP_TEXT: &str = concat!(
     "      --delete-after  Remove destination files after transfers complete.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
+    "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
+    "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
+    "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
@@ -852,6 +855,9 @@ struct ParsedArgs {
     archive: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
+    backup: bool,
+    backup_dir: Option<OsString>,
+    backup_suffix: Option<OsString>,
     checksum: bool,
     size_only: bool,
     ignore_existing: bool,
@@ -1441,6 +1447,33 @@ fn clap_command() -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("backup")
+                .long("backup")
+                .short('b')
+                .help("Create backups before overwriting or deleting existing entries.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("backup-dir")
+                .long("backup-dir")
+                .value_name("DIR")
+                .help("Store backups inside DIR instead of alongside the destination.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .allow_hyphen_values(true)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("suffix")
+                .long("suffix")
+                .value_name("SUFFIX")
+                .help("Append SUFFIX to backup names (default '~').")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .allow_hyphen_values(true)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("exclude")
                 .long("exclude")
                 .value_name("PATTERN")
@@ -1859,6 +1892,12 @@ where
     if max_delete.is_some() && !delete_mode.is_enabled() {
         delete_mode = DeleteMode::During;
     }
+    let mut backup = matches.get_flag("backup");
+    let backup_dir = matches.remove_one::<OsString>("backup-dir");
+    let backup_suffix = matches.remove_one::<OsString>("suffix");
+    if backup_dir.is_some() || backup_suffix.is_some() {
+        backup = true;
+    }
     let compress_flag = matches.get_flag("compress");
     let no_compress = matches.get_flag("no-compress");
     let mut compress = if no_compress { false } else { compress_flag };
@@ -2143,6 +2182,9 @@ where
         archive,
         delete_mode,
         delete_excluded,
+        backup,
+        backup_dir,
+        backup_suffix,
         checksum,
         size_only,
         ignore_existing,
@@ -2525,6 +2567,9 @@ where
         archive,
         delete_mode,
         delete_excluded,
+        backup,
+        backup_dir,
+        backup_suffix,
         checksum,
         size_only,
         ignore_existing,
@@ -3065,6 +3110,9 @@ where
             preallocate,
             delay_updates,
             partial_dir: partial_dir.clone(),
+            backup,
+            backup_dir: backup_dir.clone().map(PathBuf::from),
+            backup_suffix: backup_suffix.clone(),
             link_dests: link_dests.clone(),
             remove_source_files,
             append: append_for_fallback,
@@ -3240,6 +3288,9 @@ where
         .delete(delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some())
         .delete_excluded(delete_excluded)
         .max_delete(max_delete_limit)
+        .backup(backup)
+        .backup_directory(backup_dir.clone().map(PathBuf::from))
+        .backup_suffix(backup_suffix.clone())
         .bandwidth_limit(bandwidth_limit)
         .compression_setting(compression_setting)
         .compress(compress)
@@ -6527,6 +6578,118 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"cli copy"
         );
+    }
+
+    #[test]
+    fn backup_flag_creates_default_suffix_backups() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let source_file = source_dir.join("file.txt");
+        std::fs::write(&source_file, b"new data").expect("write source");
+
+        let dest_root = dest_dir.join("source");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(dest_root.join("file.txt"), b"old data").expect("seed dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--backup"),
+            source_dir.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let target_root = dest_dir.join("source");
+        assert_eq!(
+            std::fs::read(target_root.join("file.txt")).expect("read dest"),
+            b"new data"
+        );
+        assert_eq!(
+            std::fs::read(target_root.join("file.txt~")).expect("read backup"),
+            b"old data"
+        );
+    }
+
+    #[test]
+    fn backup_dir_flag_places_backups_in_relative_directory() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir_all(source_dir.join("nested")).expect("create nested source");
+        std::fs::create_dir_all(dest_dir.join("source/nested")).expect("create nested dest");
+
+        let source_file = source_dir.join("nested/file.txt");
+        std::fs::write(&source_file, b"updated").expect("write source");
+        std::fs::write(dest_dir.join("source/nested/file.txt"), b"previous").expect("seed dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--backup-dir"),
+            OsString::from("backups"),
+            source_dir.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let backup_path = dest_dir.join("backups/source/nested/file.txt~");
+        assert_eq!(
+            std::fs::read(&backup_path).expect("read backup"),
+            b"previous"
+        );
+        assert_eq!(
+            std::fs::read(dest_dir.join("source/nested/file.txt")).expect("read dest"),
+            b"updated"
+        );
+    }
+
+    #[test]
+    fn backup_suffix_flag_overrides_default_suffix() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_dir = tmp.path().join("source");
+        let dest_dir = tmp.path().join("dest");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let source_file = source_dir.join("file.txt");
+        std::fs::write(&source_file, b"fresh").expect("write source");
+        let dest_root = dest_dir.join("source");
+        std::fs::create_dir_all(&dest_root).expect("create dest root");
+        std::fs::write(dest_root.join("file.txt"), b"stale").expect("seed dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--suffix"),
+            OsString::from(".bak"),
+            source_dir.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        assert_eq!(
+            std::fs::read(dest_root.join("file.txt")).expect("read dest"),
+            b"fresh"
+        );
+        let backup_path = dest_root.join("file.txt.bak");
+        assert_eq!(std::fs::read(&backup_path).expect("read backup"), b"stale");
     }
 
     #[test]
@@ -11467,6 +11630,86 @@ exit 0
                 .lines()
                 .any(|line| line == dest_path.display().to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_backup_arguments() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--backup"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--backup"));
+        assert!(!args.contains(&"--backup-dir"));
+        assert!(!args.contains(&"--suffix"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--backup-dir"),
+            OsString::from("backups"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--backup"));
+        assert!(args.contains(&"--backup-dir"));
+        assert!(args.contains(&"backups"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--suffix"),
+            OsString::from(".bak"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--backup"));
+        assert!(args.contains(&"--suffix"));
+        assert!(args.contains(&".bak"));
     }
 
     #[cfg(unix)]
