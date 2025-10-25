@@ -89,6 +89,58 @@ use crate::signature::{
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
 static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
+thread_local! {
+    static HARD_LINK_OVERRIDE: RefCell<Option<Box<dyn Fn(&Path, &Path) -> io::Result<()> + 'static>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path, &Path) -> io::Result<()> + 'static,
+{
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            HARD_LINK_OVERRIDE.with(|cell| {
+                cell.replace(None);
+            });
+        }
+    }
+
+    HARD_LINK_OVERRIDE.with(|cell| {
+        cell.replace(Some(Box::new(override_fn)));
+    });
+    let guard = ResetGuard;
+    let result = action();
+    drop(guard);
+    result
+}
+
+fn create_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(result) = HARD_LINK_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|override_fn| override_fn(source, destination))
+    }) {
+        return result;
+    }
+
+    fs::hard_link(source, destination)
+}
+
+#[cfg(unix)]
+const CROSS_DEVICE_ERROR_CODE: i32 = 18;
+
+#[cfg(windows)]
+const CROSS_DEVICE_ERROR_CODE: i32 = 17;
+
+#[cfg(not(any(unix, windows)))]
+const CROSS_DEVICE_ERROR_CODE: i32 = 18;
+
 /// Rule kind enforced for entries inside a dir-merge file when modifiers
 /// request include-only or exclude-only semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1388,6 +1440,48 @@ impl DeleteTiming {
     }
 }
 
+/// Identifies how a reference directory should be treated when evaluating
+/// `--compare-dest`, `--copy-dest`, and `--link-dest` semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceDirectoryKind {
+    /// Skip creating the destination entry when the reference file matches.
+    Compare,
+    /// Copy the payload from the reference directory when the file matches.
+    Copy,
+    /// Create a hard link to the reference directory when the file matches.
+    Link,
+}
+
+/// Reference directory consulted during copy execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceDirectory {
+    kind: ReferenceDirectoryKind,
+    path: PathBuf,
+}
+
+impl ReferenceDirectory {
+    /// Creates a new reference directory entry.
+    #[must_use]
+    pub fn new(kind: ReferenceDirectoryKind, path: impl Into<PathBuf>) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+        }
+    }
+
+    /// Returns the reference directory kind.
+    #[must_use]
+    pub const fn kind(&self) -> ReferenceDirectoryKind {
+        self.kind
+    }
+
+    /// Returns the base directory path associated with the entry.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Options that influence how a [`LocalCopyPlan`] is executed.
 #[derive(Clone, Debug)]
 pub struct LocalCopyOptions {
@@ -1431,6 +1525,7 @@ pub struct LocalCopyOptions {
     timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
+    reference_directories: Vec<ReferenceDirectory>,
 }
 
 impl LocalCopyOptions {
@@ -1478,6 +1573,7 @@ impl LocalCopyOptions {
             timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
+            reference_directories: Vec::new(),
         }
     }
 
@@ -1762,6 +1858,24 @@ impl LocalCopyOptions {
         if self.partial_dir.is_some() {
             self.partial = true;
         }
+        self
+    }
+
+    /// Appends a reference directory consulted for `--compare-dest`,
+    /// `--copy-dest`, and `--link-dest` handling.
+    #[must_use]
+    pub fn push_reference_directory(mut self, reference: ReferenceDirectory) -> Self {
+        self.reference_directories.push(reference);
+        self
+    }
+
+    /// Extends the reference directory list with the provided entries.
+    #[must_use]
+    pub fn extend_reference_directories<I>(mut self, references: I) -> Self
+    where
+        I: IntoIterator<Item = ReferenceDirectory>,
+    {
+        self.reference_directories.extend(references);
         self
     }
 
@@ -2089,6 +2203,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn partial_directory_path(&self) -> Option<&Path> {
         self.partial_dir.as_deref()
+    }
+
+    /// Returns the ordered list of reference directories consulted during copy
+    /// execution.
+    pub fn reference_directories(&self) -> &[ReferenceDirectory] {
+        &self.reference_directories
     }
 
     /// Reports whether in-place destination updates have been requested.
@@ -2634,6 +2754,10 @@ impl<'a> CopyContext<'a> {
 
     fn options(&self) -> &LocalCopyOptions {
         &self.options
+    }
+
+    fn reference_directories(&self) -> &[ReferenceDirectory] {
+        self.options.reference_directories()
     }
 
     fn delete_timing(&self) -> Option<DeleteTiming> {
@@ -5099,6 +5223,76 @@ fn copy_directory_recursive(
     Ok(())
 }
 
+#[derive(Debug)]
+enum ReferenceDecision {
+    Skip,
+    Copy(PathBuf),
+    Link(PathBuf),
+}
+
+fn resolve_reference_candidate(base: &Path, relative: &Path, destination: &Path) -> PathBuf {
+    if base.is_absolute() {
+        base.join(relative)
+    } else {
+        let mut ancestor = destination.to_path_buf();
+        let depth = relative.components().count();
+        for _ in 0..depth {
+            if !ancestor.pop() {
+                break;
+            }
+        }
+        ancestor.join(base).join(relative)
+    }
+}
+
+fn find_reference_action(
+    context: &CopyContext<'_>,
+    destination: &Path,
+    relative: &Path,
+    source: &Path,
+    metadata: &fs::Metadata,
+    metadata_options: MetadataOptions,
+    size_only: bool,
+    checksum: bool,
+) -> Result<Option<ReferenceDecision>, LocalCopyError> {
+    for reference in context.reference_directories() {
+        let candidate = resolve_reference_candidate(reference.path(), relative, destination);
+        let candidate_metadata = match fs::symlink_metadata(&candidate) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect reference file",
+                    candidate,
+                    error,
+                ));
+            }
+        };
+
+        if !candidate_metadata.file_type().is_file() {
+            continue;
+        }
+
+        if should_skip_copy(
+            source,
+            metadata,
+            &candidate,
+            &candidate_metadata,
+            metadata_options,
+            size_only,
+            checksum,
+        ) {
+            return Ok(Some(match reference.kind() {
+                ReferenceDirectoryKind::Compare => ReferenceDecision::Skip,
+                ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(candidate),
+                ReferenceDirectoryKind::Link => ReferenceDecision::Link(candidate),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
 fn copy_file(
     context: &mut CopyContext,
     source: &Path,
@@ -5112,12 +5306,6 @@ fn copy_file(
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(feature = "acl")]
-    let preserve_acls = context.acls_enabled();
-    #[cfg(feature = "acl")]
-    let preserve_acls = context.acls_enabled();
-    #[cfg(feature = "acl")]
-    let preserve_acls = context.acls_enabled();
     #[cfg(feature = "acl")]
     let preserve_acls = context.acls_enabled();
     let record_path = relative
@@ -5272,9 +5460,10 @@ fn copy_file(
     let append_verify = context.append_verify_enabled();
     let whole_file_enabled = context.whole_file_enabled();
     let compress_enabled = context.compress_enabled();
+    let mut copy_source_override: Option<PathBuf> = None;
 
     if let Some(existing_target) = context.hard_links.existing_target(metadata) {
-        match fs::hard_link(&existing_target, destination) {
+        match create_hard_link(&existing_target, destination) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 fs::remove_file(destination).map_err(|remove_error| {
@@ -5284,7 +5473,7 @@ fn copy_file(
                         remove_error,
                     )
                 })?;
-                fs::hard_link(&existing_target, destination).map_err(|link_error| {
+                create_hard_link(&existing_target, destination).map_err(|link_error| {
                     LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
                 })?;
             }
@@ -5316,6 +5505,130 @@ fn copy_file(
         );
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
+    }
+
+    if !context.reference_directories().is_empty() && !record_path.as_os_str().is_empty() {
+        if let Some(decision) = find_reference_action(
+            context,
+            destination,
+            record_path.as_path(),
+            source,
+            metadata,
+            metadata_options,
+            size_only_enabled,
+            checksum_enabled,
+        )? {
+            match decision {
+                ReferenceDecision::Skip => {
+                    context.summary_mut().record_regular_file_matched();
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    let total_bytes = Some(metadata_snapshot.len());
+                    context.record(LocalCopyRecord::new(
+                        record_path.clone(),
+                        LocalCopyAction::MetadataReused,
+                        0,
+                        total_bytes,
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    ));
+                    context.register_progress();
+                    remove_source_entry_if_requested(
+                        context,
+                        source,
+                        Some(record_path.as_path()),
+                        file_type,
+                    )?;
+                    return Ok(());
+                }
+                ReferenceDecision::Copy(path) => {
+                    copy_source_override = Some(path);
+                }
+                ReferenceDecision::Link(path) => {
+                    if existing_metadata.is_some() {
+                        fs::remove_file(destination).map_err(|error| {
+                            LocalCopyError::io(
+                                "remove existing destination",
+                                destination.to_path_buf(),
+                                error,
+                            )
+                        })?;
+                    }
+
+                    let link_result = create_hard_link(&path, destination);
+                    let mut degrade_to_copy = false;
+                    match link_result {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                            fs::remove_file(destination).map_err(|remove_error| {
+                                LocalCopyError::io(
+                                    "remove existing destination",
+                                    destination.to_path_buf(),
+                                    remove_error,
+                                )
+                            })?;
+                            create_hard_link(&path, destination).map_err(|link_error| {
+                                LocalCopyError::io(
+                                    "create hard link",
+                                    destination.to_path_buf(),
+                                    link_error,
+                                )
+                            })?;
+                        }
+                        Err(error)
+                            if matches!(
+                                error.raw_os_error(),
+                                Some(code) if code == CROSS_DEVICE_ERROR_CODE
+                            ) =>
+                        {
+                            degrade_to_copy = true;
+                        }
+                        Err(error) => {
+                            return Err(LocalCopyError::io(
+                                "create hard link",
+                                destination.to_path_buf(),
+                                error,
+                            ));
+                        }
+                    }
+
+                    if degrade_to_copy {
+                        copy_source_override = Some(path);
+                    } else if copy_source_override.is_none() {
+                        apply_file_metadata_with_options(destination, metadata, metadata_options)
+                            .map_err(map_metadata_error)?;
+                        #[cfg(feature = "xattr")]
+                        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+                        #[cfg(feature = "acl")]
+                        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+                        context.hard_links.record(metadata, destination);
+                        context.summary_mut().record_hard_link();
+                        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                        let total_bytes = Some(metadata_snapshot.len());
+                        context.record(LocalCopyRecord::new(
+                            record_path.clone(),
+                            LocalCopyAction::HardLink,
+                            0,
+                            total_bytes,
+                            Duration::default(),
+                            Some(metadata_snapshot),
+                        ));
+                        context.register_created_path(
+                            destination,
+                            CreatedEntryKind::HardLink,
+                            destination_previously_existed,
+                        );
+                        context.register_progress();
+                        remove_source_entry_if_requested(
+                            context,
+                            source,
+                            Some(record_path.as_path()),
+                            file_type,
+                        )?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     if let Some(existing) = existing_metadata.as_ref() {
@@ -5376,6 +5689,10 @@ fn copy_file(
     } else {
         None
     };
+
+    let copy_source = copy_source_override.as_deref().unwrap_or(source);
+    let mut reader = fs::File::open(copy_source)
+        .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
     let mut guard = None;
 
     let mut writer = if append_offset > 0 {
@@ -6729,7 +7046,7 @@ mod tests {
     use super::*;
     use filetime::{FileTime, set_file_mtime, set_file_times};
     use std::ffi::OsString;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{self, Seek, SeekFrom, Write};
     use std::num::{NonZeroU8, NonZeroU64};
     use std::path::Path;
     use std::thread;
@@ -7991,6 +8308,138 @@ mod tests {
         assert_eq!(summary.symlinks_copied(), 1);
         let copied = fs::read_link(&dest).expect("read link");
         assert_eq!(copied, target_file);
+    }
+
+    #[test]
+    fn reference_compare_destination_skips_matching_file() {
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("source");
+        let reference_dir = temp.path().join("reference");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::create_dir_all(&reference_dir).expect("create reference dir");
+        fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+        let source_file = source_dir.join("file.txt");
+        let reference_file = reference_dir.join("file.txt");
+        fs::write(&source_file, b"payload").expect("write source");
+        fs::write(&reference_file, b"payload").expect("write reference");
+
+        let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_mtime(&source_file, timestamp).expect("source mtime");
+        set_file_mtime(&reference_file, timestamp).expect("reference mtime");
+
+        let destination_file = destination_dir.join("file.txt");
+        let operands = vec![
+            source_file.into_os_string(),
+            destination_file.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .times(true)
+            .extend_reference_directories([ReferenceDirectory::new(
+                ReferenceDirectoryKind::Compare,
+                &reference_dir,
+            )]);
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert!(!destination_file.exists());
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_matched(), 1);
+    }
+
+    #[test]
+    fn reference_copy_destination_reuses_reference_payload() {
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("source");
+        let reference_dir = temp.path().join("reference");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::create_dir_all(&reference_dir).expect("create reference dir");
+        fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+        let source_file = source_dir.join("file.txt");
+        let reference_file = reference_dir.join("file.txt");
+        fs::write(&source_file, b"payload").expect("write source");
+        fs::write(&reference_file, b"payload").expect("write reference");
+
+        let timestamp = FileTime::from_unix_time(1_700_000_500, 0);
+        set_file_mtime(&source_file, timestamp).expect("source mtime");
+        set_file_mtime(&reference_file, timestamp).expect("reference mtime");
+
+        let destination_file = destination_dir.join("file.txt");
+        let operands = vec![
+            source_file.into_os_string(),
+            destination_file.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .times(true)
+            .extend_reference_directories([ReferenceDirectory::new(
+                ReferenceDirectoryKind::Copy,
+                &reference_dir,
+            )]);
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert!(destination_file.exists());
+        assert_eq!(fs::read(&destination_file).expect("read dest"), b"payload");
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.regular_files_matched(), 0);
+    }
+
+    #[test]
+    fn reference_link_destination_degrades_to_copy_on_cross_device_error() {
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("source");
+        let reference_dir = temp.path().join("reference");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::create_dir_all(&reference_dir).expect("create reference dir");
+        fs::create_dir_all(&destination_dir).expect("create dest dir");
+
+        let source_file = source_dir.join("file.txt");
+        let reference_file = reference_dir.join("file.txt");
+        fs::write(&source_file, b"payload").expect("write source");
+        fs::write(&reference_file, b"payload").expect("write reference");
+
+        let timestamp = FileTime::from_unix_time(1_700_001_000, 0);
+        set_file_mtime(&source_file, timestamp).expect("source mtime");
+        set_file_mtime(&reference_file, timestamp).expect("reference mtime");
+
+        let destination_file = destination_dir.join("file.txt");
+        let operands = vec![
+            source_file.into_os_string(),
+            destination_file.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .times(true)
+            .extend_reference_directories([ReferenceDirectory::new(
+                ReferenceDirectoryKind::Link,
+                &reference_dir,
+            )]);
+
+        let summary = super::with_hard_link_override(
+            |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
+            || {
+                plan.execute_with_options(LocalCopyExecution::Apply, options)
+                    .expect("execution succeeds")
+            },
+        );
+
+        assert!(destination_file.exists());
+        assert_eq!(fs::read(&destination_file).expect("read dest"), b"payload");
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.hard_links_created(), 0);
     }
 
     #[cfg(unix)]
