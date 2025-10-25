@@ -67,6 +67,33 @@ const MICROS_PER_SECOND: u128 = 1_000_000;
 const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
 const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
+/// Parsed `--bwlimit` components consisting of an optional rate and burst size.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BandwidthLimitComponents {
+    rate: Option<NonZeroU64>,
+    burst: Option<NonZeroU64>,
+}
+
+impl BandwidthLimitComponents {
+    /// Constructs a new component set from the provided parts.
+    #[must_use]
+    pub const fn new(rate: Option<NonZeroU64>, burst: Option<NonZeroU64>) -> Self {
+        Self { rate, burst }
+    }
+
+    /// Returns the configured byte-per-second rate, if any.
+    #[must_use]
+    pub const fn rate(self) -> Option<NonZeroU64> {
+        self.rate
+    }
+
+    /// Returns the configured burst size in bytes, if any.
+    #[must_use]
+    pub const fn burst(self) -> Option<NonZeroU64> {
+        self.burst
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
     static RECORDED_SLEEPS: OnceLock<Mutex<Vec<Duration>>> = OnceLock::new();
@@ -189,7 +216,7 @@ fn sleep_for(duration: Duration) {
     }
 }
 
-fn limit_parameters(limit: NonZeroU64) -> (NonZeroU64, usize) {
+fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64, usize) {
     let kib = limit
         .get()
         .checked_div(1024)
@@ -200,7 +227,12 @@ fn limit_parameters(limit: NonZeroU64) -> (NonZeroU64, usize) {
     if write_max < 512 {
         write_max = 512;
     }
-    let write_max = write_max.min(usize::MAX as u128) as usize;
+    let mut write_max = write_max.min(usize::MAX as u128) as usize;
+
+    if let Some(burst) = burst {
+        let burst = burst.get().min(usize::MAX as u64);
+        write_max = usize::try_from(burst).unwrap_or(usize::MAX).max(1);
+    }
 
     (kib, write_max)
 }
@@ -434,6 +466,24 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         .map(Some)
 }
 
+/// Parses a bandwidth limit containing an optional burst component.
+#[doc(alias = "--bwlimit")]
+pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+
+    if let Some((rate_text, burst_text)) = trimmed.split_once(':') {
+        let rate = parse_bandwidth_argument(rate_text)?;
+        if rate.is_none() {
+            return Ok(BandwidthLimitComponents::new(None, None));
+        }
+
+        let burst = parse_bandwidth_argument(burst_text)?;
+        Ok(BandwidthLimitComponents::new(rate, burst))
+    } else {
+        parse_bandwidth_argument(trimmed).map(|rate| BandwidthLimitComponents::new(rate, None))
+    }
+}
+
 /// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
 #[doc(alias = "--bwlimit")]
 #[derive(Clone, Debug)]
@@ -441,6 +491,7 @@ pub struct BandwidthLimiter {
     limit_bytes: NonZeroU64,
     kib_per_second: NonZeroU64,
     write_max: usize,
+    burst_bytes: Option<NonZeroU64>,
     total_written: u128,
     last_instant: Option<Instant>,
     simulated_elapsed_us: u128,
@@ -450,12 +501,19 @@ impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
-        let (kib, write_max) = limit_parameters(limit);
+        Self::with_burst(limit, None)
+    }
+
+    /// Constructs a new limiter from the supplied rate and optional burst size.
+    #[must_use]
+    pub fn with_burst(limit: NonZeroU64, burst: Option<NonZeroU64>) -> Self {
+        let (kib, write_max) = limit_parameters(limit, burst);
 
         Self {
             limit_bytes: limit,
             kib_per_second: kib,
             write_max,
+            burst_bytes: burst,
             total_written: 0,
             last_instant: None,
             simulated_elapsed_us: 0,
@@ -470,7 +528,7 @@ impl BandwidthLimiter {
     /// configuration and ensures subsequent calls behave as if the limiter had
     /// been freshly constructed with the supplied rate.
     pub fn update_limit(&mut self, limit: NonZeroU64) {
-        let (kib, write_max) = limit_parameters(limit);
+        let (kib, write_max) = limit_parameters(limit, self.burst_bytes);
 
         self.limit_bytes = limit;
         self.kib_per_second = kib;
@@ -484,6 +542,12 @@ impl BandwidthLimiter {
     #[must_use]
     pub const fn limit_bytes(&self) -> NonZeroU64 {
         self.limit_bytes
+    }
+
+    /// Returns the configured burst size in bytes, if any.
+    #[must_use]
+    pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
+        self.burst_bytes
     }
 
     /// Returns the maximum chunk size that should be written before sleeping.
@@ -555,7 +619,8 @@ impl BandwidthLimiter {
 #[cfg(test)]
 mod tests {
     use super::{
-        BandwidthLimiter, BandwidthParseError, MINIMUM_SLEEP_MICROS, parse_bandwidth_argument,
+        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, MINIMUM_SLEEP_MICROS,
+        parse_bandwidth_argument, parse_bandwidth_limit,
     };
     use proptest::prelude::*;
     use std::num::NonZeroU64;
@@ -621,6 +686,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_bandwidth_limit_accepts_burst_component() {
+        let components = parse_bandwidth_limit("1M:64K").expect("parse succeeds");
+        assert_eq!(
+            components,
+            BandwidthLimitComponents::new(NonZeroU64::new(1_048_576), NonZeroU64::new(64 * 1024),)
+        );
+    }
+
+    #[test]
+    fn parse_bandwidth_limit_zero_rate_disables_burst() {
+        let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
+        assert_eq!(components, BandwidthLimitComponents::new(None, None));
+    }
+
+    #[test]
+    fn parse_bandwidth_limit_accepts_zero_burst() {
+        let components = parse_bandwidth_limit("1M:0").expect("parse succeeds");
+        assert_eq!(
+            components,
+            BandwidthLimitComponents::new(NonZeroU64::new(1_048_576), None)
+        );
+    }
+
+    #[test]
     fn parse_bandwidth_trims_surrounding_whitespace() {
         let limit = parse_bandwidth_argument("\t 2M \n").expect("parse succeeds");
         assert_eq!(limit, NonZeroU64::new(2_097_152));
@@ -667,6 +756,15 @@ mod tests {
     fn limiter_preserves_buffer_for_fast_rates() {
         let limiter = BandwidthLimiter::new(NonZeroU64::new(8 * 1024 * 1024).unwrap());
         assert_eq!(limiter.recommended_read_size(8192), 8192);
+    }
+
+    #[test]
+    fn limiter_respects_custom_burst() {
+        let limiter = BandwidthLimiter::with_burst(
+            NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+            NonZeroU64::new(2048),
+        );
+        assert_eq!(limiter.recommended_read_size(8192), 2048);
     }
 
     #[test]

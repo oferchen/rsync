@@ -1789,25 +1789,46 @@ impl FilterRuleSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BandwidthLimit {
     bytes_per_second: NonZeroU64,
+    burst_bytes: Option<NonZeroU64>,
 }
 
 impl BandwidthLimit {
     /// Creates a new [`BandwidthLimit`] from the supplied byte-per-second value.
     #[must_use]
     pub const fn from_bytes_per_second(bytes_per_second: NonZeroU64) -> Self {
-        Self { bytes_per_second }
+        Self::from_rate_and_burst(bytes_per_second, None)
+    }
+
+    /// Creates a new [`BandwidthLimit`] from a rate and optional burst size.
+    #[must_use]
+    pub const fn from_rate_and_burst(
+        bytes_per_second: NonZeroU64,
+        burst: Option<NonZeroU64>,
+    ) -> Self {
+        Self {
+            bytes_per_second,
+            burst_bytes: burst,
+        }
     }
 
     /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
     pub fn parse(text: &str) -> Result<Option<Self>, BandwidthParseError> {
-        bandwidth::parse_bandwidth_argument(text)
-            .map(|value| value.map(Self::from_bytes_per_second))
+        let components = bandwidth::parse_bandwidth_limit(text)?;
+        Ok(components
+            .rate()
+            .map(|rate| Self::from_rate_and_burst(rate, components.burst())))
     }
 
     /// Returns the configured rate in bytes per second.
     #[must_use]
     pub const fn bytes_per_second(self) -> NonZeroU64 {
         self.bytes_per_second
+    }
+
+    /// Returns the configured burst size in bytes, if any.
+    #[must_use]
+    pub const fn burst_bytes(self) -> Option<NonZeroU64> {
+        self.burst_bytes
     }
 }
 
@@ -3574,6 +3595,11 @@ fn build_local_copy_options(
             config
                 .bandwidth_limit()
                 .map(|limit| limit.bytes_per_second()),
+        )
+        .bandwidth_burst(
+            config
+                .bandwidth_limit()
+                .and_then(|limit| limit.burst_bytes()),
         )
         .with_default_compression_level(config.compression_setting().level_or_default())
         .whole_file(config.whole_file())
