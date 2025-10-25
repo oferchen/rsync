@@ -409,6 +409,7 @@ pub struct ClientConfig {
     list_only: bool,
     address_mode: AddressMode,
     timeout: TransferTimeout,
+    connect_timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
@@ -469,6 +470,7 @@ impl Default for ClientConfig {
             list_only: false,
             address_mode: AddressMode::Default,
             timeout: TransferTimeout::Default,
+            connect_timeout: TransferTimeout::Default,
             link_dest_paths: Vec::new(),
             reference_directories: Vec::new(),
             #[cfg(feature = "acl")]
@@ -564,6 +566,13 @@ impl ClientConfig {
     #[doc(alias = "--timeout")]
     pub const fn timeout(&self) -> TransferTimeout {
         self.timeout
+    }
+
+    /// Returns the configured connection timeout.
+    #[must_use]
+    #[doc(alias = "--contimeout")]
+    pub const fn connect_timeout(&self) -> TransferTimeout {
+        self.connect_timeout
     }
 
     /// Returns whether the run should avoid mutating the destination filesystem.
@@ -962,6 +971,7 @@ pub struct ClientConfigBuilder {
     list_only: bool,
     address_mode: AddressMode,
     timeout: TransferTimeout,
+    connect_timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
@@ -1530,6 +1540,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the connection timeout applied to network handshakes.
+    #[must_use]
+    #[doc(alias = "--contimeout")]
+    pub const fn connect_timeout(mut self, timeout: TransferTimeout) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
     /// Selects the preferred address family for network operations.
     #[must_use]
     #[doc(alias = "--ipv4")]
@@ -1592,6 +1610,7 @@ impl ClientConfigBuilder {
             list_only: self.list_only,
             address_mode: self.address_mode,
             timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
             link_dest_paths: self.link_dest_paths,
             reference_directories: self.reference_directories,
             #[cfg(feature = "acl")]
@@ -2258,6 +2277,8 @@ pub struct RemoteFallbackArgs {
     pub protocol: Option<ProtocolVersion>,
     /// Timeout applied to the spawned process via `--timeout`.
     pub timeout: TransferTimeout,
+    /// Connection timeout forwarded via `--contimeout`.
+    pub connect_timeout: TransferTimeout,
     /// Optional `--out-format` template.
     pub out_format: Option<OsString>,
     /// Enables `--no-motd`.
@@ -2404,6 +2425,7 @@ where
         mut daemon_password,
         protocol,
         timeout,
+        connect_timeout,
         out_format,
         no_motd,
         address_mode,
@@ -2681,6 +2703,18 @@ where
         }
         TransferTimeout::Seconds(value) => {
             command_args.push(OsString::from("--timeout"));
+            command_args.push(OsString::from(value.get().to_string()));
+        }
+    }
+
+    match connect_timeout {
+        TransferTimeout::Default => {}
+        TransferTimeout::Disabled => {
+            command_args.push(OsString::from("--contimeout"));
+            command_args.push(OsString::from("0"));
+        }
+        TransferTimeout::Seconds(value) => {
+            command_args.push(OsString::from("--contimeout"));
             command_args.push(OsString::from(value.get().to_string()));
         }
     }
@@ -3826,6 +3860,7 @@ exit 42
             daemon_password: None,
             protocol: None,
             timeout: TransferTimeout::Default,
+            connect_timeout: TransferTimeout::Default,
             out_format: None,
             no_motd: false,
             fallback_binary: None,
@@ -4084,6 +4119,21 @@ exit 42
     }
 
     #[test]
+    fn builder_sets_connect_timeout() {
+        let timeout = TransferTimeout::Seconds(NonZeroU64::new(12).unwrap());
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .connect_timeout(timeout)
+            .build();
+
+        assert_eq!(config.connect_timeout(), timeout);
+        assert_eq!(
+            ClientConfig::default().connect_timeout(),
+            TransferTimeout::Default
+        );
+    }
+
+    #[test]
     fn builder_collects_reference_directories() {
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -4120,6 +4170,114 @@ exit 42
 
         let options = build_local_copy_options(&config, None);
         assert!(options.timeout().is_none());
+    }
+
+    #[test]
+    fn resolve_connect_timeout_prefers_explicit_setting() {
+        let explicit = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
+        let resolved =
+            resolve_connect_timeout(explicit, TransferTimeout::Default, Duration::from_secs(30));
+        assert_eq!(resolved, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn resolve_connect_timeout_uses_transfer_timeout_when_default() {
+        let transfer = TransferTimeout::Seconds(NonZeroU64::new(8).unwrap());
+        let resolved =
+            resolve_connect_timeout(TransferTimeout::Default, transfer, Duration::from_secs(30));
+        assert_eq!(resolved, Some(Duration::from_secs(8)));
+    }
+
+    #[test]
+    fn resolve_connect_timeout_disables_when_requested() {
+        let resolved = resolve_connect_timeout(
+            TransferTimeout::Disabled,
+            TransferTimeout::Seconds(NonZeroU64::new(9).unwrap()),
+            Duration::from_secs(30),
+        );
+        assert!(resolved.is_none());
+
+        let resolved_default = resolve_connect_timeout(
+            TransferTimeout::Default,
+            TransferTimeout::Disabled,
+            Duration::from_secs(30),
+        );
+        assert!(resolved_default.is_none());
+    }
+
+    #[test]
+    fn connect_direct_applies_io_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let daemon_addr =
+            DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("daemon addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1];
+                let _ = stream.read(&mut buf);
+            }
+        });
+
+        let timeout = Some(Duration::from_secs(4));
+        let mut stream = connect_direct(
+            &daemon_addr,
+            Some(Duration::from_secs(10)),
+            timeout,
+            AddressMode::Default,
+        )
+        .expect("connect directly");
+
+        assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
+        assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
+
+        // Wake the accept loop and close cleanly.
+        let _ = stream.write_all(&[0]);
+        handle.join().expect("listener thread");
+    }
+
+    #[test]
+    fn connect_via_proxy_applies_io_timeout() {
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy");
+        let proxy_addr = proxy_listener.local_addr().expect("proxy addr");
+        let proxy = ProxyConfig {
+            host: proxy_addr.ip().to_string(),
+            port: proxy_addr.port(),
+            credentials: None,
+        };
+
+        let target = DaemonAddress::new(String::from("daemon.example"), 873).expect("daemon addr");
+
+        let handle = thread::spawn(move || {
+            if let Ok((stream, _)) = proxy_listener.accept() {
+                let mut reader = BufReader::new(stream);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).expect("read request") == 0 {
+                        return;
+                    }
+                    if line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                }
+
+                let mut stream = reader.into_inner();
+                stream
+                    .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                    .expect("respond to connect");
+                let _ = stream.flush();
+            }
+        });
+
+        let timeout = Some(Duration::from_secs(6));
+        let stream = connect_via_proxy(&target, &proxy, Some(Duration::from_secs(9)), timeout)
+            .expect("proxy connect");
+
+        assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
+        assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
+
+        drop(stream);
+        handle.join().expect("proxy thread");
     }
 
     #[test]
@@ -7729,7 +7887,8 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 
 fn open_daemon_stream(
     addr: &DaemonAddress,
-    timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
     address_mode: AddressMode,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = load_daemon_connect_program()? {
@@ -7737,8 +7896,8 @@ fn open_daemon_stream(
     }
 
     let stream = match load_daemon_proxy()? {
-        Some(proxy) => connect_via_proxy(addr, &proxy, timeout)?,
-        None => connect_direct(addr, timeout, address_mode)?,
+        Some(proxy) => connect_via_proxy(addr, &proxy, connect_timeout, io_timeout)?,
+        None => connect_direct(addr, connect_timeout, io_timeout, address_mode)?,
     };
 
     Ok(DaemonStream::tcp(stream))
@@ -7746,14 +7905,15 @@ fn open_daemon_stream(
 
 fn connect_direct(
     addr: &DaemonAddress,
-    timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
     address_mode: AddressMode,
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
     let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
     for candidate in addresses {
-        let attempt = if let Some(duration) = timeout {
+        let attempt = if let Some(duration) = connect_timeout {
             TcpStream::connect_timeout(&candidate, duration)
         } else {
             TcpStream::connect(candidate)
@@ -7761,7 +7921,7 @@ fn connect_direct(
 
         match attempt {
             Ok(stream) => {
-                if let Some(duration) = timeout {
+                if let Some(duration) = io_timeout {
                     stream.set_read_timeout(Some(duration)).map_err(|error| {
                         socket_error("set read timeout on", addr.socket_addr_display(), error)
                     })?;
@@ -7842,12 +8002,50 @@ fn resolve_daemon_addresses(
 fn connect_via_proxy(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
-    timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
 ) -> Result<TcpStream, ClientError> {
-    let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
-        .map_err(|error| socket_error("connect to", proxy.display(), error))?;
+    let mut stream = if let Some(duration) = connect_timeout {
+        let target = (proxy.host.as_str(), proxy.port);
+        let addrs = target
+            .to_socket_addrs()
+            .map_err(|error| socket_error("resolve proxy address for", proxy.display(), error))?;
 
-    if let Some(duration) = timeout {
+        let mut last_error: Option<(SocketAddr, io::Error)> = None;
+        let mut result: Option<TcpStream> = None;
+
+        for candidate in addrs {
+            match TcpStream::connect_timeout(&candidate, duration) {
+                Ok(stream) => {
+                    result = Some(stream);
+                    break;
+                }
+                Err(error) => last_error = Some((candidate, error)),
+            }
+        }
+
+        if let Some(stream) = result {
+            stream
+        } else if let Some((candidate, error)) = last_error {
+            return Err(socket_error("connect to", candidate, error));
+        } else {
+            return Err(socket_error(
+                "resolve proxy address for",
+                proxy.display(),
+                io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    "proxy resolution returned no addresses",
+                ),
+            ));
+        }
+    } else {
+        TcpStream::connect((proxy.host.as_str(), proxy.port))
+            .map_err(|error| socket_error("connect to", proxy.display(), error))?
+    };
+
+    establish_proxy_tunnel(&mut stream, addr, proxy)?;
+
+    if let Some(duration) = io_timeout {
         stream
             .set_read_timeout(Some(duration))
             .map_err(|error| socket_error("configure", proxy.display(), error))?;
@@ -7855,8 +8053,6 @@ fn connect_via_proxy(
             .set_write_timeout(Some(duration))
             .map_err(|error| socket_error("configure", proxy.display(), error))?;
     }
-
-    establish_proxy_tunnel(&mut stream, addr, proxy)?;
 
     Ok(stream)
 }
@@ -7889,7 +8085,7 @@ fn establish_proxy_tunnel(
         .map_err(|_| proxy_response_error("proxy status line contained invalid UTF-8"))?;
     line.clear();
 
-    let trimmed_status = status.trim_start_matches(|ch: char| matches!(ch, ' ' | '\t'));
+    let trimmed_status = status.trim_start_matches([' ', '\t']);
     if !trimmed_status
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("HTTP/"))
@@ -8419,7 +8615,13 @@ pub fn run_module_list_with_options(
     request: ModuleListRequest,
     options: ModuleListOptions,
 ) -> Result<ModuleList, ClientError> {
-    run_module_list_with_password_and_options(request, options, None, TransferTimeout::Default)
+    run_module_list_with_password_and_options(
+        request,
+        options,
+        None,
+        TransferTimeout::Default,
+        TransferTimeout::Default,
+    )
 }
 
 /// Performs a daemon module listing using an optional password override.
@@ -8437,6 +8639,7 @@ pub fn run_module_list_with_password(
         ModuleListOptions::default(),
         password_override,
         timeout,
+        TransferTimeout::Default,
     )
 }
 
@@ -8451,6 +8654,7 @@ pub fn run_module_list_with_password_and_options(
     options: ModuleListOptions,
     password_override: Option<Vec<u8>>,
     timeout: TransferTimeout,
+    connect_timeout: TransferTimeout,
 ) -> Result<ModuleList, ClientError> {
     let addr = request.address();
     let username = request.username().map(str::to_owned);
@@ -8461,7 +8665,9 @@ pub fn run_module_list_with_password_and_options(
     let address_mode = options.address_mode();
 
     let effective_timeout = timeout.effective(DAEMON_SOCKET_TIMEOUT);
-    let stream = open_daemon_stream(addr, effective_timeout, address_mode)?;
+    let connect_duration = resolve_connect_timeout(connect_timeout, timeout, DAEMON_SOCKET_TIMEOUT);
+
+    let stream = open_daemon_stream(addr, connect_duration, effective_timeout, address_mode)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;
@@ -8598,6 +8804,24 @@ pub fn run_module_list_with_password_and_options(
     }
 
     Ok(ModuleList::new(motd, warnings, capabilities, entries))
+}
+
+/// Derives the socket connect timeout from the explicit connection setting and
+/// the general transfer timeout.
+fn resolve_connect_timeout(
+    connect_timeout: TransferTimeout,
+    fallback: TransferTimeout,
+    default: Duration,
+) -> Option<Duration> {
+    match connect_timeout {
+        TransferTimeout::Default => match fallback {
+            TransferTimeout::Default => Some(default),
+            TransferTimeout::Disabled => None,
+            TransferTimeout::Seconds(value) => Some(Duration::from_secs(value.get())),
+        },
+        TransferTimeout::Disabled => None,
+        TransferTimeout::Seconds(value) => Some(Duration::from_secs(value.get())),
+    }
 }
 
 struct DaemonAuthContext {
