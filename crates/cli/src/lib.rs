@@ -4037,7 +4037,7 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     let bytes_sent = summary.bytes_sent();
     let bytes_received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
-    let matched_bytes = transferred_size.saturating_sub(literal_bytes);
+    let matched_bytes = summary.matched_bytes();
     let file_list_size = summary.file_list_size();
     let file_list_generation = summary.file_list_generation_time().as_secs_f64();
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();

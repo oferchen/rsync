@@ -2706,6 +2706,7 @@ pub struct LocalCopySummary {
     sources_removed: u64,
     transferred_file_size: u64,
     bytes_copied: u64,
+    matched_bytes: u64,
     bytes_sent: u64,
     bytes_received: u64,
     compressed_bytes: u64,
@@ -2820,6 +2821,13 @@ impl LocalCopySummary {
         self.bytes_copied
     }
 
+    /// Returns the aggregate number of bytes that were reused from existing
+    /// destination data instead of being rewritten.
+    #[must_use]
+    pub const fn matched_bytes(&self) -> u64 {
+        self.matched_bytes
+    }
+
     /// Returns the aggregate number of bytes that were sent to the peer.
     #[must_use]
     pub const fn bytes_sent(&self) -> u64 {
@@ -2884,6 +2892,8 @@ impl LocalCopySummary {
         self.files_copied = self.files_copied.saturating_add(1);
         self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
         self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
+        let matched = file_size.saturating_sub(literal_bytes);
+        self.matched_bytes = self.matched_bytes.saturating_add(matched);
         let transmitted = compressed.unwrap_or(literal_bytes);
         self.bytes_sent = self.bytes_sent.saturating_add(transmitted);
         self.bytes_received = self.bytes_received.saturating_add(transmitted);
@@ -11524,6 +11534,7 @@ mod tests {
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"abcdef");
         assert_eq!(summary.bytes_copied(), 3);
+        assert_eq!(summary.matched_bytes(), 3);
     }
 
     #[test]
@@ -11549,6 +11560,7 @@ mod tests {
 
         assert_eq!(fs::read(&destination).expect("read dest"), b"abcdef");
         assert_eq!(summary.bytes_copied(), 6);
+        assert_eq!(summary.matched_bytes(), 0);
     }
 
     #[test]
@@ -11643,6 +11655,7 @@ mod tests {
         assert_eq!(summary.bytes_copied(), expected);
         assert_eq!(summary.bytes_sent(), expected);
         assert_eq!(summary.bytes_received(), expected);
+        assert_eq!(summary.matched_bytes(), 0);
     }
 
     #[test]
