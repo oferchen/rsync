@@ -5660,6 +5660,34 @@ exit 42
     }
 
     #[test]
+    fn daemon_address_accepts_ipv6_zone_identifier() {
+        let address = DaemonAddress::new(String::from("fe80::1%eth0"), 873)
+            .expect("zone identifier accepted");
+        assert_eq!(address.host(), "fe80::1%eth0");
+        assert_eq!(address.port(), 873);
+
+        let display = format!("{}", address.socket_addr_display());
+        assert_eq!(display, "[fe80::1%eth0]:873");
+    }
+
+    #[test]
+    fn module_list_request_parses_ipv6_zone_identifier() {
+        let operands = vec![OsString::from("rsync://fe80::1%eth0/")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("parse succeeds")
+            .expect("request present");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+
+        let bracketed = vec![OsString::from("rsync://[fe80::1%25eth0]/")];
+        let request = ModuleListRequest::from_operands(&bracketed)
+            .expect("parse succeeds")
+            .expect("request present");
+        assert_eq!(request.address().host(), "fe80::1%eth0");
+        assert_eq!(request.address().port(), 873);
+    }
+
+    #[test]
     fn module_list_request_rejects_truncated_percent_encoding() {
         let operands = vec![OsString::from("rsync://example%2/")];
         let error = ModuleListRequest::from_operands(&operands)
@@ -5994,6 +6022,45 @@ exit 42
 
         proxy_handle.join().expect("proxy thread");
         daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn establish_proxy_tunnel_formats_ipv6_authority_without_brackets() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy listener");
+        let addr = listener.local_addr().expect("proxy addr");
+        let expected_line = "CONNECT fe80::1%eth0:873 HTTP/1.0\r\n";
+
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept proxy connection");
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read CONNECT request");
+            assert_eq!(line, expected_line);
+
+            line.clear();
+            reader.read_line(&mut line).expect("read blank line");
+            assert!(line == "\r\n" || line == "\n");
+
+            let mut stream = reader.into_inner();
+            stream
+                .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                .expect("write proxy response");
+            stream.flush().expect("flush proxy response");
+        });
+
+        let daemon_addr =
+            DaemonAddress::new(String::from("fe80::1%eth0"), 873).expect("daemon addr");
+        let proxy = ProxyConfig {
+            host: String::from("proxy.example"),
+            port: addr.port(),
+            credentials: None,
+        };
+
+        let mut stream = TcpStream::connect(addr).expect("connect to proxy listener");
+        establish_proxy_tunnel(&mut stream, &daemon_addr, &proxy)
+            .expect("tunnel negotiation succeeds");
+
+        handle.join().expect("proxy thread completes");
     }
 
     #[test]
@@ -7675,7 +7742,7 @@ fn establish_proxy_tunnel(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
-    let mut request = format!("CONNECT {} HTTP/1.0\r\n", addr.socket_addr_display());
+    let mut request = format!("CONNECT {}:{} HTTP/1.0\r\n", addr.host(), addr.port());
 
     if let Some(header) = proxy.authorization_header() {
         request.push_str("Proxy-Authorization: Basic ");
