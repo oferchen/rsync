@@ -180,7 +180,9 @@ use std::os::unix::fs::PermissionsExt;
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_checksums::strong::Md5;
 use rsync_core::{
-    bandwidth::{BandwidthLimiter, BandwidthParseError, parse_bandwidth_argument},
+    bandwidth::{
+        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
+    },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     version::{RUST_VERSION, VersionInfoReport},
@@ -266,6 +268,7 @@ struct ModuleDefinition {
     auth_users: Vec<String>,
     secrets_file: Option<PathBuf>,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_burst: Option<NonZeroU64>,
     refuse_options: Vec<String>,
     read_only: bool,
     numeric_ids: bool,
@@ -326,6 +329,10 @@ impl ModuleDefinition {
 
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    fn bandwidth_burst(&self) -> Option<NonZeroU64> {
+        self.bandwidth_burst
     }
 
     #[cfg(test)]
@@ -728,6 +735,7 @@ struct RuntimeOptions {
     modules: Vec<ModuleDefinition>,
     motd_lines: Vec<String>,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_burst: Option<NonZeroU64>,
     bandwidth_limit_configured: bool,
     address_family: Option<AddressFamily>,
     bind_address_overridden: bool,
@@ -751,6 +759,7 @@ impl Default for RuntimeOptions {
             modules: Vec::new(),
             motd_lines: Vec::new(),
             bandwidth_limit: None,
+            bandwidth_burst: None,
             bandwidth_limit_configured: false,
             address_family: None,
             bind_address_overridden: false,
@@ -791,10 +800,10 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-line")? {
                 options.push_motd_line(value);
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
-                let limit = parse_runtime_bwlimit(&value)?;
-                options.set_bandwidth_limit(limit)?;
+                let components = parse_runtime_bwlimit(&value)?;
+                options.set_bandwidth_limit(components.rate(), components.burst())?;
             } else if argument == "--no-bwlimit" {
-                options.set_bandwidth_limit(None)?;
+                options.set_bandwidth_limit(None, None)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -839,12 +848,17 @@ impl RuntimeOptions {
         Ok(())
     }
 
-    fn set_bandwidth_limit(&mut self, limit: Option<NonZeroU64>) -> Result<(), DaemonError> {
+    fn set_bandwidth_limit(
+        &mut self,
+        limit: Option<NonZeroU64>,
+        burst: Option<NonZeroU64>,
+    ) -> Result<(), DaemonError> {
         if self.bandwidth_limit_configured {
             return Err(duplicate_argument("--bwlimit"));
         }
 
         self.bandwidth_limit = limit;
+        self.bandwidth_burst = burst;
         self.bandwidth_limit_configured = true;
         Ok(())
     }
@@ -1018,6 +1032,11 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    #[cfg(test)]
+    fn bandwidth_burst(&self) -> Option<NonZeroU64> {
+        self.bandwidth_burst
     }
 
     #[cfg(test)]
@@ -1356,8 +1375,13 @@ fn parse_config_modules_inner(
                                 "'bwlimit' directive must not be empty",
                             ));
                         }
-                        let limit = parse_config_bwlimit(value, path, line_number)?;
-                        builder.set_bandwidth_limit(limit, path, line_number)?;
+                        let components = parse_config_bwlimit(value, path, line_number)?;
+                        builder.set_bandwidth_limit(
+                            components.rate(),
+                            components.burst(),
+                            path,
+                            line_number,
+                        )?;
                     }
                     "refuse options" => {
                         let options = parse_refuse_option_list(value).map_err(|error| {
@@ -1683,6 +1707,7 @@ struct ModuleDefinitionBuilder {
     secrets_file: Option<PathBuf>,
     declaration_line: usize,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_burst: Option<NonZeroU64>,
     bandwidth_limit_set: bool,
     refuse_options: Option<Vec<String>>,
     read_only: Option<bool>,
@@ -1707,6 +1732,7 @@ impl ModuleDefinitionBuilder {
             secrets_file: None,
             declaration_line: line,
             bandwidth_limit: None,
+            bandwidth_burst: None,
             bandwidth_limit_set: false,
             refuse_options: None,
             read_only: None,
@@ -1849,6 +1875,7 @@ impl ModuleDefinitionBuilder {
     fn set_bandwidth_limit(
         &mut self,
         limit: Option<NonZeroU64>,
+        burst: Option<NonZeroU64>,
         config_path: &Path,
         line: usize,
     ) -> Result<(), DaemonError> {
@@ -1861,6 +1888,7 @@ impl ModuleDefinitionBuilder {
         }
 
         self.bandwidth_limit = limit;
+        self.bandwidth_burst = burst;
         self.bandwidth_limit_set = true;
         Ok(())
     }
@@ -2093,6 +2121,7 @@ impl ModuleDefinitionBuilder {
             auth_users: self.auth_users.unwrap_or_default(),
             secrets_file: self.secrets_file,
             bandwidth_limit: self.bandwidth_limit,
+            bandwidth_burst: self.bandwidth_burst,
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.unwrap_or(false),
             numeric_ids: self.numeric_ids.unwrap_or(false),
@@ -2710,6 +2739,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         modules,
         motd_lines,
         bandwidth_limit,
+        bandwidth_burst,
         log_file,
         pid_file,
         reverse_lookup,
@@ -2794,6 +2824,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         modules_vec.as_slice(),
                         motd_vec.as_slice(),
                         bandwidth_limit,
+                        bandwidth_burst,
                         log_for_worker,
                         reverse_lookup,
                     )
@@ -2959,6 +2990,7 @@ fn handle_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
 ) -> io::Result<()> {
@@ -2975,13 +3007,14 @@ fn handle_session(
     }
 
     match style {
-        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, log_sink),
+        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, daemon_burst, log_sink),
         SessionStyle::Legacy => handle_legacy_session(
             stream,
             peer_addr,
             modules,
             motd_lines,
             daemon_limit,
+            daemon_burst,
             log_sink,
             peer_host,
             reverse_lookup,
@@ -3047,12 +3080,13 @@ fn handle_legacy_session(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
+    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     peer_host: Option<String>,
     reverse_lookup: bool,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
-    let mut limiter = daemon_limit.map(BandwidthLimiter::new);
+    let mut limiter = daemon_limit.map(|limit| BandwidthLimiter::with_burst(limit, daemon_burst));
 
     let greeting = legacy_daemon_greeting();
     write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
@@ -3138,9 +3172,10 @@ fn handle_legacy_session(
 fn handle_binary_session(
     mut stream: TcpStream,
     daemon_limit: Option<NonZeroU64>,
+    daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
-    let mut limiter = daemon_limit.map(BandwidthLimiter::new);
+    let mut limiter = daemon_limit.map(|limit| BandwidthLimiter::with_burst(limit, daemon_burst));
 
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
@@ -3434,18 +3469,23 @@ fn send_daemon_ok(
 fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
+    module_burst: Option<NonZeroU64>,
 ) {
-    if let Some(module_limit) = module_limit {
+    if let Some(limit) = module_limit {
         match limiter {
             Some(existing) => {
-                let current = existing.limit_bytes();
-                if module_limit < current {
-                    *existing = BandwidthLimiter::new(module_limit);
+                let target_burst = module_burst.or(existing.burst_bytes());
+                if limit < existing.limit_bytes() || module_burst.is_some() {
+                    *existing = BandwidthLimiter::with_burst(limit, target_burst);
                 }
             }
             None => {
-                *limiter = Some(BandwidthLimiter::new(module_limit));
+                *limiter = Some(BandwidthLimiter::with_burst(limit, module_burst));
             }
+        }
+    } else if let Some(burst) = module_burst {
+        if let Some(existing) = limiter {
+            *existing = BandwidthLimiter::with_burst(existing.limit_bytes(), Some(burst));
         }
     }
 }
@@ -3463,7 +3503,7 @@ fn respond_with_module_request(
     reverse_lookup: bool,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
-        apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
+        apply_module_bandwidth_limit(limiter, module.bandwidth_limit(), module.bandwidth_burst());
 
         let mut hostname_cache: Option<Option<String>> = None;
         let module_peer_host =
@@ -3907,6 +3947,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         auth_users: Vec::new(),
         secrets_file: None,
         bandwidth_limit: None,
+        bandwidth_burst: None,
         refuse_options: Vec::new(),
         read_only: false,
         numeric_ids: false,
@@ -4097,8 +4138,9 @@ fn apply_inline_module_options(
                         "'bwlimit' option must not be empty".to_string(),
                     ));
                 }
-                let limit = parse_runtime_bwlimit(&OsString::from(value))?;
-                module.bandwidth_limit = limit;
+                let components = parse_runtime_bwlimit(&OsString::from(value))?;
+                module.bandwidth_limit = components.rate();
+                module.bandwidth_burst = components.burst();
             }
             "refuse options" | "refuse-options" => {
                 let options = parse_refuse_option_list(value).map_err(|error| {
@@ -4155,10 +4197,10 @@ fn unescape_module_component(text: &str) -> String {
     result
 }
 
-fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
+fn parse_runtime_bwlimit(value: &OsString) -> Result<BandwidthLimitComponents, DaemonError> {
     let text = value.to_string_lossy();
-    match parse_bandwidth_argument(&text) {
-        Ok(limit) => Ok(limit),
+    match parse_bandwidth_limit(&text) {
+        Ok(components) => Ok(components),
         Err(error) => Err(runtime_bwlimit_error(&text, error)),
     }
 }
@@ -4167,9 +4209,9 @@ fn parse_config_bwlimit(
     value: &str,
     path: &Path,
     line: usize,
-) -> Result<Option<NonZeroU64>, DaemonError> {
-    match parse_bandwidth_argument(value) {
-        Ok(limit) => Ok(limit),
+) -> Result<BandwidthLimitComponents, DaemonError> {
+    match parse_bandwidth_limit(value) {
+        Ok(components) => Ok(components),
         Err(error) => Err(config_bwlimit_error(path, line, value, error)),
     }
 }
@@ -4482,6 +4524,7 @@ mod tests {
             auth_users: Vec::new(),
             secrets_file: None,
             bandwidth_limit: None,
+            bandwidth_burst: None,
             refuse_options: Vec::new(),
             read_only: false,
             numeric_ids: false,
@@ -4588,6 +4631,7 @@ mod tests {
             auth_users: Vec::new(),
             secrets_file: None,
             bandwidth_limit: None,
+            bandwidth_burst: None,
             refuse_options: Vec::new(),
             read_only: false,
             numeric_ids: false,
@@ -4953,11 +4997,13 @@ mod tests {
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
         assert!(modules[0].bandwidth_limit().is_none());
+        assert!(modules[0].bandwidth_burst().is_none());
         assert!(modules[0].refused_options().is_empty());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
+        assert!(modules[1].bandwidth_burst().is_none());
         assert!(modules[1].refused_options().is_empty());
     }
 
@@ -5027,11 +5073,33 @@ mod tests {
             module.bandwidth_limit().map(NonZeroU64::get),
             Some(1_048_576)
         );
+        assert!(module.bandwidth_burst().is_none());
         assert_eq!(module.refused_options(), [String::from("compress")]);
         assert_eq!(module.uid(), Some(1000));
         assert_eq!(module.gid(), Some(2000));
         assert_eq!(module.timeout().map(NonZeroU64::get), Some(600));
         assert_eq!(module.max_connections().map(NonZeroU32::get), Some(5));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_parses_inline_bwlimit_burst() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("mirror=./data;use-chroot=no;bwlimit=2m:8m"),
+        ])
+        .expect("parse module with inline bwlimit burst");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(
+            module.bandwidth_limit().map(NonZeroU64::get),
+            Some(2_097_152)
+        );
+        assert_eq!(
+            module.bandwidth_burst().map(NonZeroU64::get),
+            Some(8_388_608)
+        );
     }
 
     #[test]
@@ -5222,11 +5290,13 @@ mod tests {
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs"));
         assert_eq!(modules[0].comment.as_deref(), Some("Documentation"));
         assert!(modules[0].bandwidth_limit().is_none());
+        assert!(modules[0].bandwidth_burst().is_none());
         assert!(modules[0].listable());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
+        assert!(modules[1].bandwidth_burst().is_none());
         assert!(modules[1].listable());
         assert!(modules.iter().all(ModuleDefinition::use_chroot));
     }
@@ -5333,6 +5403,32 @@ mod tests {
         assert_eq!(
             module.bandwidth_limit(),
             Some(NonZeroU64::new(4 * 1024 * 1024).unwrap())
+        );
+        assert!(module.bandwidth_burst().is_none());
+    }
+
+    #[test]
+    fn runtime_options_loads_bwlimit_burst_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = 4M:16M\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name, "docs");
+        assert_eq!(
+            module.bandwidth_limit(),
+            Some(NonZeroU64::new(4 * 1024 * 1024).unwrap())
+        );
+        assert_eq!(
+            module.bandwidth_burst(),
+            Some(NonZeroU64::new(16 * 1024 * 1024).unwrap())
         );
     }
 
@@ -5807,6 +5903,24 @@ mod tests {
             options.bandwidth_limit(),
             Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
         );
+        assert!(options.bandwidth_burst().is_none());
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_parse_bwlimit_argument_with_burst() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("8M:12M")])
+                .expect("parse bwlimit with burst");
+
+        assert_eq!(
+            options.bandwidth_limit(),
+            Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
+        );
+        assert_eq!(
+            options.bandwidth_burst(),
+            Some(NonZeroU64::new(12 * 1024 * 1024).unwrap())
+        );
         assert!(options.bandwidth_limit_configured());
     }
 
@@ -5820,6 +5934,7 @@ mod tests {
             options.bandwidth_limit(),
             Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
         );
+        assert!(options.bandwidth_burst().is_none());
         assert!(options.bandwidth_limit_configured());
     }
 
@@ -5829,6 +5944,18 @@ mod tests {
             .expect("parse unlimited");
 
         assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_burst().is_none());
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
+    fn runtime_options_parse_bwlimit_unlimited_ignores_burst() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("0:512K")])
+                .expect("parse unlimited with burst");
+
+        assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_burst().is_none());
         assert!(options.bandwidth_limit_configured());
     }
 
@@ -5838,6 +5965,7 @@ mod tests {
             RuntimeOptions::parse(&[OsString::from("--no-bwlimit")]).expect("parse no-bwlimit");
 
         assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_burst().is_none());
         assert!(options.bandwidth_limit_configured());
     }
 
@@ -7048,13 +7176,14 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(8 * 1024 * 1024));
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(8 * 1024 * 1024), None);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
             limiter.limit_bytes(),
             NonZeroU64::new(2 * 1024 * 1024).unwrap()
         );
+        assert!(limiter.burst_bytes().is_none());
     }
 
     #[test]
@@ -7063,30 +7192,63 @@ mod tests {
             NonZeroU64::new(8 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(1024 * 1024));
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(1024 * 1024), None);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(limiter.limit_bytes(), NonZeroU64::new(1024 * 1024).unwrap());
+        assert!(limiter.burst_bytes().is_none());
     }
 
     #[test]
     fn module_bwlimit_configures_unlimited_daemon() {
         let mut limiter = None;
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(2 * 1024 * 1024));
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(2 * 1024 * 1024), None);
 
         let limiter = limiter.expect("limiter configured by module");
         assert_eq!(
             limiter.limit_bytes(),
             NonZeroU64::new(2 * 1024 * 1024).unwrap()
         );
+        assert!(limiter.burst_bytes().is_none());
 
         let mut limiter = Some(limiter);
-        apply_module_bandwidth_limit(&mut limiter, None);
+        apply_module_bandwidth_limit(
+            &mut limiter,
+            None,
+            Some(NonZeroU64::new(256 * 1024).unwrap()),
+        );
         let limiter = limiter.expect("limiter preserved");
         assert_eq!(
             limiter.limit_bytes(),
             NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
+        assert_eq!(
+            limiter.burst_bytes(),
+            Some(NonZeroU64::new(256 * 1024).unwrap())
+        );
+    }
+
+    #[test]
+    fn module_bwlimit_updates_burst_without_lowering_limit() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(4 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(
+            &mut limiter,
+            NonZeroU64::new(4 * 1024 * 1024),
+            Some(NonZeroU64::new(512 * 1024).unwrap()),
+        );
+
+        let limiter = limiter.expect("limiter remains configured");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(4 * 1024 * 1024).unwrap()
+        );
+        assert_eq!(
+            limiter.burst_bytes(),
+            Some(NonZeroU64::new(512 * 1024).unwrap())
         );
     }
 

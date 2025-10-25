@@ -10018,6 +10018,18 @@ mod tests {
     }
 
     #[test]
+    fn bwlimit_accepts_burst_component() {
+        let limit = parse_bandwidth_limit(OsStr::new("4M:32K"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 4_194_304);
+        assert_eq!(
+            limit.burst_bytes().map(std::num::NonZeroU64::get),
+            Some(32 * 1024)
+        );
+    }
+
+    #[test]
     fn bwlimit_zero_disables_limit() {
         let limit = parse_bandwidth_limit(OsStr::new("0")).expect("parse succeeds");
         assert!(limit.is_none());
