@@ -74,6 +74,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod chmod;
+
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
 
 #[cfg(unix)]
@@ -99,6 +101,8 @@ mod acl_support;
 
 #[cfg(feature = "acl")]
 pub use acl_support::sync_acls;
+
+pub use chmod::{ChmodError, ChmodModifiers};
 
 #[cfg(unix)]
 mod ownership {
@@ -308,10 +312,8 @@ pub fn apply_directory_metadata_with_options(
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, options)?;
-    if options.permissions() {
-        set_permissions_like(metadata, destination)?;
-    }
+    set_owner_like(metadata, destination, true, &options)?;
+    apply_permissions_with_chmod(destination, metadata, &options)?;
     if options.times() {
         set_timestamp_like(metadata, destination, true)?;
     }
@@ -335,10 +337,8 @@ pub fn apply_file_metadata_with_options(
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, options)?;
-    if options.permissions() {
-        set_permissions_like(metadata, destination)?;
-    }
+    set_owner_like(metadata, destination, true, &options)?;
+    apply_permissions_with_chmod(destination, metadata, &options)?;
     if options.times() {
         set_timestamp_like(metadata, destination, true)?;
     }
@@ -360,7 +360,7 @@ pub fn apply_symlink_metadata_with_options(
     metadata: &fs::Metadata,
     options: MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, false, options)?;
+    set_owner_like(metadata, destination, false, &options)?;
     if options.times() {
         set_timestamp_like(metadata, destination, false)?;
     }
@@ -505,7 +505,7 @@ fn create_device_node_inner(
 }
 
 /// Options that control metadata preservation during copy operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetadataOptions {
     preserve_owner: bool,
     preserve_group: bool,
@@ -514,6 +514,7 @@ pub struct MetadataOptions {
     numeric_ids: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
+    chmod: Option<ChmodModifiers>,
 }
 
 impl MetadataOptions {
@@ -531,6 +532,7 @@ impl MetadataOptions {
             numeric_ids: false,
             owner_override: None,
             group_override: None,
+            chmod: None,
         }
     }
 
@@ -596,6 +598,14 @@ impl MetadataOptions {
         self
     }
 
+    /// Supplies chmod modifiers that should be applied after metadata is
+    /// preserved.
+    #[must_use]
+    pub fn with_chmod(mut self, modifiers: Option<ChmodModifiers>) -> Self {
+        self.chmod = modifiers;
+        self
+    }
+
     /// Reports whether ownership should be preserved.
     #[must_use]
     pub const fn owner(&self) -> bool {
@@ -637,6 +647,12 @@ impl MetadataOptions {
     pub const fn group_override(&self) -> Option<u32> {
         self.group_override
     }
+
+    /// Returns the chmod modifiers, if any.
+    #[must_use]
+    pub fn chmod(&self) -> Option<&ChmodModifiers> {
+        self.chmod.as_ref()
+    }
 }
 
 impl Default for MetadataOptions {
@@ -649,7 +665,7 @@ fn set_owner_like(
     metadata: &fs::Metadata,
     destination: &Path,
     follow_symlinks: bool,
-    options: MetadataOptions,
+    options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -926,6 +942,42 @@ fn set_permissions_like(metadata: &fs::Metadata, destination: &Path) -> Result<(
         destination_permissions.set_readonly(readonly);
         fs::set_permissions(destination, destination_permissions)
             .map_err(|error| MetadataError::new("preserve permissions", destination, error))?
+    }
+
+    Ok(())
+}
+
+fn apply_permissions_with_chmod(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(modifiers) = options.chmod() {
+            let mut mode = if options.permissions() {
+                metadata.permissions().mode()
+            } else {
+                fs::metadata(destination)
+                    .map_err(|error| {
+                        MetadataError::new("inspect destination permissions", destination, error)
+                    })?
+                    .permissions()
+                    .mode()
+            };
+
+            mode = modifiers.apply(mode, metadata.file_type());
+            let permissions = PermissionsExt::from_mode(mode);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            return Ok(());
+        }
+    }
+
+    if options.permissions() {
+        set_permissions_like(metadata, destination)?;
     }
 
     Ok(())

@@ -81,7 +81,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::num::{IntErrorKind, NonZeroU64, NonZeroU8};
+use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
@@ -92,25 +92,26 @@ use std::time::{Duration, SystemTime};
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 
-use clap::{builder::OsStringValueParser, Arg, ArgAction, Command as ClapCommand};
+use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        run_client_or_fallback, run_module_list_with_password_and_options, AddressMode,
-        BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
-        ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
+        AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
+        ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
         FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
-        RemoteFallbackContext, TransferTimeout,
+        RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
+        run_module_list_with_password_and_options,
     },
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
+use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-use time::{format_description::FormatItem, macros::format_description, OffsetDateTime};
+use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t, uid_t};
 
 /// Maximum exit code representable by a Unix process.
@@ -218,6 +219,7 @@ const HELP_TEXT: &str = concat!(
     "      --group      Preserve file group (requires suitable privileges).\n",
     "      --no-group   Disable group preservation.\n",
     "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
+    "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
     "  -p, --perms      Preserve file permissions.\n",
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
@@ -236,7 +238,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -851,6 +853,7 @@ struct ParsedArgs {
     owner: Option<bool>,
     group: Option<bool>,
     chown: Option<OsString>,
+    chmod: Vec<OsString>,
     perms: Option<bool>,
     times: Option<bool>,
     omit_dir_times: Option<bool>,
@@ -1520,6 +1523,14 @@ fn clap_command() -> ClapCommand {
                 .num_args(1),
         )
         .arg(
+            Arg::new("chmod")
+                .long("chmod")
+                .value_name("SPEC")
+                .help("Apply chmod-style SPEC modifiers to received files.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("perms")
                 .long("perms")
                 .short('p')
@@ -1800,6 +1811,10 @@ where
         None
     };
     let chown = matches.remove_one::<OsString>("chown");
+    let chmod = matches
+        .remove_many::<OsString>("chmod")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let perms = if matches.get_flag("perms") {
         Some(true)
     } else if matches.get_flag("no-perms") {
@@ -2058,6 +2073,7 @@ where
         owner,
         group,
         chown,
+        chmod,
         perms,
         times,
         omit_dir_times,
@@ -2189,11 +2205,7 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
         daemon_args.push(arg.clone());
     }
 
-    if found {
-        Some(daemon_args)
-    } else {
-        None
-    }
+    if found { Some(daemon_args) } else { None }
 }
 
 /// Returns `true` when the invocation requests server mode.
@@ -2438,6 +2450,7 @@ where
         owner,
         group,
         chown,
+        chmod,
         perms,
         times,
         omit_dir_times,
@@ -2906,6 +2919,7 @@ where
             chown: chown_spec.clone(),
             owner,
             group,
+            chmod: chmod.clone(),
             perms,
             times,
             omit_dir_times,
@@ -3050,6 +3064,33 @@ where
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative = relative.unwrap_or(false);
 
+    let mut chmod_modifiers: Option<ChmodModifiers> = None;
+    for spec in &chmod {
+        let spec_text = spec.to_string_lossy();
+        let trimmed = spec_text.trim();
+        match ChmodModifiers::parse(trimmed) {
+            Ok(parsed) => {
+                if let Some(existing) = &mut chmod_modifiers {
+                    existing.extend(parsed);
+                } else {
+                    chmod_modifiers = Some(parsed);
+                }
+            }
+            Err(error) => {
+                let formatted = format!(
+                    "failed to parse --chmod specification '{}': {}",
+                    spec_text, error
+                );
+                let message = rsync_error!(1, formatted).with_role(Role::Client);
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
+    }
+
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
         .address_mode(address_mode)
@@ -3065,6 +3106,7 @@ where
         .owner_override(owner_override_value)
         .group(preserve_group)
         .group_override(group_override_value)
+        .chmod(chmod_modifiers.clone())
         .permissions(preserve_permissions)
         .times(preserve_times)
         .omit_dir_times(omit_dir_times_setting)
@@ -6238,6 +6280,28 @@ mod tests {
     }
 
     #[test]
+    fn run_reports_invalid_chmod_specification() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("dest.txt");
+        std::fs::write(&source, b"data").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--chmod=a+q"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+        assert!(rendered.contains("failed to parse --chmod specification"));
+    }
+
+    #[test]
     fn transfer_request_copies_file() {
         use tempfile::tempdir;
 
@@ -6294,7 +6358,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -6426,7 +6490,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn progress_reports_unknown_totals_with_placeholder() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -6464,7 +6528,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn info_progress2_enables_progress_output() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
@@ -7276,7 +7340,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn transfer_request_with_perms_preserves_mode() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
 
@@ -7365,6 +7429,24 @@ mod tests {
         assert_eq!(parsed.perms, Some(false));
         assert_eq!(parsed.times, Some(false));
         assert_eq!(parsed.omit_dir_times, Some(false));
+    }
+
+    #[test]
+    fn parse_args_collects_chmod_values() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--chmod=Du+rwx"),
+            OsString::from("--chmod"),
+            OsString::from("Fgo-w"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            parsed.chmod,
+            vec![OsString::from("Du+rwx"), OsString::from("Fgo-w")]
+        );
     }
 
     #[test]
@@ -9064,7 +9146,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_times_preserves_timestamp() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9717,7 +9799,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_no_times_overrides_archive() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9746,7 +9828,7 @@ mod tests {
 
     #[test]
     fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -9788,7 +9870,7 @@ mod tests {
 
     #[test]
     fn checksum_with_no_times_preserves_existing_destination() {
-        use filetime::{set_file_mtime, FileTime};
+        use filetime::{FileTime, set_file_mtime};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
@@ -10106,9 +10188,11 @@ exit 99
             run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
-        assert!(String::from_utf8(stdout)
-            .expect("modules")
-            .contains("module"));
+        assert!(
+            String::from_utf8(stdout)
+                .expect("modules")
+                .contains("module")
+        );
 
         let rendered_err = String::from_utf8(stderr).expect("warnings are UTF-8");
         assert!(rendered_err.contains("@WARNING: Maintenance"));
@@ -10174,8 +10258,8 @@ exit 99
 
     #[test]
     fn module_list_uses_password_file_for_authentication() {
-        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use rsync_checksums::strong::Md5;
         use tempfile::tempdir;
 
@@ -10227,8 +10311,8 @@ exit 99
 
     #[test]
     fn module_list_reads_password_from_stdin() {
-        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD_NO_PAD;
         use rsync_checksums::strong::Md5;
 
         let challenge = "stdin-test";
@@ -11054,14 +11138,18 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--partial"));
         assert!(recorded.lines().any(|line| line == "--partial-dir"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == partial_dir.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == partial_dir.display().to_string())
+        );
 
         // Ensure destination operand still forwarded correctly alongside partial dir args.
-        assert!(recorded
-            .lines()
-            .any(|line| line == dest_path.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
@@ -11114,9 +11202,11 @@ exit 0
         assert!(recorded.lines().any(|line| line == "--link-dest=link"));
         assert!(recorded.lines().any(|line| line == "--link-dest"));
         assert!(recorded.lines().any(|line| line == "link"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == dest_path.display().to_string()));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
     }
 
     #[cfg(unix)]
@@ -11158,9 +11248,11 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--link-dest=baseline"));
-        assert!(recorded
-            .lines()
-            .any(|line| line == "--link-dest=/var/cache"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == "--link-dest=/var/cache")
+        );
         assert!(recorded.lines().any(|line| line == "--compare-dest"));
         assert!(recorded.lines().any(|line| line == "compare"));
         assert!(recorded.lines().any(|line| line == "--copy-dest"));
@@ -12576,7 +12668,7 @@ exit 0
 
     #[test]
     fn list_only_matches_rsync_format_for_regular_file() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
@@ -12630,7 +12722,7 @@ exit 0
 
     #[test]
     fn list_only_formats_special_permission_bits_like_rsync() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
         use tempfile::tempdir;
