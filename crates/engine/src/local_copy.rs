@@ -4359,11 +4359,24 @@ fn parse_filter_directive_line(
         return Ok(None);
     }
 
-    if let Some(directive) = parse_dir_merge_directive(text)? {
+    let trimmed = text.trim_start();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some(directive) = parse_short_merge_directive_line(trimmed)? {
         return Ok(Some(directive));
     }
 
-    if let Some(remainder) = text.strip_prefix('+') {
+    if let Some(directive) = parse_merge_directive(trimmed)? {
+        return Ok(Some(directive));
+    }
+
+    if let Some(directive) = parse_dir_merge_directive(trimmed)? {
+        return Ok(Some(directive));
+    }
+
+    if let Some(remainder) = trimmed.strip_prefix('+') {
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '+' requires a pattern"));
@@ -4373,7 +4386,7 @@ fn parse_filter_directive_line(
         ))));
     }
 
-    if let Some(remainder) = text.strip_prefix('-') {
+    if let Some(remainder) = trimmed.strip_prefix('-') {
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '-' requires a pattern"));
@@ -4383,7 +4396,7 @@ fn parse_filter_directive_line(
         ))));
     }
 
-    let mut parts = text.splitn(2, char::is_whitespace);
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
     let keyword = parts.next().unwrap_or("");
     let remainder = parts.next().unwrap_or("").trim_start();
 
@@ -4457,27 +4470,304 @@ fn parse_filter_directive_line(
         return handle_keyword(remainder, FilterRule::risk);
     }
 
-    if keyword.eq_ignore_ascii_case("merge") {
-        if remainder.is_empty() {
+    Err(FilterParseError::new(format!(
+        "unsupported filter directive '{}'",
+        trimmed
+    )))
+}
+
+fn parse_merge_directive(text: &str) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    const MERGE_PREFIX: &str = "merge";
+
+    if text.len() < MERGE_PREFIX.len() {
+        return Ok(None);
+    }
+
+    let (prefix, rest) = text.split_at(MERGE_PREFIX.len());
+    if !prefix.eq_ignore_ascii_case(MERGE_PREFIX) {
+        return Ok(None);
+    }
+
+    let mut remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    let mut modifiers = "";
+    if let Some(next) = remainder.strip_prefix(',') {
+        let mut split = next.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
+        modifiers = split.next().unwrap_or("");
+        remainder = split
+            .next()
+            .unwrap_or("")
+            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    }
+
+    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, false)?;
+
+    if remainder == "-" {
+        return Err(FilterParseError::new(
+            "merge from standard input is not supported in .rsync-filter files",
+        ));
+    }
+
+    let path_text = remainder.trim_end();
+    let path_text = if path_text.is_empty() {
+        if assume_cvsignore {
+            ".cvsignore"
+        } else {
             return Err(FilterParseError::new(
                 "merge directive requires a file path",
             ));
         }
-        if remainder == "-" {
-            return Err(FilterParseError::new(
-                "merge from standard input is not supported in .rsync-filter files",
-            ));
+    } else {
+        path_text
+    };
+
+    let options = if modifiers.is_empty() && !assume_cvsignore {
+        None
+    } else {
+        Some(options)
+    };
+
+    Ok(Some(ParsedFilterDirective::Merge {
+        path: PathBuf::from(path_text),
+        options,
+    }))
+}
+
+fn parse_short_merge_directive_line(
+    text: &str,
+) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    let mut chars = text.chars();
+    let first = match chars.next() {
+        Some(first) => first,
+        None => return Ok(None),
+    };
+
+    let allow_extended = match first {
+        '.' => false,
+        ':' => true,
+        _ => return Ok(None),
+    };
+
+    let remainder = chars.as_str();
+    let (modifiers, rest) = split_short_rule_modifiers(remainder);
+    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, allow_extended)?;
+
+    let pattern = rest.trim();
+    let pattern = if pattern.is_empty() {
+        if assume_cvsignore {
+            ".cvsignore"
+        } else if allow_extended {
+            return Err(FilterParseError::new(format!(
+                "dir-merge directive '{}' is missing a file name",
+                text
+            )));
+        } else {
+            return Err(FilterParseError::new(format!(
+                "merge directive '{}' is missing a file path",
+                text
+            )));
         }
+    } else {
+        pattern
+    };
+
+    if allow_extended {
         return Ok(Some(ParsedFilterDirective::Merge {
-            path: PathBuf::from(remainder),
-            options: None,
+            path: PathBuf::from(pattern),
+            options: Some(options),
         }));
     }
 
-    Err(FilterParseError::new(format!(
-        "unsupported filter directive '{}'",
-        text
-    )))
+    let options = if modifiers.is_empty() && !assume_cvsignore {
+        None
+    } else {
+        Some(options)
+    };
+
+    Ok(Some(ParsedFilterDirective::Merge {
+        path: PathBuf::from(pattern),
+        options,
+    }))
+}
+
+fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
+    if text.is_empty() {
+        return ("", "");
+    }
+
+    if let Some(rest) = text.strip_prefix(',') {
+        let mut parts = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
+        let modifiers = parts.next().unwrap_or("");
+        let remainder = parts.next().unwrap_or("");
+        let remainder =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        return (modifiers, remainder);
+    }
+
+    let mut chars = text.chars();
+    match chars.next() {
+        None => ("", ""),
+        Some(first) if first.is_ascii_whitespace() || first == '_' => {
+            let remainder =
+                text.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            ("", remainder)
+        }
+        Some(_) => {
+            let mut len = 0;
+            for ch in text.chars() {
+                if ch.is_ascii_whitespace() || ch == '_' {
+                    break;
+                }
+                len += ch.len_utf8();
+            }
+            let modifiers = &text[..len];
+            let remainder =
+                text[len..].trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            (modifiers, remainder)
+        }
+    }
+}
+
+fn parse_merge_modifiers(
+    modifiers: &str,
+    directive: &str,
+    allow_extended: bool,
+) -> Result<(DirMergeOptions, bool), FilterParseError> {
+    let label = if allow_extended { "dir-merge" } else { "merge" };
+    let mut options = if allow_extended {
+        DirMergeOptions::default()
+    } else {
+        DirMergeOptions::default().allow_list_clearing(true)
+    };
+    let mut enforced: Option<DirMergeEnforcedKind> = None;
+    let mut saw_include = false;
+    let mut saw_exclude = false;
+    let mut assume_cvsignore = false;
+
+    for modifier in modifiers.chars() {
+        let lower = modifier.to_ascii_lowercase();
+        match lower {
+            '-' => {
+                if saw_include {
+                    let message = format!(
+                        "{label} directive '{}' cannot combine '+' and '-' modifiers",
+                        directive
+                    );
+
+                    return Err(FilterParseError::new(message));
+                }
+                saw_exclude = true;
+                enforced = Some(DirMergeEnforcedKind::Exclude);
+            }
+            '+' => {
+                if saw_exclude {
+                    let message = format!(
+                        "{label} directive '{}' cannot combine '+' and '-' modifiers",
+                        directive
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+                saw_include = true;
+                enforced = Some(DirMergeEnforcedKind::Include);
+            }
+            'c' => {
+                if saw_include {
+                    let message = format!(
+                        "{label} directive '{}' cannot combine 'C' with '+' or '-'",
+                        directive
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+                saw_exclude = true;
+                enforced = Some(DirMergeEnforcedKind::Exclude);
+                options = options
+                    .use_whitespace()
+                    .allow_comments(false)
+                    .allow_list_clearing(true)
+                    .inherit(false);
+                assume_cvsignore = true;
+            }
+            'e' => {
+                if allow_extended {
+                    options = options.exclude_filter_file(true);
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            'n' => {
+                if allow_extended {
+                    options = options.inherit(false);
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            'w' => {
+                if allow_extended {
+                    options = options.use_whitespace().allow_comments(false);
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            's' => {
+                if allow_extended {
+                    options = options.sender_modifier();
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            'r' => {
+                if allow_extended {
+                    options = options.receiver_modifier();
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            '/' => {
+                if allow_extended {
+                    options = options.anchor_root(true);
+                } else {
+                    let message = format!(
+                        "merge directive '{}' uses unsupported modifier '{}'",
+                        directive, modifier
+                    );
+                    return Err(FilterParseError::new(message));
+                }
+            }
+            _ => {
+                let message = format!(
+                    "{label} directive '{}' uses unsupported modifier '{}'",
+                    directive, modifier
+                );
+                return Err(FilterParseError::new(message));
+            }
+        }
+    }
+
+    options = options.with_enforced_kind(enforced);
+    if !allow_extended && !options.list_clear_allowed() {
+        options = options.allow_list_clearing(true);
+    }
+
+    Ok((options, assume_cvsignore))
 }
 
 fn parse_dir_merge_directive(
@@ -8271,6 +8561,71 @@ mod tests {
         assert!(opts.list_clear_allowed());
         assert!(opts.uses_whitespace());
         assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    }
+
+    #[test]
+    fn parse_filter_directive_short_merge_inherits_context() {
+        let directive = parse_filter_directive_line(". per-dir")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from("per-dir"));
+        assert!(options.is_none());
+    }
+
+    #[test]
+    fn parse_filter_directive_short_merge_cvs_defaults() {
+        let directive = parse_filter_directive_line(".C")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from(".cvsignore"));
+        let opts = options.expect("options");
+        assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+        assert!(opts.uses_whitespace());
+        assert!(!opts.inherit_rules());
+    }
+
+    #[test]
+    fn parse_filter_directive_short_dir_merge_with_modifiers() {
+        let directive = parse_filter_directive_line(":- per-dir")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected dir-merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from("per-dir"));
+        let opts = options.expect("options");
+        assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    }
+
+    #[test]
+    fn parse_filter_directive_merge_with_modifiers() {
+        let directive = parse_filter_directive_line("merge,+ rules")
+            .expect("parse")
+            .expect("directive");
+
+        let (path, options) = match directive {
+            ParsedFilterDirective::Merge { path, options } => (path, options),
+            other => panic!("expected merge directive, got {:?}", other),
+        };
+
+        assert_eq!(path, PathBuf::from("rules"));
+        let opts = options.expect("options");
+        assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Include));
     }
 
     #[test]
