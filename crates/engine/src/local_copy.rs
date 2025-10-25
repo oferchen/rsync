@@ -57,7 +57,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::num::{NonZeroU64, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::rc::Rc;
@@ -67,14 +67,14 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use rustix::{
     fd::AsFd,
-    fs::{fallocate, FallocateFlags},
+    fs::{FallocateFlags, fallocate},
     io::Errno,
 };
 
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::BandwidthLimiter;
-use rsync_checksums::strong::Md5;
 use rsync_checksums::RollingChecksum;
+use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "acl")]
@@ -82,15 +82,15 @@ use rsync_meta::sync_acls;
 #[cfg(feature = "xattr")]
 use rsync_meta::sync_xattrs;
 use rsync_meta::{
-    apply_directory_metadata_with_options, apply_file_metadata_with_options,
-    apply_symlink_metadata_with_options, create_device_node, create_fifo, ChmodModifiers,
-    MetadataError, MetadataOptions,
+    ChmodModifiers, MetadataError, MetadataOptions, apply_directory_metadata_with_options,
+    apply_file_metadata_with_options, apply_symlink_metadata_with_options, create_device_node,
+    create_fifo,
 };
 use rsync_protocol::ProtocolVersion;
 
-use crate::delta::{calculate_signature_layout, DeltaSignatureIndex, SignatureLayoutParams};
+use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
 use crate::signature::{
-    generate_file_signature, SignatureAlgorithm, SignatureBlock, SignatureError,
+    SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
 
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
@@ -3609,6 +3609,7 @@ impl<'a> CopyContext<'a> {
         }
 
         let mut total_bytes: u64 = 0;
+        let mut literal_bytes: u64 = 0;
         let mut compressor = if compress {
             Some(CountingZlibEncoder::new(self.compression_level()))
         } else {
@@ -3631,13 +3632,14 @@ impl<'a> CopyContext<'a> {
                 break;
             }
 
-            if sparse {
-                write_sparse_chunk(writer, &buffer[..read], destination)?;
+            let written = if sparse {
+                write_sparse_chunk(writer, &buffer[..read], destination)?
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
                 })?;
-            }
+                read
+            };
 
             self.register_progress();
 
@@ -3664,6 +3666,7 @@ impl<'a> CopyContext<'a> {
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
+            literal_bytes = literal_bytes.saturating_add(written as u64);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
@@ -3692,9 +3695,9 @@ impl<'a> CopyContext<'a> {
                     limiter.register(bounded);
                 }
             }
-            FileCopyOutcome::new(total_bytes, Some(compressed_total))
+            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
-            FileCopyOutcome::new(total_bytes, None)
+            FileCopyOutcome::new(literal_bytes, None)
         };
 
         Ok(outcome)
@@ -3773,7 +3776,7 @@ impl<'a> CopyContext<'a> {
             if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
-                    self.flush_literal_chunk(
+                    let flushed = self.flush_literal_chunk(
                         writer,
                         pending_literals.as_slice(),
                         sparse,
@@ -3782,8 +3785,8 @@ impl<'a> CopyContext<'a> {
                         source,
                         destination,
                     )?;
+                    literal_bytes = literal_bytes.saturating_add(flushed as u64);
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
-                    literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
                     self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
                     pending_literals.clear();
@@ -3821,7 +3824,7 @@ impl<'a> CopyContext<'a> {
 
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
-            self.flush_literal_chunk(
+            let flushed = self.flush_literal_chunk(
                 writer,
                 pending_literals.as_slice(),
                 sparse,
@@ -3831,7 +3834,7 @@ impl<'a> CopyContext<'a> {
                 destination,
             )?;
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
-            literal_bytes = literal_bytes.saturating_add(flushed_len as u64);
+            literal_bytes = literal_bytes.saturating_add(flushed as u64);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
@@ -3877,18 +3880,19 @@ impl<'a> CopyContext<'a> {
         compressed_progress: &mut u64,
         source: &Path,
         destination: &Path,
-    ) -> Result<(), LocalCopyError> {
+    ) -> Result<usize, LocalCopyError> {
         if chunk.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         self.enforce_timeout()?;
-        if sparse {
-            write_sparse_chunk(writer, chunk, destination)?;
+        let written = if sparse {
+            write_sparse_chunk(writer, chunk, destination)?
         } else {
             writer.write_all(chunk).map_err(|error| {
                 LocalCopyError::io("copy file", destination.to_path_buf(), error)
             })?;
-        }
+            chunk.len()
+        };
 
         if let Some(encoder) = compressor {
             encoder.write(chunk).map_err(|error| {
@@ -3907,7 +3911,7 @@ impl<'a> CopyContext<'a> {
             limiter.register(chunk.len());
         }
 
-        Ok(())
+        Ok(written)
     }
 
     fn copy_matched_block(
@@ -3952,7 +3956,7 @@ impl<'a> CopyContext<'a> {
             }
 
             if sparse {
-                write_sparse_chunk(writer, &buffer[..read], destination)?;
+                let _ = write_sparse_chunk(writer, &buffer[..read], destination)?;
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
@@ -5218,11 +5222,7 @@ fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
         skip += 1;
     }
 
-    if skip > 0 {
-        Some(skip)
-    } else {
-        None
-    }
+    if skip > 0 { Some(skip) } else { None }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -7210,8 +7210,9 @@ fn write_sparse_chunk(
     writer: &mut fs::File,
     chunk: &[u8],
     destination: &Path,
-) -> Result<(), LocalCopyError> {
+) -> Result<usize, LocalCopyError> {
     let mut index = 0usize;
+    let mut written = 0usize;
 
     while index < chunk.len() {
         if chunk[index] == 0 {
@@ -7239,10 +7240,11 @@ fn write_sparse_chunk(
             writer.write_all(&chunk[start..index]).map_err(|error| {
                 LocalCopyError::io("copy file", destination.to_path_buf(), error)
             })?;
+            written = written.saturating_add(index - start);
         }
     }
 
-    Ok(())
+    Ok(written)
 }
 
 fn destination_is_newer(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
@@ -8149,10 +8151,10 @@ fn create_symlink(target: &Path, source: &Path, destination: &Path) -> io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use filetime::{set_file_mtime, set_file_times, FileTime};
+    use filetime::{FileTime, set_file_mtime, set_file_times};
     use std::ffi::OsString;
     use std::io::{self, Seek, SeekFrom, Write};
-    use std::num::{NonZeroU64, NonZeroU8};
+    use std::num::{NonZeroU8, NonZeroU64};
     use std::path::Path;
     use std::thread;
     use std::time::Duration;
@@ -8628,9 +8630,11 @@ mod tests {
     #[test]
     fn parse_filter_directive_dir_merge_conflicting_modifiers_error() {
         let error = parse_filter_directive_line("dir-merge,+- rules").expect_err("conflict");
-        assert!(error
-            .to_string()
-            .contains("cannot combine '+' and '-' modifiers"));
+        assert!(
+            error
+                .to_string()
+                .contains("cannot combine '+' and '-' modifiers")
+        );
     }
 
     #[test]
@@ -8770,10 +8774,12 @@ mod tests {
     fn local_copy_options_xattrs_round_trip() {
         let options = LocalCopyOptions::default().xattrs(true);
         assert!(options.preserve_xattrs());
-        assert!(!LocalCopyOptions::default()
-            .xattrs(true)
-            .xattrs(false)
-            .preserve_xattrs());
+        assert!(
+            !LocalCopyOptions::default()
+                .xattrs(true)
+                .xattrs(false)
+                .preserve_xattrs()
+        );
     }
 
     #[cfg(unix)]
@@ -8979,7 +8985,7 @@ mod tests {
 
     #[test]
     fn execute_with_remove_source_files_preserves_unchanged_source() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
 
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
@@ -9630,10 +9636,12 @@ mod tests {
             fs::read(&copied_file).expect("read copied file"),
             b"payload"
         );
-        assert!(fs::symlink_metadata(&destination_link)
-            .expect("destination link metadata")
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(&destination_link)
+                .expect("destination link metadata")
+                .file_type()
+                .is_symlink()
+        );
         assert!(summary.directories_created() >= 1);
     }
 
@@ -9668,10 +9676,12 @@ mod tests {
                 LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
             )
         ));
-        assert!(fs::symlink_metadata(&destination_link)
-            .expect("destination link metadata")
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(&destination_link)
+                .expect("destination link metadata")
+                .file_type()
+                .is_symlink()
+        );
         assert!(!actual_destination.join("src-dir").join("file.txt").exists());
     }
 
@@ -9810,7 +9820,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_does_not_preserve_metadata_by_default() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempdir().expect("tempdir");
@@ -9843,7 +9853,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_preserves_metadata_when_requested() {
-        use filetime::{set_file_times, FileTime};
+        use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempdir().expect("tempdir");
@@ -9906,7 +9916,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_preserves_ownership_when_requested() {
-        use rustix::fs::{chownat, AtFlags};
+        use rustix::fs::{AtFlags, chownat};
         use std::os::unix::fs::MetadataExt;
 
         if rustix::process::geteuid().as_raw() != 0 {
@@ -9951,8 +9961,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_copies_fifo() {
-        use filetime::{set_file_times, FileTime};
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use filetime::{FileTime, set_file_times};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -10010,8 +10020,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_copies_fifo_within_directory() {
-        use filetime::{set_file_times, FileTime};
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use filetime::{FileTime, set_file_times};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -10073,7 +10083,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_skips_fifo() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
 
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("source.pipe");
@@ -10104,7 +10114,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_records_skip_event() {
-        use rustix::fs::{makedev, mknodat, FileType, Mode, CWD};
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
 
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("skip.pipe");
@@ -10676,7 +10686,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_inplace_succeeds_with_read_only_directory() {
-        use rustix::fs::{chmod, Mode};
+        use rustix::fs::{Mode, chmod};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
