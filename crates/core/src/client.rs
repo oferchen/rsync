@@ -390,6 +390,7 @@ pub struct ClientConfig {
     copy_links: bool,
     copy_dirlinks: bool,
     keep_dirlinks: bool,
+    safe_links: bool,
     relative_paths: bool,
     implied_dirs: bool,
     mkpath: bool,
@@ -451,6 +452,7 @@ impl Default for ClientConfig {
             copy_links: false,
             copy_dirlinks: false,
             keep_dirlinks: false,
+            safe_links: false,
             relative_paths: false,
             implied_dirs: true,
             mkpath: false,
@@ -546,6 +548,13 @@ impl ClientConfig {
     #[doc(alias = "--keep-dirlinks")]
     pub const fn keep_dirlinks(&self) -> bool {
         self.keep_dirlinks
+    }
+
+    /// Reports whether unsafe symlinks should be ignored (`--safe-links`).
+    #[must_use]
+    #[doc(alias = "--safe-links")]
+    pub const fn safe_links(&self) -> bool {
+        self.safe_links
     }
 
     /// Returns the ordered list of filter rules supplied by the caller.
@@ -952,6 +961,7 @@ pub struct ClientConfigBuilder {
     copy_links: bool,
     copy_dirlinks: bool,
     keep_dirlinks: bool,
+    safe_links: bool,
     relative_paths: bool,
     implied_dirs: Option<bool>,
     mkpath: bool,
@@ -1330,6 +1340,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables skipping unsafe symlinks.
+    #[must_use]
+    #[doc(alias = "--safe-links")]
+    pub const fn safe_links(mut self, safe_links: bool) -> Self {
+        self.safe_links = safe_links;
+        self
+    }
+
     /// Enables or disables copying of device nodes during the transfer.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -1591,6 +1609,7 @@ impl ClientConfigBuilder {
             copy_links: self.copy_links,
             copy_dirlinks: self.copy_dirlinks,
             keep_dirlinks: self.keep_dirlinks,
+            safe_links: self.safe_links,
             relative_paths: self.relative_paths,
             implied_dirs: self.implied_dirs.unwrap_or(true),
             mkpath: self.mkpath,
@@ -2191,6 +2210,8 @@ pub struct RemoteFallbackArgs {
     pub copy_dirlinks: bool,
     /// Optional `--keep-dirlinks`/`--no-keep-dirlinks` toggle.
     pub keep_dirlinks: Option<bool>,
+    /// Enables `--safe-links` when `true`.
+    pub safe_links: bool,
     /// Optional `--sparse`/`--no-sparse` toggle.
     pub sparse: Option<bool>,
     /// Optional `--devices`/`--no-devices` toggle.
@@ -2384,6 +2405,7 @@ where
         copy_links,
         copy_dirlinks,
         keep_dirlinks,
+        safe_links,
         sparse,
         devices,
         specials,
@@ -2528,6 +2550,9 @@ where
         "--no-keep-dirlinks",
         keep_dirlinks,
     );
+    if safe_links {
+        command_args.push(OsString::from("--safe-links"));
+    }
     push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
@@ -3015,6 +3040,8 @@ pub enum ClientEventKind {
     SkippedNewerDestination,
     /// A non-regular entry was skipped because support was disabled.
     SkippedNonRegular,
+    /// A symbolic link was skipped because it was deemed unsafe.
+    SkippedUnsafeSymlink,
     /// An entry was deleted due to `--delete`.
     EntryDeleted,
     /// A source entry was removed after a successful transfer.
@@ -3046,6 +3073,7 @@ impl ClientEvent {
             LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
+            LocalCopyAction::SkippedUnsafeSymlink => ClientEventKind::SkippedUnsafeSymlink,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
@@ -3060,6 +3088,7 @@ impl ClientEvent {
             | LocalCopyAction::SkippedExisting
             | LocalCopyAction::SkippedNewerDestination
             | LocalCopyAction::SkippedNonRegular
+            | LocalCopyAction::SkippedUnsafeSymlink
             | LocalCopyAction::EntryDeleted
             | LocalCopyAction::SourceRemoved => false,
         };
@@ -3658,6 +3687,7 @@ fn build_local_copy_options(
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
         .keep_dirlinks(config.keep_dirlinks())
+        .safe_links(config.safe_links())
         .devices(config.preserve_devices())
         .specials(config.preserve_specials())
         .relative_paths(config.relative_paths())
@@ -3819,6 +3849,7 @@ exit 42
             copy_links: None,
             copy_dirlinks: false,
             keep_dirlinks: None,
+            safe_links: false,
             sparse: None,
             devices: None,
             specials: None,
@@ -3910,6 +3941,18 @@ exit 42
         let disabled = ClientConfig::builder().append(false).build();
         assert!(!disabled.append());
         assert!(!disabled.append_verify());
+    }
+
+    #[test]
+    fn builder_safe_links_round_trip() {
+        let enabled = ClientConfig::builder().safe_links(true).build();
+        assert!(enabled.safe_links());
+
+        let disabled = ClientConfig::builder().safe_links(false).build();
+        assert!(!disabled.safe_links());
+
+        let default_config = ClientConfig::builder().build();
+        assert!(!default_config.safe_links());
     }
 
     #[test]
@@ -4772,6 +4815,55 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--no-keep-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_safe_links_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.safe_links = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--safe-links"));
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.safe_links = false;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(!captured.lines().any(|line| line == "--safe-links"));
     }
 
     #[cfg(unix)]
