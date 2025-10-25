@@ -296,6 +296,18 @@ impl SshConnection {
         self.stderr.as_mut()
     }
 
+    /// Transfers ownership of the subprocess stderr stream to the caller.
+    ///
+    /// This helper complements [`stderr_mut`](Self::stderr_mut) by allowing
+    /// higher layers to move the stderr handle into background readers without
+    /// keeping the connection borrowed mutably for the lifetime of the stream.
+    /// Subsequent calls return `None`, matching the semantics of
+    /// [`Option::take`].
+    #[must_use]
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.stderr.take()
+    }
+
     /// Flushes and closes the stdin pipe, signalling EOF to the subprocess.
     pub fn close_stdin(&mut self) -> io::Result<()> {
         if let Some(mut stdin) = self.stdin.take() {
@@ -461,6 +473,31 @@ mod tests {
             .read_to_string(&mut stderr)
             .expect("read stderr");
         assert!(stderr.contains("err"));
+
+        let status = connection.wait().expect("wait status");
+        assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn take_stderr_transfers_handle() {
+        let mut command = SshCommand::new("ignored");
+        command.set_program("sh");
+        command.set_batch_mode(false);
+        command.push_option("-c");
+        command.push_option("printf err >&2");
+
+        let mut connection = command.spawn().expect("spawn shell");
+        connection.close_stdin().expect("close stdin");
+
+        let mut handle = connection.take_stderr().expect("stderr handle");
+        assert!(connection.take_stderr().is_none());
+
+        let mut captured = String::new();
+        handle
+            .read_to_string(&mut captured)
+            .expect("read stderr");
+        assert!(captured.contains("err"));
 
         let status = connection.wait().expect("wait status");
         assert!(status.success());
