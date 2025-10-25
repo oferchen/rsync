@@ -1940,6 +1940,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that updated destination files be staged and renamed after the transfer finishes.
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(mut self, delay: bool) -> Self {
+        self.delay_updates = delay;
+        self
+    }
+
     /// Appends a reference directory consulted for `--compare-dest`,
     /// `--copy-dest`, and `--link-dest` handling.
     #[must_use]
@@ -2296,9 +2304,8 @@ impl LocalCopyOptions {
         self.partial_dir.as_deref()
     }
 
-    /// Reports whether delayed updates are enabled.
+    /// Reports whether destination updates should be delayed until the end of the transfer.
     #[must_use]
-    #[doc(alias = "--delay-updates")]
     pub const fn delay_updates_enabled(&self) -> bool {
         self.delay_updates
     }
@@ -2739,7 +2746,7 @@ struct CopyContext<'a> {
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
     deferred_deletions: Vec<DeferredDeletion>,
-    delayed_updates: Vec<DelayedUpdate>,
+    deferred_updates: Vec<DeferredUpdate>,
     timeout: Option<Duration>,
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
@@ -2804,41 +2811,16 @@ struct DeferredDeletion {
     keep: Vec<OsString>,
 }
 
-struct DelayedUpdate {
+struct DeferredUpdate {
     guard: DestinationWriteGuard,
     metadata: fs::Metadata,
     metadata_options: MetadataOptions,
-    mode: LocalCopyExecution,
     source: PathBuf,
-    relative: Option<PathBuf>,
-    file_type: fs::FileType,
-    destination_previously_existed: bool,
+    destination: PathBuf,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
-}
-
-impl DelayedUpdate {
-    fn commit(self, context: &mut CopyContext<'_>) -> Result<(), LocalCopyError> {
-        let destination_path = self.guard.final_path().to_path_buf();
-        let guard = self.guard;
-        guard.commit()?;
-        context.apply_metadata_and_finalize(
-            destination_path.as_path(),
-            &self.metadata,
-            self.metadata_options,
-            self.mode,
-            self.source.as_path(),
-            self.relative.as_deref(),
-            self.file_type,
-            self.destination_previously_existed,
-            #[cfg(feature = "xattr")]
-            self.preserve_xattrs,
-            #[cfg(feature = "acl")]
-            self.preserve_acls,
-        )
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -2889,7 +2871,7 @@ impl<'a> CopyContext<'a> {
             observer,
             dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
             deferred_deletions: Vec::new(),
-            delayed_updates: Vec::new(),
+            deferred_updates: Vec::new(),
             timeout,
             last_progress: Instant::now(),
             created_entries: Vec::new(),
@@ -3037,6 +3019,51 @@ impl<'a> CopyContext<'a> {
 
     fn reference_directories(&self) -> &[ReferenceDirectory] {
         self.options.reference_directories()
+    }
+
+    fn defer_update(&mut self, update: DeferredUpdate) {
+        self.deferred_updates.push(update);
+    }
+
+    fn flush_deferred_updates(&mut self) -> Result<(), LocalCopyError> {
+        if self.deferred_updates.is_empty() {
+            return Ok(());
+        }
+
+        let updates = std::mem::take(&mut self.deferred_updates);
+        for update in updates {
+            self.finalize_deferred_update(update)?;
+        }
+        Ok(())
+    }
+
+    fn finalize_deferred_update(&mut self, update: DeferredUpdate) -> Result<(), LocalCopyError> {
+        let DeferredUpdate {
+            guard,
+            metadata,
+            metadata_options,
+            source,
+            destination,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs,
+            #[cfg(feature = "acl")]
+            preserve_acls,
+        } = update;
+
+        #[cfg(not(any(feature = "xattr", feature = "acl")))]
+        let _ = &source;
+
+        guard.commit()?;
+
+        apply_file_metadata_with_options(&destination, &metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(feature = "xattr")]
+        sync_xattrs_if_requested(preserve_xattrs, self.mode(), &source, &destination, true)?;
+        #[cfg(feature = "acl")]
+        sync_acls_if_requested(preserve_acls, self.mode(), &source, &destination, true)?;
+        self.hard_links.record(&metadata, &destination);
+
+        Ok(())
     }
 
     fn delete_timing(&self) -> Option<DeleteTiming> {
@@ -5170,7 +5197,7 @@ fn copy_sources(
                 context.enforce_timeout()?;
             }
 
-            context.flush_delayed_updates()?;
+            context.flush_deferred_updates()?;
             context.flush_deferred_deletions()?;
             context.enforce_timeout()?;
             Ok(())
@@ -6076,7 +6103,7 @@ fn copy_file(
             .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
     }
     let mut guard = None;
-    let delay_updates_enabled = context.delay_updates_enabled();
+    let mut staging_path: Option<PathBuf> = None;
 
     let mut writer = if append_offset > 0 {
         let mut file = fs::OpenOptions::new()
@@ -6101,6 +6128,7 @@ fn copy_file(
             partial_enabled,
             context.partial_directory_path(),
         )?;
+        staging_path = Some(new_guard.staging_path().to_path_buf());
         guard = Some(new_guard);
         file
     };
@@ -6125,6 +6153,12 @@ fn copy_file(
 
     drop(writer);
 
+    let staging_path_for_links = guard
+        .as_ref()
+        .map(|existing_guard| existing_guard.staging_path().to_path_buf())
+        .or_else(|| staging_path.take());
+    let delay_updates_enabled = context.delay_updates_enabled();
+
     let outcome = match copy_result {
         Ok(outcome) => {
             if let Err(timeout_error) = context.enforce_timeout() {
@@ -6137,6 +6171,25 @@ fn copy_file(
                 }
 
                 return Err(timeout_error);
+            }
+
+            if let Some(guard) = guard.take() {
+                if delay_updates_enabled {
+                    let update = DeferredUpdate {
+                        guard,
+                        metadata: metadata.clone(),
+                        metadata_options,
+                        source: source.to_path_buf(),
+                        destination: destination.to_path_buf(),
+                        #[cfg(feature = "xattr")]
+                        preserve_xattrs,
+                        #[cfg(feature = "acl")]
+                        preserve_acls,
+                    };
+                    context.defer_update(update);
+                } else {
+                    guard.commit()?;
+                }
             }
 
             outcome
@@ -6154,6 +6207,27 @@ fn copy_file(
         }
     };
 
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::File,
+        destination_previously_existed,
+    );
+
+    if !delay_updates_enabled {
+        apply_file_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(feature = "xattr")]
+        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+        #[cfg(feature = "acl")]
+        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+    }
+
+    let hard_link_path = if delay_updates_enabled {
+        staging_path_for_links.as_deref().unwrap_or(destination)
+    } else {
+        destination
+    };
+    context.hard_links.record(metadata, hard_link_path);
     let elapsed = start.elapsed();
     let compressed_bytes = outcome.compressed_bytes();
     context
@@ -6443,6 +6517,10 @@ impl DestinationWriteGuard {
                 }
             }
         }
+    }
+
+    fn staging_path(&self) -> &Path {
+        &self.temp_path
     }
 
     fn commit(mut self) -> Result<(), LocalCopyError> {
@@ -7665,6 +7743,13 @@ mod tests {
         let options = LocalCopyOptions::default().update(true);
         assert!(options.update_enabled());
         assert!(!LocalCopyOptions::default().update_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_delay_updates_round_trip() {
+        let options = LocalCopyOptions::default().delay_updates(true);
+        assert!(options.delay_updates_enabled());
+        assert!(!LocalCopyOptions::default().delay_updates_enabled());
     }
 
     #[test]
