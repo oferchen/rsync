@@ -6381,8 +6381,8 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
         assert!(rendered.contains("file.txt"));
         assert!(!rendered.contains("Total transferred"));
-        assert!(rendered.contains("sent 0 bytes  received 7 bytes"));
-        assert!(rendered.contains("total size is 7  speedup is 1.00"));
+        assert!(rendered.contains("sent 7 bytes  received 7 bytes"));
+        assert!(rendered.contains("total size is 7  speedup is 0.50"));
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"verbose"
@@ -6657,6 +6657,7 @@ mod tests {
         assert!(rendered.contains("File list size: 0"));
         assert!(rendered.contains("File list generation time:"));
         assert!(rendered.contains("File list transfer time:"));
+        assert!(rendered.contains(&format!("Total bytes sent: {expected_size}")));
         assert!(rendered.contains(&format!("Total bytes received: {expected_size}")));
         assert!(rendered.contains("\n\nsent"));
         assert!(rendered.contains("total size is"));

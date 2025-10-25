@@ -2578,6 +2578,7 @@ pub struct LocalCopySummary {
     sources_removed: u64,
     transferred_file_size: u64,
     bytes_copied: u64,
+    bytes_sent: u64,
     bytes_received: u64,
     compressed_bytes: u64,
     compression_used: bool,
@@ -2691,6 +2692,12 @@ impl LocalCopySummary {
         self.bytes_copied
     }
 
+    /// Returns the aggregate number of bytes that were sent to the peer.
+    #[must_use]
+    pub const fn bytes_sent(&self) -> u64 {
+        self.bytes_sent
+    }
+
     /// Returns the aggregate number of bytes received during the transfer.
     #[must_use]
     pub const fn bytes_received(&self) -> u64 {
@@ -2749,8 +2756,9 @@ impl LocalCopySummary {
         self.files_copied = self.files_copied.saturating_add(1);
         self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
         self.bytes_copied = self.bytes_copied.saturating_add(literal_bytes);
-        let received = compressed.unwrap_or(literal_bytes);
-        self.bytes_received = self.bytes_received.saturating_add(received);
+        let transmitted = compressed.unwrap_or(literal_bytes);
+        self.bytes_sent = self.bytes_sent.saturating_add(transmitted);
+        self.bytes_received = self.bytes_received.saturating_add(transmitted);
         if let Some(compressed_bytes) = compressed {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
@@ -10953,6 +10961,31 @@ mod tests {
         let compressed = summary.compressed_bytes();
         assert!(compressed > 0);
         assert!(compressed <= summary.bytes_copied());
+        assert_eq!(summary.bytes_sent(), summary.bytes_received());
+        assert_eq!(summary.bytes_sent(), compressed);
+    }
+
+    #[test]
+    fn execute_records_transmitted_bytes_for_uncompressed_copy() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+        let payload = b"payload";
+        fs::write(&source, payload).expect("write source");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan.execute().expect("copy succeeds");
+
+        assert_eq!(fs::read(destination).expect("read dest"), payload);
+        let expected = payload.len() as u64;
+        assert_eq!(summary.bytes_copied(), expected);
+        assert_eq!(summary.bytes_sent(), expected);
+        assert_eq!(summary.bytes_received(), expected);
     }
 
     #[test]
