@@ -21,9 +21,11 @@ referenced functionality ships and parity is verified by tests or goldens.
     system `rsync` binary (configurable via `OC_RSYNC_FALLBACK`) so full network
     functionality remains available while the native transport and delta engine
     are built. Filter handling via `--exclude`/`--exclude-from`/`--include`/
-    `--include-from` and `--filter` with `+`/`-` actions, `exclude-if-present=FILE`, and `merge FILE`
-    directives mirrors rsync's glob semantics for local copies, but the
-    broader filter/merge language is still missing. Progress reporting now
+    `--include-from` and `--filter` with `+`/`-` actions, `show`/`hide`,
+    `protect`/`risk`, `exclude-if-present=FILE`, and `merge`/`dir-merge`
+    directives (including their `.`/`:` shorthands) mirrors rsync's glob
+    semantics for local copies, but the broader filter/merge language is still
+    missing. Progress reporting now
     emits streaming, carriage-return updates akin to upstream `rsync` while the
     richer statistics and delta-transfer metrics remain pending. The `--stats`
     flag emits a deterministic summary covering the counters implemented by the local copy

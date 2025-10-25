@@ -1523,6 +1523,19 @@ impl FilterRuleSpec {
         }
     }
 
+    /// Creates a receiver-only include rule equivalent to `risk PATTERN` or `R PATTERN`.
+    #[must_use]
+    #[doc(alias = "R")]
+    pub fn risk(pattern: impl Into<String>) -> Self {
+        Self {
+            kind: FilterRuleKind::Include,
+            pattern: pattern.into(),
+            dir_merge_options: None,
+            applies_to_sender: false,
+            applies_to_receiver: true,
+        }
+    }
+
     /// Creates a per-directory merge rule for the provided filter file pattern.
     #[must_use]
     pub fn dir_merge(pattern: impl Into<String>, options: DirMergeOptions) -> Self {
@@ -5615,11 +5628,8 @@ exit 42
     fn run_module_list_accepts_lowercase_proxy_status_line() {
         let responses = vec!["@RSYNCD: OK\n", "kappa\n", "@RSYNCD: EXIT\n"];
         let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
-        let (proxy_addr, _request_rx, proxy_handle) = spawn_stub_proxy(
-            daemon_addr,
-            None,
-            LOWERCASE_PROXY_STATUS_LINE,
-        );
+        let (proxy_addr, _request_rx, proxy_handle) =
+            spawn_stub_proxy(daemon_addr, None, LOWERCASE_PROXY_STATUS_LINE);
 
         let _env_lock = env_lock().lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(
