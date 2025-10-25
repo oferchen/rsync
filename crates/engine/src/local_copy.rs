@@ -64,6 +64,13 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime};
 
+#[cfg(unix)]
+use rustix::{
+    fd::AsFd,
+    fs::{FallocateFlags, fallocate},
+    io::Errno,
+};
+
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::BandwidthLimiter;
 use rsync_checksums::RollingChecksum;
@@ -1508,6 +1515,7 @@ pub struct LocalCopyOptions {
     delete_timing: DeleteTiming,
     delete_excluded: bool,
     remove_source_files: bool,
+    preallocate: bool,
     bandwidth_limit: Option<NonZeroU64>,
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
@@ -1561,6 +1569,7 @@ impl LocalCopyOptions {
             delete_timing: DeleteTiming::default(),
             delete_excluded: false,
             remove_source_files: false,
+            preallocate: false,
             bandwidth_limit: None,
             compress: false,
             compression_level_override: None,
@@ -1705,6 +1714,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--remove-sent-files")]
     pub const fn remove_source_files(mut self, remove: bool) -> Self {
         self.remove_source_files = remove;
+        self
+    }
+
+    /// Requests that destination files be preallocated before writing begins.
+    #[must_use]
+    #[doc(alias = "--preallocate")]
+    pub const fn preallocate(mut self, preallocate: bool) -> Self {
+        self.preallocate = preallocate;
         self
     }
 
@@ -2238,6 +2255,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn numeric_ids_enabled(&self) -> bool {
         self.numeric_ids
+    }
+
+    /// Returns whether destination files are preallocated before writing.
+    #[must_use]
+    pub const fn preallocate_enabled(&self) -> bool {
+        self.preallocate
     }
 
     #[cfg(feature = "acl")]
@@ -3124,6 +3147,10 @@ impl<'a> CopyContext<'a> {
 
     fn append_verify_enabled(&self) -> bool {
         self.options.append_verify_enabled()
+    }
+
+    fn preallocate_enabled(&self) -> bool {
+        self.options.preallocate_enabled()
     }
 
     fn devices_enabled(&self) -> bool {
@@ -5713,6 +5740,70 @@ fn find_reference_action(
     Ok(None)
 }
 
+fn maybe_preallocate_destination(
+    file: &mut fs::File,
+    path: &Path,
+    total_len: u64,
+    existing_bytes: u64,
+    enabled: bool,
+) -> Result<(), LocalCopyError> {
+    if !enabled || total_len == 0 || total_len <= existing_bytes {
+        return Ok(());
+    }
+
+    preallocate_destination_file(file, path, total_len)
+}
+
+fn preallocate_destination_file(
+    file: &mut fs::File,
+    path: &Path,
+    total_len: u64,
+) -> Result<(), LocalCopyError> {
+    #[cfg(unix)]
+    {
+        if total_len == 0 {
+            return Ok(());
+        }
+
+        if total_len > i64::MAX as u64 {
+            return Err(LocalCopyError::io(
+                "preallocate destination file",
+                path.to_path_buf(),
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "preallocation size exceeds platform limit",
+                ),
+            ));
+        }
+
+        let fd = file.as_fd();
+        match fallocate(&fd, FallocateFlags::empty(), 0, total_len) {
+            Ok(()) => Ok(()),
+            Err(errno) if matches!(errno, Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
+                file.set_len(total_len).map_err(|error| {
+                    LocalCopyError::io("preallocate destination file", path.to_path_buf(), error)
+                })
+            }
+            Err(errno) => Err(LocalCopyError::io(
+                "preallocate destination file",
+                path.to_path_buf(),
+                io::Error::from_raw_os_error(errno.raw_os_error()),
+            )),
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if total_len == 0 {
+            return Ok(());
+        }
+
+        file.set_len(total_len).map_err(|error| {
+            LocalCopyError::io("preallocate destination file", path.to_path_buf(), error)
+        })
+    }
+}
+
 fn copy_file(
     context: &mut CopyContext,
     source: &Path,
@@ -6235,6 +6326,17 @@ fn copy_file(
         guard = Some(new_guard);
         file
     };
+    let preallocate_target = guard
+        .as_ref()
+        .map(|existing_guard| existing_guard.staging_path())
+        .unwrap_or(destination);
+    maybe_preallocate_destination(
+        &mut writer,
+        preallocate_target,
+        file_size,
+        append_offset,
+        context.preallocate_enabled(),
+    )?;
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
 
     let start = Instant::now();
@@ -7730,6 +7832,29 @@ mod tests {
         let disabled = options.append(false);
         assert!(!disabled.append_enabled());
         assert!(!disabled.append_verify_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_preallocate_round_trip() {
+        let options = LocalCopyOptions::default().preallocate(true);
+        assert!(options.preallocate_enabled());
+        assert!(!LocalCopyOptions::default().preallocate_enabled());
+    }
+
+    #[test]
+    fn preallocate_destination_reserves_space() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("prealloc.bin");
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path)
+            .expect("create file");
+
+        maybe_preallocate_destination(&mut file, &path, 4096, 0, true).expect("preallocate file");
+
+        let metadata = fs::metadata(&path).expect("metadata");
+        assert_eq!(metadata.len(), 4096);
     }
 
     #[test]

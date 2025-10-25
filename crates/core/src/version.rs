@@ -1275,7 +1275,7 @@ impl VersionInfoConfig {
             supports_xattrs: cfg!(feature = "xattr"),
             secluded_args_mode: SecludedArgsMode::Optional,
             supports_iconv: cfg!(feature = "iconv"),
-            supports_prealloc: false,
+            supports_prealloc: true,
             supports_stop_at: false,
             supports_crtimes: false,
             supports_simd_roll: false,
