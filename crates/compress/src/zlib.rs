@@ -175,7 +175,7 @@ impl CountingZlibEncoder<CountingSink> {
     /// Creates a new encoder that counts the compressed output produced by zlib.
     #[must_use]
     pub fn new(level: CompressionLevel) -> Self {
-        Self::with_sink(CountingSink::default(), level)
+        Self::with_sink(CountingSink, level)
     }
 
     /// Completes the stream and returns the total number of compressed bytes generated.
