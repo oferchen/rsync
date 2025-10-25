@@ -1471,6 +1471,8 @@ pub enum DeleteTiming {
     Before,
     /// Remove extraneous entries as directories are processed.
     During,
+    /// Record deletions during the walk and apply them after transfers finish.
+    Delay,
     /// Remove extraneous entries after the full transfer completes.
     After,
 }
@@ -1693,6 +1695,20 @@ impl LocalCopyOptions {
             self.delete = true;
             self.delete_timing = DeleteTiming::After;
         } else if self.delete && matches!(self.delete_timing, DeleteTiming::After) {
+            self.delete = false;
+            self.delete_timing = DeleteTiming::default();
+        }
+        self
+    }
+
+    /// Queues deletions discovered during the walk and applies them after transfers finish.
+    #[must_use]
+    #[doc(alias = "--delete-delay")]
+    pub const fn delete_delay(mut self, delete_delay: bool) -> Self {
+        if delete_delay {
+            self.delete = true;
+            self.delete_timing = DeleteTiming::Delay;
+        } else if self.delete && matches!(self.delete_timing, DeleteTiming::Delay) {
             self.delete = false;
             self.delete_timing = DeleteTiming::default();
         }
@@ -2144,6 +2160,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn delete_after_enabled(&self) -> bool {
         matches!(self.delete_timing, DeleteTiming::After) && self.delete
+    }
+
+    /// Reports whether deletions are deferred until after transfers but determined during the walk.
+    #[must_use]
+    pub const fn delete_delay_enabled(&self) -> bool {
+        matches!(self.delete_timing, DeleteTiming::Delay) && self.delete
     }
 
     /// Reports whether deletions should occur while processing directory entries.
@@ -6039,7 +6061,7 @@ fn copy_directory_recursive(
             DeleteTiming::During => {
                 delete_extraneous_entries(context, destination, relative, &keep_names)?;
             }
-            DeleteTiming::After => {
+            DeleteTiming::Delay | DeleteTiming::After => {
                 let relative_owned = relative.map(Path::to_path_buf);
                 context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
             }
@@ -8216,6 +8238,13 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_delete_delay_round_trip() {
+        let options = LocalCopyOptions::default().delete_delay(true);
+        assert!(options.delete_delay_enabled());
+        assert!(!LocalCopyOptions::default().delete_delay_enabled());
+    }
+
+    #[test]
     fn local_copy_options_checksum_round_trip() {
         let options = LocalCopyOptions::default().checksum(true);
         assert!(options.checksum_enabled());
@@ -10250,6 +10279,37 @@ mod tests {
         let operands = vec![source_operand, dest_root.clone().into_os_string()];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
         let options = LocalCopyOptions::default().delete_after(true);
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(dest_root.join("keep.txt")).expect("read keep"),
+            b"fresh"
+        );
+        assert!(!dest_root.join("extra.txt").exists());
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.items_deleted(), 1);
+    }
+
+    #[test]
+    fn execute_with_delete_delay_removes_extraneous_entries() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::write(source_root.join("keep.txt"), b"fresh").expect("write keep");
+
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
+        fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
+
+        let mut source_operand = source_root.clone().into_os_string();
+        source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+        let operands = vec![source_operand, dest_root.clone().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default().delete_delay(true);
 
         let summary = plan
             .execute_with_options(LocalCopyExecution::Apply, options)

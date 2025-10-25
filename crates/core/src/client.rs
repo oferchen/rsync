@@ -3564,7 +3564,7 @@ fn build_local_copy_options(
     options = match config.delete_mode() {
         DeleteMode::Before => options.delete_before(true),
         DeleteMode::After => options.delete_after(true),
-        DeleteMode::Delay => options.delete_after(true),
+        DeleteMode::Delay => options.delete_delay(true),
         DeleteMode::During | DeleteMode::Disabled => options,
     };
     options = options
