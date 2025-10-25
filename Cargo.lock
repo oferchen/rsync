@@ -613,6 +613,7 @@ dependencies = [
  "rsync-daemon",
  "rsync-filters",
  "rsync-logging",
+ "rsync-meta",
  "rsync-protocol",
  "rustix 0.38.44",
  "tempfile",
