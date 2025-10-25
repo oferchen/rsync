@@ -153,7 +153,7 @@ const HELP_TEXT: &str = concat!(
     "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
     "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
@@ -1361,7 +1361,7 @@ fn clap_command() -> ClapCommand {
             Arg::new("filter")
                 .long("filter")
                 .value_name("RULE")
-                .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'merge[,MODS] FILE', and 'dir-merge[,MODS] FILE').")
+                .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE').")
                 .value_parser(OsStringValueParser::new())
                 .action(ArgAction::Append),
         )
@@ -4274,6 +4274,99 @@ fn merge_directive_options(base: &DirMergeOptions, directive: &MergeDirective) -
     merged
 }
 
+fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
+    if text.is_empty() {
+        return ("", "");
+    }
+
+    if let Some(rest) = text.strip_prefix(',') {
+        let mut parts = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
+        let modifiers = parts.next().unwrap_or("");
+        let remainder = parts.next().unwrap_or("");
+        let remainder =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        return (modifiers, remainder);
+    }
+
+    let mut chars = text.chars();
+    match chars.next() {
+        None => ("", ""),
+        Some(first) if first.is_ascii_whitespace() || first == '_' => {
+            let remainder =
+                text.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            ("", remainder)
+        }
+        Some(_) => {
+            let mut len = 0;
+            for ch in text.chars() {
+                if ch.is_ascii_whitespace() || ch == '_' {
+                    break;
+                }
+                len += ch.len_utf8();
+            }
+            let modifiers = &text[..len];
+            let remainder =
+                text[len..].trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            (modifiers, remainder)
+        }
+    }
+}
+
+fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    let (allow_extended, label) = match first {
+        '.' => (false, "merge"),
+        ':' => (true, "dir-merge"),
+        _ => return None,
+    };
+
+    let remainder = chars.as_str();
+    let (modifiers, rest) = split_short_rule_modifiers(remainder);
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, text, allow_extended) {
+        Ok(result) => result,
+        Err(error) => return Some(Err(error)),
+    };
+
+    let pattern = rest.trim();
+    let pattern = if pattern.is_empty() {
+        if assume_cvsignore {
+            ".cvsignore"
+        } else if allow_extended {
+            let message = rsync_error!(
+                1,
+                format!("filter rule '{text}' is missing a file name after '{label}'")
+            )
+            .with_role(Role::Client);
+            return Some(Err(message));
+        } else {
+            let message = rsync_error!(
+                1,
+                format!("filter merge directive '{text}' is missing a file path")
+            )
+            .with_role(Role::Client);
+            return Some(Err(message));
+        }
+    } else {
+        pattern
+    };
+
+    if allow_extended {
+        let rule = FilterRuleSpec::dir_merge(pattern.to_string(), options.clone());
+        return Some(Ok(FilterDirective::Rule(rule)));
+    }
+
+    let enforced_kind = match options.enforced_kind() {
+        Some(DirMergeEnforcedKind::Include) => Some(FilterRuleKind::Include),
+        Some(DirMergeEnforcedKind::Exclude) => Some(FilterRuleKind::Exclude),
+        None => None,
+    };
+
+    let directive =
+        MergeDirective::new(OsString::from(pattern), enforced_kind).with_options(options);
+    Some(Ok(FilterDirective::Merge(directive)))
+}
+
 fn parse_filter_shorthand(
     trimmed: &str,
     short: char,
@@ -4293,15 +4386,15 @@ fn parse_filter_shorthand(
         return Some(Err(message));
     }
 
-    if !remainder
+    let first_non_space = remainder
         .chars()
         .next()
-        .is_some_and(|ch| ch.is_ascii_whitespace())
-    {
+        .filter(|ch| ch.is_ascii_whitespace() || *ch == '_');
+    if first_non_space.is_none() {
         return None;
     }
 
-    let pattern = remainder.trim_start();
+    let pattern = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     if pattern.is_empty() {
         let text = format!("filter rule '{trimmed}' is missing a pattern after '{label}'");
         let message = rsync_error!(1, text).with_role(Role::Client);
@@ -4488,17 +4581,25 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     let text = argument.to_string_lossy();
     let trimmed_leading = text.trim_start();
 
+    if let Some(result) = parse_short_merge_directive(trimmed_leading) {
+        return result;
+    }
+
     if let Some(rest) = trimmed_leading.strip_prefix("merge") {
-        let mut remainder = rest.trim_start();
+        let mut remainder =
+            rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         let mut modifiers = "";
         if let Some(next) = remainder.strip_prefix(',') {
-            let mut split = next.splitn(2, char::is_whitespace);
+            let mut split = next.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
             modifiers = split.next().unwrap_or("");
-            remainder = split.next().unwrap_or("").trim_start();
+            remainder = split
+                .next()
+                .unwrap_or("")
+                .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         }
         let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed_leading, false)?;
 
-        let mut path_text = remainder.trim();
+        let mut path_text = remainder.trim_end();
         if path_text.is_empty() {
             if assume_cvsignore {
                 path_text = ".cvsignore";
@@ -4558,13 +4659,18 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return result;
     }
 
+    if let Some(result) = parse_filter_shorthand(trimmed, 'R', "R", FilterRuleSpec::risk) {
+        return result;
+    }
+
     if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
         && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
             .eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
     {
-        let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..].trim_start();
+        let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..]
+            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if let Some(rest) = remainder.strip_prefix('=') {
-            remainder = rest.trim_start();
+            remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         }
 
         let pattern_text = remainder.trim();
@@ -4585,7 +4691,8 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     }
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
-        let pattern = remainder.trim_start();
+        let pattern =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if pattern.is_empty() {
             let message = rsync_error!(
                 1,
@@ -4601,7 +4708,8 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     }
 
     if let Some(remainder) = trimmed.strip_prefix('-') {
-        let pattern = remainder.trim_start();
+        let pattern =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if pattern.is_empty() {
             let message = rsync_error!(
                 1,
@@ -4621,17 +4729,21 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     if trimmed.len() >= DIR_MERGE_PREFIX.len()
         && trimmed[..DIR_MERGE_PREFIX.len()].eq_ignore_ascii_case(DIR_MERGE_PREFIX)
     {
-        let mut remainder = trimmed[DIR_MERGE_PREFIX.len()..].trim_start();
+        let mut remainder = trimmed[DIR_MERGE_PREFIX.len()..]
+            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         let mut modifiers = "";
         if let Some(rest) = remainder.strip_prefix(',') {
-            let mut split = rest.splitn(2, char::is_whitespace);
+            let mut split = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
             modifiers = split.next().unwrap_or("");
-            remainder = split.next().unwrap_or("").trim_start();
+            remainder = split
+                .next()
+                .unwrap_or("")
+                .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         }
 
         let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, trimmed, true)?;
 
-        let mut path_text = remainder.trim();
+        let mut path_text = remainder.trim_end();
         if path_text.is_empty() {
             if assume_cvsignore {
                 path_text = ".cvsignore";
@@ -4651,7 +4763,7 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
     let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
-    let pattern = remainder.trim_start();
+    let pattern = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
 
     let handle_keyword = |action_label: &str, builder: fn(String) -> FilterRuleSpec| {
         if pattern.is_empty() {
@@ -4684,9 +4796,13 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return handle_keyword("protect", FilterRuleSpec::protect);
     }
 
+    if keyword.eq_ignore_ascii_case("risk") {
+        return handle_keyword("risk", FilterRuleSpec::risk);
+    }
+
     let message = rsync_error!(
         1,
-        "unsupported filter rule '{}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'merge FILE', and 'dir-merge[,MODS] FILE' directives",
+        "unsupported filter rule '{}': this build currently supports only '+' (include), '-' (exclude), '!' (clear), 'include PATTERN', 'exclude PATTERN', 'show PATTERN', 'hide PATTERN', 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' directives",
         trimmed
     )
     .with_role(Role::Client);
@@ -8142,6 +8258,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_risk_keyword_and_shorthand() {
+        let risk_keyword =
+            parse_filter_directive(OsStr::new("risk backups/**")).expect("keyword risk parses");
+        assert_eq!(
+            risk_keyword,
+            FilterDirective::Rule(FilterRuleSpec::risk("backups/**".to_string()))
+        );
+
+        let risk_shorthand =
+            parse_filter_directive(OsStr::new("R logs/**")).expect("shorthand risk parses");
+        assert_eq!(
+            risk_shorthand,
+            FilterDirective::Rule(FilterRuleSpec::risk("logs/**".to_string()))
+        );
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
         let protect =
             parse_filter_directive(OsStr::new("P backups/**")).expect("shorthand protect parses");
@@ -8275,6 +8408,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_accepts_short_merge() {
+        let directive =
+            parse_filter_directive(OsStr::new(". per-dir")).expect("short merge directive parses");
+        let (options, _) = parse_merge_modifiers("", ". per-dir", false).expect("modifiers");
+        let expected = MergeDirective::new(OsString::from("per-dir"), None).with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_short_merge_with_cvs_alias() {
+        let directive = parse_filter_directive(OsStr::new(".C"))
+            .expect("short merge directive with 'C' parses");
+        let (options, _) = parse_merge_modifiers("C", ".C", false).expect("modifiers");
+        let expected =
+            MergeDirective::new(OsString::from(".cvsignore"), Some(FilterRuleKind::Exclude))
+                .with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
+    }
+
+    #[test]
     fn parse_filter_directive_rejects_merge_with_unknown_modifier() {
         let error = parse_filter_directive(OsStr::new("merge,x rules"))
             .expect_err("merge with unsupported modifier should error");
@@ -8324,6 +8477,39 @@ mod tests {
         assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
         assert!(options.inherit_rules());
         assert!(!options.excludes_self());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_short_dir_merge() {
+        let directive = parse_filter_directive(OsStr::new(": rules"))
+            .expect("short dir-merge directive parses");
+
+        let FilterDirective::Rule(rule) = directive else {
+            panic!("expected dir-merge rule");
+        };
+
+        assert_eq!(rule.pattern(), "rules");
+        let options = rule
+            .dir_merge_options()
+            .expect("dir-merge rule returns options");
+        assert!(options.inherit_rules());
+        assert!(!options.excludes_self());
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_short_dir_merge_with_exclude_modifier() {
+        let directive = parse_filter_directive(OsStr::new(":- per-dir"))
+            .expect("short dir-merge with '-' modifier parses");
+
+        let FilterDirective::Rule(rule) = directive else {
+            panic!("expected dir-merge rule");
+        };
+
+        assert_eq!(rule.pattern(), "per-dir");
+        let options = rule
+            .dir_merge_options()
+            .expect("dir-merge rule returns options");
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
     }
 
     #[test]
