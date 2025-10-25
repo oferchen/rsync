@@ -301,6 +301,8 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -348,6 +350,8 @@ impl Default for ClientConfig {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            owner_override: None,
+            group_override: None,
             omit_dir_times: false,
             compress: false,
             compression_level: None,
@@ -509,11 +513,23 @@ impl ClientConfig {
         self.preserve_owner
     }
 
+    /// Returns the configured ownership override, if any.
+    #[must_use]
+    pub const fn owner_override(&self) -> Option<u32> {
+        self.owner_override
+    }
+
     /// Reports whether group preservation was requested.
     #[must_use]
     #[doc(alias = "--group")]
     pub const fn preserve_group(&self) -> bool {
         self.preserve_group
+    }
+
+    /// Returns the configured group override, if any.
+    #[must_use]
+    pub const fn group_override(&self) -> Option<u32> {
+        self.group_override
     }
 
     /// Reports whether permissions should be preserved.
@@ -735,6 +751,8 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -887,11 +905,27 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Applies an explicit ownership override using numeric identifiers.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn owner_override(mut self, owner: Option<u32>) -> Self {
+        self.owner_override = owner;
+        self
+    }
+
     /// Requests that group metadata be preserved.
     #[must_use]
     #[doc(alias = "--group")]
     pub const fn group(mut self, preserve: bool) -> Self {
         self.preserve_group = preserve;
+        self
+    }
+
+    /// Applies an explicit group override using numeric identifiers.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn group_override(mut self, group: Option<u32>) -> Self {
+        self.group_override = group;
         self
     }
 
@@ -1204,6 +1238,8 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            owner_override: self.owner_override,
+            group_override: self.group_override,
             omit_dir_times: self.omit_dir_times,
             compress: self.compress,
             compression_level: self.compression_level,
@@ -1738,6 +1774,8 @@ pub struct RemoteFallbackArgs {
     pub compress_disabled: bool,
     /// Optional compression level forwarded via `--compress-level`.
     pub compress_level: Option<OsString>,
+    /// Optional ownership override forwarded via `--chown`.
+    pub chown: Option<OsString>,
     /// Optional `--owner`/`--no-owner` toggle.
     pub owner: Option<bool>,
     /// Optional `--group`/`--no-group` toggle.
@@ -1905,6 +1943,7 @@ where
         compress,
         compress_disabled,
         compress_level,
+        chown,
         owner,
         group,
         perms,
@@ -2000,6 +2039,12 @@ where
     if let Some(level) = compress_level {
         command_args.push(OsString::from("--compress-level"));
         command_args.push(level);
+    }
+
+    if let Some(spec) = chown {
+        let mut arg = OsString::from("--chown=");
+        arg.push(spec);
+        command_args.push(arg);
     }
 
     push_toggle(&mut command_args, "--owner", "--no-owner", owner);
@@ -3040,7 +3085,9 @@ fn build_local_copy_options(
         .compress(config.compress())
         .with_compression_level_override(config.compression_level())
         .owner(config.preserve_owner())
+        .with_owner_override(config.owner_override())
         .group(config.preserve_group())
+        .with_group_override(config.group_override())
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
         .omit_dir_times(config.omit_dir_times())
@@ -3181,6 +3228,7 @@ exit 42
             compress: false,
             compress_disabled: false,
             compress_level: None,
+            chown: None,
             owner: None,
             group: None,
             perms: None,

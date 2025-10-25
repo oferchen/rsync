@@ -1406,6 +1406,8 @@ pub struct LocalCopyOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
     omit_dir_times: bool,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
@@ -1451,6 +1453,8 @@ impl LocalCopyOptions {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            owner_override: None,
+            group_override: None,
             omit_dir_times: false,
             #[cfg(feature = "acl")]
             preserve_acls: false,
@@ -1633,11 +1637,27 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Applies an explicit ownership override to transferred entries.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn with_owner_override(mut self, owner: Option<u32>) -> Self {
+        self.owner_override = owner;
+        self
+    }
+
     /// Requests that the group be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--group")]
     pub const fn group(mut self, preserve: bool) -> Self {
         self.preserve_group = preserve;
+        self
+    }
+
+    /// Applies an explicit group override to transferred entries.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn with_group_override(mut self, group: Option<u32>) -> Self {
+        self.group_override = group;
         self
     }
 
@@ -1934,10 +1954,22 @@ impl LocalCopyOptions {
         self.preserve_owner
     }
 
+    /// Returns the configured ownership override, if any.
+    #[must_use]
+    pub const fn owner_override(&self) -> Option<u32> {
+        self.owner_override
+    }
+
     /// Reports whether group preservation has been requested.
     #[must_use]
     pub const fn preserve_group(&self) -> bool {
         self.preserve_group
+    }
+
+    /// Returns the configured group override, if any.
+    #[must_use]
+    pub const fn group_override(&self) -> Option<u32> {
+        self.group_override
     }
 
     /// Reports whether permissions should be preserved.
@@ -2607,6 +2639,8 @@ impl<'a> CopyContext<'a> {
             .preserve_permissions(self.options.preserve_permissions())
             .preserve_times(self.options.preserve_times())
             .numeric_ids(self.options.numeric_ids_enabled())
+            .with_owner_override(self.options.owner_override())
+            .with_group_override(self.options.group_override())
     }
 
     fn copy_links_enabled(&self) -> bool {
