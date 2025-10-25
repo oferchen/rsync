@@ -387,6 +387,7 @@ pub struct ClientConfig {
     update: bool,
     numeric_ids: bool,
     preallocate: bool,
+    preserve_hard_links: bool,
     filter_rules: Vec<FilterRuleSpec>,
     debug_flags: Vec<OsString>,
     sparse: bool,
@@ -450,6 +451,7 @@ impl Default for ClientConfig {
             update: false,
             numeric_ids: false,
             preallocate: false,
+            preserve_hard_links: false,
             filter_rules: Vec::new(),
             debug_flags: Vec::new(),
             sparse: false,
@@ -796,6 +798,13 @@ impl ClientConfig {
         self.numeric_ids
     }
 
+    /// Returns whether hard links should be preserved when copying files.
+    #[must_use]
+    #[doc(alias = "--hard-links")]
+    pub const fn preserve_hard_links(&self) -> bool {
+        self.preserve_hard_links
+    }
+
     /// Reports whether destination files should be preallocated before writing.
     #[doc(alias = "--preallocate")]
     pub const fn preallocate(&self) -> bool {
@@ -967,6 +976,7 @@ pub struct ClientConfigBuilder {
     update: bool,
     numeric_ids: bool,
     preallocate: bool,
+    preserve_hard_links: bool,
     filter_rules: Vec<FilterRuleSpec>,
     debug_flags: Vec<OsString>,
     sparse: bool,
@@ -1146,6 +1156,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--preallocate")]
     pub const fn preallocate(mut self, preallocate: bool) -> Self {
         self.preallocate = preallocate;
+        self
+    }
+
+    /// Enables or disables preservation of hard links between files.
+    #[must_use]
+    #[doc(alias = "--hard-links")]
+    pub const fn hard_links(mut self, preserve: bool) -> Self {
+        self.preserve_hard_links = preserve;
         self
     }
 
@@ -1624,6 +1642,7 @@ impl ClientConfigBuilder {
             update: self.update,
             numeric_ids: self.numeric_ids,
             preallocate: self.preallocate,
+            preserve_hard_links: self.preserve_hard_links,
             filter_rules: self.filter_rules,
             debug_flags: self.debug_flags,
             sparse: self.sparse,
@@ -2227,6 +2246,8 @@ pub struct RemoteFallbackArgs {
     pub omit_dir_times: Option<bool>,
     /// Optional `--numeric-ids`/`--no-numeric-ids` toggle.
     pub numeric_ids: Option<bool>,
+    /// Optional `--hard-links`/`--no-hard-links` toggle.
+    pub hard_links: Option<bool>,
     /// Optional `--copy-links`/`--no-copy-links` toggle.
     pub copy_links: Option<bool>,
     /// Enables `--copy-dirlinks` when `true`.
@@ -2426,6 +2447,7 @@ where
         times,
         omit_dir_times,
         numeric_ids,
+        hard_links,
         copy_links,
         copy_dirlinks,
         keep_dirlinks,
@@ -2563,6 +2585,12 @@ where
         "--numeric-ids",
         "--no-numeric-ids",
         numeric_ids,
+    );
+    push_toggle(
+        &mut command_args,
+        "--hard-links",
+        "--no-hard-links",
+        hard_links,
     );
     push_toggle(
         &mut command_args,
@@ -3713,6 +3741,7 @@ fn build_local_copy_options(
         .with_filter_program(filter_program)
         .numeric_ids(config.numeric_ids())
         .preallocate(config.preallocate())
+        .hard_links(config.preserve_hard_links())
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
@@ -3877,6 +3906,7 @@ exit 42
             times: None,
             omit_dir_times: None,
             numeric_ids: None,
+            hard_links: None,
             copy_links: None,
             copy_dirlinks: false,
             keep_dirlinks: None,
@@ -4456,6 +4486,17 @@ exit 42
 
         assert!(config.preserve_specials());
         assert!(!config.preserve_devices());
+    }
+
+    #[test]
+    fn builder_preserves_hard_links_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .hard_links(true)
+            .build();
+
+        assert!(config.preserve_hard_links());
+        assert!(!ClientConfig::default().preserve_hard_links());
     }
 
     #[cfg(feature = "acl")]
