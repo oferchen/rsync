@@ -461,8 +461,9 @@ fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
     cache: &'a mut Option<Option<String>>,
     peer_ip: IpAddr,
+    allow_lookup: bool,
 ) -> Option<&'a str> {
-    if !module.requires_hostname_lookup() {
+    if !allow_lookup || !module.requires_hostname_lookup() {
         return None;
     }
 
@@ -553,6 +554,8 @@ struct RuntimeOptions {
     global_refuse_options: Option<Vec<String>>,
     pid_file: Option<PathBuf>,
     pid_file_from_config: bool,
+    reverse_lookup: bool,
+    reverse_lookup_configured: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -572,6 +575,8 @@ impl Default for RuntimeOptions {
             global_refuse_options: None,
             pid_file: None,
             pid_file_from_config: false,
+            reverse_lookup: true,
+            reverse_lookup_configured: false,
         }
     }
 }
@@ -771,6 +776,10 @@ impl RuntimeOptions {
             self.set_config_pid_file(pid_file, &origin)?;
         }
 
+        if let Some((reverse_lookup, origin)) = parsed.reverse_lookup {
+            self.set_reverse_lookup_from_config(reverse_lookup, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -832,6 +841,11 @@ impl RuntimeOptions {
         self.pid_file.as_deref()
     }
 
+    #[cfg(test)]
+    fn reverse_lookup(&self) -> bool {
+        self.reverse_lookup
+    }
+
     fn inherit_global_refuse_options(
         &mut self,
         options: Vec<String>,
@@ -878,6 +892,24 @@ impl RuntimeOptions {
 
         self.pid_file = Some(path);
         self.pid_file_from_config = true;
+        Ok(())
+    }
+
+    fn set_reverse_lookup_from_config(
+        &mut self,
+        value: bool,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if self.reverse_lookup_configured {
+            return Err(config_parse_error(
+                &origin.path,
+                origin.line,
+                "duplicate 'reverse lookup' directive in global section",
+            ));
+        }
+
+        self.reverse_lookup = value;
+        self.reverse_lookup_configured = true;
         Ok(())
     }
 
@@ -941,6 +973,7 @@ struct ParsedConfigModules {
     global_refuse_options: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
     motd_lines: Vec<String>,
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -974,6 +1007,7 @@ fn parse_config_modules_inner(
     let mut global_refuse_line: Option<usize> = None;
     let mut motd_lines = Vec::new();
     let mut pid_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
+    let mut reverse_lookup: Option<(bool, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1297,6 +1331,36 @@ fn parse_config_modules_inner(
                         ));
                     }
                 }
+                "reverse lookup" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{}' for 'reverse lookup'", value),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &reverse_lookup {
+                        if *existing != parsed {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
+                                    existing_origin.line
+                                ),
+                            ));
+                        }
+                        continue;
+                    }
+
+                    reverse_lookup = Some((parsed, origin));
+                }
                 _ => {
                     return Err(config_parse_error(
                         path,
@@ -1316,6 +1380,7 @@ fn parse_config_modules_inner(
             global_refuse_options: global_refuse_directives,
             motd_lines,
             pid_file,
+            reverse_lookup,
         })
     })();
 
@@ -2359,6 +2424,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         bandwidth_limit,
         log_file,
         pid_file,
+        reverse_lookup,
         ..
     } = options;
 
@@ -2414,6 +2480,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         motd_vec.as_slice(),
                         bandwidth_limit,
                         log_for_worker,
+                        reverse_lookup,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -2550,11 +2617,16 @@ fn handle_session(
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     let style = detect_session_style(&stream)?;
     configure_stream(&stream)?;
 
-    let peer_host = resolve_peer_hostname(peer_addr.ip());
+    let peer_host = if reverse_lookup {
+        resolve_peer_hostname(peer_addr.ip())
+    } else {
+        None
+    };
     if let Some(log) = log_sink.as_ref() {
         log_connection(log, peer_host.as_deref(), peer_addr);
     }
@@ -2569,6 +2641,7 @@ fn handle_session(
             daemon_limit,
             log_sink,
             peer_host,
+            reverse_lookup,
         ),
     }
 }
@@ -2633,6 +2706,7 @@ fn handle_legacy_session(
     daemon_limit: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     peer_host: Option<String>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
@@ -2689,6 +2763,7 @@ fn handle_legacy_session(
             modules,
             motd_lines,
             peer_addr.ip(),
+            reverse_lookup,
         )?;
     } else if request.is_empty() {
         write_limited(
@@ -2710,6 +2785,7 @@ fn handle_legacy_session(
             peer_host.as_deref(),
             &refused_options,
             log_sink.as_ref(),
+            reverse_lookup,
         )?;
     }
 
@@ -2828,6 +2904,7 @@ fn respond_with_module_list(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     peer_ip: IpAddr,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
@@ -2848,7 +2925,7 @@ fn respond_with_module_list(
             continue;
         }
 
-        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
         if !module.permits(peer_ip, peer_host) {
             continue;
         }
@@ -3040,12 +3117,14 @@ fn respond_with_module_request(
     session_peer_host: Option<&str>,
     options: &[String],
     log_sink: Option<&SharedLogSink>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
 
         let mut hostname_cache: Option<Option<String>> = None;
-        let module_peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        let module_peer_host =
+            module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
         if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
@@ -4169,7 +4248,7 @@ mod tests {
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         set_test_hostname_override(peer, Some("Trusted.Example.Com"));
         let mut cache = None;
-        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        let resolved = module_peer_hostname(&module, &mut cache, peer, true);
         assert_eq!(resolved, Some("trusted.example.com"));
         assert!(module.permits(peer, resolved));
         clear_test_hostname_overrides();
@@ -4181,11 +4260,24 @@ mod tests {
         let module = module_with_host_patterns(&["trusted.example.com"], &[]);
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let mut cache = None;
-        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        let resolved = module_peer_hostname(&module, &mut cache, peer, true);
         if let Some(host) = resolved {
             assert_ne!(host, "trusted.example.com");
         }
         assert!(!module.permits(peer, resolved));
+    }
+
+    #[test]
+    fn module_peer_hostname_skips_lookup_when_disabled() {
+        clear_test_hostname_overrides();
+        let module = module_with_host_patterns(&["trusted.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        set_test_hostname_override(peer, Some("trusted.example.com"));
+        let mut cache = None;
+        let resolved = module_peer_hostname(&module, &mut cache, peer, false);
+        assert!(resolved.is_none());
+        assert!(!module.permits(peer, resolved));
+        clear_test_hostname_overrides();
     }
 
     #[test]
@@ -5066,6 +5158,48 @@ mod tests {
         ];
 
         assert_eq!(options.motd_lines(), expected.as_slice());
+    }
+
+    #[test]
+    fn runtime_options_default_enables_reverse_lookup() {
+        let options = RuntimeOptions::parse(&[]).expect("parse defaults");
+        assert!(options.reverse_lookup());
+    }
+
+    #[test]
+    fn runtime_options_loads_reverse_lookup_from_config() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            "reverse lookup = no\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let args = [
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse config");
+        assert!(!options.reverse_lookup());
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_reverse_lookup_directive() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            "reverse lookup = yes\nreverse lookup = no\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let args = [
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ];
+        let error = RuntimeOptions::parse(&args).expect_err("duplicate reverse lookup");
+        assert!(format!("{error}").contains("reverse lookup"));
     }
 
     #[test]
