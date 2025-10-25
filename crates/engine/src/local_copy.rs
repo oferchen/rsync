@@ -440,6 +440,12 @@ impl FilterProgram {
                 FilterProgramEntry::Rule(rule) => {
                     current_segment.push_rule(rule)?;
                 }
+                FilterProgramEntry::Clear => {
+                    current_segment = FilterSegment::default();
+                    instructions.clear();
+                    dir_merge_rules.clear();
+                    exclude_if_present_rules.clear();
+                }
                 FilterProgramEntry::DirMerge(rule) => {
                     if !current_segment.is_empty() || instructions.is_empty() {
                         instructions.push(FilterInstruction::Segment(current_segment));
@@ -562,6 +568,8 @@ enum FilterContext {
 pub enum FilterProgramEntry {
     /// Static include/exclude/protect rule.
     Rule(FilterRule),
+    /// Clears any rules accumulated so far, mirroring the `!` directive.
+    Clear,
     /// Per-directory merge directive.
     DirMerge(DirMergeRule),
     /// Exclude a directory when the marker file is present.
@@ -10205,6 +10213,45 @@ mod tests {
         let target_root = destination_root.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert!(!target_root.join("skip").exists());
+    }
+
+    #[test]
+    fn filter_program_clear_discards_previous_rules() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source");
+        fs::create_dir_all(&destination_root).expect("create dest");
+
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source_root.join("skip.tmp"), b"tmp").expect("write tmp");
+        fs::write(source_root.join("skip.bak"), b"bak").expect("write bak");
+
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let program = FilterProgram::new([
+            FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
+            FilterProgramEntry::Clear,
+            FilterProgramEntry::Rule(FilterRule::exclude("*.bak")),
+        ])
+        .expect("compile filter program");
+
+        let options = LocalCopyOptions::default().with_filter_program(Some(program));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = destination_root.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(
+            target_root.join("skip.tmp").exists(),
+            "list-clearing rule should discard earlier excludes"
+        );
+        assert!(!target_root.join("skip.bak").exists());
     }
 
     #[test]

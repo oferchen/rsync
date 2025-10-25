@@ -146,17 +146,15 @@ use dns_lookup::lookup_addr;
 use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-#[cfg(test)]
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
@@ -174,6 +172,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
+use fs2::FileExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -218,6 +217,9 @@ const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when a module reaches its connection cap.
 const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
+/// Error payload returned when updating the connection lock file fails.
+const MODULE_LOCK_ERROR_PAYLOAD: &str =
+    "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 
@@ -242,6 +244,7 @@ const HELP_TEXT: &str = concat!(
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
+    "  --lock-file FILE   Track module connection limits across processes using FILE.\n",
     "  --pid-file FILE    Write the daemon PID to FILE for process supervision.\n",
     "  --bwlimit=RATE     Limit per-connection bandwidth in KiB/s (0 = unlimited).\n",
     "  --no-bwlimit       Remove any per-connection bandwidth limit configured so far.\n",
@@ -378,37 +381,75 @@ impl ModuleDefinition {
 struct ModuleRuntime {
     definition: ModuleDefinition,
     active_connections: AtomicU32,
+    connection_limiter: Option<Arc<ConnectionLimiter>>,
+}
+
+#[derive(Debug)]
+enum ModuleConnectionError {
+    Limit(NonZeroU32),
+    Io(io::Error),
+}
+
+impl ModuleConnectionError {
+    fn io(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<io::Error> for ModuleConnectionError {
+    fn from(error: io::Error) -> Self {
+        ModuleConnectionError::Io(error)
+    }
 }
 
 impl ModuleRuntime {
-    fn new(definition: ModuleDefinition) -> Self {
+    fn new(
+        definition: ModuleDefinition,
+        connection_limiter: Option<Arc<ConnectionLimiter>>,
+    ) -> Self {
         Self {
             definition,
             active_connections: AtomicU32::new(0),
+            connection_limiter,
         }
     }
 
-    fn try_acquire_connection(&self) -> Result<ModuleConnectionGuard<'_>, NonZeroU32> {
+    fn try_acquire_connection(&self) -> Result<ModuleConnectionGuard<'_>, ModuleConnectionError> {
         if let Some(limit) = self.definition.max_connections() {
-            let limit_value = limit.get();
-            let mut current = self.active_connections.load(Ordering::Acquire);
-            loop {
-                if current >= limit_value {
-                    return Err(limit);
-                }
-
-                match self.active_connections.compare_exchange(
-                    current,
-                    current + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => return Ok(ModuleConnectionGuard::limited(self)),
-                    Err(updated) => current = updated,
+            if let Some(limiter) = &self.connection_limiter {
+                match limiter.acquire(&self.definition.name, limit) {
+                    Ok(lock_guard) => {
+                        self.acquire_local_slot(limit)?;
+                        return Ok(ModuleConnectionGuard::limited(self, Some(lock_guard)));
+                    }
+                    Err(error) => return Err(error),
                 }
             }
+
+            self.acquire_local_slot(limit)?;
+            Ok(ModuleConnectionGuard::limited(self, None))
         } else {
             Ok(ModuleConnectionGuard::unlimited())
+        }
+    }
+
+    fn acquire_local_slot(&self, limit: NonZeroU32) -> Result<(), ModuleConnectionError> {
+        let limit_value = limit.get();
+        let mut current = self.active_connections.load(Ordering::Acquire);
+        loop {
+            if current >= limit_value {
+                return Err(ModuleConnectionError::Limit(limit));
+            }
+
+            match self.active_connections.compare_exchange(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(updated) => current = updated,
+            }
         }
     }
 
@@ -419,9 +460,141 @@ impl ModuleRuntime {
     }
 }
 
+struct ConnectionLimiter {
+    path: PathBuf,
+}
+
+impl ConnectionLimiter {
+    fn open(path: PathBuf) -> Result<Self, DaemonError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
+            }
+        }
+
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| lock_file_error(&path, error))?;
+
+        drop(file);
+
+        Ok(Self { path })
+    }
+
+    fn acquire(
+        self: &Arc<Self>,
+        module: &str,
+        limit: NonZeroU32,
+    ) -> Result<ConnectionLockGuard, ModuleConnectionError> {
+        let mut file = self.open_file().map_err(ModuleConnectionError::io)?;
+        file.lock_exclusive().map_err(ModuleConnectionError::io)?;
+
+        let result = self.increment_count(&mut file, module, limit);
+        let unlock_result = file.unlock().map_err(ModuleConnectionError::io);
+
+        drop(file);
+
+        match (result, unlock_result) {
+            (Ok(_), Ok(_)) => Ok(ConnectionLockGuard {
+                limiter: Arc::clone(self),
+                module: module.to_string(),
+            }),
+            (Err(error), Ok(_)) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Err(primary), Err(_)) => Err(primary),
+        }
+    }
+
+    fn decrement(&self, module: &str) -> io::Result<()> {
+        let mut file = self.open_file()?;
+        file.lock_exclusive()?;
+        let result = self.decrement_count(&mut file, module);
+        let unlock_result = file.unlock();
+        drop(file);
+        result.and(unlock_result)
+    }
+
+    fn open_file(&self) -> io::Result<File> {
+        OpenOptions::new().read(true).write(true).open(&self.path)
+    }
+
+    fn increment_count(
+        &self,
+        file: &mut File,
+        module: &str,
+        limit: NonZeroU32,
+    ) -> Result<(), ModuleConnectionError> {
+        let mut counts = self.read_counts(file)?;
+        let current = counts.get(module).copied().unwrap_or(0);
+        if current >= limit.get() {
+            return Err(ModuleConnectionError::Limit(limit));
+        }
+
+        counts.insert(module.to_string(), current.saturating_add(1));
+        self.write_counts(file, &counts)
+            .map_err(ModuleConnectionError::io)
+    }
+
+    fn decrement_count(&self, file: &mut File, module: &str) -> io::Result<()> {
+        let mut counts = self.read_counts(file)?;
+        if let Some(entry) = counts.get_mut(module) {
+            if *entry > 1 {
+                *entry -= 1;
+            } else {
+                counts.remove(module);
+            }
+        }
+
+        self.write_counts(file, &counts)
+    }
+
+    fn read_counts(&self, file: &mut File) -> io::Result<BTreeMap<String, u32>> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let mut counts = BTreeMap::new();
+        for line in contents.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+                if let Ok(parsed) = value.parse::<u32>() {
+                    counts.insert(name.to_string(), parsed);
+                }
+            }
+        }
+
+        Ok(counts)
+    }
+
+    fn write_counts(&self, file: &mut File, counts: &BTreeMap<String, u32>) -> io::Result<()> {
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        for (module, value) in counts {
+            if *value > 0 {
+                writeln!(file, "{module} {value}")?;
+            }
+        }
+        file.flush()
+    }
+}
+
+struct ConnectionLockGuard {
+    limiter: Arc<ConnectionLimiter>,
+    module: String,
+}
+
+impl Drop for ConnectionLockGuard {
+    fn drop(&mut self) {
+        let _ = self.limiter.decrement(&self.module);
+    }
+}
+
 impl From<ModuleDefinition> for ModuleRuntime {
     fn from(definition: ModuleDefinition) -> Self {
-        Self::new(definition)
+        Self::new(definition, None)
     }
 }
 
@@ -435,17 +608,22 @@ impl std::ops::Deref for ModuleRuntime {
 
 struct ModuleConnectionGuard<'a> {
     module: Option<&'a ModuleRuntime>,
+    lock_guard: Option<ConnectionLockGuard>,
 }
 
 impl<'a> ModuleConnectionGuard<'a> {
-    fn limited(module: &'a ModuleRuntime) -> Self {
+    fn limited(module: &'a ModuleRuntime, lock_guard: Option<ConnectionLockGuard>) -> Self {
         Self {
             module: Some(module),
+            lock_guard,
         }
     }
 
     const fn unlimited() -> Self {
-        Self { module: None }
+        Self {
+            module: None,
+            lock_guard: None,
+        }
     }
 }
 
@@ -454,6 +632,8 @@ impl<'a> Drop for ModuleConnectionGuard<'a> {
         if let Some(module) = self.module.take() {
             module.release();
         }
+
+        self.lock_guard.take();
     }
 }
 
@@ -556,6 +736,8 @@ struct RuntimeOptions {
     pid_file_from_config: bool,
     reverse_lookup: bool,
     reverse_lookup_configured: bool,
+    lock_file: Option<PathBuf>,
+    lock_file_from_config: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -577,6 +759,8 @@ impl Default for RuntimeOptions {
             pid_file_from_config: false,
             reverse_lookup: true,
             reverse_lookup_configured: false,
+            lock_file: None,
+            lock_file_from_config: false,
         }
     }
 }
@@ -620,6 +804,8 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv6)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
                 options.set_log_file(PathBuf::from(value))?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
+                options.set_lock_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
                 options.set_pid_file(PathBuf::from(value))?;
             } else if argument == "--module" {
@@ -668,6 +854,23 @@ impl RuntimeOptions {
 
         self.log_file = Some(path);
         self.log_file_configured = true;
+        Ok(())
+    }
+
+    fn set_lock_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.lock_file {
+            if !self.lock_file_from_config {
+                return Err(duplicate_argument("--lock-file"));
+            }
+
+            if existing == &path {
+                self.lock_file_from_config = false;
+                return Ok(());
+            }
+        }
+
+        self.lock_file = Some(path);
+        self.lock_file_from_config = false;
         Ok(())
     }
 
@@ -778,6 +981,8 @@ impl RuntimeOptions {
 
         if let Some((reverse_lookup, origin)) = parsed.reverse_lookup {
             self.set_reverse_lookup_from_config(reverse_lookup, &origin)?;
+        if let Some((lock_file, origin)) = parsed.lock_file {
+            self.set_config_lock_file(lock_file, &origin)?;
         }
 
         if !parsed.motd_lines.is_empty() {
@@ -844,6 +1049,8 @@ impl RuntimeOptions {
     #[cfg(test)]
     fn reverse_lookup(&self) -> bool {
         self.reverse_lookup
+    fn lock_file(&self) -> Option<&Path> {
+        self.lock_file.as_deref()
     }
 
     fn inherit_global_refuse_options(
@@ -910,6 +1117,28 @@ impl RuntimeOptions {
 
         self.reverse_lookup = value;
         self.reverse_lookup_configured = true;
+    fn set_config_lock_file(
+        &mut self,
+        path: PathBuf,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.lock_file {
+            if self.lock_file_from_config {
+                if existing == &path {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'lock file' directive in global section",
+                ));
+            }
+
+            return Ok(());
+        }
+
+        self.lock_file = Some(path);
+        self.lock_file_from_config = true;
         Ok(())
     }
 
@@ -974,6 +1203,7 @@ struct ParsedConfigModules {
     motd_lines: Vec<String>,
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
+    lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -1008,6 +1238,7 @@ fn parse_config_modules_inner(
     let mut motd_lines = Vec::new();
     let mut pid_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
     let mut reverse_lookup: Option<(bool, ConfigDirectiveOrigin)> = None;
+    let mut lock_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1347,6 +1578,19 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &reverse_lookup {
                         if *existing != parsed {
+                "lock file" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'lock file' directive must not be empty",
+                        ));
+                    }
+
+                    let resolved = resolve_config_relative_path(path, trimmed);
+                    if let Some((existing, origin)) = &lock_file {
+                        if existing != &resolved {
                             return Err(config_parse_error(
                                 path,
                                 line_number,
@@ -1360,6 +1604,20 @@ fn parse_config_modules_inner(
                     }
 
                     reverse_lookup = Some((parsed, origin));
+                                    "duplicate 'lock file' directive in global section (previously defined on line {})",
+                                    origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        lock_file = Some((
+                            resolved,
+                            ConfigDirectiveOrigin {
+                                path: canonical.clone(),
+                                line: line_number,
+                            },
+                        ));
+                    }
                 }
                 _ => {
                     return Err(config_parse_error(
@@ -1381,6 +1639,7 @@ fn parse_config_modules_inner(
             motd_lines,
             pid_file,
             reverse_lookup,
+            lock_file,
         })
     })();
 
@@ -2425,6 +2684,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         log_file,
         pid_file,
         reverse_lookup,
+        lock_file,
         ..
     } = options;
 
@@ -2440,8 +2700,18 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
-    let modules: Arc<Vec<ModuleRuntime>> =
-        Arc::new(modules.into_iter().map(ModuleRuntime::from).collect());
+    let connection_limiter = if let Some(path) = lock_file {
+        Some(Arc::new(ConnectionLimiter::open(path)?))
+    } else {
+        None
+    };
+
+    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
+        modules
+            .into_iter()
+            .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
+            .collect(),
+    );
     let motd_lines = Arc::new(motd_lines);
     let requested_addr = SocketAddr::new(bind_address, port);
     let listener =
@@ -3128,7 +3398,7 @@ fn respond_with_module_request(
         if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
-                Err(limit) => {
+                Err(ModuleConnectionError::Limit(limit)) => {
                     let payload =
                         MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
                     let stream = reader.get_mut();
@@ -3144,6 +3414,24 @@ fn respond_with_module_request(
                             peer_ip,
                             request,
                             limit,
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(ModuleConnectionError::Io(error)) => {
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, MODULE_LOCK_ERROR_PAYLOAD.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+                    write_limited(stream, limiter, exit.as_bytes())?;
+                    stream.flush()?;
+                    if let Some(log) = log_sink {
+                        log_module_lock_error(
+                            log,
+                            module_peer_host.or(session_peer_host),
+                            peer_ip,
+                            request,
+                            &error,
                         );
                     }
                     return Ok(());
@@ -3284,6 +3572,17 @@ fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to open lock file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
 fn log_message(log: &SharedLogSink, message: &Message) {
     if let Ok(mut sink) = log.lock() {
         if sink.write(message).is_ok() {
@@ -3334,6 +3633,22 @@ fn log_module_limit(
         module, display, peer_ip, limit,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_lock_error(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+    error: &io::Error,
+) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "failed to update lock for module '{}' requested from {} ({}): {}",
+        module, display, peer_ip, error
+    );
+    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
@@ -3874,8 +4189,8 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
-    use std::num::NonZeroU64;
-    use std::path::PathBuf;
+    use std::num::{NonZeroU32, NonZeroU64};
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -4278,6 +4593,47 @@ mod tests {
         assert!(resolved.is_none());
         assert!(!module.permits(peer, resolved));
         clear_test_hostname_overrides();
+    fn connection_limiter_enforces_limits_across_guards() {
+        let temp = tempdir().expect("lock dir");
+        let lock_path = temp.path().join("daemon.lock");
+        let limiter = Arc::new(ConnectionLimiter::open(lock_path).expect("open lock file"));
+        let limit = NonZeroU32::new(2).expect("non-zero");
+
+        let first = limiter
+            .acquire("docs", limit)
+            .expect("first connection allowed");
+        let second = limiter
+            .acquire("docs", limit)
+            .expect("second connection allowed");
+        assert!(matches!(
+            limiter.acquire("docs", limit),
+            Err(ModuleConnectionError::Limit(l)) if l == limit
+        ));
+
+        drop(second);
+        let third = limiter
+            .acquire("docs", limit)
+            .expect("slot released after guard drop");
+
+        drop(third);
+        drop(first);
+        assert!(limiter.acquire("docs", limit).is_ok());
+    }
+
+    #[test]
+    fn connection_limiter_propagates_io_errors() {
+        let temp = tempdir().expect("lock dir");
+        let lock_path = temp.path().join("daemon.lock");
+        let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("open lock"));
+
+        fs::remove_file(&lock_path).expect("remove original lock file");
+        fs::create_dir(&lock_path).expect("replace lock file with directory");
+
+        match limiter.acquire("docs", NonZeroU32::new(1).unwrap()) {
+            Err(ModuleConnectionError::Io(_)) => {}
+            Err(other) => panic!("expected io error, got {other:?}"),
+            Ok(_) => panic!("expected io error, got success"),
+        }
     }
 
     #[test]
@@ -4518,6 +4874,48 @@ mod tests {
         .expect("parse config with cli override");
 
         assert_eq!(options.pid_file(), Some(cli_pid.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_loads_lock_file_from_config() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "lock file = daemon.lock\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with lock file");
+
+        let expected = dir.path().join("daemon.lock");
+        assert_eq!(options.lock_file(), Some(expected.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_config_lock_file_respects_cli_override() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "lock file = config.lock\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let cli_lock = PathBuf::from("/var/run/override.lock");
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            cli_lock.as_os_str().to_os_string(),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with cli lock override");
+
+        assert_eq!(options.lock_file(), Some(cli_lock.as_path()));
     }
 
     #[test]
@@ -5106,6 +5504,38 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("duplicate daemon argument '--log-file'")
+        );
+    }
+
+    #[test]
+    fn runtime_options_parse_lock_file_argument() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            OsString::from("/var/run/oc-rsyncd.lock"),
+        ])
+        .expect("parse lock file argument");
+
+        assert_eq!(
+            options.lock_file(),
+            Some(Path::new("/var/run/oc-rsyncd.lock"))
+        );
+    }
+
+    #[test]
+    fn runtime_options_reject_duplicate_lock_file_argument() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            OsString::from("/tmp/one.lock"),
+            OsString::from("--lock-file"),
+            OsString::from("/tmp/two.lock"),
+        ])
+        .expect_err("duplicate lock file should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate daemon argument '--lock-file'")
         );
     }
 
