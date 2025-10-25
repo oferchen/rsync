@@ -91,6 +91,8 @@ pub enum FilterAction {
     Exclude,
     /// Protect the matching path from deletion while leaving transfer decisions unchanged.
     Protect,
+    /// Remove previously applied protection, allowing deletion when matched.
+    Risk,
 }
 
 /// User-visible filter rule consisting of an action and pattern.
@@ -130,6 +132,17 @@ impl FilterRule {
     pub fn protect(pattern: impl Into<String>) -> Self {
         Self {
             action: FilterAction::Protect,
+            pattern: pattern.into(),
+            applies_to_sender: false,
+            applies_to_receiver: true,
+        }
+    }
+
+    /// Creates a risk rule for `pattern`.
+    #[must_use]
+    pub fn risk(pattern: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::Risk,
             pattern: pattern.into(),
             applies_to_sender: false,
             applies_to_receiver: true,
@@ -279,15 +292,15 @@ impl FilterSet {
         I: IntoIterator<Item = FilterRule>,
     {
         let mut include_exclude = Vec::new();
-        let mut protect = Vec::new();
+        let mut protect_risk = Vec::new();
 
         for rule in rules.into_iter() {
             match rule.action {
                 FilterAction::Include | FilterAction::Exclude => {
                     include_exclude.push(CompiledRule::new(rule)?);
                 }
-                FilterAction::Protect => {
-                    protect.push(CompiledRule::new(rule)?);
+                FilterAction::Protect | FilterAction::Risk => {
+                    protect_risk.push(CompiledRule::new(rule)?);
                 }
             }
         }
@@ -295,7 +308,7 @@ impl FilterSet {
         Ok(Self {
             inner: Arc::new(FilterSetInner {
                 include_exclude,
-                protect,
+                protect_risk,
             }),
         })
     }
@@ -303,7 +316,7 @@ impl FilterSet {
     /// Reports whether the set contains any rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.include_exclude.is_empty() && self.inner.protect.is_empty()
+        self.inner.include_exclude.is_empty() && self.inner.protect_risk.is_empty()
     }
 
     /// Determines whether the provided path is allowed.
@@ -337,7 +350,7 @@ impl FilterSet {
 #[derive(Debug, Default)]
 struct FilterSetInner {
     include_exclude: Vec<CompiledRule>,
-    protect: Vec<CompiledRule>,
+    protect_risk: Vec<CompiledRule>,
 }
 
 impl FilterSetInner {
@@ -363,14 +376,18 @@ impl FilterSetInner {
             }
         }
 
-        for rule in &self.protect {
+        for rule in &self.protect_risk {
             if rule.matches(path, is_dir) {
                 let applies = match context {
                     DecisionContext::Transfer => rule.applies_to_sender,
                     DecisionContext::Deletion => rule.applies_to_receiver,
                 };
                 if applies {
-                    decision.protected = true;
+                    match rule.action {
+                        FilterAction::Protect => decision.protect(),
+                        FilterAction::Risk => decision.unprotect(),
+                        FilterAction::Include | FilterAction::Exclude => {}
+                    }
                 }
             }
         }
@@ -402,6 +419,14 @@ impl FilterDecision {
 
     const fn allows_deletion_when_excluded_removed(self) -> bool {
         !self.protected
+    }
+
+    fn protect(&mut self) {
+        self.protected = true;
+    }
+
+    fn unprotect(&mut self) {
+        self.protected = false;
     }
 }
 
@@ -440,7 +465,12 @@ impl CompiledRule {
         }
 
         let mut descendant_patterns = HashSet::new();
-        if directory_only || matches!(action, FilterAction::Exclude | FilterAction::Protect) {
+        if directory_only
+            || matches!(
+                action,
+                FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
+            )
+        {
             descendant_patterns.insert(format!("{}/**", core_pattern));
             if !anchored {
                 descendant_patterns.insert(format!("**/{}/**", core_pattern));
@@ -673,6 +703,24 @@ mod tests {
         assert!(set.allows(Path::new("secrets/data.txt"), false));
         assert!(!set.allows_deletion(Path::new("secrets/data.txt"), false));
         assert!(!set.allows_deletion(Path::new("dir/secrets/data.txt"), false));
+    }
+
+    #[test]
+    fn risk_rule_allows_deletion_after_protection() {
+        let rules = [
+            FilterRule::protect("archive/"),
+            FilterRule::risk("archive/"),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(set.allows_deletion(Path::new("archive/file.bin"), false));
+    }
+
+    #[test]
+    fn risk_rule_applies_to_descendants() {
+        let rules = [FilterRule::protect("backup/"), FilterRule::risk("backup/")];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(set.allows_deletion(Path::new("backup/snap/info"), false));
+        assert!(set.allows_deletion(Path::new("sub/backup/snap"), true));
     }
 
     #[test]

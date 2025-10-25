@@ -818,6 +818,13 @@ impl ClientConfig {
         self.partial
     }
 
+    /// Reports whether updates should be delayed until after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(&self) -> bool {
+        self.delay_updates
+    }
+
     /// Returns the optional directory used to store partial files.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -1533,6 +1540,8 @@ pub enum FilterRuleKind {
     Exclude,
     /// Protect matching destination paths from deletion.
     Protect,
+    /// Remove protection for matching destination paths.
+    Risk,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
     /// Exclude directories containing a specific marker file.
@@ -1588,12 +1597,12 @@ impl FilterRuleSpec {
         }
     }
 
-    /// Creates a receiver-only include rule equivalent to `risk PATTERN` or `R PATTERN`.
+    /// Creates a receiver-only risk rule equivalent to `risk PATTERN` or `R PATTERN`.
     #[must_use]
     #[doc(alias = "R")]
     pub fn risk(pattern: impl Into<String>) -> Self {
         Self {
-            kind: FilterRuleKind::Include,
+            kind: FilterRuleKind::Risk,
             pattern: pattern.into(),
             dir_merge_options: None,
             applies_to_sender: false,
@@ -2075,6 +2084,8 @@ pub struct RemoteFallbackArgs {
     pub itemize_changes: bool,
     /// Enables `--partial`.
     pub partial: bool,
+    /// Enables `--delay-updates`.
+    pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
     /// Enables `--delay-updates`.
@@ -2248,6 +2259,7 @@ where
         stats,
         itemize_changes,
         partial,
+        delay_updates,
         partial_dir,
         delay_updates,
         link_dests,
@@ -3449,6 +3461,7 @@ fn build_local_copy_options(
         .append(config.append())
         .append_verify(config.append_verify())
         .partial(config.partial())
+        .delay_updates(config.delay_updates())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .delay_updates(config.delay_updates())
         .extend_link_dests(config.link_dest_paths().iter().cloned())
@@ -3607,6 +3620,7 @@ exit 42
             stats: false,
             itemize_changes: false,
             partial: false,
+            delay_updates: false,
             partial_dir: None,
             delay_updates: false,
             link_dests: Vec::new(),
@@ -6621,6 +6635,10 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
             )),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern().to_string())
+                    .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
+            )),
+            FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
+                EngineFilterRule::risk(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
             FilterRuleKind::DirMerge => {

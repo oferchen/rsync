@@ -681,7 +681,7 @@ enum FilterInstruction {
 #[derive(Clone, Debug, Default)]
 struct FilterSegment {
     include_exclude: Vec<CompiledRule>,
-    protect: Vec<CompiledRule>,
+    protect_risk: Vec<CompiledRule>,
 }
 
 impl FilterSegment {
@@ -690,15 +690,15 @@ impl FilterSegment {
             rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
                 self.include_exclude.push(CompiledRule::new(rule)?);
             }
-            rsync_filters::FilterAction::Protect => {
-                self.protect.push(CompiledRule::new(rule)?);
+            rsync_filters::FilterAction::Protect | rsync_filters::FilterAction::Risk => {
+                self.protect_risk.push(CompiledRule::new(rule)?);
             }
         }
         Ok(())
     }
 
     fn is_empty(&self) -> bool {
-        self.include_exclude.is_empty() && self.protect.is_empty()
+        self.include_exclude.is_empty() && self.protect_risk.is_empty()
     }
 
     fn apply(
@@ -731,14 +731,19 @@ impl FilterSegment {
             }
         }
 
-        for rule in &self.protect {
+        for rule in &self.protect_risk {
             if rule.matches(path, is_dir) {
                 let applies = match context {
                     FilterContext::Transfer => rule.applies_to_sender,
                     FilterContext::Deletion => rule.applies_to_receiver,
                 };
                 if applies {
-                    outcome.protect();
+                    match rule.action {
+                        rsync_filters::FilterAction::Protect => outcome.protect(),
+                        rsync_filters::FilterAction::Risk => outcome.unprotect(),
+                        rsync_filters::FilterAction::Include
+                        | rsync_filters::FilterAction::Exclude => {}
+                    }
                 }
             }
         }
@@ -781,6 +786,10 @@ impl FilterOutcome {
     fn protect(&mut self) {
         self.protected = true;
     }
+
+    fn unprotect(&mut self) {
+        self.protected = false;
+    }
 }
 
 impl Default for FilterOutcome {
@@ -817,7 +826,9 @@ impl CompiledRule {
         if directory_only
             || matches!(
                 action,
-                rsync_filters::FilterAction::Exclude | rsync_filters::FilterAction::Protect
+                rsync_filters::FilterAction::Exclude
+                    | rsync_filters::FilterAction::Protect
+                    | rsync_filters::FilterAction::Risk
             )
         {
             descendant_patterns.insert(format!("{}/**", core_pattern));
@@ -1907,6 +1918,17 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that updated files be renamed into place after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(mut self, delay: bool) -> Self {
+        self.delay_updates = delay;
+        if delay {
+            self.partial = true;
+        }
+        self
+    }
+
     /// Selects the directory used to retain partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -2884,6 +2906,68 @@ impl<'a> CopyContext<'a> {
 
     fn destination_root(&self) -> &Path {
         &self.destination_root
+    }
+
+    fn apply_metadata_and_finalize(
+        &mut self,
+        destination: &Path,
+        metadata: &fs::Metadata,
+        metadata_options: MetadataOptions,
+        mode: LocalCopyExecution,
+        source: &Path,
+        relative: Option<&Path>,
+        file_type: fs::FileType,
+        destination_previously_existed: bool,
+        #[cfg(feature = "xattr")] preserve_xattrs: bool,
+        #[cfg(feature = "acl")] preserve_acls: bool,
+    ) -> Result<(), LocalCopyError> {
+        self.register_created_path(
+            destination,
+            CreatedEntryKind::File,
+            destination_previously_existed,
+        );
+        apply_file_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(feature = "xattr")]
+        {
+            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+        }
+        #[cfg(feature = "acl")]
+        {
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+        }
+        #[cfg(not(any(feature = "xattr", feature = "acl")))]
+        let _ = mode;
+        self.hard_links.record(metadata, destination);
+        remove_source_entry_if_requested(self, source, relative, file_type)?;
+        Ok(())
+    }
+
+    fn register_delayed_update(&mut self, update: DelayedUpdate) {
+        let metadata = update.metadata.clone();
+        let destination = update.guard.final_path().to_path_buf();
+        self.hard_links.record(&metadata, destination.as_path());
+        self.delayed_updates.push(update);
+    }
+
+    fn commit_delayed_update_for(&mut self, destination: &Path) -> Result<(), LocalCopyError> {
+        if let Some(index) = self
+            .delayed_updates
+            .iter()
+            .position(|update| update.guard.final_path() == destination)
+        {
+            let update = self.delayed_updates.swap_remove(index);
+            update.commit(self)?;
+        }
+        Ok(())
+    }
+
+    fn flush_delayed_updates(&mut self) -> Result<(), LocalCopyError> {
+        let mut pending = std::mem::take(&mut self.delayed_updates);
+        for update in pending.drain(..) {
+            update.commit(self)?;
+        }
+        Ok(())
     }
 
     fn link_dest_target(
@@ -4155,6 +4239,9 @@ fn parse_filter_directive_line(
             'p' => {
                 return handle_keyword(remainder, FilterRule::protect);
             }
+            'r' => {
+                return handle_keyword(remainder, FilterRule::risk);
+            }
             's' => {
                 if remainder.is_empty() {
                     return Err(FilterParseError::new("filter directive missing pattern"));
@@ -4199,6 +4286,10 @@ fn parse_filter_directive_line(
 
     if keyword.eq_ignore_ascii_case("protect") {
         return handle_keyword(remainder, FilterRule::protect);
+    }
+
+    if keyword.eq_ignore_ascii_case("risk") {
+        return handle_keyword(remainder, FilterRule::risk);
     }
 
     if keyword.eq_ignore_ascii_case("merge") {
@@ -5696,26 +5787,43 @@ fn copy_file(
         size_only_enabled,
         checksum_enabled,
     )? {
-        match fs::hard_link(&link_target, destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                fs::remove_file(destination).map_err(|remove_error| {
-                    LocalCopyError::io(
-                        "remove existing destination",
+        let mut attempted_commit = false;
+        loop {
+            match fs::hard_link(&link_target, destination) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    fs::remove_file(destination).map_err(|remove_error| {
+                        LocalCopyError::io(
+                            "remove existing destination",
+                            destination.to_path_buf(),
+                            remove_error,
+                        )
+                    })?;
+                    fs::hard_link(&link_target, destination).map_err(|link_error| {
+                        LocalCopyError::io(
+                            "create hard link",
+                            destination.to_path_buf(),
+                            link_error,
+                        )
+                    })?;
+                    break;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        && context.delay_updates_enabled()
+                        && !attempted_commit =>
+                {
+                    context.commit_delayed_update_for(&link_target)?;
+                    attempted_commit = true;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "create hard link",
                         destination.to_path_buf(),
-                        remove_error,
-                    )
-                })?;
-                fs::hard_link(&link_target, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
-                })?;
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create hard link",
-                    destination.to_path_buf(),
-                    error,
-                ));
+                        error,
+                    ));
+                }
             }
         }
 
@@ -5742,26 +5850,43 @@ fn copy_file(
     let mut copy_source_override: Option<PathBuf> = None;
 
     if let Some(existing_target) = context.hard_links.existing_target(metadata) {
-        match create_hard_link(&existing_target, destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                fs::remove_file(destination).map_err(|remove_error| {
-                    LocalCopyError::io(
-                        "remove existing destination",
+        let mut attempted_commit = false;
+        loop {
+            match create_hard_link(&existing_target, destination) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    fs::remove_file(destination).map_err(|remove_error| {
+                        LocalCopyError::io(
+                            "remove existing destination",
+                            destination.to_path_buf(),
+                            remove_error,
+                        )
+                    })?;
+                    create_hard_link(&existing_target, destination).map_err(|link_error| {
+                        LocalCopyError::io(
+                            "create hard link",
+                            destination.to_path_buf(),
+                            link_error,
+                        )
+                    })?;
+                    break;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        && context.delay_updates_enabled()
+                        && !attempted_commit =>
+                {
+                    context.commit_delayed_update_for(&existing_target)?;
+                    attempted_commit = true;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "create hard link",
                         destination.to_path_buf(),
-                        remove_error,
-                    )
-                })?;
-                create_hard_link(&existing_target, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
-                })?;
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create hard link",
-                    destination.to_path_buf(),
-                    error,
-                ));
+                        error,
+                    ));
+                }
             }
         }
 
@@ -6128,7 +6253,59 @@ fn copy_file(
         return Err(timeout_error);
     }
 
-    remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
+    let relative_for_removal = Some(record_path.clone());
+    if let Some(guard) = guard.take() {
+        if delay_updates_enabled {
+            let update = DelayedUpdate {
+                guard,
+                metadata: metadata.clone(),
+                metadata_options,
+                mode,
+                source: source.to_path_buf(),
+                relative: relative_for_removal,
+                file_type,
+                destination_previously_existed,
+                #[cfg(feature = "xattr")]
+                preserve_xattrs,
+                #[cfg(feature = "acl")]
+                preserve_acls,
+            };
+            context.register_delayed_update(update);
+        } else {
+            let destination_path = guard.final_path().to_path_buf();
+            guard.commit()?;
+            context.apply_metadata_and_finalize(
+                destination_path.as_path(),
+                metadata,
+                metadata_options,
+                mode,
+                source,
+                relative_for_removal.as_deref(),
+                file_type,
+                destination_previously_existed,
+                #[cfg(feature = "xattr")]
+                preserve_xattrs,
+                #[cfg(feature = "acl")]
+                preserve_acls,
+            )?;
+        }
+    } else {
+        context.apply_metadata_and_finalize(
+            destination,
+            metadata,
+            metadata_options,
+            mode,
+            source,
+            relative_for_removal.as_deref(),
+            file_type,
+            destination_previously_existed,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs,
+            #[cfg(feature = "acl")]
+            preserve_acls,
+        )?;
+    }
+
     Ok(())
 }
 
@@ -6379,6 +6556,10 @@ impl DestinationWriteGuard {
         }
         self.committed = true;
         Ok(())
+    }
+
+    fn final_path(&self) -> &Path {
+        &self.final_path
     }
 
     fn discard(mut self) {
@@ -7483,6 +7664,13 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_delay_updates_round_trip() {
+        let options = LocalCopyOptions::default().delay_updates(true);
+        assert!(options.delay_updates_enabled());
+        assert!(!LocalCopyOptions::default().delay_updates_enabled());
+    }
+
+    #[test]
     fn local_copy_options_whole_file_round_trip() {
         assert!(LocalCopyOptions::default().whole_file_enabled());
         let delta = LocalCopyOptions::default().whole_file(false);
@@ -7665,6 +7853,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_risk_requires_receiver() {
+        let rule = match parse_filter_directive_line("risk cache/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn parse_filter_directive_shorthand_risk_requires_receiver() {
+        let rule = match parse_filter_directive_line("R cache/**").expect("parse") {
+            Some(ParsedFilterDirective::Rule(rule)) => rule,
+            other => panic!("expected rule, got {:?}", other),
+        };
+
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
     fn parse_filter_directive_dir_merge_without_modifiers() {
         let directive = parse_filter_directive_line("dir-merge .rsync-filter")
             .expect("parse")
@@ -7728,6 +7938,62 @@ mod tests {
                 .to_string()
                 .contains("cannot combine '+' and '-' modifiers")
         );
+    }
+
+    #[test]
+    fn delayed_updates_flush_commits_pending_files() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        fs::write(&source, b"payload").expect("write source");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(&destination_root).expect("create dest root");
+        let destination = destination_root.join("file.txt");
+
+        let options = LocalCopyOptions::default()
+            .partial(true)
+            .delay_updates(true);
+        let mut context = CopyContext::new(
+            LocalCopyExecution::Apply,
+            options,
+            None,
+            destination_root.clone(),
+        );
+
+        let (guard, mut file) =
+            DestinationWriteGuard::new(destination.as_path(), true, None).expect("guard");
+        file.write_all(b"payload").expect("write temp");
+        drop(file);
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        let metadata_options = context.metadata_options();
+        let partial_path = partial_destination_path(&destination);
+        let update = DelayedUpdate {
+            guard,
+            metadata: metadata.clone(),
+            metadata_options,
+            mode: LocalCopyExecution::Apply,
+            source: source.clone(),
+            relative: Some(std::path::PathBuf::from("file.txt")),
+            file_type: metadata.file_type(),
+            destination_previously_existed: false,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs: context.xattrs_enabled(),
+            #[cfg(feature = "acl")]
+            preserve_acls: context.acls_enabled(),
+        };
+
+        context.register_delayed_update(update);
+
+        assert!(!destination.exists());
+        assert!(partial_path.exists());
+
+        context
+            .flush_delayed_updates()
+            .expect("delayed updates committed");
+
+        assert!(destination.exists());
+        assert_eq!(fs::read(&destination).expect("read dest"), b"payload");
+        assert!(!partial_path.exists());
     }
 
     #[test]
@@ -9426,6 +9692,57 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn execute_with_delay_updates_preserves_hard_links() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        fs::create_dir_all(&source_root).expect("create source root");
+        let file_a = source_root.join("file-a");
+        let file_b = source_root.join("file-b");
+        fs::write(&file_a, b"shared").expect("write source file");
+        fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+        let dest_root = temp.path().join("dest");
+        let operands = vec![
+            source_root.into_os_string(),
+            dest_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .partial(true)
+            .delay_updates(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let dest_a = dest_root.join("file-a");
+        let dest_b = dest_root.join("file-b");
+        let metadata_a = fs::metadata(&dest_a).expect("metadata a");
+        let metadata_b = fs::metadata(&dest_b).expect("metadata b");
+
+        assert_eq!(metadata_a.ino(), metadata_b.ino());
+        assert_eq!(metadata_a.nlink(), 2);
+        assert_eq!(metadata_b.nlink(), 2);
+        assert_eq!(fs::read(&dest_a).expect("read dest a"), b"shared");
+        assert_eq!(fs::read(&dest_b).expect("read dest b"), b"shared");
+        assert!(summary.hard_links_created() >= 1);
+
+        for entry in fs::read_dir(&dest_root).expect("read dest") {
+            let entry = entry.expect("dir entry");
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".oc-rsync-tmp-") && !name.starts_with(".oc-rsync-partial-"),
+                "unexpected temporary file left behind: {}",
+                name
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn execute_with_link_dest_uses_reference_inode() {
         use filetime::FileTime;
         use std::os::unix::fs::MetadataExt;
@@ -10033,6 +10350,41 @@ mod tests {
         let target_root = dest.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert_eq!(summary.items_deleted(), 0);
+    }
+
+    #[test]
+    fn delete_risk_rule_overrides_protection() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let target_root = dest.join("source");
+        fs::create_dir_all(&target_root).expect("create target root");
+        fs::write(target_root.join("keep.txt"), b"keep").expect("write keep");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let filters = FilterSet::from_rules([
+            rsync_filters::FilterRule::protect("keep.txt"),
+            rsync_filters::FilterRule::risk("keep.txt"),
+        ])
+        .expect("compile filters");
+        let options = LocalCopyOptions::default()
+            .delete(true)
+            .filters(Some(filters));
+
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = dest.join("source");
+        assert!(!target_root.join("keep.txt").exists());
+        assert_eq!(summary.items_deleted(), 1);
     }
 
     #[test]

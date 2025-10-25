@@ -182,8 +182,8 @@ const HELP_TEXT: &str = concat!(
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
     "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
-    "      --delay-updates  Put all updated files into place at end of transfer.\n",
-    "      --no-delay-updates  Write updated files immediately during the transfer.\n",
+    "      --delay-updates  Put completed updates in place after transfers finish.\n",
+    "      --no-delay-updates  Disable delayed updates.\n",
     "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
     "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
@@ -855,6 +855,7 @@ struct ParsedArgs {
     name_overridden: bool,
     stats: bool,
     partial: bool,
+    delay_updates: bool,
     partial_dir: Option<PathBuf>,
     delay_updates: bool,
     link_dests: Vec<PathBuf>,
@@ -1213,6 +1214,20 @@ fn clap_command() -> ClapCommand {
                 .help("Store partially transferred files in DIR.")
                 .value_parser(OsStringValueParser::new())
                 .overrides_with("no-partial"),
+        )
+        .arg(
+            Arg::new("delay-updates")
+                .long("delay-updates")
+                .help("Delay moving updated files into place until transfers finish.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-delay-updates"),
+        )
+        .arg(
+            Arg::new("no-delay-updates")
+                .long("no-delay-updates")
+                .help("Disable delayed updates.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("delay-updates"),
         )
         .arg(
             Arg::new("whole-file")
@@ -1848,12 +1863,16 @@ where
     if partial_dir.is_some() {
         partial = true;
     }
+    if matches.get_flag("no-delay-updates") {
+        delay_updates = false;
+    }
     if no_progress_flag {
         progress_setting = ProgressSetting::Disabled;
     }
     if matches.get_flag("no-partial") {
         partial = false;
         partial_dir = None;
+        delay_updates = false;
     }
     if matches.get_count("partial-progress") > 0 {
         partial = true;
@@ -2006,6 +2025,7 @@ where
         name_overridden,
         stats,
         partial,
+        delay_updates,
         partial_dir,
         delay_updates,
         link_dests,
@@ -2252,6 +2272,7 @@ where
         name_overridden: initial_name_overridden,
         stats,
         partial,
+        delay_updates,
         partial_dir,
         delay_updates,
         link_dests,
@@ -2701,6 +2722,7 @@ where
             progress: progress_mode.is_some(),
             stats,
             partial,
+            delay_updates,
             partial_dir: partial_dir.clone(),
             delay_updates,
             link_dests: link_dests.clone(),
@@ -2861,6 +2883,7 @@ where
         .stats(stats)
         .debug_flags(debug_flags_list.clone())
         .partial(partial)
+        .delay_updates(delay_updates)
         .partial_directory(partial_dir.clone())
         .delay_updates(delay_updates)
         .extend_link_dests(link_dests.clone())
@@ -4885,6 +4908,7 @@ fn append_filter_rules_from_files(
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
             FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
             FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
+            FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
             FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
         }));
     }
@@ -7445,6 +7469,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_delay_updates_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delay-updates"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.delay_updates);
+    }
+
+    #[test]
+    fn parse_args_resets_delay_updates_with_no_delay_updates() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delay-updates"),
+            OsString::from("--no-delay-updates"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.delay_updates);
+    }
+
+    #[test]
     fn parse_args_allows_no_partial_to_clear_partial_dir() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -9153,6 +9204,7 @@ mod tests {
             FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
             FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
             FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
+            FilterRuleKind::Risk => Some(EngineFilterRule::risk(rule.pattern())),
             FilterRuleKind::ExcludeIfPresent => None,
             FilterRuleKind::DirMerge => None,
         });
