@@ -5064,6 +5064,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_entries() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: MOTD Welcome to the test daemon\n",
             "@RSYNCD: MOTD Maintenance window at 02:00 UTC\n",
@@ -5130,6 +5132,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_motd_after_acknowledgement() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: OK\n",
             "@RSYNCD: MOTD: Post-acknowledgement notice\n",
@@ -5159,6 +5163,8 @@ exit 42
 
     #[test]
     fn run_module_list_suppresses_motd_when_requested() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: MOTD Welcome to the test daemon\n",
             "@RSYNCD: OK\n",
@@ -5186,6 +5192,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_warnings() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@WARNING: Maintenance scheduled\n",
             "@RSYNCD: OK\n",
@@ -5218,6 +5226,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_capabilities() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: CAP modules uid\n",
             "@RSYNCD: OK\n",
@@ -5424,6 +5434,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5442,6 +5454,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error_without_colon() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@ERROR unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5502,6 +5516,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5520,6 +5536,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_authentication_required() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@RSYNCD: AUTHREQD modules\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5851,6 +5869,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_access_denied() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@RSYNCD: DENIED host rules\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
