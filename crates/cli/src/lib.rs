@@ -765,6 +765,13 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         ClientEntryKind::CharDevice | ClientEntryKind::BlockDevice => 'D',
     };
 
+    if event.was_created() {
+        for slot in fields.iter_mut().skip(2) {
+            *slot = '+';
+        }
+        return fields.iter().collect();
+    }
+
     let attr = &mut fields[2..];
 
     match event.kind() {
@@ -6768,7 +6775,7 @@ mod tests {
         assert!(stderr.is_empty());
         assert_eq!(
             String::from_utf8(stdout).expect("utf8"),
-            ">fcst...... source.txt\n"
+            ">f+++++++++ source.txt\n"
         );
 
         let destination = dest_dir.join("source.txt");
@@ -8333,7 +8340,7 @@ mod tests {
             .render(event, &mut output)
             .expect("render %i");
 
-        assert_eq!(output, b">fcst......\n");
+        assert_eq!(output, b">f+++++++++\n");
     }
 
     #[test]

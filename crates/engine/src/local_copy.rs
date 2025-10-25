@@ -1118,6 +1118,7 @@ pub struct LocalCopyRecord {
     total_bytes: Option<u64>,
     elapsed: Duration,
     metadata: Option<LocalCopyMetadata>,
+    created: bool,
 }
 
 impl LocalCopyRecord {
@@ -1137,7 +1138,15 @@ impl LocalCopyRecord {
             total_bytes,
             elapsed,
             metadata,
+            created: false,
         }
+    }
+
+    /// Marks whether the record corresponds to the creation of a new destination entry.
+    #[must_use]
+    fn with_creation(mut self, created: bool) -> Self {
+        self.created = created;
+        self
     }
 
     /// Returns the relative path affected by this record.
@@ -1174,6 +1183,12 @@ impl LocalCopyRecord {
     #[must_use]
     pub fn metadata(&self) -> Option<&LocalCopyMetadata> {
         self.metadata.as_ref()
+    }
+
+    /// Returns whether the record corresponds to a newly created destination entry.
+    #[must_use]
+    pub const fn was_created(&self) -> bool {
+        self.created
     }
 }
 
@@ -3273,11 +3288,7 @@ impl<'a> CopyContext<'a> {
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     fs::create_dir_all(parent).map_err(|error| {
-                        LocalCopyError::io(
-                            "create parent directory",
-                            parent.to_path_buf(),
-                            error,
-                        )
+                        LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
                     })?;
                     self.register_progress();
                     Ok(())
@@ -5937,6 +5948,8 @@ fn copy_file(
         }
     }
 
+    let destination_previously_existed = existing_metadata.is_some();
+
     if mode.is_dry_run() {
         if context.update_enabled() {
             if let Some(existing) = existing_metadata.as_ref() {
@@ -5995,18 +6008,20 @@ fn copy_file(
             .record_file(file_size, bytes_transferred, None);
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.clone(),
-            LocalCopyAction::DataCopied,
-            bytes_transferred,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                record_path.clone(),
+                LocalCopyAction::DataCopied,
+                bytes_transferred,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            .with_creation(!destination_previously_existed),
+        );
         remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
         return Ok(());
     }
-    let destination_previously_existed = existing_metadata.is_some();
 
     if context.update_enabled() {
         if let Some(existing) = existing_metadata.as_ref() {
@@ -6494,14 +6509,17 @@ fn copy_file(
     context.summary_mut().record_elapsed(elapsed);
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
-    context.record(LocalCopyRecord::new(
-        record_path.clone(),
-        LocalCopyAction::DataCopied,
-        outcome.literal_bytes(),
-        total_bytes,
-        elapsed,
-        Some(metadata_snapshot),
-    ));
+    context.record(
+        LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::DataCopied,
+            outcome.literal_bytes(),
+            total_bytes,
+            elapsed,
+            Some(metadata_snapshot),
+        )
+        .with_creation(!destination_previously_existed),
+    );
 
     if let Err(timeout_error) = context.enforce_timeout() {
         if existing_metadata.is_none() {
@@ -9211,11 +9229,16 @@ mod tests {
             .expect("copy succeeds");
 
         let copied_file = actual_destination.join("src-dir").join("file.txt");
-        assert_eq!(fs::read(&copied_file).expect("read copied file"), b"payload");
-        assert!(fs::symlink_metadata(&destination_link)
-            .expect("destination link metadata")
-            .file_type()
-            .is_symlink());
+        assert_eq!(
+            fs::read(&copied_file).expect("read copied file"),
+            b"payload"
+        );
+        assert!(
+            fs::symlink_metadata(&destination_link)
+                .expect("destination link metadata")
+                .file_type()
+                .is_symlink()
+        );
         assert!(summary.directories_created() >= 1);
     }
 
@@ -9234,13 +9257,14 @@ mod tests {
         let destination_link = temp.path().join("dest-link");
         symlink(&actual_destination, &destination_link).expect("create destination link");
 
-        let operands = vec![source_dir.into_os_string(), destination_link.clone().into_os_string()];
+        let operands = vec![
+            source_dir.into_os_string(),
+            destination_link.clone().into_os_string(),
+        ];
         let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-        let result = plan.execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default(),
-        );
+        let result =
+            plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default());
 
         let error = result.expect_err("keep-dirlinks disabled should reject destination symlink");
         assert!(matches!(
@@ -9249,10 +9273,12 @@ mod tests {
                 LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
             )
         ));
-        assert!(fs::symlink_metadata(&destination_link)
-            .expect("destination link metadata")
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(&destination_link)
+                .expect("destination link metadata")
+                .file_type()
+                .is_symlink()
+        );
         assert!(!actual_destination.join("src-dir").join("file.txt").exists());
     }
 
