@@ -832,13 +832,6 @@ impl ClientConfig {
         self.partial_dir.as_deref()
     }
 
-    /// Reports whether destination updates should be staged and committed after the transfer.
-    #[must_use]
-    #[doc(alias = "--delay-updates")]
-    pub const fn delay_updates(&self) -> bool {
-        self.delay_updates
-    }
-
     /// Returns the ordered list of link-destination directories supplied by the caller.
     #[must_use]
     #[doc(alias = "--link-dest")]
@@ -2088,8 +2081,6 @@ pub struct RemoteFallbackArgs {
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
-    /// Enables `--delay-updates`.
-    pub delay_updates: bool,
     /// Directories forwarded via repeated `--link-dest` flags.
     pub link_dests: Vec<PathBuf>,
     /// Enables `--remove-source-files`.
@@ -2261,7 +2252,6 @@ where
         partial,
         delay_updates,
         partial_dir,
-        delay_updates,
         link_dests,
         remove_source_files,
         append,
@@ -3622,7 +3612,6 @@ exit 42
             partial: false,
             delay_updates: false,
             partial_dir: None,
-            delay_updates: false,
             link_dests: Vec::new(),
             remove_source_files: false,
             append: None,

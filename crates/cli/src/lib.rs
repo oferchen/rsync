@@ -857,7 +857,6 @@ struct ParsedArgs {
     partial: bool,
     delay_updates: bool,
     partial_dir: Option<PathBuf>,
-    delay_updates: bool,
     link_dests: Vec<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
@@ -1214,20 +1213,6 @@ fn clap_command() -> ClapCommand {
                 .help("Store partially transferred files in DIR.")
                 .value_parser(OsStringValueParser::new())
                 .overrides_with("no-partial"),
-        )
-        .arg(
-            Arg::new("delay-updates")
-                .long("delay-updates")
-                .help("Delay moving updated files into place until transfers finish.")
-                .action(ArgAction::SetTrue)
-                .overrides_with("no-delay-updates"),
-        )
-        .arg(
-            Arg::new("no-delay-updates")
-                .long("no-delay-updates")
-                .help("Disable delayed updates.")
-                .action(ArgAction::SetTrue)
-                .overrides_with("delay-updates"),
         )
         .arg(
             Arg::new("whole-file")
@@ -1880,9 +1865,6 @@ where
             progress_setting = ProgressSetting::PerFile;
         }
     }
-    if matches.get_flag("no-delay-updates") {
-        delay_updates = false;
-    }
     let link_dests: Vec<PathBuf> = matches
         .remove_many::<OsString>("link-dest")
         .map(|values| {
@@ -2027,7 +2009,6 @@ where
         partial,
         delay_updates,
         partial_dir,
-        delay_updates,
         link_dests,
         remove_source_files,
         inplace,
@@ -2274,7 +2255,6 @@ where
         partial,
         delay_updates,
         partial_dir,
-        delay_updates,
         link_dests,
         remove_source_files,
         inplace,
@@ -2724,7 +2704,6 @@ where
             partial,
             delay_updates,
             partial_dir: partial_dir.clone(),
-            delay_updates,
             link_dests: link_dests.clone(),
             remove_source_files,
             append: append_for_fallback,
@@ -7466,19 +7445,6 @@ mod tests {
             parsed.partial_dir.as_deref(),
             Some(Path::new(".rsync-partial"))
         );
-    }
-
-    #[test]
-    fn parse_args_recognises_delay_updates_flag() {
-        let parsed = parse_args([
-            OsString::from("oc-rsync"),
-            OsString::from("--delay-updates"),
-            OsString::from("source"),
-            OsString::from("dest"),
-        ])
-        .expect("parse");
-
-        assert!(parsed.delay_updates);
     }
 
     #[test]
