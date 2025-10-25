@@ -127,7 +127,7 @@ const HELP_TEXT: &str = concat!(
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
     "following options are recognised:\n",
-    "  -h, --help       Show this help message and exit.\n",
+    "      --help       Show this help message and exit.\n",
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
     "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
@@ -209,6 +209,8 @@ const HELP_TEXT: &str = concat!(
     "      --preallocate  Preallocate destination files before writing.\n",
     "      --inplace    Write updated data directly to destination files.\n",
     "      --no-inplace Use temporary files when updating regular files.\n",
+    "  -h, --human-readable  Output numbers in a human-readable format.\n",
+    "      --no-human-readable  Disable human-readable number formatting.\n",
     "  -P              Equivalent to --partial --progress.\n",
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
@@ -247,7 +249,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -845,6 +847,7 @@ impl ProgressSetting {
 struct ParsedArgs {
     show_help: bool,
     show_version: bool,
+    human_readable: Option<bool>,
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
@@ -959,9 +962,23 @@ fn clap_command() -> ClapCommand {
         .arg(
             Arg::new("help")
                 .long("help")
-                .short('h')
                 .help("Show this help message and exit.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("human-readable")
+                .short('h')
+                .long("human-readable")
+                .help("Output numbers in a human-readable format.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-human-readable"),
+        )
+        .arg(
+            Arg::new("no-human-readable")
+                .long("no-human-readable")
+                .help("Disable human-readable number formatting.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("human-readable"),
         )
         .arg(
             Arg::new("msgs2stderr")
@@ -1810,6 +1827,13 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
+    let human_readable = if matches.get_flag("human-readable") {
+        Some(true)
+    } else if matches.get_flag("no-human-readable") {
+        Some(false)
+    } else {
+        None
+    };
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
     let mkpath = matches.get_flag("mkpath");
@@ -2172,6 +2196,7 @@ where
     Ok(ParsedArgs {
         show_help,
         show_version,
+        human_readable,
         dry_run,
         list_only,
         remote_shell,
@@ -2557,6 +2582,7 @@ where
     let ParsedArgs {
         show_help,
         show_version,
+        human_readable,
         dry_run,
         list_only,
         remote_shell,
@@ -2641,6 +2667,8 @@ where
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
+    let human_readable_setting = human_readable;
+    let human_readable = human_readable_setting.unwrap_or(false);
 
     if password_file
         .as_deref()
@@ -3071,6 +3099,7 @@ where
             remote_shell: remote_shell.clone(),
             remote_options: remote_options.clone(),
             protect_args,
+            human_readable: human_readable_setting,
             archive,
             delete: delete_for_fallback,
             delete_mode,
@@ -3318,6 +3347,7 @@ where
         .safe_links(safe_links)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
+        .human_readable(human_readable)
         .mkpath(mkpath)
         .prune_empty_dirs(prune_empty_dirs.unwrap_or(false))
         .verbosity(verbosity)
@@ -3475,7 +3505,7 @@ where
             stdout,
             stderr,
             msgs_to_stderr,
-            |writer| LiveProgress::new(writer, mode),
+            |writer| LiveProgress::new(writer, mode, human_readable),
         ))
     } else {
         None
@@ -3512,6 +3542,7 @@ where
                     out_format_template.as_ref(),
                     name_level,
                     name_overridden,
+                    human_readable,
                     writer,
                 )
             }) {
@@ -3555,10 +3586,11 @@ struct LiveProgress<'a> {
     active_path: Option<PathBuf>,
     line_active: bool,
     mode: ProgressMode,
+    human_readable: bool,
 }
 
 impl<'a> LiveProgress<'a> {
-    fn new(writer: &'a mut dyn Write, mode: ProgressMode) -> Self {
+    fn new(writer: &'a mut dyn Write, mode: ProgressMode, human_readable: bool) -> Self {
         Self {
             writer,
             rendered: false,
@@ -3566,6 +3598,7 @@ impl<'a> LiveProgress<'a> {
             active_path: None,
             line_active: false,
             mode,
+            human_readable,
         }
     }
 
@@ -3617,10 +3650,14 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 }
 
                 let bytes = event.bytes_transferred();
-                let size_field = format!("{:>15}", format_progress_bytes(bytes));
+                let size_field =
+                    format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
                 let percent = format_progress_percent(bytes, update.total_bytes());
                 let percent_field = format!("{:>4}", percent);
-                let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
+                let rate_field = format!(
+                    "{:>12}",
+                    format_progress_rate(bytes, event.elapsed(), self.human_readable)
+                );
                 let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
                 let xfr_index = update.index();
 
@@ -3644,14 +3681,15 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             })(),
             ProgressMode::Overall => (|| -> io::Result<()> {
                 let bytes = update.overall_transferred();
-                let size_field = format!("{:>15}", format_progress_bytes(bytes));
+                let size_field =
+                    format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
                 let percent_field = format!(
                     "{:>4}",
                     format_progress_percent(bytes, update.overall_total_bytes())
                 );
                 let rate_field = format!(
                     "{:>12}",
-                    format_progress_rate(bytes, update.overall_elapsed())
+                    format_progress_rate(bytes, update.overall_elapsed(), self.human_readable)
                 );
                 let elapsed_field =
                     format!("{:>11}", format_progress_elapsed(update.overall_elapsed()));
@@ -3697,6 +3735,7 @@ fn emit_transfer_summary(
     out_format: Option<&OutFormat>,
     name_level: NameOutputLevel,
     name_overridden: bool,
+    human_readable: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -3704,7 +3743,7 @@ fn emit_transfer_summary(
     if list_only {
         let mut wrote_listing = false;
         if !events.is_empty() {
-            emit_list_only(events, writer)?;
+            emit_list_only(events, writer, human_readable)?;
             wrote_listing = true;
         }
 
@@ -3712,12 +3751,12 @@ fn emit_transfer_summary(
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer)?;
+            emit_stats(summary, writer, human_readable)?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_totals(summary, writer)?;
+            emit_totals(summary, writer, human_readable)?;
         }
 
         return Ok(());
@@ -3737,7 +3776,7 @@ fn emit_transfer_summary(
     let progress_rendered = if progress_already_rendered {
         true
     } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
-        emit_progress(events, writer)?
+        emit_progress(events, writer, human_readable)?
     } else {
         false
     };
@@ -3759,22 +3798,33 @@ fn emit_transfer_summary(
     }
 
     if emit_verbose_listing {
-        emit_verbose(events, verbosity, name_level, name_overridden, writer)?;
+        emit_verbose(
+            events,
+            verbosity,
+            name_level,
+            name_overridden,
+            human_readable,
+            writer,
+        )?;
         if stats {
             writeln!(writer)?;
         }
     }
 
     if stats {
-        emit_stats(summary, writer)?;
+        emit_stats(summary, writer, human_readable)?;
     } else if verbosity > 0 || (verbosity == 0 && name_enabled) {
-        emit_totals(summary, writer)?;
+        emit_totals(summary, writer, human_readable)?;
     }
 
     Ok(())
 }
 
-fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> io::Result<()> {
+fn emit_list_only<W: Write + ?Sized>(
+    events: &[ClientEvent],
+    stdout: &mut W,
+    human_readable: bool,
+) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
             continue;
@@ -3782,7 +3832,7 @@ fn emit_list_only<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> 
 
         if let Some(metadata) = event.metadata() {
             let permissions = format_list_permissions(metadata);
-            let size = format_list_size(metadata.length());
+            let size = format_list_size(metadata.length(), human_readable);
             let timestamp = format_list_timestamp(metadata.modified());
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
             if metadata.kind().is_symlink() {
@@ -3891,8 +3941,33 @@ fn format_list_timestamp(modified: Option<SystemTime>) -> String {
     "1970/01/01 00:00:00".to_string()
 }
 
-fn format_list_size(size: u64) -> String {
-    let mut digits = size.to_string();
+fn format_list_size(size: u64, human_readable: bool) -> String {
+    let value = format_size(size, human_readable);
+    format!("{value:>15}")
+}
+
+/// Returns whether the provided event kind should be reflected in progress output.
+fn is_progress_event(kind: &ClientEventKind) -> bool {
+    kind.is_progress()
+}
+
+/// Formats a byte count using thousands separators when human-readable formatting is disabled. When
+/// enabled, the output uses decimal unit suffixes such as `K`, `M`, or `G` with two fractional
+/// digits.
+fn format_progress_bytes(bytes: u64, human_readable: bool) -> String {
+    format_size(bytes, human_readable)
+}
+
+fn format_size(bytes: u64, human_readable: bool) -> String {
+    if human_readable {
+        format_human_bytes(bytes)
+    } else {
+        format_decimal_bytes(bytes)
+    }
+}
+
+fn format_decimal_bytes(bytes: u64) -> String {
+    let mut digits = bytes.to_string();
     let mut groups = Vec::new();
 
     while digits.len() > 3 {
@@ -3902,34 +3977,85 @@ fn format_list_size(size: u64) -> String {
 
     groups.push(digits);
     groups.reverse();
-    let with_commas = groups.join(",");
-    format!("{with_commas:>15}")
+    groups.join(",")
 }
 
-/// Returns whether the provided event kind should be reflected in progress output.
-fn is_progress_event(kind: &ClientEventKind) -> bool {
-    kind.is_progress()
-}
-
-/// Formats a byte count using thousands separators, mirroring upstream rsync progress lines.
-fn format_progress_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        return "0".to_string();
+fn format_human_bytes(bytes: u64) -> String {
+    if bytes < 1_000 {
+        return bytes.to_string();
     }
 
-    let mut value = bytes;
-    let mut parts = Vec::new();
-    while value > 0 {
-        let chunk = value % 1_000;
-        value /= 1_000;
-        if value == 0 {
-            parts.push(chunk.to_string());
-        } else {
-            parts.push(format!("{chunk:03}"));
+    const UNITS: &[(&str, f64)] = &[
+        ("P", 1_000_000_000_000_000.0),
+        ("T", 1_000_000_000_000.0),
+        ("G", 1_000_000_000.0),
+        ("M", 1_000_000.0),
+        ("K", 1_000.0),
+    ];
+
+    let bytes_f64 = bytes as f64;
+    for (suffix, threshold) in UNITS {
+        if bytes_f64 >= *threshold {
+            let value = bytes_f64 / *threshold;
+            return format!("{value:.2}{suffix}");
         }
     }
-    parts.reverse();
-    parts.join(",")
+
+    bytes.to_string()
+}
+
+fn format_summary_rate(rate: f64, human_readable: bool) -> String {
+    if human_readable {
+        format_human_rate(rate)
+    } else {
+        format!("{rate:.2}")
+    }
+}
+
+fn format_human_rate(rate: f64) -> String {
+    if rate < 1_000.0 {
+        return format!("{rate:.2}");
+    }
+
+    const UNITS: &[(&str, f64)] = &[
+        ("P", 1_000_000_000_000_000.0),
+        ("T", 1_000_000_000_000.0),
+        ("G", 1_000_000_000.0),
+        ("M", 1_000_000.0),
+        ("K", 1_000.0),
+    ];
+
+    for (suffix, threshold) in UNITS {
+        if rate >= *threshold {
+            let value = rate / *threshold;
+            return format!("{value:.2}{suffix}");
+        }
+    }
+
+    format!("{rate:.2}")
+}
+
+fn format_verbose_rate(rate: f64, human_readable: bool) -> (String, &'static str) {
+    if human_readable {
+        const UNITS: &[(&str, f64)] = &[
+            ("PB/s", 1_000_000_000_000_000.0),
+            ("TB/s", 1_000_000_000_000.0),
+            ("GB/s", 1_000_000_000.0),
+            ("MB/s", 1_000_000.0),
+            ("kB/s", 1_000.0),
+        ];
+
+        for (unit, threshold) in UNITS {
+            if rate >= *threshold {
+                let value = rate / *threshold;
+                return (format!("{value:.2}"), *unit);
+            }
+        }
+
+        (format!("{rate:.2}"), "B/s")
+    } else {
+        (format!("{rate:.1}"), "B/s")
+    }
 }
 
 /// Formats a progress percentage, producing the upstream `??%` placeholder when totals are
@@ -3947,30 +4073,43 @@ fn format_progress_percent(bytes: u64, total: Option<u64>) -> String {
 }
 
 /// Formats a transfer rate in the `kB/s`, `MB/s`, or `GB/s` ranges.
-fn format_progress_rate(bytes: u64, elapsed: Duration) -> String {
+fn format_progress_rate(bytes: u64, elapsed: Duration, human_readable: bool) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
     const GIB: f64 = MIB * 1024.0;
 
     if bytes == 0 || elapsed.is_zero() {
-        return "0.00kB/s".to_string();
+        return if human_readable {
+            "0.00B/s".to_string()
+        } else {
+            "0.00kB/s".to_string()
+        };
     }
 
     let seconds = elapsed.as_secs_f64();
     if seconds <= 0.0 {
-        return "0.00kB/s".to_string();
+        return if human_readable {
+            "0.00B/s".to_string()
+        } else {
+            "0.00kB/s".to_string()
+        };
     }
 
     let bytes_per_second = bytes as f64 / seconds;
-    let (value, unit) = if bytes_per_second >= GIB {
-        (bytes_per_second / GIB, "GB/s")
-    } else if bytes_per_second >= MIB {
-        (bytes_per_second / MIB, "MB/s")
+    if human_readable {
+        let (value, unit) = format_verbose_rate(bytes_per_second, true);
+        format!("{value}{unit}")
     } else {
-        (bytes_per_second / KIB, "kB/s")
-    };
+        let (value, unit) = if bytes_per_second >= GIB {
+            (bytes_per_second / GIB, "GB/s")
+        } else if bytes_per_second >= MIB {
+            (bytes_per_second / MIB, "MB/s")
+        } else {
+            (bytes_per_second / KIB, "kB/s")
+        };
 
-    format!("{value:.2}{unit}")
+        format!("{value:.2}{unit}")
+    }
 }
 
 /// Formats an elapsed duration as `H:MM:SS`, matching rsync's progress output.
@@ -3983,7 +4122,11 @@ fn format_progress_elapsed(elapsed: Duration) -> String {
 }
 
 /// Renders progress lines for the provided transfer events.
-fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> io::Result<bool> {
+fn emit_progress<W: Write + ?Sized>(
+    events: &[ClientEvent],
+    stdout: &mut W,
+    human_readable: bool,
+) -> io::Result<bool> {
     let progress_events: Vec<_> = events
         .iter()
         .filter(|event| is_progress_event(event.kind()))
@@ -3999,13 +4142,16 @@ fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> i
         writeln!(stdout, "{}", event.relative_path().display())?;
 
         let bytes = event.bytes_transferred();
-        let size_field = format!("{:>15}", format_progress_bytes(bytes));
+        let size_field = format!("{:>15}", format_progress_bytes(bytes, human_readable));
         let percent_hint = match event.kind() {
             ClientEventKind::DataCopied => event.total_bytes(),
             _ => None,
         };
         let percent_field = format!("{:>4}", format_progress_percent(bytes, percent_hint));
-        let rate_field = format!("{:>12}", format_progress_rate(bytes, event.elapsed()));
+        let rate_field = format!(
+            "{:>12}",
+            format_progress_rate(bytes, event.elapsed(), human_readable)
+        );
         let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
         let remaining = total - index - 1;
         let xfr_index = index + 1;
@@ -4020,7 +4166,11 @@ fn emit_progress<W: Write + ?Sized>(events: &[ClientEvent], stdout: &mut W) -> i
 }
 
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
-fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+fn emit_stats<W: Write + ?Sized>(
+    summary: &ClientSummary,
+    stdout: &mut W,
+    human_readable: bool,
+) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
     let directories = summary.directories_created();
@@ -4066,6 +4216,14 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
         ("special", special_created),
     ]);
 
+    let total_size_display = format_size(total_size, human_readable);
+    let transferred_size_display = format_size(transferred_size, human_readable);
+    let literal_bytes_display = format_size(literal_bytes, human_readable);
+    let matched_bytes_display = format_size(matched_bytes, human_readable);
+    let file_list_size_display = format_size(file_list_size, human_readable);
+    let bytes_sent_display = format_size(bytes_sent, human_readable);
+    let bytes_received_display = format_size(bytes_received, human_readable);
+
     writeln!(stdout, "Number of files: {total_entries}{files_breakdown}")?;
     writeln!(
         stdout,
@@ -4073,14 +4231,14 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
     )?;
     writeln!(stdout, "Number of deleted files: {deleted}")?;
     writeln!(stdout, "Number of regular files transferred: {files}")?;
-    writeln!(stdout, "Total file size: {total_size} bytes")?;
+    writeln!(stdout, "Total file size: {total_size_display} bytes")?;
     writeln!(
         stdout,
-        "Total transferred file size: {transferred_size} bytes"
+        "Total transferred file size: {transferred_size_display} bytes"
     )?;
-    writeln!(stdout, "Literal data: {literal_bytes} bytes")?;
-    writeln!(stdout, "Matched data: {matched_bytes} bytes")?;
-    writeln!(stdout, "File list size: {file_list_size}")?;
+    writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
+    writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
+    writeln!(stdout, "File list size: {file_list_size_display}")?;
     writeln!(
         stdout,
         "File list generation time: {file_list_generation:.3} seconds"
@@ -4089,11 +4247,11 @@ fn emit_stats<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io:
         stdout,
         "File list transfer time: {file_list_transfer:.3} seconds"
     )?;
-    writeln!(stdout, "Total bytes sent: {bytes_sent}")?;
-    writeln!(stdout, "Total bytes received: {bytes_received}")?;
+    writeln!(stdout, "Total bytes sent: {bytes_sent_display}")?;
+    writeln!(stdout, "Total bytes received: {bytes_received_display}")?;
     writeln!(stdout)?;
 
-    emit_totals(summary, stdout)
+    emit_totals(summary, stdout, human_readable)
 }
 
 fn format_stat_categories(categories: &[(&str, u64)]) -> String {
@@ -4109,7 +4267,11 @@ fn format_stat_categories(categories: &[(&str, u64)]) -> String {
 }
 
 /// Emits the summary lines reported by verbose transfers.
-fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io::Result<()> {
+fn emit_totals<W: Write + ?Sized>(
+    summary: &ClientSummary,
+    stdout: &mut W,
+    human_readable: bool,
+) -> io::Result<()> {
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
@@ -4127,13 +4289,18 @@ fn emit_totals<W: Write + ?Sized>(summary: &ClientSummary, stdout: &mut W) -> io
         0.0
     };
 
+    let sent_display = format_size(sent, human_readable);
+    let received_display = format_size(received, human_readable);
+    let rate_display = format_summary_rate(rate, human_readable);
+    let total_size_display = format_size(total_size, human_readable);
+
     writeln!(
         stdout,
-        "sent {sent} bytes  received {received} bytes  {rate:.2} bytes/sec"
+        "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
     writeln!(
         stdout,
-        "total size is {total_size}  speedup is {speedup:.2}"
+        "total size is {total_size_display}  speedup is {speedup:.2}"
     )
 }
 
@@ -4143,6 +4310,7 @@ fn emit_verbose<W: Write + ?Sized>(
     verbosity: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
+    human_readable: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
     if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
@@ -4233,14 +4401,15 @@ fn emit_verbose<W: Write + ?Sized>(
         let descriptor = describe_event_kind(kind);
         let bytes = event.bytes_transferred();
         if bytes > 0 {
+            let size_text = format_size(bytes, human_readable);
             if let Some(rate) = compute_rate(bytes, event.elapsed()) {
+                let (rate_value, rate_unit) = format_verbose_rate(rate, human_readable);
                 writeln!(
                     stdout,
-                    "{descriptor}: {rendered} ({} bytes, {rate:.1} B/s)",
-                    bytes
+                    "{descriptor}: {rendered} ({size_text} bytes, {rate_value} {rate_unit})"
                 )?;
             } else {
-                writeln!(stdout, "{descriptor}: {rendered} ({} bytes)", bytes)?;
+                writeln!(stdout, "{descriptor}: {rendered} ({size_text} bytes)")?;
             }
         } else {
             writeln!(stdout, "{descriptor}: {rendered}")?;
@@ -6512,14 +6681,16 @@ mod tests {
     }
 
     #[test]
-    fn short_help_flag_renders_static_help_snapshot() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-h")]);
+    fn short_h_flag_enables_human_readable_mode() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-h"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
 
-        assert_eq!(code, 0);
-        assert!(stderr.is_empty());
-
-        let expected = render_help();
-        assert_eq!(stdout, expected.into_bytes());
+        assert_eq!(parsed.human_readable, Some(true));
     }
 
     #[test]
@@ -6722,6 +6893,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stats_human_readable_formats_totals() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("file.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let dest_default = tmp.path().join("default");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--stats"),
+            source.clone().into_os_string(),
+            dest_default.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stats output utf8");
+        assert!(rendered.contains("Total file size: 1,536 bytes"));
+        assert!(rendered.contains("Total bytes sent: 1,536"));
+
+        let dest_human = tmp.path().join("human");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--stats"),
+            OsString::from("--human-readable"),
+            source.into_os_string(),
+            dest_human.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stats output utf8");
+        assert!(rendered.contains("Total file size: 1.54K bytes"));
+        assert!(rendered.contains("Total bytes sent: 1.54K"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
@@ -6756,6 +6965,42 @@ mod tests {
     }
 
     #[test]
+    fn verbose_human_readable_formats_sizes() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("sizes.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let dest_default = tmp.path().join("default.bin");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-vv"),
+            source.clone().into_os_string(),
+            dest_default.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("verbose output utf8");
+        assert!(rendered.contains("1,536 bytes"));
+
+        let dest_human = tmp.path().join("human.bin");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-vv"),
+            OsString::from("--human-readable"),
+            source.into_os_string(),
+            dest_human.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("verbose output utf8");
+        assert!(rendered.contains("1.54K bytes"));
+    }
+
+    #[test]
     fn progress_transfer_renders_progress_lines() {
         use tempfile::tempdir;
 
@@ -6782,6 +7027,44 @@ mod tests {
             std::fs::read(destination).expect("read destination"),
             b"progress"
         );
+    }
+
+    #[test]
+    fn progress_human_readable_formats_sizes() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("human-progress.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let destination_default = tmp.path().join("default-progress.bin");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            source.clone().into_os_string(),
+            destination_default.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("progress output utf8");
+        let normalized = rendered.replace('\r', "\n");
+        assert!(normalized.contains("1,536"));
+
+        let destination_human = tmp.path().join("human-progress.out");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("--human-readable"),
+            source.into_os_string(),
+            destination_human.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("progress output utf8");
+        let normalized = rendered.replace('\r', "\n");
+        assert!(normalized.contains("1.54K"));
     }
 
     #[test]
@@ -8536,6 +8819,32 @@ mod tests {
         .expect("parse");
 
         assert!(parsed.stats);
+    }
+
+    #[test]
+    fn parse_args_recognises_human_readable_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--human-readable"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.human_readable, Some(true));
+    }
+
+    #[test]
+    fn parse_args_recognises_no_human_readable_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-human-readable"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.human_readable, Some(false));
     }
 
     #[test]
@@ -12712,6 +13021,82 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn remote_fallback_forwards_human_readable_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--human-readable"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--human-readable"));
+        assert!(!args.contains(&"--no-human-readable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_no_human_readable_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-human-readable"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-human-readable"));
+        assert!(!args.contains(&"--human-readable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn remote_fallback_forwards_info_flags() {
         use tempfile::tempdir;
 
@@ -13520,7 +13905,7 @@ exit 0
             .expect("file entry present");
 
         let expected_permissions = "-rw-r--r--";
-        let expected_size = format_list_size(1_234);
+        let expected_size = format_list_size(1_234, false);
         let system_time = SystemTime::UNIX_EPOCH
             + Duration::from_secs(
                 u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
@@ -13531,6 +13916,30 @@ exit 0
             format!("{expected_permissions} {expected_size} {expected_timestamp} data.bin");
 
         assert_eq!(file_line, expected);
+
+        let mut source_arg = source_dir.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--list-only"),
+            OsString::from("--human-readable"),
+            source_arg,
+            dest_dir.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+        let human_line = rendered
+            .lines()
+            .find(|line| line.ends_with("data.bin"))
+            .expect("file entry present");
+        let expected_human_size = format_list_size(1_234, true);
+        let expected_human =
+            format!("{expected_permissions} {expected_human_size} {expected_timestamp} data.bin");
+        assert_eq!(human_line, expected_human);
     }
 
     #[test]
@@ -13584,11 +13993,11 @@ exit 0
 
         let expected_exec = format!(
             "-rwsrwsrwt {} {expected_timestamp} exec-special",
-            format_list_size(4)
+            format_list_size(4, false)
         );
         let expected_plain = format!(
             "-rwSrwSrwT {} {expected_timestamp} plain-special",
-            format_list_size(5)
+            format_list_size(5, false)
         );
 
         let mut exec_line = None;

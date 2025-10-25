@@ -494,9 +494,7 @@ mod tests {
         assert!(connection.take_stderr().is_none());
 
         let mut captured = String::new();
-        handle
-            .read_to_string(&mut captured)
-            .expect("read stderr");
+        handle.read_to_string(&mut captured).expect("read stderr");
         assert!(captured.contains("err"));
 
         let status = connection.wait().expect("wait status");

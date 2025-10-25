@@ -402,6 +402,7 @@ pub struct ClientConfig {
     verbosity: u8,
     progress: bool,
     stats: bool,
+    human_readable: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
     backup: bool,
@@ -469,6 +470,7 @@ impl Default for ClientConfig {
             verbosity: 0,
             progress: false,
             stats: false,
+            human_readable: false,
             partial: false,
             partial_dir: None,
             backup: false,
@@ -891,6 +893,13 @@ impl ClientConfig {
         self.stats
     }
 
+    /// Reports whether human-readable formatting should be applied to byte counts.
+    #[must_use]
+    #[doc(alias = "--human-readable")]
+    pub const fn human_readable(&self) -> bool {
+        self.human_readable
+    }
+
     /// Reports whether partial transfers were requested.
     #[must_use]
     #[doc(alias = "--partial")]
@@ -1018,6 +1027,7 @@ pub struct ClientConfigBuilder {
     verbosity: u8,
     progress: bool,
     stats: bool,
+    human_readable: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
     backup: bool,
@@ -1493,6 +1503,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables human-readable output formatting.
+    #[must_use]
+    #[doc(alias = "--human-readable")]
+    pub const fn human_readable(mut self, enabled: bool) -> Self {
+        self.human_readable = enabled;
+        self
+    }
+
     /// Enables or disables retention of partial files on failure.
     #[must_use]
     #[doc(alias = "--partial")]
@@ -1718,6 +1736,7 @@ impl ClientConfigBuilder {
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
+            human_readable: self.human_readable,
             partial: self.partial,
             partial_dir: self.partial_dir,
             backup: self.backup,
@@ -2270,6 +2289,8 @@ pub struct RemoteFallbackArgs {
     /// while `Some(false)` forwards `--no-protect-args`. A `None` value keeps
     /// rsync's default behaviour.
     pub protect_args: Option<bool>,
+    /// Optional `--human-readable`/`--no-human-readable` toggle.
+    pub human_readable: Option<bool>,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Enables `--delete`.
@@ -2497,6 +2518,7 @@ where
         remote_shell,
         remote_options,
         protect_args,
+        human_readable,
         archive,
         delete,
         delete_mode,
@@ -2774,6 +2796,13 @@ where
             command_args.push(OsString::from("--no-protect-args"));
         }
     }
+
+    push_toggle(
+        &mut command_args,
+        "--human-readable",
+        "--no-human-readable",
+        human_readable,
+    );
 
     if let Some(limit) = bwlimit {
         command_args.push(OsString::from("--bwlimit"));
@@ -3972,6 +4001,7 @@ exit 42
             remote_shell: None,
             remote_options: Vec::new(),
             protect_args: None,
+            human_readable: None,
             address_mode: AddressMode::Default,
             archive: false,
             delete: false,
