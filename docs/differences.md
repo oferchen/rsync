@@ -11,7 +11,9 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. It can proactively create parent directories via
-    `--mkpath` even when implied directories are disabled. A `--dry-run` flag
+    `--mkpath` even when implied directories are disabled. Append-only updates via
+    `--append` and `--append-verify` reuse the native verification logic when the
+    destination already contains a prefix of the incoming file. A `--dry-run` flag
     validates transfers without
     mutating the destination, and `--delete` removes destination entries that
     are absent from the source. The client can contact an `rsync://` daemon to

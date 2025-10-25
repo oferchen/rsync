@@ -107,8 +107,8 @@ use rsync_engine::local_copy::{
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
-    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, ProtocolVersion, parse_legacy_daemon_message,
-    parse_legacy_error_message, parse_legacy_warning_message,
+    LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, NegotiationError, ProtocolVersion,
+    parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
 };
 use rsync_transport::negotiate_legacy_daemon_session;
 #[cfg(test)]
@@ -325,6 +325,8 @@ pub struct ClientConfig {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
@@ -373,6 +375,8 @@ impl Default for ClientConfig {
             partial: false,
             partial_dir: None,
             inplace: false,
+            append: false,
+            append_verify: false,
             force_event_collection: false,
             preserve_devices: false,
             preserve_specials: false,
@@ -718,6 +722,20 @@ impl ClientConfig {
         self.inplace
     }
 
+    /// Reports whether appended transfers are enabled.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(&self) -> bool {
+        self.append
+    }
+
+    /// Reports whether append verification is enabled.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(&self) -> bool {
+        self.append_verify
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {
@@ -768,6 +786,8 @@ pub struct ClientConfigBuilder {
     partial: bool,
     partial_dir: Option<PathBuf>,
     inplace: bool,
+    append: bool,
+    append_verify: bool,
     force_event_collection: bool,
     preserve_devices: bool,
     preserve_specials: bool,
@@ -1158,6 +1178,30 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables append-only transfers for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append")]
+    pub const fn append(mut self, append: bool) -> Self {
+        self.append = append;
+        if !append {
+            self.append_verify = false;
+        }
+        self
+    }
+
+    /// Enables append verification for existing destination files.
+    #[must_use]
+    #[doc(alias = "--append-verify")]
+    pub const fn append_verify(mut self, verify: bool) -> Self {
+        if verify {
+            self.append = true;
+            self.append_verify = true;
+        } else {
+            self.append_verify = false;
+        }
+        self
+    }
+
     /// Forces collection of transfer events regardless of verbosity.
     #[must_use]
     pub const fn force_event_collection(mut self, force: bool) -> Self {
@@ -1250,6 +1294,8 @@ impl ClientConfigBuilder {
             partial: self.partial,
             partial_dir: self.partial_dir,
             inplace: self.inplace,
+            append: self.append,
+            append_verify: self.append_verify,
             force_event_collection: self.force_event_collection,
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
@@ -1803,6 +1849,10 @@ pub struct RemoteFallbackArgs {
     pub partial_dir: Option<PathBuf>,
     /// Enables `--remove-source-files`.
     pub remove_source_files: bool,
+    /// Optional `--append`/`--no-append` toggle.
+    pub append: Option<bool>,
+    /// Enables `--append-verify`.
+    pub append_verify: bool,
     /// Optional `--inplace`/`--no-inplace` toggle.
     pub inplace: Option<bool>,
     /// Routes daemon messages to standard error via `--msgs2stderr`.
@@ -1854,6 +1904,12 @@ pub struct RemoteFallbackArgs {
     /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
+    /// Optional override for the remote rsync executable.
+    ///
+    /// When populated the helper forwards `--rsync-path` to the fallback command so upstream
+    /// rsync executes the specified program on the remote system. The option is ignored when
+    /// remote operands are absent because local transfers never invoke the fallback binary.
+    pub rsync_path: Option<OsString>,
     /// Remaining operands to forward to the fallback binary.
     pub remainder: Vec<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
@@ -1951,6 +2007,8 @@ where
         partial,
         partial_dir,
         remove_source_files,
+        append,
+        append_verify,
         inplace,
         msgs_to_stderr,
         whole_file,
@@ -1973,6 +2031,7 @@ where
         out_format,
         no_motd,
         fallback_binary,
+        rsync_path,
         mut remainder,
         #[cfg(feature = "acl")]
         acls,
@@ -2100,6 +2159,11 @@ where
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
     }
+    if append_verify {
+        command_args.push(OsString::from("--append-verify"));
+    } else {
+        push_toggle(&mut command_args, "--append", "--no-append", append);
+    }
     if msgs_to_stderr {
         command_args.push(OsString::from("--msgs2stderr"));
     }
@@ -2202,6 +2266,11 @@ where
     if let Some(shell) = remote_shell {
         command_args.push(OsString::from("-e"));
         command_args.push(shell);
+    }
+
+    if let Some(path) = rsync_path {
+        command_args.push(OsString::from("--rsync-path"));
+        command_args.push(path);
     }
 
     command_args.append(&mut remainder);
@@ -3091,6 +3160,8 @@ fn build_local_copy_options(
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
         .inplace(config.inplace())
+        .append(config.append())
+        .append_verify(config.append_verify())
         .partial(config.partial())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .with_timeout(
@@ -3234,6 +3305,8 @@ exit 42
             partial: false,
             partial_dir: None,
             remove_source_files: false,
+            append: None,
+            append_verify: false,
             inplace: None,
             msgs_to_stderr: false,
             whole_file: None,
@@ -3256,6 +3329,7 @@ exit 42
             out_format: None,
             no_motd: false,
             fallback_binary: None,
+            rsync_path: None,
             remainder: Vec::new(),
             #[cfg(feature = "acl")]
             acls: None,
@@ -3290,6 +3364,32 @@ exit 42
         );
         assert!(config.has_transfer_request());
         assert!(!config.dry_run());
+    }
+
+    #[test]
+    fn builder_append_round_trip() {
+        let enabled = ClientConfig::builder().append(true).build();
+        assert!(enabled.append());
+        assert!(!enabled.append_verify());
+
+        let disabled = ClientConfig::builder().append(false).build();
+        assert!(!disabled.append());
+        assert!(!disabled.append_verify());
+    }
+
+    #[test]
+    fn builder_append_verify_implies_append() {
+        let verified = ClientConfig::builder().append_verify(true).build();
+        assert!(verified.append());
+        assert!(verified.append_verify());
+
+        let cleared = ClientConfig::builder()
+            .append(true)
+            .append_verify(true)
+            .append_verify(false)
+            .build();
+        assert!(cleared.append());
+        assert!(!cleared.append_verify());
     }
 
     #[test]
@@ -5215,6 +5315,18 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_decodes_percent_encoded_credentials() {
+        let proxy = parse_proxy_spec("http://user%3Aname:p%40ss%25word@proxy.example:1080")
+            .expect("percent-encoded proxy parses");
+        assert_eq!(proxy.host, "proxy.example");
+        assert_eq!(proxy.port, 1080);
+        assert_eq!(
+            proxy.authorization_header(),
+            Some(String::from("dXNlcjpuYW1lOnBAc3Mld29yZA=="))
+        );
+    }
+
+    #[test]
     fn parse_proxy_spec_accepts_https_scheme() {
         let proxy = parse_proxy_spec("https://proxy.example:3128").expect("https proxy parses");
         assert_eq!(proxy.host, "proxy.example");
@@ -5253,6 +5365,34 @@ exit 42
     }
 
     #[test]
+    fn parse_proxy_spec_rejects_invalid_percent_encoding_in_credentials() {
+        let error = match parse_proxy_spec("user%zz:secret@proxy.example:8080") {
+            Ok(_) => panic!("invalid percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY username contains invalid percent-encoding")
+        );
+
+        let error = match parse_proxy_spec("user:secret%@proxy.example:8080") {
+            Ok(_) => panic!("truncated percent-encoding should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("RSYNC_PROXY password contains truncated percent-encoding")
+        );
+    }
+
+    #[test]
     fn run_module_list_reports_daemon_error() {
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
@@ -5286,6 +5426,48 @@ exit 42
         assert!(error.message().to_string().contains("unavailable"));
 
         handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_converts_error_payload() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@ERROR module unavailable".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("module unavailable"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_converts_other_malformed_greetings() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            NegotiationError::MalformedLegacyGreeting {
+                input: "@RSYNCD? unexpected".to_string(),
+            },
+        );
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("@RSYNCD? unexpected"));
+    }
+
+    #[test]
+    fn map_daemon_handshake_error_propagates_other_failures() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = mapped.message().to_string();
+        assert!(rendered.contains("timed out"));
+        assert!(rendered.contains("negotiate with"));
     }
 
     #[test]
@@ -5972,6 +6154,30 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
         .trim();
 
     Some(payload.to_string())
+}
+
+fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
+    if let Some(mapped) = handshake_error_to_client_error(&error) {
+        mapped
+    } else {
+        socket_error("negotiate with", addr.socket_addr_display(), error)
+    }
+}
+
+fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
+    let negotiation_error = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<NegotiationError>())?;
+
+    if let Some(input) = negotiation_error.malformed_legacy_greeting() {
+        if let Some(payload) = legacy_daemon_error_payload(input) {
+            return Some(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
+        }
+
+        return Some(daemon_protocol_error(input));
+    }
+
+    None
 }
 
 /// Target daemon address used for module listing requests.
@@ -6714,7 +6920,9 @@ fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
             proxy_configuration_error("RSYNC_PROXY credentials must use USER:PASS@HOST:PORT format")
         })?;
 
-        let credentials = ProxyCredentials::new(username.to_string(), password.to_string());
+        let username = decode_proxy_component(username, "username")?;
+        let password = decode_proxy_component(password, "password")?;
+        let credentials = ProxyCredentials::new(username, password);
         (Some(credentials), &host_part[1..])
     } else {
         (None, remainder)
@@ -6768,6 +6976,50 @@ fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
         .map_err(|_| proxy_configuration_error("RSYNC_PROXY specified an invalid port"))?;
 
     Ok((host, port))
+}
+
+fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
+    if !input.contains('%') {
+        return Ok(input.to_string());
+    }
+
+    let mut decoded = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains truncated percent-encoding"
+                )));
+            }
+
+            let hi = hex_value(bytes[index + 1]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+            let lo = hex_value(bytes[index + 2]).ok_or_else(|| {
+                proxy_configuration_error(format!(
+                    "RSYNC_PROXY {field} contains invalid percent-encoding"
+                ))
+            })?;
+
+            decoded.push((hi << 4) | lo);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).map_err(|_| {
+        proxy_configuration_error(format!(
+            "RSYNC_PROXY {field} contains invalid UTF-8 after percent-decoding"
+        ))
+    })
 }
 
 fn proxy_configuration_error(text: impl Into<String>) -> ClientError {
@@ -6870,7 +7122,7 @@ pub fn run_module_list_with_password_and_options(
     let stream = open_daemon_stream(addr, effective_timeout)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
-        .map_err(|error| socket_error("negotiate with", addr.socket_addr_display(), error))?;
+        .map_err(|error| map_daemon_handshake_error(error, addr))?;
     let stream = handshake.into_stream();
     let mut reader = BufReader::new(stream);
 
