@@ -832,6 +832,13 @@ impl ClientConfig {
         self.partial_dir.as_deref()
     }
 
+    /// Reports whether destination updates should be staged and committed after the transfer.
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(&self) -> bool {
+        self.delay_updates
+    }
+
     /// Returns the ordered list of link-destination directories supplied by the caller.
     #[must_use]
     #[doc(alias = "--link-dest")]
@@ -1333,7 +1340,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Enables or disables delayed updates (`--delay-updates`).
+    /// Enables or disables delayed update commits, mirroring `--delay-updates`.
     #[must_use]
     #[doc(alias = "--delay-updates")]
     pub const fn delay_updates(mut self, delay: bool) -> Self {
@@ -2081,6 +2088,8 @@ pub struct RemoteFallbackArgs {
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
+    /// Enables `--delay-updates`.
+    pub delay_updates: bool,
     /// Directories forwarded via repeated `--link-dest` flags.
     pub link_dests: Vec<PathBuf>,
     /// Enables `--remove-source-files`.
@@ -2252,6 +2261,7 @@ where
         partial,
         delay_updates,
         partial_dir,
+        delay_updates,
         link_dests,
         remove_source_files,
         append,
@@ -3453,6 +3463,7 @@ fn build_local_copy_options(
         .partial(config.partial())
         .delay_updates(config.delay_updates())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
+        .delay_updates(config.delay_updates())
         .extend_link_dests(config.link_dest_paths().iter().cloned())
         .with_timeout(
             config
@@ -3611,6 +3622,7 @@ exit 42
             partial: false,
             delay_updates: false,
             partial_dir: None,
+            delay_updates: false,
             link_dests: Vec::new(),
             remove_source_files: false,
             append: None,
@@ -4134,6 +4146,22 @@ exit 42
     }
 
     #[test]
+    fn builder_sets_delay_updates() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delay_updates(true)
+            .build();
+
+        assert!(config.delay_updates());
+
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!config.delay_updates());
+    }
+
+    #[test]
     fn builder_sets_copy_dirlinks() {
         let enabled = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -4512,7 +4540,6 @@ exit 42
 
         let mut args = baseline_fallback_args();
         args.fallback_binary = Some(script_path.clone().into_os_string());
-        args.partial = true;
         args.delay_updates = true;
         args.remainder = vec![OsString::from(format!(
             "CAPTURE={}",
