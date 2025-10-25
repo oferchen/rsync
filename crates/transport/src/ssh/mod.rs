@@ -54,9 +54,13 @@
 //! - [`crate::session`] for the negotiation façade that consumes
 //!   [`SshConnection`] streams.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+
+mod parse;
+
+pub use parse::{RemoteShellParseError, parse_remote_shell};
 
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
@@ -146,6 +150,47 @@ impl SshCommand {
     pub fn set_target_override<S: Into<OsString>>(&mut self, target: Option<S>) -> &mut Self {
         self.target_override = target.map(Into::into);
         self
+    }
+
+    /// Replaces the command and options using a remote-shell specification.
+    ///
+    /// The specification uses the same quoting rules recognised by upstream
+    /// rsync's `-e/--rsh` handling: whitespace separates arguments unless it is
+    /// protected by single or double quotes, single quotes inhibit all
+    /// escaping, and backslashes escape the following byte outside single
+    /// quotes (inside double quotes they only escape `"`, `\`, `$`, `` ` ``
+    /// and a trailing newline). The resulting sequence replaces the current
+    /// program and option list while leaving the target host and remote command
+    /// untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RemoteShellParseError`] when the specification is empty or
+    /// contains unterminated quotes/escapes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_transport::ssh::SshCommand;
+    /// use std::ffi::OsStr;
+    ///
+    /// let mut builder = SshCommand::new("files.example.com");
+    /// builder
+    ///     .configure_remote_shell(OsStr::new("ssh -p 2222 -l backup"))
+    ///     .expect("valid remote shell");
+    /// // The builder now invokes `ssh -p 2222 -l backup files.example.com ...`.
+    /// ```
+    pub fn configure_remote_shell(
+        &mut self,
+        specification: &OsStr,
+    ) -> Result<&mut Self, RemoteShellParseError> {
+        let mut parts = parse_remote_shell(specification)?;
+        debug_assert!(!parts.is_empty(), "parser guarantees at least one element");
+
+        self.program = parts.remove(0);
+        self.options = parts;
+
+        Ok(self)
     }
 
     /// Spawns the configured command and returns a [`SshConnection`].
@@ -307,11 +352,10 @@ impl Drop for SshConnection {
         let _ = self.child.wait();
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::{SshCommand, SshConnection};
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::io::{Read, Write};
 
     fn args_to_strings(args: &[OsString]) -> Vec<String> {
@@ -420,5 +464,18 @@ mod tests {
 
         let status = connection.wait().expect("wait status");
         assert!(status.success());
+    }
+
+    #[test]
+    fn configure_remote_shell_updates_program_and_options() {
+        let mut command = SshCommand::new("example.com");
+        command
+            .configure_remote_shell(OsStr::new("ssh -p 2222"))
+            .expect("configure succeeds");
+
+        let (program, args) = command.command_parts_for_testing();
+        assert_eq!(program, OsString::from("ssh"));
+        assert!(args.contains(&OsString::from("-p")));
+        assert!(args.contains(&OsString::from("2222")));
     }
 }
