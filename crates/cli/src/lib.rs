@@ -199,8 +199,10 @@ const HELP_TEXT: &str = concat!(
     "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
     "      --no-sparse Disable sparse file handling.\n",
     "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
-    "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
     "      --no-copy-links  Preserve symlinks instead of following them.\n",
+    "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
+    "  -K, --keep-dirlinks  Treat destination symlinks to directories as directories.\n",
+    "      --no-keep-dirlinks  Disable --keep-dirlinks semantics.\n",
     "  -D              Equivalent to --devices --specials.\n",
     "      --devices   Preserve device files.\n",
     "      --no-devices  Disable device file preservation.\n",
@@ -230,6 +232,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --preallocate, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -845,6 +848,7 @@ struct ParsedArgs {
     sparse: Option<bool>,
     copy_links: Option<bool>,
     copy_dirlinks: bool,
+    keep_dirlinks: Option<bool>,
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
@@ -1084,11 +1088,26 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("keep-dirlinks")
+                .long("keep-dirlinks")
+                .short('K')
+                .help("Treat existing destination symlinks to directories as directories.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-keep-dirlinks"),
+        )
+        .arg(
             Arg::new("no-copy-links")
                 .long("no-copy-links")
                 .help("Preserve symlinks instead of following them.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("copy-links"),
+        )
+        .arg(
+            Arg::new("no-keep-dirlinks")
+                .long("no-keep-dirlinks")
+                .help("Disable treating destination symlinks to directories as directories.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("keep-dirlinks"),
         )
         .arg(
             Arg::new("archive-devices")
@@ -1804,6 +1823,13 @@ where
         None
     };
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
+    let keep_dirlinks = if matches.get_flag("no-keep-dirlinks") {
+        Some(false)
+    } else if matches.get_flag("keep-dirlinks") {
+        Some(true)
+    } else {
+        None
+    };
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
@@ -2005,6 +2031,7 @@ where
         sparse,
         copy_links,
         copy_dirlinks,
+        keep_dirlinks,
         devices,
         specials,
         relative,
@@ -2252,6 +2279,7 @@ where
         sparse,
         copy_links,
         copy_dirlinks,
+        keep_dirlinks,
         devices,
         specials,
         relative,
@@ -2703,6 +2731,7 @@ where
             numeric_ids: numeric_ids_option,
             copy_links,
             copy_dirlinks,
+            keep_dirlinks,
             sparse,
             devices,
             specials,
@@ -2836,6 +2865,7 @@ where
     let preserve_specials = specials.unwrap_or(archive);
     let sparse = sparse.unwrap_or(false);
     let copy_links = copy_links.unwrap_or(false);
+    let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative = relative.unwrap_or(false);
 
     let mut builder = ClientConfig::builder()
@@ -2866,6 +2896,7 @@ where
         .sparse(sparse)
         .copy_links(copy_links)
         .copy_dirlinks(copy_dirlinks)
+        .keep_dirlinks(keep_dirlinks_flag)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .mkpath(mkpath)
@@ -7418,6 +7449,39 @@ mod tests {
         .expect("parse");
 
         assert!(parsed.copy_dirlinks);
+    }
+
+    #[test]
+    fn parse_args_recognises_keep_dirlinks_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--keep-dirlinks"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.keep_dirlinks, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-keep-dirlinks"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.keep_dirlinks, Some(false));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-K"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.keep_dirlinks, Some(true));
     }
 
     #[test]

@@ -146,17 +146,15 @@ use dns_lookup::lookup_addr;
 use std::cell::RefCell;
 #[cfg(test)]
 use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-#[cfg(test)]
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
@@ -174,6 +172,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
+use fs2::FileExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -218,6 +217,9 @@ const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when a module reaches its connection cap.
 const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
+/// Error payload returned when updating the connection lock file fails.
+const MODULE_LOCK_ERROR_PAYLOAD: &str =
+    "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 
@@ -242,6 +244,7 @@ const HELP_TEXT: &str = concat!(
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
+    "  --lock-file FILE   Track module connection limits across processes using FILE.\n",
     "  --pid-file FILE    Write the daemon PID to FILE for process supervision.\n",
     "  --bwlimit=RATE     Limit per-connection bandwidth in KiB/s (0 = unlimited).\n",
     "  --no-bwlimit       Remove any per-connection bandwidth limit configured so far.\n",
@@ -378,37 +381,75 @@ impl ModuleDefinition {
 struct ModuleRuntime {
     definition: ModuleDefinition,
     active_connections: AtomicU32,
+    connection_limiter: Option<Arc<ConnectionLimiter>>,
+}
+
+#[derive(Debug)]
+enum ModuleConnectionError {
+    Limit(NonZeroU32),
+    Io(io::Error),
+}
+
+impl ModuleConnectionError {
+    fn io(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<io::Error> for ModuleConnectionError {
+    fn from(error: io::Error) -> Self {
+        ModuleConnectionError::Io(error)
+    }
 }
 
 impl ModuleRuntime {
-    fn new(definition: ModuleDefinition) -> Self {
+    fn new(
+        definition: ModuleDefinition,
+        connection_limiter: Option<Arc<ConnectionLimiter>>,
+    ) -> Self {
         Self {
             definition,
             active_connections: AtomicU32::new(0),
+            connection_limiter,
         }
     }
 
-    fn try_acquire_connection(&self) -> Result<ModuleConnectionGuard<'_>, NonZeroU32> {
+    fn try_acquire_connection(&self) -> Result<ModuleConnectionGuard<'_>, ModuleConnectionError> {
         if let Some(limit) = self.definition.max_connections() {
-            let limit_value = limit.get();
-            let mut current = self.active_connections.load(Ordering::Acquire);
-            loop {
-                if current >= limit_value {
-                    return Err(limit);
-                }
-
-                match self.active_connections.compare_exchange(
-                    current,
-                    current + 1,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => return Ok(ModuleConnectionGuard::limited(self)),
-                    Err(updated) => current = updated,
+            if let Some(limiter) = &self.connection_limiter {
+                match limiter.acquire(&self.definition.name, limit) {
+                    Ok(lock_guard) => {
+                        self.acquire_local_slot(limit)?;
+                        return Ok(ModuleConnectionGuard::limited(self, Some(lock_guard)));
+                    }
+                    Err(error) => return Err(error),
                 }
             }
+
+            self.acquire_local_slot(limit)?;
+            Ok(ModuleConnectionGuard::limited(self, None))
         } else {
             Ok(ModuleConnectionGuard::unlimited())
+        }
+    }
+
+    fn acquire_local_slot(&self, limit: NonZeroU32) -> Result<(), ModuleConnectionError> {
+        let limit_value = limit.get();
+        let mut current = self.active_connections.load(Ordering::Acquire);
+        loop {
+            if current >= limit_value {
+                return Err(ModuleConnectionError::Limit(limit));
+            }
+
+            match self.active_connections.compare_exchange(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(updated) => current = updated,
+            }
         }
     }
 
@@ -419,9 +460,141 @@ impl ModuleRuntime {
     }
 }
 
+struct ConnectionLimiter {
+    path: PathBuf,
+}
+
+impl ConnectionLimiter {
+    fn open(path: PathBuf) -> Result<Self, DaemonError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
+            }
+        }
+
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| lock_file_error(&path, error))?;
+
+        drop(file);
+
+        Ok(Self { path })
+    }
+
+    fn acquire(
+        self: &Arc<Self>,
+        module: &str,
+        limit: NonZeroU32,
+    ) -> Result<ConnectionLockGuard, ModuleConnectionError> {
+        let mut file = self.open_file().map_err(ModuleConnectionError::io)?;
+        file.lock_exclusive().map_err(ModuleConnectionError::io)?;
+
+        let result = self.increment_count(&mut file, module, limit);
+        let unlock_result = file.unlock().map_err(ModuleConnectionError::io);
+
+        drop(file);
+
+        match (result, unlock_result) {
+            (Ok(_), Ok(_)) => Ok(ConnectionLockGuard {
+                limiter: Arc::clone(self),
+                module: module.to_string(),
+            }),
+            (Err(error), Ok(_)) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Err(primary), Err(_)) => Err(primary),
+        }
+    }
+
+    fn decrement(&self, module: &str) -> io::Result<()> {
+        let mut file = self.open_file()?;
+        file.lock_exclusive()?;
+        let result = self.decrement_count(&mut file, module);
+        let unlock_result = file.unlock();
+        drop(file);
+        result.and(unlock_result)
+    }
+
+    fn open_file(&self) -> io::Result<File> {
+        OpenOptions::new().read(true).write(true).open(&self.path)
+    }
+
+    fn increment_count(
+        &self,
+        file: &mut File,
+        module: &str,
+        limit: NonZeroU32,
+    ) -> Result<(), ModuleConnectionError> {
+        let mut counts = self.read_counts(file)?;
+        let current = counts.get(module).copied().unwrap_or(0);
+        if current >= limit.get() {
+            return Err(ModuleConnectionError::Limit(limit));
+        }
+
+        counts.insert(module.to_string(), current.saturating_add(1));
+        self.write_counts(file, &counts)
+            .map_err(ModuleConnectionError::io)
+    }
+
+    fn decrement_count(&self, file: &mut File, module: &str) -> io::Result<()> {
+        let mut counts = self.read_counts(file)?;
+        if let Some(entry) = counts.get_mut(module) {
+            if *entry > 1 {
+                *entry -= 1;
+            } else {
+                counts.remove(module);
+            }
+        }
+
+        self.write_counts(file, &counts)
+    }
+
+    fn read_counts(&self, file: &mut File) -> io::Result<BTreeMap<String, u32>> {
+        file.seek(SeekFrom::Start(0))?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let mut counts = BTreeMap::new();
+        for line in contents.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+                if let Ok(parsed) = value.parse::<u32>() {
+                    counts.insert(name.to_string(), parsed);
+                }
+            }
+        }
+
+        Ok(counts)
+    }
+
+    fn write_counts(&self, file: &mut File, counts: &BTreeMap<String, u32>) -> io::Result<()> {
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        for (module, value) in counts {
+            if *value > 0 {
+                writeln!(file, "{module} {value}")?;
+            }
+        }
+        file.flush()
+    }
+}
+
+struct ConnectionLockGuard {
+    limiter: Arc<ConnectionLimiter>,
+    module: String,
+}
+
+impl Drop for ConnectionLockGuard {
+    fn drop(&mut self) {
+        let _ = self.limiter.decrement(&self.module);
+    }
+}
+
 impl From<ModuleDefinition> for ModuleRuntime {
     fn from(definition: ModuleDefinition) -> Self {
-        Self::new(definition)
+        Self::new(definition, None)
     }
 }
 
@@ -435,17 +608,22 @@ impl std::ops::Deref for ModuleRuntime {
 
 struct ModuleConnectionGuard<'a> {
     module: Option<&'a ModuleRuntime>,
+    lock_guard: Option<ConnectionLockGuard>,
 }
 
 impl<'a> ModuleConnectionGuard<'a> {
-    fn limited(module: &'a ModuleRuntime) -> Self {
+    fn limited(module: &'a ModuleRuntime, lock_guard: Option<ConnectionLockGuard>) -> Self {
         Self {
             module: Some(module),
+            lock_guard,
         }
     }
 
     const fn unlimited() -> Self {
-        Self { module: None }
+        Self {
+            module: None,
+            lock_guard: None,
+        }
     }
 }
 
@@ -454,6 +632,8 @@ impl<'a> Drop for ModuleConnectionGuard<'a> {
         if let Some(module) = self.module.take() {
             module.release();
         }
+
+        self.lock_guard.take();
     }
 }
 
@@ -461,8 +641,9 @@ fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
     cache: &'a mut Option<Option<String>>,
     peer_ip: IpAddr,
+    allow_lookup: bool,
 ) -> Option<&'a str> {
-    if !module.requires_hostname_lookup() {
+    if !allow_lookup || !module.requires_hostname_lookup() {
         return None;
     }
 
@@ -553,6 +734,10 @@ struct RuntimeOptions {
     global_refuse_options: Option<Vec<String>>,
     pid_file: Option<PathBuf>,
     pid_file_from_config: bool,
+    reverse_lookup: bool,
+    reverse_lookup_configured: bool,
+    lock_file: Option<PathBuf>,
+    lock_file_from_config: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -572,6 +757,10 @@ impl Default for RuntimeOptions {
             global_refuse_options: None,
             pid_file: None,
             pid_file_from_config: false,
+            reverse_lookup: true,
+            reverse_lookup_configured: false,
+            lock_file: None,
+            lock_file_from_config: false,
         }
     }
 }
@@ -615,6 +804,8 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv6)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
                 options.set_log_file(PathBuf::from(value))?;
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
+                options.set_lock_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
                 options.set_pid_file(PathBuf::from(value))?;
             } else if argument == "--module" {
@@ -663,6 +854,23 @@ impl RuntimeOptions {
 
         self.log_file = Some(path);
         self.log_file_configured = true;
+        Ok(())
+    }
+
+    fn set_lock_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.lock_file {
+            if !self.lock_file_from_config {
+                return Err(duplicate_argument("--lock-file"));
+            }
+
+            if existing == &path {
+                self.lock_file_from_config = false;
+                return Ok(());
+            }
+        }
+
+        self.lock_file = Some(path);
+        self.lock_file_from_config = false;
         Ok(())
     }
 
@@ -771,6 +979,12 @@ impl RuntimeOptions {
             self.set_config_pid_file(pid_file, &origin)?;
         }
 
+        if let Some((reverse_lookup, origin)) = parsed.reverse_lookup {
+            self.set_reverse_lookup_from_config(reverse_lookup, &origin)?;
+        if let Some((lock_file, origin)) = parsed.lock_file {
+            self.set_config_lock_file(lock_file, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -832,6 +1046,13 @@ impl RuntimeOptions {
         self.pid_file.as_deref()
     }
 
+    #[cfg(test)]
+    fn reverse_lookup(&self) -> bool {
+        self.reverse_lookup
+    fn lock_file(&self) -> Option<&Path> {
+        self.lock_file.as_deref()
+    }
+
     fn inherit_global_refuse_options(
         &mut self,
         options: Vec<String>,
@@ -878,6 +1099,46 @@ impl RuntimeOptions {
 
         self.pid_file = Some(path);
         self.pid_file_from_config = true;
+        Ok(())
+    }
+
+    fn set_reverse_lookup_from_config(
+        &mut self,
+        value: bool,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if self.reverse_lookup_configured {
+            return Err(config_parse_error(
+                &origin.path,
+                origin.line,
+                "duplicate 'reverse lookup' directive in global section",
+            ));
+        }
+
+        self.reverse_lookup = value;
+        self.reverse_lookup_configured = true;
+    fn set_config_lock_file(
+        &mut self,
+        path: PathBuf,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.lock_file {
+            if self.lock_file_from_config {
+                if existing == &path {
+                    return Ok(());
+                }
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'lock file' directive in global section",
+                ));
+            }
+
+            return Ok(());
+        }
+
+        self.lock_file = Some(path);
+        self.lock_file_from_config = true;
         Ok(())
     }
 
@@ -941,6 +1202,8 @@ struct ParsedConfigModules {
     global_refuse_options: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
     motd_lines: Vec<String>,
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
+    lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -974,6 +1237,8 @@ fn parse_config_modules_inner(
     let mut global_refuse_line: Option<usize> = None;
     let mut motd_lines = Vec::new();
     let mut pid_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
+    let mut reverse_lookup: Option<(bool, ConfigDirectiveOrigin)> = None;
+    let mut lock_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1297,6 +1562,63 @@ fn parse_config_modules_inner(
                         ));
                     }
                 }
+                "reverse lookup" => {
+                    let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            format!("invalid boolean value '{}' for 'reverse lookup'", value),
+                        )
+                    })?;
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &reverse_lookup {
+                        if *existing != parsed {
+                "lock file" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'lock file' directive must not be empty",
+                        ));
+                    }
+
+                    let resolved = resolve_config_relative_path(path, trimmed);
+                    if let Some((existing, origin)) = &lock_file {
+                        if existing != &resolved {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
+                                    existing_origin.line
+                                ),
+                            ));
+                        }
+                        continue;
+                    }
+
+                    reverse_lookup = Some((parsed, origin));
+                                    "duplicate 'lock file' directive in global section (previously defined on line {})",
+                                    origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        lock_file = Some((
+                            resolved,
+                            ConfigDirectiveOrigin {
+                                path: canonical.clone(),
+                                line: line_number,
+                            },
+                        ));
+                    }
+                }
                 _ => {
                     return Err(config_parse_error(
                         path,
@@ -1316,6 +1638,8 @@ fn parse_config_modules_inner(
             global_refuse_options: global_refuse_directives,
             motd_lines,
             pid_file,
+            reverse_lookup,
+            lock_file,
         })
     })();
 
@@ -2359,6 +2683,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         bandwidth_limit,
         log_file,
         pid_file,
+        reverse_lookup,
+        lock_file,
         ..
     } = options;
 
@@ -2374,8 +2700,18 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
-    let modules: Arc<Vec<ModuleRuntime>> =
-        Arc::new(modules.into_iter().map(ModuleRuntime::from).collect());
+    let connection_limiter = if let Some(path) = lock_file {
+        Some(Arc::new(ConnectionLimiter::open(path)?))
+    } else {
+        None
+    };
+
+    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
+        modules
+            .into_iter()
+            .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
+            .collect(),
+    );
     let motd_lines = Arc::new(motd_lines);
     let requested_addr = SocketAddr::new(bind_address, port);
     let listener =
@@ -2414,6 +2750,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         motd_vec.as_slice(),
                         bandwidth_limit,
                         log_for_worker,
+                        reverse_lookup,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -2550,11 +2887,16 @@ fn handle_session(
     motd_lines: &[String],
     daemon_limit: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     let style = detect_session_style(&stream)?;
     configure_stream(&stream)?;
 
-    let peer_host = resolve_peer_hostname(peer_addr.ip());
+    let peer_host = if reverse_lookup {
+        resolve_peer_hostname(peer_addr.ip())
+    } else {
+        None
+    };
     if let Some(log) = log_sink.as_ref() {
         log_connection(log, peer_host.as_deref(), peer_addr);
     }
@@ -2569,6 +2911,7 @@ fn handle_session(
             daemon_limit,
             log_sink,
             peer_host,
+            reverse_lookup,
         ),
     }
 }
@@ -2633,6 +2976,7 @@ fn handle_legacy_session(
     daemon_limit: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     peer_host: Option<String>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut limiter = daemon_limit.map(BandwidthLimiter::new);
@@ -2689,6 +3033,7 @@ fn handle_legacy_session(
             modules,
             motd_lines,
             peer_addr.ip(),
+            reverse_lookup,
         )?;
     } else if request.is_empty() {
         write_limited(
@@ -2710,6 +3055,7 @@ fn handle_legacy_session(
             peer_host.as_deref(),
             &refused_options,
             log_sink.as_ref(),
+            reverse_lookup,
         )?;
     }
 
@@ -2828,6 +3174,7 @@ fn respond_with_module_list(
     modules: &[ModuleRuntime],
     motd_lines: &[String],
     peer_ip: IpAddr,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
@@ -2848,7 +3195,7 @@ fn respond_with_module_list(
             continue;
         }
 
-        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        let peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
         if !module.permits(peer_ip, peer_host) {
             continue;
         }
@@ -3040,16 +3387,18 @@ fn respond_with_module_request(
     session_peer_host: Option<&str>,
     options: &[String],
     log_sink: Option<&SharedLogSink>,
+    reverse_lookup: bool,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         apply_module_bandwidth_limit(limiter, module.bandwidth_limit());
 
         let mut hostname_cache: Option<Option<String>> = None;
-        let module_peer_host = module_peer_hostname(module, &mut hostname_cache, peer_ip);
+        let module_peer_host =
+            module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
         if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
-                Err(limit) => {
+                Err(ModuleConnectionError::Limit(limit)) => {
                     let payload =
                         MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
                     let stream = reader.get_mut();
@@ -3065,6 +3414,24 @@ fn respond_with_module_request(
                             peer_ip,
                             request,
                             limit,
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(ModuleConnectionError::Io(error)) => {
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, MODULE_LOCK_ERROR_PAYLOAD.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
+                    write_limited(stream, limiter, exit.as_bytes())?;
+                    stream.flush()?;
+                    if let Some(log) = log_sink {
+                        log_module_lock_error(
+                            log,
+                            module_peer_host.or(session_peer_host),
+                            peer_ip,
+                            request,
+                            &error,
                         );
                     }
                     return Ok(());
@@ -3205,6 +3572,17 @@ fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to open lock file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
 fn log_message(log: &SharedLogSink, message: &Message) {
     if let Ok(mut sink) = log.lock() {
         if sink.write(message).is_ok() {
@@ -3255,6 +3633,22 @@ fn log_module_limit(
         module, display, peer_ip, limit,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
+    log_message(log, &message);
+}
+
+fn log_module_lock_error(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+    error: &io::Error,
+) {
+    let display = format_host(host, peer_ip);
+    let text = format!(
+        "failed to update lock for module '{}' requested from {} ({}): {}",
+        module, display, peer_ip, error
+    );
+    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
@@ -3406,7 +3800,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
     let name = name_part.trim();
     ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_string()))?;
 
-    let (path_part, comment_part) = split_module_path_and_comment(remainder);
+    let (path_part, comment_part, options_part) = split_module_path_comment_and_options(remainder);
 
     let path_text = path_part.trim();
     if path_text.is_empty() {
@@ -3418,17 +3812,9 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         .map(|value| unescape_module_component(value.trim()))
         .filter(|value| !value.is_empty());
 
-    let path = PathBuf::from(&path_text);
-    if !path.is_absolute() {
-        return Err(config_error(format!(
-            "module path '{}' must be absolute when 'use chroot' is enabled",
-            path_text
-        )));
-    }
-
-    Ok(ModuleDefinition {
+    let mut module = ModuleDefinition {
         name: name.to_string(),
-        path,
+        path: PathBuf::from(&path_text),
         comment,
         hosts_allow: Vec::new(),
         hosts_deny: Vec::new(),
@@ -3444,32 +3830,226 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         listable: true,
         use_chroot: true,
         max_connections: None,
-    })
+    };
+
+    if let Some(options_text) = options_part {
+        apply_inline_module_options(options_text, &mut module)?;
+    }
+
+    if module.use_chroot && !module.path.is_absolute() {
+        return Err(config_error(format!(
+            "module path '{}' must be absolute when 'use chroot' is enabled",
+            path_text
+        )));
+    }
+
+    if module.auth_users.is_empty() {
+        return Ok(module);
+    }
+
+    if module.secrets_file.is_none() {
+        return Err(config_error(
+            "module specified 'auth users' but did not supply a secrets file".to_string(),
+        ));
+    }
+
+    Ok(module)
 }
 
-fn split_module_path_and_comment(value: &str) -> (&str, Option<&str>) {
-    let chars = value.char_indices();
+fn split_module_path_comment_and_options(value: &str) -> (&str, Option<&str>, Option<&str>) {
+    enum Segment {
+        Path,
+        Comment { start: usize },
+    }
+
+    let mut state = Segment::Path;
     let mut escape = false;
 
-    for (idx, ch) in chars {
+    for (idx, ch) in value.char_indices() {
         if escape {
             escape = false;
             continue;
         }
 
-        if ch == '\\' {
-            escape = true;
-            continue;
-        }
-
-        if ch == ',' {
-            let (path, rest) = value.split_at(idx);
-            let comment = rest.get(1..);
-            return (path, comment);
+        match ch {
+            '\\' => {
+                escape = true;
+            }
+            ';' => {
+                let options = value.get(idx + ch.len_utf8()..);
+                return match state {
+                    Segment::Path => {
+                        let path = &value[..idx];
+                        (path, None, options)
+                    }
+                    Segment::Comment { start } => {
+                        let comment = value.get(start..idx);
+                        let path = &value[..start - 1];
+                        (path, comment, options)
+                    }
+                };
+            }
+            ',' => {
+                if matches!(state, Segment::Path) {
+                    state = Segment::Comment {
+                        start: idx + ch.len_utf8(),
+                    };
+                }
+            }
+            _ => {}
         }
     }
 
-    (value, None)
+    match state {
+        Segment::Path => (value, None, None),
+        Segment::Comment { start } => (&value[..start - 1], value.get(start..), None),
+    }
+}
+
+fn split_inline_options(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut escape = false;
+
+    for ch in text.chars() {
+        if escape {
+            current.push(ch);
+            escape = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escape = true,
+            ';' => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current.trim().to_string());
+    }
+
+    parts.into_iter().filter(|part| !part.is_empty()).collect()
+}
+
+fn apply_inline_module_options(
+    options: &str,
+    module: &mut ModuleDefinition,
+) -> Result<(), DaemonError> {
+    let path = Path::new("--module");
+    let mut seen = HashSet::new();
+
+    for option in split_inline_options(options) {
+        let (key_raw, value_raw) = option
+            .split_once('=')
+            .ok_or_else(|| config_error(format!("module option '{option}' is missing '='")))?;
+
+        let key = key_raw.trim().to_ascii_lowercase();
+        if !seen.insert(key.clone()) {
+            return Err(config_error(format!("duplicate module option '{key_raw}'")));
+        }
+
+        let value = value_raw.trim();
+        match key.as_str() {
+            "read only" | "read-only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'read only'"))
+                })?;
+                module.read_only = parsed;
+            }
+            "list" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'list'"))
+                })?;
+                module.listable = parsed;
+            }
+            "numeric ids" | "numeric-ids" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
+                })?;
+                module.numeric_ids = parsed;
+            }
+            "use chroot" | "use-chroot" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
+                })?;
+                module.use_chroot = parsed;
+            }
+            "hosts allow" | "hosts-allow" => {
+                let patterns = parse_host_list(value, path, 0, "hosts allow")?;
+                module.hosts_allow = patterns;
+            }
+            "hosts deny" | "hosts-deny" => {
+                let patterns = parse_host_list(value, path, 0, "hosts deny")?;
+                module.hosts_deny = patterns;
+            }
+            "auth users" | "auth-users" => {
+                let users = parse_auth_user_list(value).map_err(|error| {
+                    config_error(format!("invalid 'auth users' directive: {error}"))
+                })?;
+                if users.is_empty() {
+                    return Err(config_error(
+                        "'auth users' option must list at least one user".to_string(),
+                    ));
+                }
+                module.auth_users = users;
+            }
+            "secrets file" | "secrets-file" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'secrets file' option must not be empty".to_string(),
+                    ));
+                }
+                module.secrets_file = Some(PathBuf::from(unescape_module_component(value)));
+            }
+            "bwlimit" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'bwlimit' option must not be empty".to_string(),
+                    ));
+                }
+                let limit = parse_runtime_bwlimit(&OsString::from(value))?;
+                module.bandwidth_limit = limit;
+            }
+            "refuse options" | "refuse-options" => {
+                let options = parse_refuse_option_list(value).map_err(|error| {
+                    config_error(format!("invalid 'refuse options' directive: {error}"))
+                })?;
+                module.refuse_options = options;
+            }
+            "uid" => {
+                let uid = parse_numeric_identifier(value)
+                    .ok_or_else(|| config_error(format!("invalid uid '{value}'")))?;
+                module.uid = Some(uid);
+            }
+            "gid" => {
+                let gid = parse_numeric_identifier(value)
+                    .ok_or_else(|| config_error(format!("invalid gid '{value}'")))?;
+                module.gid = Some(gid);
+            }
+            "timeout" => {
+                let timeout = parse_timeout_seconds(value)
+                    .ok_or_else(|| config_error(format!("invalid timeout '{value}'")))?;
+                module.timeout = timeout;
+            }
+            "max connections" | "max-connections" => {
+                let max = parse_max_connections_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid max connections value '{value}'"))
+                })?;
+                module.max_connections = max;
+            }
+            _ => {
+                return Err(config_error(format!(
+                    "unsupported module option '{key_raw}'"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn unescape_module_component(text: &str) -> String {
@@ -3795,8 +4375,8 @@ mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
-    use std::num::NonZeroU64;
-    use std::path::PathBuf;
+    use std::num::{NonZeroU32, NonZeroU64};
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -4169,7 +4749,7 @@ mod tests {
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         set_test_hostname_override(peer, Some("Trusted.Example.Com"));
         let mut cache = None;
-        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        let resolved = module_peer_hostname(&module, &mut cache, peer, true);
         assert_eq!(resolved, Some("trusted.example.com"));
         assert!(module.permits(peer, resolved));
         clear_test_hostname_overrides();
@@ -4181,11 +4761,65 @@ mod tests {
         let module = module_with_host_patterns(&["trusted.example.com"], &[]);
         let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let mut cache = None;
-        let resolved = module_peer_hostname(&module, &mut cache, peer);
+        let resolved = module_peer_hostname(&module, &mut cache, peer, true);
         if let Some(host) = resolved {
             assert_ne!(host, "trusted.example.com");
         }
         assert!(!module.permits(peer, resolved));
+    }
+
+    #[test]
+    fn module_peer_hostname_skips_lookup_when_disabled() {
+        clear_test_hostname_overrides();
+        let module = module_with_host_patterns(&["trusted.example.com"], &[]);
+        let peer = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        set_test_hostname_override(peer, Some("trusted.example.com"));
+        let mut cache = None;
+        let resolved = module_peer_hostname(&module, &mut cache, peer, false);
+        assert!(resolved.is_none());
+        assert!(!module.permits(peer, resolved));
+        clear_test_hostname_overrides();
+    fn connection_limiter_enforces_limits_across_guards() {
+        let temp = tempdir().expect("lock dir");
+        let lock_path = temp.path().join("daemon.lock");
+        let limiter = Arc::new(ConnectionLimiter::open(lock_path).expect("open lock file"));
+        let limit = NonZeroU32::new(2).expect("non-zero");
+
+        let first = limiter
+            .acquire("docs", limit)
+            .expect("first connection allowed");
+        let second = limiter
+            .acquire("docs", limit)
+            .expect("second connection allowed");
+        assert!(matches!(
+            limiter.acquire("docs", limit),
+            Err(ModuleConnectionError::Limit(l)) if l == limit
+        ));
+
+        drop(second);
+        let third = limiter
+            .acquire("docs", limit)
+            .expect("slot released after guard drop");
+
+        drop(third);
+        drop(first);
+        assert!(limiter.acquire("docs", limit).is_ok());
+    }
+
+    #[test]
+    fn connection_limiter_propagates_io_errors() {
+        let temp = tempdir().expect("lock dir");
+        let lock_path = temp.path().join("daemon.lock");
+        let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("open lock"));
+
+        fs::remove_file(&lock_path).expect("remove original lock file");
+        fs::create_dir(&lock_path).expect("replace lock file with directory");
+
+        match limiter.acquire("docs", NonZeroU32::new(1).unwrap()) {
+            Err(ModuleConnectionError::Io(_)) => {}
+            Err(other) => panic!("expected io error, got {other:?}"),
+            Ok(_) => panic!("expected io error, got success"),
+        }
     }
 
     #[test]
@@ -4258,6 +4892,98 @@ mod tests {
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].path, PathBuf::from("/var/log\\files"));
         assert_eq!(modules[0].comment.as_deref(), Some("Log share"));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_parses_inline_options() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from(
+                "mirror=./data;use-chroot=no;read-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/rsyncd.secrets;bwlimit=1m;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
+            ),
+        ])
+        .expect("parse module with inline options");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name(), "mirror");
+        assert_eq!(module.path, PathBuf::from("./data"));
+        assert!(module.read_only());
+        assert!(!module.listable());
+        assert!(module.numeric_ids());
+        assert!(!module.use_chroot());
+        assert!(module.permits(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)),
+            Some("host.example")
+        ));
+        assert_eq!(
+            module.auth_users(),
+            &[String::from("alice"), String::from("bob")]
+        );
+        assert_eq!(
+            module
+                .secrets_file()
+                .map(|path| path.to_string_lossy().into_owned()),
+            Some(String::from("/etc/rsyncd.secrets"))
+        );
+        assert_eq!(
+            module.bandwidth_limit().map(NonZeroU64::get),
+            Some(1_048_576)
+        );
+        assert_eq!(module.refused_options(), [String::from("compress")]);
+        assert_eq!(module.uid(), Some(1000));
+        assert_eq!(module.gid(), Some(2000));
+        assert_eq!(module.timeout().map(NonZeroU64::get), Some(600));
+        assert_eq!(module.max_connections().map(NonZeroU32::get), Some(5));
+    }
+
+    #[test]
+    fn runtime_options_module_definition_rejects_unknown_inline_option() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs;unknown=true"),
+        ])
+        .expect_err("unknown option should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("unsupported module option")
+        );
+    }
+
+    #[test]
+    fn runtime_options_module_definition_requires_secrets_for_inline_auth_users() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("logs=/var/log;auth-users=alice"),
+        ])
+        .expect_err("missing secrets file should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("did not supply a secrets file")
+        );
+    }
+
+    #[test]
+    fn runtime_options_module_definition_rejects_duplicate_inline_option() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--module"),
+            OsString::from("docs=/srv/docs;read-only=yes;read-only=no"),
+        ])
+        .expect_err("duplicate inline option should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate module option")
+        );
     }
 
     #[test]
@@ -4426,6 +5152,48 @@ mod tests {
         .expect("parse config with cli override");
 
         assert_eq!(options.pid_file(), Some(cli_pid.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_loads_lock_file_from_config() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "lock file = daemon.lock\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with lock file");
+
+        let expected = dir.path().join("daemon.lock");
+        assert_eq!(options.lock_file(), Some(expected.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_config_lock_file_respects_cli_override() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        writeln!(
+            File::create(&config_path).expect("create config"),
+            "lock file = config.lock\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let cli_lock = PathBuf::from("/var/run/override.lock");
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            cli_lock.as_os_str().to_os_string(),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config with cli lock override");
+
+        assert_eq!(options.lock_file(), Some(cli_lock.as_path()));
     }
 
     #[test]
@@ -5018,6 +5786,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_parse_lock_file_argument() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            OsString::from("/var/run/oc-rsyncd.lock"),
+        ])
+        .expect("parse lock file argument");
+
+        assert_eq!(
+            options.lock_file(),
+            Some(Path::new("/var/run/oc-rsyncd.lock"))
+        );
+    }
+
+    #[test]
+    fn runtime_options_reject_duplicate_lock_file_argument() {
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--lock-file"),
+            OsString::from("/tmp/one.lock"),
+            OsString::from("--lock-file"),
+            OsString::from("/tmp/two.lock"),
+        ])
+        .expect_err("duplicate lock file should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate daemon argument '--lock-file'")
+        );
+    }
+
+    #[test]
     fn runtime_options_parse_motd_sources() {
         let dir = tempdir().expect("motd dir");
         let motd_path = dir.path().join("motd.txt");
@@ -5066,6 +5866,48 @@ mod tests {
         ];
 
         assert_eq!(options.motd_lines(), expected.as_slice());
+    }
+
+    #[test]
+    fn runtime_options_default_enables_reverse_lookup() {
+        let options = RuntimeOptions::parse(&[]).expect("parse defaults");
+        assert!(options.reverse_lookup());
+    }
+
+    #[test]
+    fn runtime_options_loads_reverse_lookup_from_config() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            "reverse lookup = no\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let args = [
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse config");
+        assert!(!options.reverse_lookup());
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_reverse_lookup_directive() {
+        let dir = tempdir().expect("config dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            "reverse lookup = yes\nreverse lookup = no\n[docs]\npath = /srv/docs\n",
+        )
+        .expect("write config");
+
+        let args = [
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ];
+        let error = RuntimeOptions::parse(&args).expect_err("duplicate reverse lookup");
+        assert!(format!("{error}").contains("reverse lookup"));
     }
 
     #[test]

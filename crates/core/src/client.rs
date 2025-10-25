@@ -387,6 +387,7 @@ pub struct ClientConfig {
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    keep_dirlinks: bool,
     relative_paths: bool,
     implied_dirs: bool,
     mkpath: bool,
@@ -444,6 +445,7 @@ impl Default for ClientConfig {
             sparse: false,
             copy_links: false,
             copy_dirlinks: false,
+            keep_dirlinks: false,
             relative_paths: false,
             implied_dirs: true,
             mkpath: false,
@@ -530,6 +532,13 @@ impl ClientConfig {
     #[doc(alias = "-k")]
     pub const fn copy_dirlinks(&self) -> bool {
         self.copy_dirlinks
+    }
+
+    /// Returns whether existing destination directory symlinks should be preserved.
+    #[must_use]
+    #[doc(alias = "--keep-dirlinks")]
+    pub const fn keep_dirlinks(&self) -> bool {
+        self.keep_dirlinks
     }
 
     /// Returns the ordered list of filter rules supplied by the caller.
@@ -912,6 +921,7 @@ pub struct ClientConfigBuilder {
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    keep_dirlinks: bool,
     relative_paths: bool,
     implied_dirs: Option<bool>,
     mkpath: bool,
@@ -1272,6 +1282,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Preserves existing destination symlinks that refer to directories.
+    #[must_use]
+    #[doc(alias = "--keep-dirlinks")]
+    pub const fn keep_dirlinks(mut self, keep_dirlinks: bool) -> Self {
+        self.keep_dirlinks = keep_dirlinks;
+        self
+    }
+
     /// Enables or disables copying of device nodes during the transfer.
     #[must_use]
     #[doc(alias = "--devices")]
@@ -1514,6 +1532,7 @@ impl ClientConfigBuilder {
             sparse: self.sparse,
             copy_links: self.copy_links,
             copy_dirlinks: self.copy_dirlinks,
+            keep_dirlinks: self.keep_dirlinks,
             relative_paths: self.relative_paths,
             implied_dirs: self.implied_dirs.unwrap_or(true),
             mkpath: self.mkpath,
@@ -2073,6 +2092,8 @@ pub struct RemoteFallbackArgs {
     pub copy_links: Option<bool>,
     /// Enables `--copy-dirlinks` when `true`.
     pub copy_dirlinks: bool,
+    /// Optional `--keep-dirlinks`/`--no-keep-dirlinks` toggle.
+    pub keep_dirlinks: Option<bool>,
     /// Optional `--sparse`/`--no-sparse` toggle.
     pub sparse: Option<bool>,
     /// Optional `--devices`/`--no-devices` toggle.
@@ -2259,6 +2280,7 @@ where
         numeric_ids,
         copy_links,
         copy_dirlinks,
+        keep_dirlinks,
         sparse,
         devices,
         specials,
@@ -2390,6 +2412,12 @@ where
     if copy_dirlinks {
         command_args.push(OsString::from("--copy-dirlinks"));
     }
+    push_toggle(
+        &mut command_args,
+        "--keep-dirlinks",
+        "--no-keep-dirlinks",
+        keep_dirlinks,
+    );
     push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
@@ -3467,6 +3495,7 @@ fn build_local_copy_options(
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
+        .keep_dirlinks(config.keep_dirlinks())
         .devices(config.preserve_devices())
         .specials(config.preserve_specials())
         .relative_paths(config.relative_paths())
@@ -3624,6 +3653,7 @@ exit 42
             numeric_ids: None,
             copy_links: None,
             copy_dirlinks: false,
+            keep_dirlinks: None,
             sparse: None,
             devices: None,
             specials: None,
@@ -4193,6 +4223,22 @@ exit 42
     }
 
     #[test]
+    fn builder_sets_keep_dirlinks() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .keep_dirlinks(true)
+            .build();
+
+        assert!(enabled.keep_dirlinks());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!disabled.keep_dirlinks());
+    }
+
+    #[test]
     fn builder_enables_stats() {
         let enabled = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -4376,6 +4422,55 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_keep_dirlinks_flags() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.keep_dirlinks = Some(true);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--keep-dirlinks"));
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.keep_dirlinks = Some(false);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--no-keep-dirlinks"));
     }
 
     #[cfg(unix)]
