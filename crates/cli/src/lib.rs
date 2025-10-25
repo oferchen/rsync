@@ -11,7 +11,7 @@
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
-//! `--append`/`--append-verify`, and `--sparse`) and delegates local copy operations to
+//! `--append`/`--append-verify`, `--remote-option`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
@@ -131,6 +131,7 @@ const HELP_TEXT: &str = concat!(
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
     "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
+    "  -M, --remote-option=OPTION  Forward OPTION to the remote rsync command.\n",
     "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
     "      --secluded-args  Alias of --protect-args.\n",
@@ -238,6 +239,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
@@ -835,6 +837,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
+    remote_options: Vec<OsString>,
     rsync_path: Option<OsString>,
     protect_args: Option<bool>,
     address_mode: AddressMode,
@@ -987,6 +990,17 @@ fn clap_command() -> ClapCommand {
                 .help("Use PROGRAM as the remote rsync executable during remote transfers.")
                 .num_args(1)
                 .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("remote-option")
+                .long("remote-option")
+                .short('M')
+                .value_name("OPTION")
+                .help("Forward OPTION to the remote rsync command.")
+                .action(ArgAction::Append)
+                .num_args(1)
+                .allow_hyphen_values(true)
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
@@ -1733,6 +1747,10 @@ where
     let rsync_path = matches
         .remove_one::<OsString>("rsync-path")
         .filter(|value| !value.is_empty());
+    let remote_options = matches
+        .remove_many::<OsString>("remote-option")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let protect_args = if matches.get_flag("no-protect-args") {
         Some(false)
     } else if matches.get_flag("protect-args") {
@@ -2055,6 +2073,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        remote_options,
         rsync_path,
         protect_args,
         address_mode,
@@ -2432,6 +2451,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        remote_options,
         rsync_path,
         protect_args,
         address_mode,
@@ -2904,6 +2924,7 @@ where
             dry_run,
             list_only,
             remote_shell: remote_shell.clone(),
+            remote_options: remote_options.clone(),
             protect_args,
             archive,
             delete: delete_for_fallback,
@@ -2996,6 +3017,21 @@ where
                 let _ = writeln!(
                     stderr.writer_mut(),
                     "the --rsync-path option may only be used with remote connections"
+                );
+            }
+            return 1;
+        }
+
+        if !remote_options.is_empty() {
+            let message = rsync_error!(
+                1,
+                "the --remote-option option may only be used with remote connections"
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --remote-option option may only be used with remote connections"
                 );
             }
             return 1;
@@ -12328,6 +12364,83 @@ exit 0
     }
 
     #[test]
+    fn remote_fallback_forwards_remote_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--remote-option=--log-file=/tmp/rsync.log"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--remote-option"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == "--log-file=/tmp/rsync.log")
+        );
+    }
+
+    #[test]
+    fn remote_fallback_forwards_remote_option_short_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-M"),
+            OsString::from("--log-format=%n"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--remote-option"));
+        assert!(recorded.lines().any(|line| line == "--log-format=%n"));
+    }
+
+    #[test]
     fn remote_fallback_reads_rsync_rsh_env() {
         use tempfile::tempdir;
 
@@ -12422,6 +12535,31 @@ exit 0
         let message = String::from_utf8(stderr).expect("stderr utf8");
         assert!(
             message.contains("the --rsync-path option may only be used with remote connections")
+        );
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn remote_option_requires_remote_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        std::fs::write(&source, b"content").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--remote-option=--log-file=/tmp/rsync.log"),
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let message = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(
+            message.contains("the --remote-option option may only be used with remote connections")
         );
         assert!(!dest.exists());
     }
