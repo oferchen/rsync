@@ -394,6 +394,7 @@ pub struct ClientConfig {
     stats: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    delay_updates: bool,
     inplace: bool,
     append: bool,
     append_verify: bool,
@@ -449,6 +450,7 @@ impl Default for ClientConfig {
             stats: false,
             partial: false,
             partial_dir: None,
+            delay_updates: false,
             inplace: false,
             append: false,
             append_verify: false,
@@ -816,6 +818,13 @@ impl ClientConfig {
         self.partial
     }
 
+    /// Reports whether updates should be delayed until after the transfer completes.
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(&self) -> bool {
+        self.delay_updates
+    }
+
     /// Returns the optional directory used to store partial files.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -902,6 +911,7 @@ pub struct ClientConfigBuilder {
     stats: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    delay_updates: bool,
     inplace: bool,
     append: bool,
     append_verify: bool,
@@ -1323,6 +1333,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables delayed updates (`--delay-updates`).
+    #[must_use]
+    #[doc(alias = "--delay-updates")]
+    pub const fn delay_updates(mut self, delay: bool) -> Self {
+        self.delay_updates = delay;
+        self
+    }
+
     /// Configures the directory used to store partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -1486,6 +1504,7 @@ impl ClientConfigBuilder {
             stats: self.stats,
             partial: self.partial,
             partial_dir: self.partial_dir,
+            delay_updates: self.delay_updates,
             inplace: self.inplace,
             append: self.append,
             append_verify: self.append_verify,
@@ -2056,6 +2075,8 @@ pub struct RemoteFallbackArgs {
     pub itemize_changes: bool,
     /// Enables `--partial`.
     pub partial: bool,
+    /// Enables `--delay-updates`.
+    pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
     /// Directories forwarded via repeated `--link-dest` flags.
@@ -2227,6 +2248,7 @@ where
         stats,
         itemize_changes,
         partial,
+        delay_updates,
         partial_dir,
         link_dests,
         remove_source_files,
@@ -2384,6 +2406,9 @@ where
     }
     if partial {
         command_args.push(OsString::from("--partial"));
+    }
+    if delay_updates {
+        command_args.push(OsString::from("--delay-updates"));
     }
     if let Some(dir) = partial_dir {
         command_args.push(OsString::from("--partial-dir"));
@@ -3424,6 +3449,7 @@ fn build_local_copy_options(
         .append(config.append())
         .append_verify(config.append_verify())
         .partial(config.partial())
+        .delay_updates(config.delay_updates())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .extend_link_dests(config.link_dest_paths().iter().cloned())
         .with_timeout(
@@ -3581,6 +3607,7 @@ exit 42
             stats: false,
             itemize_changes: false,
             partial: false,
+            delay_updates: false,
             partial_dir: None,
             link_dests: Vec::new(),
             remove_source_files: false,
@@ -4463,6 +4490,40 @@ exit 42
         assert!(captured.lines().any(|line| line == "--partial"));
         assert!(captured.lines().any(|line| line == "--partial-dir"));
         assert!(captured.lines().any(|line| line == ".rsync-partial"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_delay_updates_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.partial = true;
+        args.delay_updates = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--delay-updates"));
     }
 
     #[cfg(unix)]
