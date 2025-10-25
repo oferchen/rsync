@@ -279,11 +279,31 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::Invalid);
     }
 
+    let mut unsigned = trimmed;
+    let mut negative = false;
+
+    if let Some(first) = unsigned.chars().next() {
+        match first {
+            '+' => {
+                unsigned = &unsigned[first.len_utf8()..];
+            }
+            '-' => {
+                negative = true;
+                unsigned = &unsigned[first.len_utf8()..];
+            }
+            _ => {}
+        }
+    }
+
+    if unsigned.is_empty() {
+        return Err(BandwidthParseError::Invalid);
+    }
+
     let mut digits_seen = false;
     let mut decimal_seen = false;
-    let mut numeric_end = trimmed.len();
+    let mut numeric_end = unsigned.len();
 
-    for (index, ch) in trimmed.char_indices() {
+    for (index, ch) in unsigned.char_indices() {
         if ch.is_ascii_digit() {
             digits_seen = true;
             continue;
@@ -298,8 +318,8 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         break;
     }
 
-    let numeric_part = &trimmed[..numeric_end];
-    let remainder = &trimmed[numeric_end..];
+    let numeric_part = &unsigned[..numeric_end];
+    let remainder = &unsigned[numeric_end..];
 
     if !digits_seen || numeric_part == "." || numeric_part == "," {
         return Err(BandwidthParseError::Invalid);
@@ -386,6 +406,10 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         }
     } else if adjust == 1 {
         bytes = bytes.checked_add(1).ok_or(BandwidthParseError::TooLarge)?;
+    }
+
+    if negative {
+        return Err(BandwidthParseError::Invalid);
     }
 
     if bytes == 0 {
@@ -585,6 +609,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_bandwidth_accepts_leading_plus_sign() {
+        let limit = parse_bandwidth_argument("+1M").expect("parse succeeds");
+        assert_eq!(limit, NonZeroU64::new(1_048_576));
+    }
+
+    #[test]
     fn parse_bandwidth_accepts_comma_fraction_separator() {
         let limit = parse_bandwidth_argument("0,5M").expect("parse succeeds");
         assert_eq!(limit, NonZeroU64::new(512 * 1024));
@@ -612,6 +642,12 @@ mod tests {
     fn parse_bandwidth_negative_adjustment_can_trigger_too_small() {
         let error = parse_bandwidth_argument("0.0001M-1").unwrap_err();
         assert_eq!(error, BandwidthParseError::TooSmall);
+    }
+
+    #[test]
+    fn parse_bandwidth_rejects_negative_values() {
+        let error = parse_bandwidth_argument("-1M").unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
     }
 
     #[test]
