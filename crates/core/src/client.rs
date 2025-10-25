@@ -85,7 +85,8 @@ use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, TcpStream};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -179,6 +180,30 @@ impl TransferTimeout {
 }
 
 impl Default for TransferTimeout {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+/// Selects the preferred address family for daemon and remote-shell connections.
+///
+/// When [`AddressMode::Ipv4`] or [`AddressMode::Ipv6`] is selected, network
+/// operations restrict socket resolution to the requested family, mirroring
+/// upstream rsync's `--ipv4` and `--ipv6` flags. The default mode allows the
+/// operating system to pick whichever address family resolves first.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[doc(alias = "--ipv4")]
+#[doc(alias = "--ipv6")]
+pub enum AddressMode {
+    /// Allow the operating system to pick the address family.
+    Default,
+    /// Restrict resolution and connections to IPv4 addresses.
+    Ipv4,
+    /// Restrict resolution and connections to IPv6 addresses.
+    Ipv6,
+}
+
+impl Default for AddressMode {
     fn default() -> Self {
         Self::Default
     }
@@ -376,6 +401,7 @@ pub struct ClientConfig {
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
+    address_mode: AddressMode,
     timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
@@ -430,6 +456,7 @@ impl Default for ClientConfig {
             preserve_devices: false,
             preserve_specials: false,
             list_only: false,
+            address_mode: AddressMode::Default,
             timeout: TransferTimeout::Default,
             link_dest_paths: Vec::new(),
             reference_directories: Vec::new(),
@@ -469,6 +496,14 @@ impl ClientConfig {
     #[doc(alias = "--list-only")]
     pub const fn list_only(&self) -> bool {
         self.list_only
+    }
+
+    /// Returns the preferred address family used for daemon or remote-shell connections.
+    #[must_use]
+    #[doc(alias = "--ipv4")]
+    #[doc(alias = "--ipv6")]
+    pub const fn address_mode(&self) -> AddressMode {
+        self.address_mode
     }
 
     /// Reports whether a transfer was explicitly requested.
@@ -874,6 +909,7 @@ pub struct ClientConfigBuilder {
     preserve_devices: bool,
     preserve_specials: bool,
     list_only: bool,
+    address_mode: AddressMode,
     timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
@@ -1402,6 +1438,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Selects the preferred address family for network operations.
+    #[must_use]
+    #[doc(alias = "--ipv4")]
+    #[doc(alias = "--ipv6")]
+    pub const fn address_mode(mut self, mode: AddressMode) -> Self {
+        self.address_mode = mode;
+        self
+    }
+
     /// Finalises the builder and constructs a [`ClientConfig`].
     #[must_use]
     pub fn build(self) -> ClientConfig {
@@ -1448,6 +1493,7 @@ impl ClientConfigBuilder {
             preserve_devices: self.preserve_devices,
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
+            address_mode: self.address_mode,
             timeout: self.timeout,
             link_dest_paths: self.link_dest_paths,
             reference_directories: self.reference_directories,
@@ -2072,6 +2118,8 @@ pub struct RemoteFallbackArgs {
     pub out_format: Option<OsString>,
     /// Enables `--no-motd`.
     pub no_motd: bool,
+    /// Preferred address family forwarded via `--ipv4`/`--ipv6`.
+    pub address_mode: AddressMode,
     /// Optional override for the fallback executable path.
     ///
     /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
@@ -2208,6 +2256,7 @@ where
         timeout,
         out_format,
         no_motd,
+        address_mode,
         fallback_binary,
         rsync_path,
         mut remainder,
@@ -2470,6 +2519,12 @@ where
     if let Some(shell) = remote_shell {
         command_args.push(OsString::from("-e"));
         command_args.push(shell);
+    }
+
+    match address_mode {
+        AddressMode::Default => {}
+        AddressMode::Ipv4 => command_args.push(OsString::from("--ipv4")),
+        AddressMode::Ipv6 => command_args.push(OsString::from("--ipv6")),
     }
 
     if let Some(path) = rsync_path {
@@ -3494,6 +3549,7 @@ exit 42
             list_only: false,
             remote_shell: None,
             protect_args: None,
+            address_mode: AddressMode::Default,
             archive: false,
             delete: false,
             delete_mode: DeleteMode::Disabled,
@@ -5309,6 +5365,46 @@ exit 42
     }
 
     #[test]
+    fn module_list_options_reports_address_mode() {
+        let options = ModuleListOptions::default().with_address_mode(AddressMode::Ipv6);
+        assert_eq!(options.address_mode(), AddressMode::Ipv6);
+
+        let default_options = ModuleListOptions::default();
+        assert_eq!(default_options.address_mode(), AddressMode::Default);
+    }
+
+    #[test]
+    fn resolve_daemon_addresses_filters_ipv4_mode() {
+        let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
+        let addresses = resolve_daemon_addresses(&address, AddressMode::Ipv4)
+            .expect("ipv4 resolution succeeds");
+
+        assert!(!addresses.is_empty());
+        assert!(addresses.iter().all(std::net::SocketAddr::is_ipv4));
+    }
+
+    #[test]
+    fn resolve_daemon_addresses_rejects_missing_ipv6_addresses() {
+        let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
+        let error = resolve_daemon_addresses(&address, AddressMode::Ipv6)
+            .expect_err("IPv6 filtering should fail for IPv4-only host");
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(rendered.contains("does not have IPv6 addresses"));
+    }
+
+    #[test]
+    fn resolve_daemon_addresses_filters_ipv6_mode() {
+        let address = DaemonAddress::new(String::from("::1"), 873).expect("address");
+        let addresses = resolve_daemon_addresses(&address, AddressMode::Ipv6)
+            .expect("ipv6 resolution succeeds");
+
+        assert!(!addresses.is_empty());
+        assert!(addresses.iter().all(std::net::SocketAddr::is_ipv6));
+    }
+
+    #[test]
     fn module_list_request_rejects_truncated_percent_encoding() {
         let operands = vec![OsString::from("rsync://example%2/")];
         let error = ModuleListRequest::from_operands(&operands)
@@ -6754,6 +6850,7 @@ impl ModuleListRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ModuleListOptions {
     suppress_motd: bool,
+    address_mode: AddressMode,
 }
 
 impl ModuleListOptions {
@@ -6762,6 +6859,7 @@ impl ModuleListOptions {
     pub const fn new() -> Self {
         Self {
             suppress_motd: false,
+            address_mode: AddressMode::Default,
         }
     }
 
@@ -6776,6 +6874,21 @@ impl ModuleListOptions {
     #[must_use]
     pub const fn suppresses_motd(self) -> bool {
         self.suppress_motd
+    }
+
+    /// Configures the preferred address family for the daemon connection.
+    #[must_use]
+    #[doc(alias = "--ipv4")]
+    #[doc(alias = "--ipv6")]
+    pub const fn with_address_mode(mut self, mode: AddressMode) -> Self {
+        self.address_mode = mode;
+        self
+    }
+
+    /// Returns the preferred address family.
+    #[must_use]
+    pub const fn address_mode(&self) -> AddressMode {
+        self.address_mode
     }
 }
 
@@ -7146,6 +7259,7 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 fn open_daemon_stream(
     addr: &DaemonAddress,
     timeout: Option<Duration>,
+    address_mode: AddressMode,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = load_daemon_connect_program()? {
         return connect_via_program(addr, &program);
@@ -7153,7 +7267,7 @@ fn open_daemon_stream(
 
     let stream = match load_daemon_proxy()? {
         Some(proxy) => connect_via_proxy(addr, &proxy, timeout)?,
-        None => connect_direct(addr, timeout)?,
+        None => connect_direct(addr, timeout, address_mode)?,
     };
 
     Ok(DaemonStream::tcp(stream))
@@ -7162,20 +7276,96 @@ fn open_daemon_stream(
 fn connect_direct(
     addr: &DaemonAddress,
     timeout: Option<Duration>,
+    address_mode: AddressMode,
 ) -> Result<TcpStream, ClientError> {
-    let stream = TcpStream::connect((addr.host.as_str(), addr.port))
-        .map_err(|error| socket_error("connect to", addr.socket_addr_display(), error))?;
+    let addresses = resolve_daemon_addresses(addr, address_mode)?;
+    let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
-    if let Some(duration) = timeout {
-        stream
-            .set_read_timeout(Some(duration))
-            .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
-        stream
-            .set_write_timeout(Some(duration))
-            .map_err(|error| socket_error("configure", addr.socket_addr_display(), error))?;
+    for candidate in addresses {
+        let attempt = if let Some(duration) = timeout {
+            TcpStream::connect_timeout(&candidate, duration)
+        } else {
+            TcpStream::connect(candidate)
+        };
+
+        match attempt {
+            Ok(stream) => {
+                if let Some(duration) = timeout {
+                    stream.set_read_timeout(Some(duration)).map_err(|error| {
+                        socket_error("set read timeout on", addr.socket_addr_display(), error)
+                    })?;
+                    stream.set_write_timeout(Some(duration)).map_err(|error| {
+                        socket_error("set write timeout on", addr.socket_addr_display(), error)
+                    })?;
+                }
+
+                return Ok(stream);
+            }
+            Err(error) => last_error = Some((candidate, error)),
+        }
     }
 
-    Ok(stream)
+    let (candidate, error) = last_error.expect("no addresses available for daemon connection");
+    Err(socket_error("connect to", candidate, error))
+}
+
+fn resolve_daemon_addresses(
+    addr: &DaemonAddress,
+    mode: AddressMode,
+) -> Result<Vec<SocketAddr>, ClientError> {
+    let iterator = (addr.host.as_str(), addr.port)
+        .to_socket_addrs()
+        .map_err(|error| {
+            socket_error(
+                "resolve daemon address for",
+                addr.socket_addr_display(),
+                error,
+            )
+        })?;
+
+    let addresses: Vec<SocketAddr> = iterator.collect();
+
+    if addresses.is_empty() {
+        return Err(daemon_error(
+            format!(
+                "daemon host '{}' did not resolve to any addresses",
+                addr.host()
+            ),
+            SOCKET_IO_EXIT_CODE,
+        ));
+    }
+
+    let filtered = match mode {
+        AddressMode::Default => addresses,
+        AddressMode::Ipv4 => {
+            let retain: Vec<SocketAddr> = addresses
+                .into_iter()
+                .filter(|candidate| candidate.is_ipv4())
+                .collect();
+            if retain.is_empty() {
+                return Err(daemon_error(
+                    format!("daemon host '{}' does not have IPv4 addresses", addr.host()),
+                    SOCKET_IO_EXIT_CODE,
+                ));
+            }
+            retain
+        }
+        AddressMode::Ipv6 => {
+            let retain: Vec<SocketAddr> = addresses
+                .into_iter()
+                .filter(|candidate| candidate.is_ipv6())
+                .collect();
+            if retain.is_empty() {
+                return Err(daemon_error(
+                    format!("daemon host '{}' does not have IPv6 addresses", addr.host()),
+                    SOCKET_IO_EXIT_CODE,
+                ));
+            }
+            retain
+        }
+    };
+
+    Ok(filtered)
 }
 
 fn connect_via_proxy(
@@ -7205,12 +7395,7 @@ fn establish_proxy_tunnel(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
-    let mut request = String::new();
-    request.push_str("CONNECT ");
-    request.push_str(addr.host());
-    request.push(':');
-    request.push_str(&addr.port().to_string());
-    request.push_str(" HTTP/1.0\r\n");
+    let mut request = format!("CONNECT {} HTTP/1.0\r\n", addr.socket_addr_display());
 
     if let Some(header) = proxy.authorization_header() {
         request.push_str("Proxy-Authorization: Basic ");
@@ -7793,9 +7978,10 @@ pub fn run_module_list_with_password_and_options(
     let mut auth_attempted = false;
     let mut auth_context: Option<DaemonAuthContext> = None;
     let suppress_motd = options.suppresses_motd();
+    let address_mode = options.address_mode();
 
     let effective_timeout = timeout.effective(DAEMON_SOCKET_TIMEOUT);
-    let stream = open_daemon_stream(addr, effective_timeout)?;
+    let stream = open_daemon_stream(addr, effective_timeout, address_mode)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;

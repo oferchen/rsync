@@ -94,8 +94,8 @@ use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata, ClientEvent,
-        ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
+        AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
+        ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
         FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
         RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
@@ -131,6 +131,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
     "      --secluded-args  Alias of --protect-args.\n",
     "      --no-secluded-args  Alias of --no-protect-args.\n",
+    "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
+    "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
     "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --list-only  List files without performing a transfer.\n",
@@ -224,7 +226,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -816,6 +818,7 @@ struct ParsedArgs {
     remote_shell: Option<OsString>,
     rsync_path: Option<OsString>,
     protect_args: Option<bool>,
+    address_mode: AddressMode,
     archive: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
@@ -978,6 +981,20 @@ fn clap_command() -> ClapCommand {
                 .help("Allow the remote shell to expand wildcard arguments.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("protect-args"),
+        )
+        .arg(
+            Arg::new("ipv4")
+                .long("ipv4")
+                .help("Prefer IPv4 when contacting remote hosts.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("ipv6"),
+        )
+        .arg(
+            Arg::new("ipv6")
+                .long("ipv6")
+                .help("Prefer IPv6 when contacting remote hosts.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("ipv4"),
         )
         .arg(
             Arg::new("dry-run")
@@ -1634,6 +1651,13 @@ where
     } else {
         env_protect_args_default()
     };
+    let address_mode = if matches.get_flag("ipv4") {
+        AddressMode::Ipv4
+    } else if matches.get_flag("ipv6") {
+        AddressMode::Ipv6
+    } else {
+        AddressMode::Default
+    };
     let archive = matches.get_flag("archive");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
@@ -1927,6 +1951,7 @@ where
         remote_shell,
         rsync_path,
         protect_args,
+        address_mode,
         archive,
         delete_mode,
         delete_excluded,
@@ -2157,6 +2182,7 @@ where
         remote_shell,
         rsync_path,
         protect_args,
+        address_mode,
         archive,
         delete_mode,
         delete_excluded,
@@ -2547,7 +2573,9 @@ where
                     }
                 };
 
-                let list_options = ModuleListOptions::default().suppress_motd(no_motd);
+                let list_options = ModuleListOptions::default()
+                    .suppress_motd(no_motd)
+                    .with_address_mode(address_mode);
                 return match run_module_list_with_password_and_options(
                     request,
                     list_options,
@@ -2619,7 +2647,6 @@ where
             dry_run,
             list_only,
             remote_shell: remote_shell.clone(),
-            rsync_path: rsync_path.clone(),
             protect_args,
             archive,
             delete: delete_for_fallback,
@@ -2680,7 +2707,9 @@ where
             timeout: timeout_setting,
             out_format: fallback_out_format.clone(),
             no_motd,
+            address_mode,
             fallback_binary: None,
+            rsync_path: rsync_path.clone(),
             remainder: remainder.clone(),
             #[cfg(feature = "acl")]
             acls,
@@ -2774,6 +2803,7 @@ where
 
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
+        .address_mode(address_mode)
         .dry_run(dry_run)
         .list_only(list_only)
         .delete(delete_mode.is_enabled() || delete_excluded)
@@ -7176,6 +7206,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_sets_ipv4_address_mode() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ipv4"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.address_mode, AddressMode::Ipv4);
+    }
+
+    #[test]
+    fn parse_args_sets_ipv6_address_mode() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ipv6"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.address_mode, AddressMode::Ipv6);
+    }
+
+    #[test]
     fn parse_args_recognises_group_overrides() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -10379,6 +10435,80 @@ exit 7
         assert!(recorded.contains("--dry-run"));
         assert!(recorded.contains("remote::module/path"));
         assert!(recorded.contains("dest"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_includes_ipv4_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ipv4"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--ipv4"));
+        assert!(!recorded.contains("--ipv6"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_includes_ipv6_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ipv6"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--ipv6"));
+        assert!(!recorded.contains("--ipv4"));
     }
 
     #[cfg(unix)]
