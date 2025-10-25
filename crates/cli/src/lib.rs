@@ -207,6 +207,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-sparse Disable sparse file handling.\n",
     "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
     "      --no-copy-links  Preserve symlinks instead of following them.\n",
+    "      --safe-links     Skip symlinks that point outside the transfer root.\n",
     "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
     "  -K, --keep-dirlinks  Treat destination symlinks to directories as directories.\n",
     "      --no-keep-dirlinks  Disable --keep-dirlinks semantics.\n",
@@ -239,7 +240,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --safe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -745,7 +746,11 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
 
     fields[0] = match event.kind() {
         DataCopied => '>',
-        MetadataReused | SkippedExisting | SkippedNewerDestination | SkippedNonRegular => '.',
+        MetadataReused
+        | SkippedExisting
+        | SkippedNewerDestination
+        | SkippedNonRegular
+        | SkippedUnsafeSymlink => '.',
         HardLink => 'h',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         _ => '.',
@@ -865,6 +870,7 @@ struct ParsedArgs {
     copy_links: Option<bool>,
     copy_dirlinks: bool,
     keep_dirlinks: Option<bool>,
+    safe_links: bool,
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
@@ -1144,6 +1150,12 @@ fn clap_command() -> ClapCommand {
                 .help("Preserve symlinks instead of following them.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("copy-links"),
+        )
+        .arg(
+            Arg::new("safe-links")
+                .long("safe-links")
+                .help("Skip symlinks that point outside the transfer root.")
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("no-keep-dirlinks")
@@ -1896,6 +1908,7 @@ where
     } else {
         None
     };
+    let safe_links = matches.get_flag("safe-links");
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
@@ -2100,6 +2113,7 @@ where
         copy_links,
         copy_dirlinks,
         keep_dirlinks,
+        safe_links,
         devices,
         specials,
         relative,
@@ -2492,6 +2506,7 @@ where
         copy_links,
         copy_dirlinks,
         keep_dirlinks,
+        safe_links,
         devices,
         specials,
         relative,
@@ -2947,6 +2962,7 @@ where
             copy_links,
             copy_dirlinks,
             keep_dirlinks,
+            safe_links,
             sparse,
             devices,
             specials,
@@ -3156,6 +3172,7 @@ where
         .copy_links(copy_links)
         .copy_dirlinks(copy_dirlinks)
         .keep_dirlinks(keep_dirlinks_flag)
+        .safe_links(safe_links)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .mkpath(mkpath)
@@ -4038,6 +4055,20 @@ fn emit_verbose<W: Write + ?Sized>(
                 )?;
                 continue;
             }
+            ClientEventKind::SkippedUnsafeSymlink => {
+                let mut rendered = format!(
+                    "ignoring unsafe symlink \"{}\"",
+                    event.relative_path().display()
+                );
+                if let Some(metadata) = event.metadata()
+                    && let Some(target) = metadata.symlink_target()
+                {
+                    rendered.push_str(" -> ");
+                    rendered.push_str(&target.to_string_lossy());
+                }
+                writeln!(stdout, "{rendered}")?;
+                continue;
+            }
             _ => {}
         }
 
@@ -4113,6 +4144,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::DirectoryCreated => "directory",
         ClientEventKind::SkippedExisting => "skipped existing file",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
+        ClientEventKind::SkippedUnsafeSymlink => "skipped unsafe symlink",
         ClientEventKind::SkippedNewerDestination => "skipped newer destination file",
         ClientEventKind::EntryDeleted => "deleted",
         ClientEventKind::SourceRemoved => "source removed",
@@ -7782,6 +7814,19 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.keep_dirlinks, Some(true));
+    }
+
+    #[test]
+    fn parse_args_recognises_safe_links_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--safe-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.safe_links);
     }
 
     #[test]
@@ -11661,6 +11706,59 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(!recorded.lines().any(|line| line == "--preallocate"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_safe_links_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--safe-links"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--safe-links"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(!recorded.lines().any(|line| line == "--safe-links"));
     }
 
     #[cfg(unix)]

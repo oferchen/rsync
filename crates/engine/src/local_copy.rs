@@ -58,7 +58,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::{NonZeroU8, NonZeroU64};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -1103,6 +1103,8 @@ pub enum LocalCopyAction {
     SkippedNewerDestination,
     /// A non-regular file was skipped because support was disabled.
     SkippedNonRegular,
+    /// A symbolic link was skipped because it was deemed unsafe by `--safe-links`.
+    SkippedUnsafeSymlink,
     /// An entry was removed due to `--delete`.
     EntryDeleted,
     /// A source entry was removed after a successful transfer.
@@ -1542,6 +1544,7 @@ pub struct LocalCopyOptions {
     copy_links: bool,
     copy_dirlinks: bool,
     keep_dirlinks: bool,
+    safe_links: bool,
     preserve_owner: bool,
     preserve_group: bool,
     preserve_permissions: bool,
@@ -1599,6 +1602,7 @@ impl LocalCopyOptions {
             copy_links: false,
             copy_dirlinks: false,
             keep_dirlinks: false,
+            safe_links: false,
             preserve_owner: false,
             preserve_group: false,
             preserve_permissions: false,
@@ -1800,6 +1804,14 @@ impl LocalCopyOptions {
     #[doc(alias = "-L")]
     pub const fn copy_links(mut self, copy: bool) -> Self {
         self.copy_links = copy;
+        self
+    }
+
+    /// Skips symlinks whose targets escape the transfer root.
+    #[must_use]
+    #[doc(alias = "--safe-links")]
+    pub const fn safe_links(mut self, enabled: bool) -> Self {
+        self.safe_links = enabled;
         self
     }
 
@@ -2239,6 +2251,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_links_enabled(&self) -> bool {
         self.copy_links
+    }
+
+    /// Reports whether unsafe symlinks should be ignored.
+    #[must_use]
+    pub const fn safe_links_enabled(&self) -> bool {
+        self.safe_links
     }
 
     /// Reports whether symlinks to directories should be followed as directories.
@@ -3231,6 +3249,10 @@ impl<'a> CopyContext<'a> {
         self.options.copy_links_enabled()
     }
 
+    fn safe_links_enabled(&self) -> bool {
+        self.options.safe_links_enabled()
+    }
+
     fn copy_dirlinks_enabled(&self) -> bool {
         self.options.copy_dirlinks_enabled()
     }
@@ -4027,6 +4049,25 @@ impl<'a> CopyContext<'a> {
                 None,
                 Duration::default(),
                 None,
+            ));
+        }
+    }
+
+    fn record_skipped_unsafe_symlink(
+        &mut self,
+        relative: Option<&Path>,
+        metadata: &fs::Metadata,
+        target: PathBuf,
+    ) {
+        if let Some(path) = relative {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedUnsafeSymlink,
+                0,
+                None,
+                Duration::default(),
+                Some(metadata_snapshot),
             ));
         }
     }
@@ -7873,6 +7914,67 @@ fn remove_source_entry_if_requested(
     }
 }
 
+fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> bool {
+    if target.as_os_str().is_empty() || target.has_root() {
+        return false;
+    }
+
+    let mut seen_non_parent = false;
+    let mut last_was_parent = false;
+    let mut component_count = 0usize;
+
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                if seen_non_parent {
+                    return false;
+                }
+                last_was_parent = true;
+            }
+            Component::CurDir => {
+                seen_non_parent = true;
+                last_was_parent = false;
+            }
+            Component::Normal(_) => {
+                seen_non_parent = true;
+                last_was_parent = false;
+            }
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+        component_count = component_count.saturating_add(1);
+    }
+
+    if component_count > 1 && last_was_parent {
+        return false;
+    }
+
+    let mut depth: i64 = 0;
+    for component in link_relative.components() {
+        match component {
+            Component::ParentDir => depth = 0,
+            Component::CurDir => {}
+            Component::Normal(_) => depth += 1,
+            Component::RootDir | Component::Prefix(_) => depth = 0,
+        }
+    }
+
+    for component in target.components() {
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::CurDir => {}
+            Component::Normal(_) => depth += 1,
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+
+    true
+}
+
 fn copy_symlink(
     context: &mut CopyContext,
     source: &Path,
@@ -7890,6 +7992,26 @@ fn copy_symlink(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_symlink_total();
+    let target = fs::read_link(source)
+        .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
+
+    let safety_relative = relative
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            destination
+                .strip_prefix(context.destination_root())
+                .ok()
+                .and_then(|path| (!path.as_os_str().is_empty()).then(|| path.to_path_buf()))
+        })
+        .or_else(|| destination.file_name().map(PathBuf::from))
+        .unwrap_or_else(|| destination.to_path_buf());
+
+    if context.safe_links_enabled() && !symlink_target_is_safe(&target, &safety_relative) {
+        context.record_skipped_unsafe_symlink(record_path.as_deref(), metadata, target);
+        context.register_progress();
+        return Ok(());
+    }
+
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -7948,9 +8070,6 @@ fn copy_symlink(
             ));
         }
     }
-
-    let target = fs::read_link(source)
-        .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
 
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
@@ -8301,6 +8420,47 @@ mod tests {
             CopyContext::new(LocalCopyExecution::Apply, options, None, PathBuf::from("."));
 
         assert_eq!(context.metadata_options().chmod(), Some(&modifiers));
+    }
+
+    #[test]
+    fn symlink_target_is_safe_accepts_relative_paths() {
+        assert!(symlink_target_is_safe(
+            Path::new("target"),
+            Path::new("dir")
+        ));
+        assert!(symlink_target_is_safe(
+            Path::new("nested/entry"),
+            Path::new("dir/subdir")
+        ));
+        assert!(symlink_target_is_safe(
+            Path::new("./inner"),
+            Path::new("dest")
+        ));
+    }
+
+    #[test]
+    fn symlink_target_is_safe_rejects_unsafe_targets() {
+        assert!(!symlink_target_is_safe(Path::new(""), Path::new("dest")));
+        assert!(!symlink_target_is_safe(
+            Path::new("/etc/passwd"),
+            Path::new("dest")
+        ));
+        assert!(!symlink_target_is_safe(
+            Path::new("../../escape"),
+            Path::new("dest")
+        ));
+        assert!(!symlink_target_is_safe(
+            Path::new("../../../escape"),
+            Path::new("dest/subdir")
+        ));
+        assert!(!symlink_target_is_safe(
+            Path::new("dir/.."),
+            Path::new("dest")
+        ));
+        assert!(!symlink_target_is_safe(
+            Path::new("dir/../.."),
+            Path::new("dest")
+        ));
     }
 
     #[test]
@@ -9657,6 +9817,84 @@ mod tests {
         assert_eq!(summary.symlinks_copied(), 1);
         let copied = fs::read_link(&dest).expect("read link");
         assert_eq!(copied, target_file);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_safe_links_allows_relative_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src");
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create src dir");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+        let nested = source_dir.join("nested");
+        fs::create_dir(&nested).expect("create nested");
+        let target_file = nested.join("file.txt");
+        fs::write(&target_file, b"payload").expect("write target");
+
+        let link_path = source_dir.join("link");
+        symlink(Path::new("nested/file.txt"), &link_path).expect("create symlink");
+        let destination_link = dest_dir.join("link");
+
+        let operands = vec![
+            link_path.into_os_string(),
+            destination_link.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().safe_links(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.symlinks_copied(), 1);
+        let copied = fs::read_link(&destination_link).expect("read link");
+        assert_eq!(copied, Path::new("nested/file.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_safe_links_skips_unsafe_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src");
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create src dir");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let link_path = source_dir.join("escape");
+        symlink(Path::new("../../outside"), &link_path).expect("create symlink");
+        let destination_link = dest_dir.join("escape");
+
+        let operands = vec![
+            link_path.into_os_string(),
+            destination_link.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .safe_links(true)
+            .collect_events(true);
+        let report = plan
+            .execute_with_report(LocalCopyExecution::Apply, options)
+            .expect("copy completes");
+
+        assert!(!destination_link.exists());
+        let summary = report.summary();
+        assert_eq!(summary.symlinks_copied(), 0);
+        assert_eq!(summary.symlinks_total(), 1);
+
+        assert!(
+            report
+                .records()
+                .iter()
+                .any(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
+        );
     }
 
     #[cfg(unix)]
