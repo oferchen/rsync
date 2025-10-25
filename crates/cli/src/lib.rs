@@ -10,6 +10,7 @@
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
+//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`, and `--sparse`) and delegates local copy operations to
 //! `--bwlimit`, `--append`, `--append-verify`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
@@ -28,7 +29,7 @@
 //! mirroring the approach used by upstream rsync. Internally a
 //! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
 //! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
-//! `--delete-excluded`,
+//! `--delete-excluded`, `--compare-dest`, `--copy-dest`, `--link-dest`,
 //! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
 //! delegates to [`rsync_core::client::run_client`], which currently implements a
@@ -107,7 +108,7 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
-use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
+use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t, uid_t};
 
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
@@ -148,6 +149,9 @@ const HELP_TEXT: &str = concat!(
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
     "      --include-from=FILE  Read include patterns from FILE.\n",
+    "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
+    "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
+    "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
@@ -201,6 +205,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-owner   Disable ownership preservation.\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
     "      --no-group   Disable group preservation.\n",
+    "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
     "  -p, --perms      Preserve file permissions.\n",
     "      --no-perms   Disable permission preservation.\n",
     "  -t, --times      Preserve modification times.\n",
@@ -220,6 +225,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --link-dest, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -825,6 +831,7 @@ struct ParsedArgs {
     compress_level: Option<OsString>,
     owner: Option<bool>,
     group: Option<bool>,
+    chown: Option<OsString>,
     perms: Option<bool>,
     times: Option<bool>,
     omit_dir_times: Option<bool>,
@@ -858,6 +865,9 @@ struct ParsedArgs {
     exclude_from: Vec<OsString>,
     include_from: Vec<OsString>,
     filters: Vec<OsString>,
+    compare_destinations: Vec<OsString>,
+    copy_destinations: Vec<OsString>,
+    link_destinations: Vec<OsString>,
     cvs_exclude: bool,
     files_from: Vec<OsString>,
     from0: bool,
@@ -1326,6 +1336,30 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::Append),
         )
         .arg(
+            Arg::new("compare-dest")
+                .long("compare-dest")
+                .value_name("DIR")
+                .help("Skip creating destination files that match DIR.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("copy-dest")
+                .long("copy-dest")
+                .value_name("DIR")
+                .help("Copy matching files from DIR instead of the source.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("link-dest")
+                .long("link-dest")
+                .value_name("DIR")
+                .help("Hard-link matching files from DIR into the destination.")
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Append),
+        )
+        .arg(
             Arg::new("cvs-exclude")
                 .long("cvs-exclude")
                 .short('C')
@@ -1397,6 +1431,14 @@ fn clap_command() -> ClapCommand {
                 .help("Disable group preservation.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("group"),
+        )
+        .arg(
+            Arg::new("chown")
+                .long("chown")
+                .value_name("USER:GROUP")
+                .help("Set destination ownership to USER and/or GROUP.")
+                .value_parser(OsStringValueParser::new())
+                .num_args(1),
         )
         .arg(
             Arg::new("perms")
@@ -1664,6 +1706,7 @@ where
     } else {
         None
     };
+    let chown = matches.remove_one::<OsString>("chown");
     let perms = if matches.get_flag("perms") {
         Some(true)
     } else if matches.get_flag("no-perms") {
@@ -1838,6 +1881,18 @@ where
         .remove_many::<OsString>("include")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let compare_destinations = matches
+        .remove_many::<OsString>("compare-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let copy_destinations = matches
+        .remove_many::<OsString>("copy-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
+    let link_destinations = matches
+        .remove_many::<OsString>("link-dest")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let exclude_from = matches
         .remove_many::<OsString>("exclude-from")
         .map(|values| values.collect())
@@ -1895,6 +1950,7 @@ where
         compress_level,
         owner,
         group,
+        chown,
         perms,
         times,
         omit_dir_times,
@@ -1924,6 +1980,9 @@ where
         whole_file,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -2121,12 +2180,16 @@ where
         compress_level,
         owner,
         group,
+        chown,
         perms,
         times,
         omit_dir_times,
         acls,
         excludes,
         includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         exclude_from,
         include_from,
         filters,
@@ -2426,6 +2489,30 @@ where
         return 1;
     }
 
+    let parsed_chown = match chown.as_ref() {
+        Some(value) => match parse_chown_argument(value.as_os_str()) {
+            Ok(parsed) => Some(parsed),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    let owner_override_value = parsed_chown
+        .as_ref()
+        .and_then(|value| value.owner)
+        .map(|uid| uid as u32);
+    let group_override_value = parsed_chown
+        .as_ref()
+        .and_then(|value| value.group)
+        .map(|gid| gid as u32);
+    let chown_spec = parsed_chown.as_ref().map(|value| value.spec.clone());
+
     #[cfg(not(feature = "xattr"))]
     if xattrs.unwrap_or(false) {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
@@ -2554,6 +2641,7 @@ where
             compress,
             compress_disabled,
             compress_level: compress_level_cli.clone(),
+            chown: chown_spec.clone(),
             owner,
             group,
             perms,
@@ -2586,6 +2674,9 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            compare_destinations: compare_destinations.clone(),
+            copy_destinations: copy_destinations.clone(),
+            link_destinations: link_destinations.clone(),
             cvs_exclude,
             info_flags: fallback_info_flags,
             debug_flags: fallback_debug_flags,
@@ -2663,8 +2754,24 @@ where
     transfer_operands.append(&mut file_list_operands);
     transfer_operands.extend(remainder);
 
-    let preserve_owner = owner.unwrap_or(archive);
-    let preserve_group = group.unwrap_or(archive);
+    let preserve_owner = if parsed_chown
+        .as_ref()
+        .and_then(|value| value.owner)
+        .is_some()
+    {
+        true
+    } else {
+        owner.unwrap_or(archive)
+    };
+    let preserve_group = if parsed_chown
+        .as_ref()
+        .and_then(|value| value.group)
+        .is_some()
+    {
+        true
+    } else {
+        group.unwrap_or(archive)
+    };
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
@@ -2685,7 +2792,9 @@ where
         .compress(compress)
         .compression_level(compression_level_override)
         .owner(preserve_owner)
+        .owner_override(owner_override_value)
         .group(preserve_group)
+        .group_override(group_override_value)
         .permissions(preserve_permissions)
         .times(preserve_times)
         .omit_dir_times(omit_dir_times_setting)
@@ -2715,6 +2824,18 @@ where
         .append_verify(append_verify)
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting);
+
+    for path in &compare_destinations {
+        builder = builder.compare_destination(PathBuf::from(path));
+    }
+
+    for path in &copy_destinations {
+        builder = builder.copy_destination(PathBuf::from(path));
+    }
+
+    for path in &link_destinations {
+        builder = builder.link_destination(PathBuf::from(path));
+    }
     #[cfg(feature = "acl")]
     {
         builder = builder.acls(preserve_acls);
@@ -5401,6 +5522,75 @@ fn parse_compress_level_argument(value: &OsStr) -> Result<CompressionSetting, Me
     })
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedChown {
+    spec: OsString,
+    owner: Option<uid_t>,
+    group: Option<gid_t>,
+}
+
+fn parse_chown_argument(value: &OsStr) -> Result<ParsedChown, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        return Err(
+            rsync_error!(1, "--chown requires a non-empty USER and/or GROUP")
+                .with_role(Role::Client),
+        );
+    }
+
+    let (user_part, group_part) = match trimmed.split_once(':') {
+        Some((user, group)) => (user, group),
+        None => (trimmed, ""),
+    };
+
+    let owner = if user_part.is_empty() {
+        None
+    } else {
+        Some(resolve_chown_user(user_part)?)
+    };
+    let group = if group_part.is_empty() {
+        None
+    } else {
+        Some(resolve_chown_group(group_part)?)
+    };
+
+    if owner.is_none() && group.is_none() {
+        return Err(rsync_error!(1, "--chown requires a user and/or group").with_role(Role::Client));
+    }
+
+    Ok(ParsedChown {
+        spec: OsString::from(trimmed),
+        owner,
+        group,
+    })
+}
+
+fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
+    if let Ok(id) = input.parse::<uid_t>() {
+        return Ok(id);
+    }
+
+    if let Some(user) = get_user_by_name(input) {
+        return Ok(user.uid());
+    }
+
+    Err(rsync_error!(1, "unknown user '{}' specified for --chown", input).with_role(Role::Client))
+}
+
+fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
+    if let Ok(id) = input.parse::<gid_t>() {
+        return Ok(id);
+    }
+
+    if let Some(group) = get_group_by_name(input) {
+        return Ok(group.gid());
+    }
+
+    Err(rsync_error!(1, "unknown group '{}' specified for --chown", input).with_role(Role::Client))
+}
+
 fn render_module_list<W: Write, E: Write>(
     stdout: &mut W,
     stderr: &mut E,
@@ -6825,6 +7015,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_chown_option() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--chown=user:group"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.chown, Some(OsString::from("user:group")));
+    }
+
+    #[test]
     fn parse_args_sets_protect_args_flag() {
         let parsed = parse_args([OsString::from("oc-rsync"), OsString::from("--protect-args")])
             .expect("parse");
@@ -7406,6 +7609,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_reference_destinations() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--compare-dest"),
+            OsString::from("compare"),
+            OsString::from("--copy-dest"),
+            OsString::from("copy"),
+            OsString::from("--link-dest"),
+            OsString::from("link"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.compare_destinations, vec![OsString::from("compare")]);
+        assert_eq!(parsed.copy_destinations, vec![OsString::from("copy")]);
+        assert_eq!(parsed.link_destinations, vec![OsString::from("link")]);
+    }
+
+    #[test]
     fn parse_args_collects_files_from_paths() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -7459,6 +7682,25 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.password_file, Some(OsString::from("secrets.d")));
+    }
+
+    #[test]
+    fn chown_requires_non_empty_components() {
+        let error =
+            parse_chown_argument(OsStr::new("")).expect_err("empty --chown spec should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("--chown requires a non-empty USER and/or GROUP"),
+            "diagnostic missing non-empty message: {rendered}"
+        );
+
+        let colon_error =
+            parse_chown_argument(OsStr::new(":")).expect_err("missing user and group should fail");
+        let colon_rendered = colon_error.to_string();
+        assert!(
+            colon_rendered.contains("--chown requires a user and/or group"),
+            "diagnostic missing user/group message: {colon_rendered}"
+        );
     }
 
     #[test]
@@ -10110,6 +10352,7 @@ exit 0
     #[cfg(unix)]
     #[test]
     fn remote_fallback_forwards_link_dest_arguments() {
+    fn remote_fallback_forwards_reference_destinations() {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -10133,6 +10376,9 @@ exit 0
             OsString::from("oc-rsync"),
             OsString::from("--link-dest=baseline"),
             OsString::from("--link-dest=/var/cache"),
+            OsString::from("--compare-dest=compare"),
+            OsString::from("--copy-dest=copy"),
+            OsString::from("--link-dest=link"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
         ]);
@@ -10148,6 +10394,12 @@ exit 0
                 .lines()
                 .any(|line| line == "--link-dest=/var/cache")
         );
+        assert!(recorded.lines().any(|line| line == "--compare-dest"));
+        assert!(recorded.lines().any(|line| line == "compare"));
+        assert!(recorded.lines().any(|line| line == "--copy-dest"));
+        assert!(recorded.lines().any(|line| line == "copy"));
+        assert!(recorded.lines().any(|line| line == "--link-dest"));
+        assert!(recorded.lines().any(|line| line == "link"));
     }
 
     #[cfg(unix)]

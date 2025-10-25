@@ -104,6 +104,8 @@ use rsync_engine::local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
     LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
     LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    ReferenceDirectory as EngineReferenceDirectory,
+    ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_protocol::{
@@ -288,6 +290,47 @@ impl Default for DeleteMode {
     }
 }
 
+/// Identifies the strategy applied to a reference directory entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceDirectoryKind {
+    /// Skip creating the destination when the referenced file matches.
+    Compare,
+    /// Copy data from the reference directory when the file matches.
+    Copy,
+    /// Create a hard link to the reference directory when the file matches.
+    Link,
+}
+
+/// Describes a reference directory consulted during local copy execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceDirectory {
+    kind: ReferenceDirectoryKind,
+    path: PathBuf,
+}
+
+impl ReferenceDirectory {
+    /// Creates a new reference directory entry.
+    #[must_use]
+    pub fn new(kind: ReferenceDirectoryKind, path: impl Into<PathBuf>) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+        }
+    }
+
+    /// Returns the kind associated with the reference directory entry.
+    #[must_use]
+    pub const fn kind(&self) -> ReferenceDirectoryKind {
+        self.kind
+    }
+
+    /// Returns the base path of the reference directory.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Configuration describing the requested client operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
@@ -301,6 +344,8 @@ pub struct ClientConfig {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -333,6 +378,7 @@ pub struct ClientConfig {
     list_only: bool,
     timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -352,6 +398,8 @@ impl Default for ClientConfig {
             preserve_group: false,
             preserve_permissions: false,
             preserve_times: false,
+            owner_override: None,
+            group_override: None,
             omit_dir_times: false,
             compress: false,
             compression_level: None,
@@ -384,6 +432,7 @@ impl Default for ClientConfig {
             list_only: false,
             timeout: TransferTimeout::Default,
             link_dest_paths: Vec::new(),
+            reference_directories: Vec::new(),
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -403,6 +452,16 @@ impl ClientConfig {
     #[must_use]
     pub fn transfer_args(&self) -> &[OsString] {
         &self.transfer_args
+    }
+
+    /// Returns the ordered reference directories supplied via `--compare-dest`,
+    /// `--copy-dest`, or `--link-dest`.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    #[doc(alias = "--copy-dest")]
+    #[doc(alias = "--link-dest")]
+    pub fn reference_directories(&self) -> &[ReferenceDirectory] {
+        &self.reference_directories
     }
 
     /// Reports whether transfers should be listed without mutating the destination.
@@ -524,11 +583,23 @@ impl ClientConfig {
         self.preserve_owner
     }
 
+    /// Returns the configured ownership override, if any.
+    #[must_use]
+    pub const fn owner_override(&self) -> Option<u32> {
+        self.owner_override
+    }
+
     /// Reports whether group preservation was requested.
     #[must_use]
     #[doc(alias = "--group")]
     pub const fn preserve_group(&self) -> bool {
         self.preserve_group
+    }
+
+    /// Returns the configured group override, if any.
+    #[must_use]
+    pub const fn group_override(&self) -> Option<u32> {
+        self.group_override
     }
 
     /// Reports whether permissions should be preserved.
@@ -771,6 +842,8 @@ pub struct ClientConfigBuilder {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    owner_override: Option<u32>,
+    group_override: Option<u32>,
     omit_dir_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
@@ -803,6 +876,7 @@ pub struct ClientConfigBuilder {
     list_only: bool,
     timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
+    reference_directories: Vec<ReferenceDirectory>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -902,6 +976,35 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Adds a `--compare-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--compare-dest")]
+    pub fn compare_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            path,
+        ));
+        self
+    }
+
+    /// Adds a `--copy-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--copy-dest")]
+    pub fn copy_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Copy, path));
+        self
+    }
+
+    /// Adds a `--link-dest` reference directory consulted during execution.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn link_destination<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.reference_directories
+            .push(ReferenceDirectory::new(ReferenceDirectoryKind::Link, path));
+        self
+    }
+
     /// Enables or disables removal of source files after a successful transfer.
     #[must_use]
     #[doc(alias = "--remove-source-files")]
@@ -927,11 +1030,27 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Applies an explicit ownership override using numeric identifiers.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn owner_override(mut self, owner: Option<u32>) -> Self {
+        self.owner_override = owner;
+        self
+    }
+
     /// Requests that group metadata be preserved.
     #[must_use]
     #[doc(alias = "--group")]
     pub const fn group(mut self, preserve: bool) -> Self {
         self.preserve_group = preserve;
+        self
+    }
+
+    /// Applies an explicit group override using numeric identifiers.
+    #[must_use]
+    #[doc(alias = "--chown")]
+    pub const fn group_override(mut self, group: Option<u32>) -> Self {
+        self.group_override = group;
         self
     }
 
@@ -1297,6 +1416,8 @@ impl ClientConfigBuilder {
             preserve_group: self.preserve_group,
             preserve_permissions: self.preserve_permissions,
             preserve_times: self.preserve_times,
+            owner_override: self.owner_override,
+            group_override: self.group_override,
             omit_dir_times: self.omit_dir_times,
             compress: self.compress,
             compression_level: self.compression_level,
@@ -1329,6 +1450,7 @@ impl ClientConfigBuilder {
             list_only: self.list_only,
             timeout: self.timeout,
             link_dest_paths: self.link_dest_paths,
+            reference_directories: self.reference_directories,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -1835,6 +1957,8 @@ pub struct RemoteFallbackArgs {
     pub compress_disabled: bool,
     /// Optional compression level forwarded via `--compress-level`.
     pub compress_level: Option<OsString>,
+    /// Optional ownership override forwarded via `--chown`.
+    pub chown: Option<OsString>,
     /// Optional `--owner`/`--no-owner` toggle.
     pub owner: Option<bool>,
     /// Optional `--group`/`--no-group` toggle.
@@ -1901,6 +2025,12 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--compare-dest` flags.
+    pub compare_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--copy-dest` flags.
+    pub copy_destinations: Vec<OsString>,
+    /// Reference directories forwarded via repeated `--link-dest` flags.
+    pub link_destinations: Vec<OsString>,
     /// Enables `--cvs-exclude` on the fallback binary.
     pub cvs_exclude: bool,
     /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
@@ -2016,6 +2146,7 @@ where
         compress,
         compress_disabled,
         compress_level,
+        chown,
         owner,
         group,
         perms,
@@ -2049,6 +2180,9 @@ where
         exclude_from,
         include_from,
         filters,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
         cvs_exclude,
         info_flags,
         debug_flags,
@@ -2116,6 +2250,12 @@ where
     if let Some(level) = compress_level {
         command_args.push(OsString::from("--compress-level"));
         command_args.push(level);
+    }
+
+    if let Some(spec) = chown {
+        let mut arg = OsString::from("--chown=");
+        arg.push(spec);
+        command_args.push(arg);
     }
 
     push_toggle(&mut command_args, "--owner", "--no-owner", owner);
@@ -2244,6 +2384,21 @@ where
     for filter in filters {
         command_args.push(OsString::from("--filter"));
         command_args.push(filter);
+    }
+
+    for path in compare_destinations {
+        command_args.push(OsString::from("--compare-dest"));
+        command_args.push(path);
+    }
+
+    for path in copy_destinations {
+        command_args.push(OsString::from("--copy-dest"));
+        command_args.push(path);
+    }
+
+    for path in link_destinations {
+        command_args.push(OsString::from("--link-dest"));
+        command_args.push(path);
     }
 
     for flag in info_flags {
@@ -3177,7 +3332,9 @@ fn build_local_copy_options(
         .compress(config.compress())
         .with_compression_level_override(config.compression_level())
         .owner(config.preserve_owner())
+        .with_owner_override(config.owner_override())
         .group(config.preserve_group())
+        .with_group_override(config.group_override())
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
         .omit_dir_times(config.omit_dir_times())
@@ -3211,6 +3368,19 @@ fn build_local_copy_options(
     let options = options.acls(config.preserve_acls());
     #[cfg(feature = "xattr")]
     let options = options.xattrs(config.preserve_xattrs());
+
+    if !config.reference_directories().is_empty() {
+        let references = config.reference_directories().iter().map(|reference| {
+            let kind = match reference.kind() {
+                ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
+                ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
+            };
+            EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
+        });
+        options = options.extend_reference_directories(references);
+    }
+
     options
 }
 
@@ -3235,6 +3405,7 @@ mod tests {
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -3257,7 +3428,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -3321,6 +3492,7 @@ exit 42
             compress: false,
             compress_disabled: false,
             compress_level: None,
+            chown: None,
             owner: None,
             group: None,
             perms: None,
@@ -3354,6 +3526,9 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            compare_destinations: Vec::new(),
+            copy_destinations: Vec::new(),
+            link_destinations: Vec::new(),
             cvs_exclude: false,
             info_flags: Vec::new(),
             debug_flags: Vec::new(),
@@ -3619,6 +3794,23 @@ exit 42
 
         assert_eq!(config.timeout(), timeout);
         assert_eq!(ClientConfig::default().timeout(), TransferTimeout::Default);
+    }
+
+    #[test]
+    fn builder_collects_reference_directories() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .compare_destination(PathBuf::from("compare"))
+            .copy_destination(PathBuf::from("copy"))
+            .link_destination(PathBuf::from("link"))
+            .build();
+
+        let references = config.reference_directories();
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].kind(), ReferenceDirectoryKind::Compare);
+        assert_eq!(references[1].kind(), ReferenceDirectoryKind::Copy);
+        assert_eq!(references[2].kind(), ReferenceDirectoryKind::Link);
+        assert_eq!(references[0].path(), PathBuf::from("compare").as_path());
     }
 
     #[test]
@@ -4043,6 +4235,62 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_reference_directory_flags() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.compare_destinations =
+            vec![OsString::from("compare-one"), OsString::from("compare-two")];
+        args.copy_destinations = vec![OsString::from("copy-one")];
+        args.link_destinations = vec![OsString::from("link-one"), OsString::from("link-two")];
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        let lines: Vec<&str> = captured.lines().collect();
+        let expected_pairs = [
+            ("--compare-dest", "compare-one"),
+            ("--compare-dest", "compare-two"),
+            ("--copy-dest", "copy-one"),
+            ("--link-dest", "link-one"),
+            ("--link-dest", "link-two"),
+        ];
+
+        for (flag, path) in expected_pairs {
+            assert!(
+                lines
+                    .windows(2)
+                    .any(|window| window[0] == flag && window[1] == path),
+                "missing pair {flag} {path} in {:?}",
+                lines
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -5102,6 +5350,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_entries() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: MOTD Welcome to the test daemon\n",
             "@RSYNCD: MOTD Maintenance window at 02:00 UTC\n",
@@ -5168,6 +5418,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_motd_after_acknowledgement() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: OK\n",
             "@RSYNCD: MOTD: Post-acknowledgement notice\n",
@@ -5197,6 +5449,8 @@ exit 42
 
     #[test]
     fn run_module_list_suppresses_motd_when_requested() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: MOTD Welcome to the test daemon\n",
             "@RSYNCD: OK\n",
@@ -5224,6 +5478,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_warnings() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@WARNING: Maintenance scheduled\n",
             "@RSYNCD: OK\n",
@@ -5256,6 +5512,8 @@ exit 42
 
     #[test]
     fn run_module_list_collects_capabilities() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec![
             "@RSYNCD: CAP modules uid\n",
             "@RSYNCD: OK\n",
@@ -5286,7 +5544,8 @@ exit 42
     fn run_module_list_via_proxy_connects_through_tunnel() {
         let responses = vec!["@RSYNCD: OK\n", "theta\n", "@RSYNCD: EXIT\n"];
         let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
-        let (proxy_addr, request_rx, proxy_handle) = spawn_stub_proxy(daemon_addr, None);
+        let (proxy_addr, request_rx, proxy_handle) =
+            spawn_stub_proxy(daemon_addr, None, DEFAULT_PROXY_STATUS_LINE);
 
         let _env_lock = env_lock().lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(
@@ -5322,8 +5581,11 @@ exit 42
         let responses = vec!["@RSYNCD: OK\n", "iota\n", "@RSYNCD: EXIT\n"];
         let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
         let expected_header = "Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=";
-        let (proxy_addr, request_rx, proxy_handle) =
-            spawn_stub_proxy(daemon_addr, Some(expected_header));
+        let (proxy_addr, request_rx, proxy_handle) = spawn_stub_proxy(
+            daemon_addr,
+            Some(expected_header),
+            DEFAULT_PROXY_STATUS_LINE,
+        );
 
         let _env_lock = env_lock().lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(
@@ -5344,6 +5606,37 @@ exit 42
 
         let captured = request_rx.recv().expect("proxy request");
         assert!(captured.contains(expected_header));
+
+        proxy_handle.join().expect("proxy thread");
+        daemon_handle.join().expect("daemon thread");
+    }
+
+    #[test]
+    fn run_module_list_accepts_lowercase_proxy_status_line() {
+        let responses = vec!["@RSYNCD: OK\n", "kappa\n", "@RSYNCD: EXIT\n"];
+        let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
+        let (proxy_addr, _request_rx, proxy_handle) = spawn_stub_proxy(
+            daemon_addr,
+            None,
+            LOWERCASE_PROXY_STATUS_LINE,
+        );
+
+        let _env_lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set(
+            "RSYNC_PROXY",
+            &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
+        );
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
+                .expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("module list succeeds");
+        assert_eq!(list.entries().len(), 1);
+        assert_eq!(list.entries()[0].name(), "kappa");
 
         proxy_handle.join().expect("proxy thread");
         daemon_handle.join().expect("daemon thread");
@@ -5462,6 +5755,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5480,6 +5775,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error_without_colon() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@ERROR unavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5512,6 +5809,16 @@ exit 42
     }
 
     #[test]
+    fn map_daemon_handshake_error_converts_plain_invalid_data_error() {
+        let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
+        let error = io::Error::new(io::ErrorKind::InvalidData, "@ERROR daemon unavailable");
+
+        let mapped = map_daemon_handshake_error(error, &addr);
+        assert_eq!(mapped.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+        assert!(mapped.message().to_string().contains("daemon unavailable"));
+    }
+
+    #[test]
     fn map_daemon_handshake_error_converts_other_malformed_greetings() {
         let addr = DaemonAddress::new("127.0.0.1".to_string(), 873).expect("address");
         let error = io::Error::new(
@@ -5540,6 +5847,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5558,6 +5867,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_authentication_required() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@RSYNCD: AUTHREQD modules\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5889,6 +6200,8 @@ exit 42
 
     #[test]
     fn run_module_list_reports_access_denied() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
         let responses = vec!["@RSYNCD: DENIED host rules\n", "@RSYNCD: EXIT\n"];
         let (addr, handle) = spawn_stub_daemon(responses);
 
@@ -5957,9 +6270,13 @@ exit 42
         }
     }
 
+    const DEFAULT_PROXY_STATUS_LINE: &str = "HTTP/1.0 200 Connection established";
+    const LOWERCASE_PROXY_STATUS_LINE: &str = "http/1.1 200 Connection Established";
+
     fn spawn_stub_proxy(
         target: std::net::SocketAddr,
         expected_header: Option<&'static str>,
+        status_line: &'static str,
     ) -> (
         std::net::SocketAddr,
         mpsc::Receiver<String>,
@@ -5993,8 +6310,11 @@ exit 42
                 let mut client_stream = reader.into_inner();
                 let mut server_stream = TcpStream::connect(target).expect("connect daemon");
                 client_stream
-                    .write_all(b"HTTP/1.0 200 Connection established\r\n\r\n")
+                    .write_all(status_line.as_bytes())
                     .expect("write proxy response");
+                client_stream
+                    .write_all(b"\r\n\r\n")
+                    .expect("terminate proxy status");
 
                 let mut client_clone = client_stream.try_clone().expect("clone client");
                 let mut server_clone = server_stream.try_clone().expect("clone server");
@@ -6245,7 +6565,10 @@ fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientE
     if let Some(mapped) = handshake_error_to_client_error(&error) {
         mapped
     } else {
-        socket_error("negotiate with", addr.socket_addr_display(), error)
+        match daemon_error_from_invalid_data(&error) {
+            Some(mapped) => mapped,
+            None => socket_error("negotiate with", addr.socket_addr_display(), error),
+        }
     }
 }
 
@@ -6260,6 +6583,26 @@ fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
         }
 
         return Some(daemon_protocol_error(input));
+    }
+
+    None
+}
+
+fn daemon_error_from_invalid_data(error: &io::Error) -> Option<ClientError> {
+    if error.kind() != io::ErrorKind::InvalidData {
+        return None;
+    }
+
+    let payload_candidates = error
+        .get_ref()
+        .map(|inner| inner.to_string())
+        .into_iter()
+        .chain(std::iter::once(error.to_string()));
+
+    for candidate in payload_candidates {
+        if let Some(payload) = legacy_daemon_error_payload(&candidate) {
+            return Some(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
+        }
     }
 
     None
@@ -6880,13 +7223,17 @@ fn establish_proxy_tunnel(
         .map_err(|_| proxy_response_error("proxy status line contained invalid UTF-8"))?;
     line.clear();
 
-    if !status.starts_with("HTTP/") {
+    let trimmed_status = status.trim_start_matches(|ch: char| matches!(ch, ' ' | '\t'));
+    if !trimmed_status
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("HTTP/"))
+    {
         return Err(proxy_response_error(format!(
             "proxy response did not start with HTTP/: {status}"
         )));
     }
 
-    let mut parts = status.split_whitespace();
+    let mut parts = trimmed_status.split_whitespace();
     let _ = parts.next();
     let code = parts.next().ok_or_else(|| {
         proxy_response_error(format!("proxy response missing status code: {status}"))
