@@ -141,7 +141,7 @@
 //! - [`rsync_core::version`] for the shared `--version` banner helpers.
 //! - [`rsync_core::client`] for the analogous client-facing orchestration.
 
-use dns_lookup::lookup_addr;
+use dns_lookup::{lookup_addr, lookup_host};
 #[cfg(test)]
 use std::cell::RefCell;
 #[cfg(test)]
@@ -3849,8 +3849,21 @@ fn parse_port(value: &OsString) -> Result<u16, DaemonError> {
 
 fn parse_bind_address(value: &OsString) -> Result<IpAddr, DaemonError> {
     let text = value.to_string_lossy();
-    text.parse::<IpAddr>()
-        .map_err(|_| config_error(format!("invalid bind address '{text}'")))
+    let trimmed = text.trim();
+    let candidate = trimmed
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(trimmed);
+
+    if let Ok(address) = candidate.parse::<IpAddr>() {
+        return Ok(address);
+    }
+
+    lookup_host(candidate)
+        .map_err(|_| config_error(format!("invalid bind address '{text}'")))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| config_error(format!("invalid bind address '{text}'")))
 }
 
 fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
@@ -5116,6 +5129,29 @@ mod tests {
 
         assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
         assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn runtime_options_bind_accepts_bracketed_ipv6() {
+        let options = RuntimeOptions::parse(&[OsString::from("--bind"), OsString::from("[::1]")])
+            .expect("parse bracketed ipv6");
+
+        assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn runtime_options_bind_resolves_hostnames() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("--bind"), OsString::from("localhost")])
+                .expect("parse hostname bind");
+
+        let address = options.bind_address();
+        assert!(
+            address == IpAddr::V4(Ipv4Addr::LOCALHOST)
+                || address == IpAddr::V6(Ipv6Addr::LOCALHOST),
+            "unexpected resolved address {address}",
+        );
     }
 
     #[test]
