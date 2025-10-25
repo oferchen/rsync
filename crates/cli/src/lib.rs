@@ -182,6 +182,8 @@ const HELP_TEXT: &str = concat!(
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
     "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
+    "      --delay-updates  Put completed updates in place after transfers finish.\n",
+    "      --no-delay-updates  Disable delayed updates.\n",
     "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
     "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
     "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
@@ -226,7 +228,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --delay-updates, --no-delay-updates, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -853,6 +855,7 @@ struct ParsedArgs {
     name_overridden: bool,
     stats: bool,
     partial: bool,
+    delay_updates: bool,
     partial_dir: Option<PathBuf>,
     link_dests: Vec<PathBuf>,
     remove_source_files: bool,
@@ -1196,6 +1199,20 @@ fn clap_command() -> ClapCommand {
                 .help("Store partially transferred files in DIR.")
                 .value_parser(OsStringValueParser::new())
                 .overrides_with("no-partial"),
+        )
+        .arg(
+            Arg::new("delay-updates")
+                .long("delay-updates")
+                .help("Delay moving updated files into place until transfers finish.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-delay-updates"),
+        )
+        .arg(
+            Arg::new("no-delay-updates")
+                .long("no-delay-updates")
+                .help("Disable delayed updates.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("delay-updates"),
         )
         .arg(
             Arg::new("whole-file")
@@ -1824,11 +1841,15 @@ where
     };
     let stats = matches.get_flag("stats");
     let mut partial = matches.get_flag("partial");
+    let mut delay_updates = matches.get_flag("delay-updates");
     let mut partial_dir = matches
         .get_one::<OsString>("partial-dir")
         .map(PathBuf::from);
     if partial_dir.is_some() {
         partial = true;
+    }
+    if matches.get_flag("no-delay-updates") {
+        delay_updates = false;
     }
     if no_progress_flag {
         progress_setting = ProgressSetting::Disabled;
@@ -1836,6 +1857,7 @@ where
     if matches.get_flag("no-partial") {
         partial = false;
         partial_dir = None;
+        delay_updates = false;
     }
     if matches.get_count("partial-progress") > 0 {
         partial = true;
@@ -1985,6 +2007,7 @@ where
         name_overridden,
         stats,
         partial,
+        delay_updates,
         partial_dir,
         link_dests,
         remove_source_files,
@@ -2230,6 +2253,7 @@ where
         name_overridden: initial_name_overridden,
         stats,
         partial,
+        delay_updates,
         partial_dir,
         link_dests,
         remove_source_files,
@@ -2678,6 +2702,7 @@ where
             progress: progress_mode.is_some(),
             stats,
             partial,
+            delay_updates,
             partial_dir: partial_dir.clone(),
             link_dests: link_dests.clone(),
             remove_source_files,
@@ -2837,6 +2862,7 @@ where
         .stats(stats)
         .debug_flags(debug_flags_list.clone())
         .partial(partial)
+        .delay_updates(delay_updates)
         .partial_directory(partial_dir.clone())
         .extend_link_dests(link_dests.clone())
         .remove_source_files(remove_source_files)
@@ -7420,6 +7446,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_delay_updates_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delay-updates"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(parsed.delay_updates);
+    }
+
+    #[test]
+    fn parse_args_resets_delay_updates_with_no_delay_updates() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--delay-updates"),
+            OsString::from("--no-delay-updates"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(!parsed.delay_updates);
+    }
+
+    #[test]
     fn parse_args_allows_no_partial_to_clear_partial_dir() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -10694,7 +10747,13 @@ exit 0
         assert!(stderr.is_empty());
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-        assert!(recorded.lines().filter(|line| *line == "--link-dest").count() >= 2);
+        assert!(
+            recorded
+                .lines()
+                .filter(|line| *line == "--link-dest")
+                .count()
+                >= 2
+        );
         assert!(recorded.lines().any(|line| line == "baseline"));
         assert!(recorded.lines().any(|line| line == "/var/cache"));
         assert!(recorded.lines().any(|line| line == "--link-dest=link"));
