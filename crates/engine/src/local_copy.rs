@@ -6186,7 +6186,7 @@ fn copy_file(
         destination_previously_existed,
     );
 
-    if !delay_updates_enabled {
+    if guard.is_none() && !delay_updates_enabled {
         apply_file_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
         #[cfg(feature = "xattr")]
