@@ -2927,6 +2927,7 @@ pub struct ClientEvent {
     total_bytes: Option<u64>,
     elapsed: Duration,
     metadata: Option<ClientEntryMetadata>,
+    created: bool,
 }
 
 impl ClientEvent {
@@ -2945,6 +2946,20 @@ impl ClientEvent {
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
+        let created = match record.action() {
+            LocalCopyAction::DataCopied => record.was_created(),
+            LocalCopyAction::DirectoryCreated
+            | LocalCopyAction::SymlinkCopied
+            | LocalCopyAction::FifoCopied
+            | LocalCopyAction::DeviceCopied
+            | LocalCopyAction::HardLink => true,
+            LocalCopyAction::MetadataReused
+            | LocalCopyAction::SkippedExisting
+            | LocalCopyAction::SkippedNewerDestination
+            | LocalCopyAction::SkippedNonRegular
+            | LocalCopyAction::EntryDeleted
+            | LocalCopyAction::SourceRemoved => false,
+        };
         Self {
             relative_path: record.relative_path().to_path_buf(),
             kind,
@@ -2954,6 +2969,7 @@ impl ClientEvent {
             metadata: record
                 .metadata()
                 .map(ClientEntryMetadata::from_local_copy_metadata),
+            created,
         }
     }
 
@@ -2970,6 +2986,7 @@ impl ClientEvent {
             total_bytes,
             elapsed,
             metadata: None,
+            created: false,
         }
     }
 
@@ -3007,6 +3024,12 @@ impl ClientEvent {
     #[must_use]
     pub fn metadata(&self) -> Option<&ClientEntryMetadata> {
         self.metadata.as_ref()
+    }
+
+    /// Returns whether the event corresponds to the creation of a new destination entry.
+    #[must_use]
+    pub const fn was_created(&self) -> bool {
+        self.created
     }
 }
 
