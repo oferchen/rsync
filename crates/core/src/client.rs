@@ -332,6 +332,7 @@ pub struct ClientConfig {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    link_dest_paths: Vec<PathBuf>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -382,6 +383,7 @@ impl Default for ClientConfig {
             preserve_specials: false,
             list_only: false,
             timeout: TransferTimeout::Default,
+            link_dest_paths: Vec::new(),
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -715,6 +717,13 @@ impl ClientConfig {
         self.partial_dir.as_deref()
     }
 
+    /// Returns the ordered list of link-destination directories supplied by the caller.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn link_dest_paths(&self) -> &[PathBuf] {
+        &self.link_dest_paths
+    }
+
     /// Reports whether destination updates should be performed in place.
     #[must_use]
     #[doc(alias = "--inplace")]
@@ -793,6 +802,7 @@ pub struct ClientConfigBuilder {
     preserve_specials: bool,
     list_only: bool,
     timeout: TransferTimeout,
+    link_dest_paths: Vec<PathBuf>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -1169,6 +1179,23 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Extends the link-destination list used when creating hard links for unchanged files.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn extend_link_dests<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.link_dest_paths.extend(
+            paths
+                .into_iter()
+                .map(Into::into)
+                .filter(|path| !path.as_os_str().is_empty()),
+        );
+        self
+    }
+
     /// Enables or disables in-place updates for destination files.
     #[must_use]
     #[doc(alias = "--inplace")]
@@ -1301,6 +1328,7 @@ impl ClientConfigBuilder {
             preserve_specials: self.preserve_specials,
             list_only: self.list_only,
             timeout: self.timeout,
+            link_dest_paths: self.link_dest_paths,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -1847,6 +1875,8 @@ pub struct RemoteFallbackArgs {
     pub partial: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
+    /// Directories forwarded via repeated `--link-dest` flags.
+    pub link_dests: Vec<PathBuf>,
     /// Enables `--remove-source-files`.
     pub remove_source_files: bool,
     /// Optional `--append`/`--no-append` toggle.
@@ -2006,6 +2036,7 @@ where
         itemize_changes,
         partial,
         partial_dir,
+        link_dests,
         remove_source_files,
         append,
         append_verify,
@@ -2155,6 +2186,11 @@ where
     if let Some(dir) = partial_dir {
         command_args.push(OsString::from("--partial-dir"));
         command_args.push(dir.into_os_string());
+    }
+    for dir in link_dests {
+        let mut arg = OsString::from("--link-dest=");
+        arg.push(dir);
+        command_args.push(arg);
     }
     if remove_source_files {
         command_args.push(OsString::from("--remove-source-files"));
@@ -3164,6 +3200,7 @@ fn build_local_copy_options(
         .append_verify(config.append_verify())
         .partial(config.partial())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
+        .extend_link_dests(config.link_dest_paths().iter().cloned())
         .with_timeout(
             config
                 .timeout()
@@ -3304,6 +3341,7 @@ exit 42
             itemize_changes: false,
             partial: false,
             partial_dir: None,
+            link_dests: Vec::new(),
             remove_source_files: false,
             append: None,
             append_verify: false,
@@ -6187,14 +6225,13 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
     }
 
     let trimmed = line.trim_matches(['\r', '\n']).trim_start();
-    let Some(remainder) = strip_prefix_ignore_ascii_case(trimmed, "@ERROR") else {
-        return None;
-    };
+    let remainder = strip_prefix_ignore_ascii_case(trimmed, "@ERROR")?;
 
-    if let Some(ch) = remainder.chars().next() {
-        if ch != ':' && !ch.is_ascii_whitespace() {
-            return None;
-        }
+    if let Some(ch) = remainder.chars().next()
+        && ch != ':'
+        && !ch.is_ascii_whitespace()
+    {
+        return None;
     }
 
     let payload = remainder
@@ -6935,7 +6972,7 @@ fn load_daemon_connect_program() -> Result<Option<ConnectProgramConfig>, ClientE
 
     ConnectProgramConfig::new(template, shell)
         .map(Some)
-        .map_err(|error| connect_program_configuration_error(error))
+        .map_err(connect_program_configuration_error)
 }
 
 enum DaemonStream {
@@ -6989,10 +7026,8 @@ impl ConnectProgramConfig {
             return Err("RSYNC_CONNECT_PROG must not be empty".to_string());
         }
 
-        if let Some(shell) = &shell {
-            if shell.is_empty() {
-                return Err("RSYNC_SHELL must not be empty".to_string());
-            }
+        if shell.as_ref().is_some_and(|value| value.is_empty()) {
+            return Err("RSYNC_SHELL must not be empty".to_string());
         }
 
         Ok(Self { template, shell })
@@ -7026,7 +7061,7 @@ impl ConnectProgramConfig {
                 }
             }
 
-            return Ok(OsString::from_vec(rendered));
+            Ok(OsString::from_vec(rendered))
         }
 
         #[cfg(not(unix))]
@@ -7051,7 +7086,7 @@ impl ConnectProgramConfig {
                 }
             }
 
-            return Ok(OsString::from(rendered));
+            Ok(OsString::from(rendered))
         }
     }
 }

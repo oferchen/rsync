@@ -1431,6 +1431,7 @@ pub struct LocalCopyOptions {
     timeout: Option<Duration>,
     #[cfg(feature = "xattr")]
     preserve_xattrs: bool,
+    link_dests: Vec<LinkDestEntry>,
 }
 
 impl LocalCopyOptions {
@@ -1478,7 +1479,41 @@ impl LocalCopyOptions {
             timeout: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
+            link_dests: Vec::new(),
         }
+    }
+
+    /// Adds a directory that should be consulted when creating hard links for matching files.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn with_link_dest(mut self, path: PathBuf) -> Self {
+        if !path.as_os_str().is_empty() {
+            self.link_dests.push(LinkDestEntry::new(path));
+        }
+        self
+    }
+
+    /// Extends the link-destination list with additional directories.
+    #[must_use]
+    #[doc(alias = "--link-dest")]
+    pub fn extend_link_dests<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        for path in paths.into_iter() {
+            let path = path.into();
+            if !path.as_os_str().is_empty() {
+                self.link_dests.push(LinkDestEntry::new(path));
+            }
+        }
+        self
+    }
+
+    /// Returns the configured link-destination entries.
+    #[must_use]
+    pub(crate) fn link_dest_entries(&self) -> &[LinkDestEntry] {
+        &self.link_dests
     }
 
     /// Requests that destination files absent from the source be removed.
@@ -2129,6 +2164,28 @@ impl LocalCopyOptions {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LinkDestEntry {
+    path: PathBuf,
+    is_relative: bool,
+}
+
+impl LinkDestEntry {
+    fn new(path: PathBuf) -> Self {
+        let is_relative = !path.is_absolute();
+        Self { path, is_relative }
+    }
+
+    fn resolve(&self, destination_root: &Path, relative: &Path) -> PathBuf {
+        let base = if self.is_relative {
+            destination_root.join(&self.path)
+        } else {
+            self.path.clone()
+        };
+        base.join(relative)
+    }
+}
+
 impl Default for LocalCopyOptions {
     fn default() -> Self {
         Self::new()
@@ -2502,6 +2559,7 @@ struct CopyContext<'a> {
     timeout: Option<Duration>,
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
+    destination_root: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2583,6 +2641,7 @@ impl<'a> CopyContext<'a> {
         mode: LocalCopyExecution,
         options: LocalCopyOptions,
         observer: Option<&'a mut dyn LocalCopyRecordHandler>,
+        destination_root: PathBuf,
     ) -> Self {
         let limiter = options.bandwidth_limit_bytes().map(BandwidthLimiter::new);
         let collect_events = options.events_enabled();
@@ -2612,6 +2671,7 @@ impl<'a> CopyContext<'a> {
             timeout,
             last_progress: Instant::now(),
             created_entries: Vec::new(),
+            destination_root,
         }
     }
 
@@ -2634,6 +2694,57 @@ impl<'a> CopyContext<'a> {
 
     fn options(&self) -> &LocalCopyOptions {
         &self.options
+    }
+
+    fn destination_root(&self) -> &Path {
+        &self.destination_root
+    }
+
+    fn link_dest_target(
+        &self,
+        relative: &Path,
+        source: &Path,
+        metadata: &fs::Metadata,
+        metadata_options: MetadataOptions,
+        size_only: bool,
+        checksum: bool,
+    ) -> Result<Option<PathBuf>, LocalCopyError> {
+        if self.options.link_dest_entries().is_empty() {
+            return Ok(None);
+        }
+
+        for entry in self.options.link_dest_entries() {
+            let candidate = entry.resolve(self.destination_root(), relative);
+            let candidate_metadata = match fs::metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "inspect link-dest candidate",
+                        candidate,
+                        error,
+                    ));
+                }
+            };
+
+            if !candidate_metadata.file_type().is_file() {
+                continue;
+            }
+
+            if should_skip_copy(
+                source,
+                metadata,
+                candidate.as_path(),
+                &candidate_metadata,
+                metadata_options,
+                size_only,
+                checksum,
+            ) {
+                return Ok(Some(candidate));
+            }
+        }
+
+        Ok(None)
     }
 
     fn delete_timing(&self) -> Option<DeleteTiming> {
@@ -4530,7 +4641,8 @@ fn copy_sources(
     options: LocalCopyOptions,
     handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
-    let mut context = CopyContext::new(mode, options, handler);
+    let destination_root = plan.destination.path().to_path_buf();
+    let mut context = CopyContext::new(mode, options, handler, destination_root);
     let result = {
         let context = &mut context;
         (|| -> Result<(), LocalCopyError> {
@@ -5272,6 +5384,59 @@ fn copy_file(
     let append_verify = context.append_verify_enabled();
     let whole_file_enabled = context.whole_file_enabled();
     let compress_enabled = context.compress_enabled();
+    let relative_for_link = relative.unwrap_or(record_path.as_path());
+
+    if let Some(link_target) = context.link_dest_target(
+        relative_for_link,
+        source,
+        metadata,
+        metadata_options,
+        size_only_enabled,
+        checksum_enabled,
+    )? {
+        match fs::hard_link(&link_target, destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                fs::remove_file(destination).map_err(|remove_error| {
+                    LocalCopyError::io(
+                        "remove existing destination",
+                        destination.to_path_buf(),
+                        remove_error,
+                    )
+                })?;
+                fs::hard_link(&link_target, destination).map_err(|link_error| {
+                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                })?;
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "create hard link",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        context.hard_links.record(metadata, destination);
+        context.summary_mut().record_hard_link();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::HardLink,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        context.register_created_path(
+            destination,
+            CreatedEntryKind::HardLink,
+            destination_previously_existed,
+        );
+        remove_source_entry_if_requested(context, source, Some(record_path.as_path()), file_type)?;
+        return Ok(());
+    }
 
     if let Some(existing_target) = context.hard_links.existing_target(metadata) {
         match fs::hard_link(&existing_target, destination) {
@@ -5382,6 +5547,7 @@ fn copy_file(
         let mut file = fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(false)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
         file.seek(SeekFrom::Start(append_offset))
@@ -6808,7 +6974,8 @@ mod tests {
     #[test]
     fn metadata_options_reflect_numeric_ids_setting() {
         let options = LocalCopyOptions::default().numeric_ids(true);
-        let context = CopyContext::new(LocalCopyExecution::Apply, options, None);
+        let context =
+            CopyContext::new(LocalCopyExecution::Apply, options, None, PathBuf::from("."));
         assert!(context.metadata_options().numeric_ids_enabled());
     }
 
@@ -8649,6 +8816,53 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn execute_with_link_dest_uses_reference_inode() {
+        use filetime::FileTime;
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let source_file = source_dir.join("data.txt");
+        fs::write(&source_file, b"payload").expect("write source");
+
+        let baseline_dir = temp.path().join("baseline");
+        fs::create_dir_all(&baseline_dir).expect("create baseline dir");
+        let baseline_file = baseline_dir.join("data.txt");
+        fs::write(&baseline_file, b"payload").expect("write baseline");
+
+        let source_metadata = fs::metadata(&source_file).expect("source metadata");
+        let source_mtime = source_metadata.modified().expect("source modified time");
+        let timestamp = FileTime::from_system_time(source_mtime);
+        filetime::set_file_times(&baseline_file, timestamp, timestamp)
+            .expect("synchronise baseline timestamps");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create destination dir");
+
+        let operands = vec![
+            source_file.clone().into_os_string(),
+            dest_dir.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let options = LocalCopyOptions::default()
+            .times(true)
+            .extend_link_dests([baseline_dir.clone()]);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let dest_file = dest_dir.join("data.txt");
+        let dest_metadata = fs::metadata(&dest_file).expect("dest metadata");
+        let baseline_metadata = fs::metadata(&baseline_file).expect("baseline metadata");
+
+        assert_eq!(dest_metadata.ino(), baseline_metadata.ino());
+        assert!(summary.hard_links_created() >= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn execute_with_sparse_enabled_creates_holes() {
         use std::os::unix::fs::MetadataExt;
 
@@ -8817,11 +9031,7 @@ mod tests {
             .into_iter()
             .fold(Duration::ZERO, |acc, duration| acc + duration);
         let expected = Duration::from_secs(4);
-        let diff = if total > expected {
-            total - expected
-        } else {
-            expected - total
-        };
+        let diff = total.abs_diff(expected);
         assert!(
             diff <= Duration::from_millis(50),
             "expected sleep duration near {:?}, got {:?}",
