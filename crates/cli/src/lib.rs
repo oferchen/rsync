@@ -161,6 +161,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-compress  Disable compression.\n",
     "      --compress-level=NUM  Set compression level NUM (0 disables compression).\n",
     "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
+    "      --debug=FLAGS  Adjust diagnostic output; use --debug=help for details.\n",
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
@@ -217,6 +218,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
+const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 const SUPPORTED_OPTIONS_LIST: &str = "--help/-h, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --checksum/-c, --size-only, --ignore-existing, --exclude, --exclude-from, --include, --include-from, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --protocol, --rsync-path, --compress/-z, --no-compress, --compress-level, --info, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --copy-dirlinks/-k, --no-copy-links, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
@@ -859,6 +861,7 @@ struct ParsedArgs {
     files_from: Vec<OsString>,
     from0: bool,
     info: Vec<OsString>,
+    debug: Vec<OsString>,
     xattrs: Option<bool>,
     no_motd: bool,
     password_file: Option<OsString>,
@@ -1535,6 +1538,15 @@ fn clap_command() -> ClapCommand {
                 .value_delimiter(','),
         )
         .arg(
+            Arg::new("debug")
+                .long("debug")
+                .value_name("FLAGS")
+                .help("Adjust diagnostic output; use --debug=help for details.")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new())
+                .value_delimiter(','),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
@@ -1832,6 +1844,10 @@ where
         .remove_many::<OsString>("info")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let debug = matches
+        .remove_many::<OsString>("debug")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let ignore_existing = matches.get_flag("ignore-existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
@@ -1898,6 +1914,7 @@ where
         files_from,
         from0,
         info,
+        debug,
         acls,
         xattrs,
         no_motd,
@@ -2100,6 +2117,7 @@ where
         files_from,
         from0,
         info,
+        debug,
         numeric_ids,
         sparse,
         copy_links,
@@ -2243,6 +2261,8 @@ where
     let mut name_level = initial_name_level;
     let mut name_overridden = initial_name_overridden;
 
+    let mut debug_flags_list = Vec::new();
+
     if !info.is_empty() {
         match parse_info_flags(&info) {
             Ok(settings) => {
@@ -2265,6 +2285,29 @@ where
                     name_level = level;
                     name_overridden = true;
                 }
+            }
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
+    }
+
+    if !debug.is_empty() {
+        match parse_debug_flags(&debug) {
+            Ok(settings) => {
+                if settings.help_requested {
+                    if stdout.write_all(DEBUG_HELP_TEXT.as_bytes()).is_err() {
+                        let _ = write!(stderr.writer_mut(), "{DEBUG_HELP_TEXT}");
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                debug_flags_list = settings.flags;
             }
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -2455,6 +2498,7 @@ where
 
     let fallback_args = if fallback_required {
         let mut fallback_info_flags = info.clone();
+        let fallback_debug_flags = debug_flags_list.clone();
         if protect_args.unwrap_or(false)
             && matches!(progress_setting, ProgressSetting::Unspecified)
             && !info_flags_include_progress(&fallback_info_flags)
@@ -2525,6 +2569,7 @@ where
             filters: filters.clone(),
             cvs_exclude,
             info_flags: fallback_info_flags,
+            debug_flags: fallback_debug_flags,
             files_from_used,
             file_list_entries: file_list_operands.clone(),
             from0,
@@ -2641,6 +2686,7 @@ where
         .verbosity(verbosity)
         .progress(progress_mode.is_some())
         .stats(stats)
+        .debug_flags(debug_flags_list.clone())
         .partial(partial)
         .partial_directory(partial_dir.clone())
         .remove_source_files(remove_source_files)
@@ -3828,6 +3874,52 @@ fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
     Ok(settings)
 }
 
+struct DebugFlagSettings {
+    flags: Vec<OsString>,
+    help_requested: bool,
+}
+
+impl DebugFlagSettings {
+    fn push_flag(&mut self, flag: &str) {
+        self.flags.push(OsString::from(flag));
+    }
+}
+
+fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings, Message> {
+    let mut settings = DebugFlagSettings {
+        flags: Vec::new(),
+        help_requested: false,
+    };
+
+    for value in values {
+        let text = value.to_string_lossy();
+        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+
+        if trimmed.is_empty() {
+            return Err(debug_flag_empty_error());
+        }
+
+        for token in trimmed.split(',') {
+            let token = token.trim_matches(|ch: char| ch.is_ascii_whitespace());
+            if token.is_empty() {
+                return Err(debug_flag_empty_error());
+            }
+
+            if token.eq_ignore_ascii_case("help") {
+                settings.help_requested = true;
+            } else {
+                settings.push_flag(token);
+            }
+        }
+    }
+
+    Ok(settings)
+}
+
+fn debug_flag_empty_error() -> Message {
+    rsync_error!(1, "--debug flag must not be empty").with_role(Role::Client)
+}
+
 fn info_flags_include_progress(flags: &[OsString]) -> bool {
     flags.iter().any(|value| {
         value
@@ -3859,6 +3951,18 @@ const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
     stats       Enable transfer statistics.\n\
     stats0      Disable transfer statistics.\n\
 Flags may also be written with 'no' prefixes (for example, --info=noprogress).\n";
+
+const DEBUG_HELP_TEXT: &str = "The following --debug flags are supported:\n\
+    all         Enable all diagnostic categories currently implemented.\n\
+    none        Disable diagnostic output.\n\
+    checksum    Trace checksum calculations and verification.\n\
+    deltas      Trace delta-transfer generation and token handling.\n\
+    events      Trace file-list discovery and generator events.\n\
+    fs          Trace filesystem metadata operations.\n\
+    io          Trace I/O buffering and transport exchanges.\n\
+    socket      Trace socket setup, negotiation, and pacing decisions.\n\
+Flags may be prefixed with 'no' or '-' to disable a category. Multiple flags\n\
+may be combined by separating them with commas.\n";
 
 #[derive(Debug)]
 struct UnsupportedOption {
@@ -5930,6 +6034,16 @@ mod tests {
     }
 
     #[test]
+    fn debug_help_lists_supported_flags() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--debug=help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert_eq!(stdout, DEBUG_HELP_TEXT.as_bytes());
+    }
+
+    #[test]
     fn info_rejects_unknown_flag() {
         let (code, stdout, stderr) =
             run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=unknown")]);
@@ -5954,6 +6068,24 @@ mod tests {
         let flags = vec![OsString::from("progress,,stats")];
         let error = parse_info_flags(&flags).err().expect("parse should fail");
         assert!(error.to_string().contains("--info flag must not be empty"));
+    }
+
+    #[test]
+    fn debug_accepts_comma_separated_tokens() {
+        let flags = vec![OsString::from("checksum,io")];
+        let settings = parse_debug_flags(&flags).expect("flags parse");
+        assert!(!settings.help_requested);
+        assert_eq!(
+            settings.flags,
+            vec![OsString::from("checksum"), OsString::from("io")]
+        );
+    }
+
+    #[test]
+    fn debug_rejects_empty_segments() {
+        let flags = vec![OsString::from("checksum,,io")];
+        let error = parse_debug_flags(&flags).err().expect("parse should fail");
+        assert!(error.to_string().contains("--debug flag must not be empty"));
     }
 
     #[test]
@@ -10491,6 +10623,44 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--update"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_debug_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--debug=io,events"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--debug=io"));
+        assert!(args.contains(&"--debug=events"));
     }
 
     #[cfg(unix)]
