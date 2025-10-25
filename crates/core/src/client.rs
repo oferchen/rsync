@@ -312,6 +312,7 @@ pub struct ClientConfig {
     update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    debug_flags: Vec<OsString>,
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
@@ -359,6 +360,7 @@ impl Default for ClientConfig {
             update: false,
             numeric_ids: false,
             filter_rules: Vec::new(),
+            debug_flags: Vec::new(),
             sparse: false,
             copy_links: false,
             copy_dirlinks: false,
@@ -430,6 +432,13 @@ impl ClientConfig {
     #[must_use]
     pub fn filter_rules(&self) -> &[FilterRuleSpec] {
         &self.filter_rules
+    }
+
+    /// Returns the debug categories requested via `--debug`.
+    #[must_use]
+    #[doc(alias = "--debug")]
+    pub fn debug_flags(&self) -> &[OsString] {
+        &self.debug_flags
     }
 
     /// Returns the configured transfer timeout.
@@ -746,6 +755,7 @@ pub struct ClientConfigBuilder {
     update: bool,
     numeric_ids: bool,
     filter_rules: Vec<FilterRuleSpec>,
+    debug_flags: Vec<OsString>,
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
@@ -1165,6 +1175,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Replaces the collected debug flags with the provided list.
+    #[must_use]
+    #[doc(alias = "--debug")]
+    pub fn debug_flags<I, S>(mut self, flags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.debug_flags = flags.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Appends a filter rule to the configuration being constructed.
     #[must_use]
     pub fn add_filter_rule(mut self, rule: FilterRuleSpec) -> Self {
@@ -1215,6 +1237,7 @@ impl ClientConfigBuilder {
             update: self.update,
             numeric_ids: self.numeric_ids,
             filter_rules: self.filter_rules,
+            debug_flags: self.debug_flags,
             sparse: self.sparse,
             copy_links: self.copy_links,
             copy_dirlinks: self.copy_dirlinks,
@@ -1802,6 +1825,8 @@ pub struct RemoteFallbackArgs {
     pub cvs_exclude: bool,
     /// Values forwarded to the fallback binary via repeated `--info=FLAGS` occurrences.
     pub info_flags: Vec<OsString>,
+    /// Values forwarded to the fallback binary via repeated `--debug=FLAGS` occurrences.
+    pub debug_flags: Vec<OsString>,
     /// Whether the original invocation used `--files-from`.
     pub files_from_used: bool,
     /// Entries collected from `--files-from` operands.
@@ -1937,6 +1962,7 @@ where
         filters,
         cvs_exclude,
         info_flags,
+        debug_flags,
         files_from_used,
         file_list_entries,
         from0,
@@ -2122,6 +2148,12 @@ where
 
     for flag in info_flags {
         let mut arg = OsString::from("--info=");
+        arg.push(&flag);
+        command_args.push(arg);
+    }
+
+    for flag in debug_flags {
+        let mut arg = OsString::from("--debug=");
         arg.push(&flag);
         command_args.push(arg);
     }
@@ -3093,7 +3125,7 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
@@ -3213,6 +3245,7 @@ exit 42
             filters: Vec::new(),
             cvs_exclude: false,
             info_flags: Vec::new(),
+            debug_flags: Vec::new(),
             files_from_used: false,
             file_list_entries: Vec::new(),
             from0: false,
@@ -5757,6 +5790,9 @@ exit 42
                 .expect("write response");
         }
         reader.get_mut().flush().expect("flush response");
+
+        let stream = reader.into_inner();
+        let _ = stream.shutdown(Shutdown::Both);
     }
 }
 
