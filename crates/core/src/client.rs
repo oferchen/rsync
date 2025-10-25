@@ -88,7 +88,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -122,7 +122,7 @@ use crate::{
 };
 
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 /// Exit code returned when client functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -3161,7 +3161,7 @@ where
 mod tests {
     use super::*;
     use rsync_compress::zlib::CompressionLevel;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
@@ -5066,6 +5066,36 @@ exit 42
     }
 
     #[test]
+    fn run_module_list_uses_connect_program_command() {
+        let _guard = env_lock().lock().expect("env mutex poisoned");
+
+        let command = OsString::from(
+            "sh -c 'CONNECT_HOST=%H\n\
+             printf \"@RSYNCD: 31.0\\n\"\n\
+             read greeting\n\
+             printf \"@RSYNCD: OK\\n\"\n\
+             read request\n\
+             printf \"example\\t$CONNECT_HOST\\n@RSYNCD: EXIT\\n\"'",
+        );
+
+        let _prog_guard = EnvGuard::set_os("RSYNC_CONNECT_PROG", &command);
+        let _shell_guard = EnvGuard::remove("RSYNC_SHELL");
+        let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
+
+        let request = ModuleListRequest {
+            address: DaemonAddress::new("example.com".to_string(), 873).expect("address"),
+            username: None,
+            protocol: ProtocolVersion::NEWEST,
+        };
+
+        let list = run_module_list(request).expect("connect program listing succeeds");
+        assert_eq!(list.entries().len(), 1);
+        let entry = &list.entries()[0];
+        assert_eq!(entry.name(), "example");
+        assert_eq!(entry.comment(), Some("example.com"));
+    }
+
+    #[test]
     fn run_module_list_collects_motd_after_acknowledgement() {
         let responses = vec![
             "@RSYNCD: OK\n",
@@ -5817,6 +5847,24 @@ exit 42
             #[allow(unsafe_code)]
             unsafe {
                 env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn set_os(key: &'static str, value: &OsStr) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::remove_var(key);
             }
             Self { key, previous }
         }
@@ -6672,11 +6720,17 @@ pub fn run_module_list(request: ModuleListRequest) -> Result<ModuleList, ClientE
 fn open_daemon_stream(
     addr: &DaemonAddress,
     timeout: Option<Duration>,
-) -> Result<TcpStream, ClientError> {
-    match load_daemon_proxy()? {
-        Some(proxy) => connect_via_proxy(addr, &proxy, timeout),
-        None => connect_direct(addr, timeout),
+) -> Result<DaemonStream, ClientError> {
+    if let Some(program) = load_daemon_connect_program()? {
+        return connect_via_program(addr, &program);
     }
+
+    let stream = match load_daemon_proxy()? {
+        Some(proxy) => connect_via_proxy(addr, &proxy, timeout)?,
+        None => connect_direct(addr, timeout)?,
+    };
+
+    Ok(DaemonStream::tcp(stream))
 }
 
 fn connect_direct(
@@ -6779,6 +6833,230 @@ fn establish_proxy_tunnel(
     }
 
     Ok(())
+}
+
+fn connect_via_program(
+    addr: &DaemonAddress,
+    program: &ConnectProgramConfig,
+) -> Result<DaemonStream, ClientError> {
+    let command = program
+        .format_command(addr.host())
+        .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
+
+    let shell = program
+        .shell()
+        .cloned()
+        .unwrap_or_else(|| OsString::from("sh"));
+
+    let mut builder = Command::new(&shell);
+    builder.arg("-c").arg(&command);
+    builder.stdin(Stdio::piped());
+    builder.stdout(Stdio::piped());
+    builder.stderr(Stdio::inherit());
+    builder.env("RSYNC_PORT", addr.port().to_string());
+
+    let mut child = builder.spawn().map_err(|error| {
+        daemon_error(
+            format!(
+                "failed to spawn RSYNC_CONNECT_PROG using shell '{}': {error}",
+                Path::new(&shell).display()
+            ),
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    let stdin = child.stdin.take().ok_or_else(|| {
+        daemon_error(
+            "RSYNC_CONNECT_PROG command did not expose a writable stdin",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        daemon_error(
+            "RSYNC_CONNECT_PROG command did not expose a readable stdout",
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    Ok(DaemonStream::program(ConnectProgramStream::new(
+        child, stdin, stdout,
+    )))
+}
+
+fn load_daemon_connect_program() -> Result<Option<ConnectProgramConfig>, ClientError> {
+    let Some(template) = env::var_os("RSYNC_CONNECT_PROG") else {
+        return Ok(None);
+    };
+
+    if template.is_empty() {
+        return Err(connect_program_configuration_error(
+            "RSYNC_CONNECT_PROG must not be empty",
+        ));
+    }
+
+    let shell = env::var_os("RSYNC_SHELL").filter(|value| !value.is_empty());
+
+    ConnectProgramConfig::new(template, shell)
+        .map(Some)
+        .map_err(|error| connect_program_configuration_error(error))
+}
+
+enum DaemonStream {
+    Tcp(TcpStream),
+    Program(ConnectProgramStream),
+}
+
+impl DaemonStream {
+    fn tcp(stream: TcpStream) -> Self {
+        Self::Tcp(stream)
+    }
+
+    fn program(stream: ConnectProgramStream) -> Self {
+        Self::Program(stream)
+    }
+}
+
+impl Read for DaemonStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buf),
+            Self::Program(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for DaemonStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buf),
+            Self::Program(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            Self::Program(stream) => stream.flush(),
+        }
+    }
+}
+
+struct ConnectProgramConfig {
+    template: OsString,
+    shell: Option<OsString>,
+}
+
+impl ConnectProgramConfig {
+    fn new(template: OsString, shell: Option<OsString>) -> Result<Self, String> {
+        if template.is_empty() {
+            return Err("RSYNC_CONNECT_PROG must not be empty".to_string());
+        }
+
+        if let Some(shell) = &shell {
+            if shell.is_empty() {
+                return Err("RSYNC_SHELL must not be empty".to_string());
+            }
+        }
+
+        Ok(Self { template, shell })
+    }
+
+    fn shell(&self) -> Option<&OsString> {
+        self.shell.as_ref()
+    }
+
+    fn format_command(&self, host: &str) -> Result<OsString, String> {
+        #[cfg(unix)]
+        {
+            let template = self.template.as_bytes();
+            let mut rendered = Vec::with_capacity(template.len() + host.len());
+            let mut iter = template.iter().copied();
+            let host_bytes = host.as_bytes();
+
+            while let Some(byte) = iter.next() {
+                if byte == b'%' {
+                    match iter.next() {
+                        Some(b'%') => rendered.push(b'%'),
+                        Some(b'H') => rendered.extend_from_slice(host_bytes),
+                        Some(other) => {
+                            rendered.push(b'%');
+                            rendered.push(other);
+                        }
+                        None => rendered.push(b'%'),
+                    }
+                } else {
+                    rendered.push(byte);
+                }
+            }
+
+            return Ok(OsString::from_vec(rendered));
+        }
+
+        #[cfg(not(unix))]
+        {
+            let template = self.template.as_os_str().to_string_lossy();
+            let mut rendered = String::with_capacity(template.len() + host.len());
+            let mut chars = template.chars();
+
+            while let Some(ch) = chars.next() {
+                if ch == '%' {
+                    match chars.next() {
+                        Some('%') => rendered.push('%'),
+                        Some('H') => rendered.push_str(host),
+                        Some(other) => {
+                            rendered.push('%');
+                            rendered.push(other);
+                        }
+                        None => rendered.push('%'),
+                    }
+                } else {
+                    rendered.push(ch);
+                }
+            }
+
+            return Ok(OsString::from(rendered));
+        }
+    }
+}
+
+struct ConnectProgramStream {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+}
+
+impl ConnectProgramStream {
+    fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
+        Self {
+            child,
+            stdin,
+            stdout,
+        }
+    }
+}
+
+impl Read for ConnectProgramStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stdout.read(buf)
+    }
+}
+
+impl Write for ConnectProgramStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stdin.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
+}
+
+impl Drop for ConnectProgramStream {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 struct ProxyConfig {
@@ -6995,6 +7273,12 @@ fn proxy_response_error(text: impl Into<String>) -> ClientError {
     let message =
         rsync_error!(SOCKET_IO_EXIT_CODE, "proxy error: {}", text.into()).with_role(Role::Client);
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
+}
+
+fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
+    let message =
+        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 fn read_proxy_line(
