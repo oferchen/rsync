@@ -8896,6 +8896,25 @@ mod tests {
     }
 
     #[test]
+    fn bwlimit_accepts_leading_plus_sign() {
+        let limit = parse_bandwidth_limit(OsStr::new("+2M"))
+            .expect("parse succeeds")
+            .expect("limit available");
+        assert_eq!(limit.bytes_per_second().get(), 2_097_152);
+    }
+
+    #[test]
+    fn bwlimit_rejects_negative_values() {
+        let (code, stdout, stderr) =
+            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=-1")]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+        assert!(rendered.contains("--bwlimit=-1 is invalid"));
+    }
+
+    #[test]
     fn compress_level_invalid_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
             OsString::from("oc-rsync"),
