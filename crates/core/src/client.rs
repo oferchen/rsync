@@ -391,6 +391,7 @@ pub struct ClientConfig {
     relative_paths: bool,
     implied_dirs: bool,
     mkpath: bool,
+    prune_empty_dirs: bool,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -449,6 +450,7 @@ impl Default for ClientConfig {
             relative_paths: false,
             implied_dirs: true,
             mkpath: false,
+            prune_empty_dirs: false,
             verbosity: 0,
             progress: false,
             stats: false,
@@ -805,6 +807,14 @@ impl ClientConfig {
         self.mkpath
     }
 
+    /// Returns whether empty directories should be pruned after filtering.
+    #[must_use]
+    #[doc(alias = "--prune-empty-dirs")]
+    #[doc(alias = "-m")]
+    pub const fn prune_empty_dirs(&self) -> bool {
+        self.prune_empty_dirs
+    }
+
     /// Returns the requested verbosity level.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -925,6 +935,7 @@ pub struct ClientConfigBuilder {
     relative_paths: bool,
     implied_dirs: Option<bool>,
     mkpath: bool,
+    prune_empty_dirs: bool,
     verbosity: u8,
     progress: bool,
     stats: bool,
@@ -1332,6 +1343,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables pruning of empty directories after filters apply.
+    #[must_use]
+    #[doc(alias = "--prune-empty-dirs")]
+    #[doc(alias = "-m")]
+    pub const fn prune_empty_dirs(mut self, prune: bool) -> Self {
+        self.prune_empty_dirs = prune;
+        self
+    }
+
     /// Sets the verbosity level requested by the caller.
     #[must_use]
     #[doc(alias = "--verbose")]
@@ -1536,6 +1556,7 @@ impl ClientConfigBuilder {
             relative_paths: self.relative_paths,
             implied_dirs: self.implied_dirs.unwrap_or(true),
             mkpath: self.mkpath,
+            prune_empty_dirs: self.prune_empty_dirs,
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
@@ -2106,6 +2127,8 @@ pub struct RemoteFallbackArgs {
     pub implied_dirs: Option<bool>,
     /// Enables `--mkpath`.
     pub mkpath: bool,
+    /// Controls pruning of empty directories via `--prune-empty-dirs`.
+    pub prune_empty_dirs: Option<bool>,
     /// Verbosity level translated into repeated `-v` flags.
     pub verbosity: u8,
     /// Enables `--progress`.
@@ -2287,6 +2310,7 @@ where
         relative,
         implied_dirs,
         mkpath,
+        prune_empty_dirs,
         verbosity,
         progress,
         stats,
@@ -2431,6 +2455,12 @@ where
     if mkpath {
         command_args.push(OsString::from("--mkpath"));
     }
+    push_toggle(
+        &mut command_args,
+        "--prune-empty-dirs",
+        "--no-prune-empty-dirs",
+        prune_empty_dirs,
+    );
     push_toggle(&mut command_args, "--inplace", "--no-inplace", inplace);
     #[cfg(feature = "acl")]
     push_toggle(&mut command_args, "--acls", "--no-acls", acls);
@@ -3501,6 +3531,7 @@ fn build_local_copy_options(
         .relative_paths(config.relative_paths())
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
+        .prune_empty_dirs(config.prune_empty_dirs())
         .inplace(config.inplace())
         .append(config.append())
         .append_verify(config.append_verify())
@@ -3660,6 +3691,7 @@ exit 42
             relative: None,
             implied_dirs: None,
             mkpath: false,
+            prune_empty_dirs: None,
             verbosity: 0,
             progress: false,
             stats: false,

@@ -173,6 +173,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-relative  Disable preservation of source path components.\n",
     "      --implied-dirs  Create parent directories implied by source paths.\n",
     "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
+    "  -m, --prune-empty-dirs  Skip creating directories that remain empty after filters.\n",
+    "      --no-prune-empty-dirs  Disable pruning of empty directories.\n",
     "      --progress   Show progress information during transfers.\n",
     "      --no-progress  Disable progress reporting.\n",
     "      --msgs2stderr  Route informational messages to standard error.\n",
@@ -854,6 +856,7 @@ struct ParsedArgs {
     relative: Option<bool>,
     implied_dirs: Option<bool>,
     mkpath: bool,
+    prune_empty_dirs: Option<bool>,
     verbosity: u8,
     progress: ProgressSetting,
     name_level: NameOutputLevel,
@@ -1023,6 +1026,21 @@ fn clap_command() -> ClapCommand {
                 .long("mkpath")
                 .help("Create destination's path component.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("prune-empty-dirs")
+                .long("prune-empty-dirs")
+                .short('m')
+                .help("Skip creating directories that remain empty after filters.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-prune-empty-dirs"),
+        )
+        .arg(
+            Arg::new("no-prune-empty-dirs")
+                .long("no-prune-empty-dirs")
+                .help("Disable pruning of empty directories.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("prune-empty-dirs"),
         )
         .arg(
             Arg::new("archive")
@@ -1678,6 +1696,13 @@ where
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
     let mkpath = matches.get_flag("mkpath");
+    let prune_empty_dirs = if matches.get_flag("no-prune-empty-dirs") {
+        Some(false)
+    } else if matches.get_flag("prune-empty-dirs") {
+        Some(true)
+    } else {
+        None
+    };
     if list_only {
         dry_run = true;
     }
@@ -2037,6 +2062,7 @@ where
         relative,
         implied_dirs,
         mkpath,
+        prune_empty_dirs,
         verbosity,
         progress: progress_setting,
         name_level,
@@ -2285,6 +2311,7 @@ where
         relative,
         implied_dirs,
         mkpath,
+        prune_empty_dirs,
         verbosity,
         progress: initial_progress,
         name_level: initial_name_level,
@@ -2738,6 +2765,7 @@ where
             relative,
             implied_dirs: implied_dirs_option,
             mkpath,
+            prune_empty_dirs,
             verbosity,
             progress: progress_mode.is_some(),
             stats,
@@ -2900,6 +2928,7 @@ where
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
         .mkpath(mkpath)
+        .prune_empty_dirs(prune_empty_dirs.unwrap_or(false))
         .verbosity(verbosity)
         .progress(progress_mode.is_some())
         .stats(stats)
@@ -7717,6 +7746,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_prune_empty_dirs_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--prune-empty-dirs"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.prune_empty_dirs, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-prune-empty-dirs"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.prune_empty_dirs, Some(false));
+    }
+
+    #[test]
     fn parse_args_recognises_inplace_flags() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -11343,6 +11395,63 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--implied-dirs"));
         assert!(!args.contains(&"--no-implied-dirs"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_prune_empty_dirs_flags() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--prune-empty-dirs"),
+            OsString::from("remote::module"),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--prune-empty-dirs"));
+        assert!(!args.contains(&"--no-prune-empty-dirs"));
+
+        std::fs::write(&args_path, b"").expect("truncate args file");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-prune-empty-dirs"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-prune-empty-dirs"));
+        assert!(!args.contains(&"--prune-empty-dirs"));
     }
 
     #[cfg(unix)]
