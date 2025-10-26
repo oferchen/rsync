@@ -2589,6 +2589,8 @@ pub struct RemoteFallbackArgs {
     pub chmod: Vec<OsString>,
     /// Optional `--perms`/`--no-perms` toggle.
     pub perms: Option<bool>,
+    /// Optional `--super`/`--no-super` toggle.
+    pub super_mode: Option<bool>,
     /// Optional `--times`/`--no-times` toggle.
     pub times: Option<bool>,
     /// Optional `--omit-dir-times`/`--no-omit-dir-times` toggle.
@@ -2816,6 +2818,7 @@ where
         group,
         chmod,
         perms,
+        super_mode,
         times,
         omit_dir_times,
         omit_link_times,
@@ -2978,6 +2981,7 @@ where
         command_args.push(arg);
     }
     push_toggle(&mut command_args, "--perms", "--no-perms", perms);
+    push_toggle(&mut command_args, "--super", "--no-super", super_mode);
     push_toggle(&mut command_args, "--times", "--no-times", times);
     push_toggle(
         &mut command_args,
@@ -4453,6 +4457,7 @@ exit 42
             group: None,
             chmod: Vec::new(),
             perms: None,
+            super_mode: None,
             times: None,
             omit_dir_times: None,
             omit_link_times: None,

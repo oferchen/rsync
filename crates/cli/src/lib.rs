@@ -238,6 +238,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-devices  Disable device file preservation.\n",
     "      --specials  Preserve special files such as FIFOs.\n",
     "      --no-specials  Disable preservation of special files.\n",
+    "      --super      Receiver attempts super-user activities (implies --owner, --group, and --perms).\n",
+    "      --no-super   Disable super-user handling even when running as root.\n",
     "      --owner      Preserve file ownership (requires super-user).\n",
     "      --no-owner   Disable ownership preservation.\n",
     "      --group      Preserve file group (requires suitable privileges).\n",
@@ -264,7 +266,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -940,6 +942,7 @@ struct ParsedArgs {
     chown: Option<OsString>,
     chmod: Vec<OsString>,
     perms: Option<bool>,
+    super_mode: Option<bool>,
     times: Option<bool>,
     omit_dir_times: Option<bool>,
     omit_link_times: Option<bool>,
@@ -1345,6 +1348,22 @@ fn clap_command() -> ClapCommand {
                 .help("Disable preservation of special files such as FIFOs.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("specials"),
+        )
+        .arg(
+            Arg::new("super")
+                .long("super")
+                .help(
+                    "Receiver attempts super-user activities (implies --owner, --group, and --perms).",
+                )
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-super"),
+        )
+        .arg(
+            Arg::new("no-super")
+                .long("no-super")
+                .help("Disable super-user handling even when running as root.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("super"),
         )
         .arg(
             Arg::new("verbose")
@@ -2136,6 +2155,13 @@ where
     } else {
         None
     };
+    let super_mode = if matches.get_flag("super") {
+        Some(true)
+    } else if matches.get_flag("no-super") {
+        Some(false)
+    } else {
+        None
+    };
     let times = if matches.get_flag("times") {
         Some(true)
     } else if matches.get_flag("no-times") {
@@ -2420,6 +2446,7 @@ where
         chown,
         chmod,
         perms,
+        super_mode,
         times,
         omit_dir_times,
         omit_link_times,
@@ -2825,6 +2852,7 @@ where
         chown,
         chmod,
         perms,
+        super_mode,
         times,
         omit_dir_times,
         omit_link_times,
@@ -3407,6 +3435,7 @@ where
             group,
             chmod: chmod.clone(),
             perms,
+            super_mode,
             times,
             omit_dir_times,
             omit_link_times,
@@ -3567,8 +3596,12 @@ where
         .is_some()
     {
         true
+    } else if let Some(value) = owner {
+        value
+    } else if super_mode == Some(true) {
+        true
     } else {
-        owner.unwrap_or(archive)
+        archive
     };
     let preserve_group = if parsed_chown
         .as_ref()
@@ -3576,10 +3609,20 @@ where
         .is_some()
     {
         true
+    } else if let Some(value) = group {
+        value
+    } else if super_mode == Some(true) {
+        true
     } else {
-        group.unwrap_or(archive)
+        archive
     };
-    let preserve_permissions = perms.unwrap_or(archive);
+    let preserve_permissions = if let Some(value) = perms {
+        value
+    } else if super_mode == Some(true) {
+        true
+    } else {
+        archive
+    };
     let preserve_times = times.unwrap_or(archive);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let omit_link_times_setting = omit_link_times.unwrap_or(false);
@@ -8951,6 +8994,32 @@ mod tests {
         assert_eq!(parsed.times, Some(false));
         assert_eq!(parsed.omit_dir_times, Some(false));
         assert_eq!(parsed.omit_link_times, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_super_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--super"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.super_mode, Some(true));
+    }
+
+    #[test]
+    fn parse_args_recognises_no_super_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-super"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.super_mode, Some(false));
     }
 
     #[test]
@@ -14613,6 +14682,81 @@ exit 0
         assert!(args.contains(&"--human-readable=2"));
         assert!(!args.contains(&"--human-readable"));
         assert!(!args.contains(&"--no-human-readable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_super_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--super"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--super"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_no_super_flag() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-super"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--no-super"));
+        assert!(!args.contains(&"--super"));
     }
 
     #[cfg(unix)]
