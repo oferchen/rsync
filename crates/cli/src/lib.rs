@@ -6227,6 +6227,7 @@ fn append_filter_rules_from_files(
         destination.extend(patterns.into_iter().map(|pattern| match kind {
             FilterRuleKind::Include => FilterRuleSpec::include(pattern),
             FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
+            FilterRuleKind::Clear => FilterRuleSpec::clear(),
             FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
             FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
             FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
@@ -11477,6 +11478,7 @@ mod tests {
         let engine_rules = expected_rules.iter().filter_map(|rule| match rule.kind() {
             FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
             FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
+            FilterRuleKind::Clear => None,
             FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
             FilterRuleKind::Risk => Some(EngineFilterRule::risk(rule.pattern())),
             FilterRuleKind::ExcludeIfPresent => None,

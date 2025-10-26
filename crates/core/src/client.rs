@@ -1990,6 +1990,8 @@ pub enum FilterRuleKind {
     Include,
     /// Exclude matching paths.
     Exclude,
+    /// Clear all previously defined filter rules.
+    Clear,
     /// Protect matching destination paths from deletion.
     Protect,
     /// Remove protection for matching destination paths.
@@ -2031,6 +2033,19 @@ impl FilterRuleSpec {
         Self {
             kind: FilterRuleKind::Exclude,
             pattern: pattern.into(),
+            dir_merge_options: None,
+            applies_to_sender: true,
+            applies_to_receiver: true,
+        }
+    }
+
+    /// Clears all previously configured filter rules.
+    #[must_use]
+    #[doc(alias = "!")]
+    pub fn clear() -> Self {
+        Self {
+            kind: FilterRuleKind::Clear,
+            pattern: String::new(),
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
@@ -2118,6 +2133,9 @@ impl FilterRuleSpec {
     }
 
     /// Returns the pattern associated with this rule.
+    ///
+    /// For list-clearing rules created via [`FilterRuleSpec::clear`] the
+    /// returned string is empty because the variant does not carry a pattern.
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
@@ -2143,6 +2161,10 @@ impl FilterRuleSpec {
 
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
     pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
+        if matches!(self.kind, FilterRuleKind::Clear) {
+            return;
+        }
+
         if options.anchor_root_enabled() && !self.pattern.starts_with('/') {
             self.pattern.insert(0, '/');
         }
@@ -6431,6 +6453,33 @@ exit 42
     }
 
     #[test]
+    fn run_client_filter_clear_resets_previous_rules() {
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source root");
+        fs::create_dir_all(&dest_root).expect("create dest root");
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+        fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_root.clone(), dest_root.clone()])
+            .extend_filter_rules([
+                FilterRuleSpec::exclude("*.tmp".to_string()),
+                FilterRuleSpec::clear(),
+                FilterRuleSpec::exclude("keep.txt".to_string()),
+            ])
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        let copied_root = dest_root.join("source");
+        assert!(copied_root.join("skip.tmp").exists());
+        assert!(!copied_root.join("keep.txt").exists());
+        assert!(summary.files_copied() >= 1);
+    }
+
+    #[test]
     fn run_client_copies_directory_tree() {
         let tmp = tempdir().expect("tempdir");
         let source_root = tmp.path().join("source");
@@ -8221,6 +8270,7 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
                 EngineFilterRule::exclude(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
             )),
+            FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver()),
