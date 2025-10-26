@@ -2433,6 +2433,10 @@ pub struct RemoteFallbackArgs {
     /// Optional `--whole-file`/`--no-whole-file` toggle.
     pub whole_file: Option<bool>,
     /// Optional bandwidth limit forwarded through `--bwlimit`.
+    ///
+    /// Values are normalised to their rounded byte-per-second representation so
+    /// legacy fallback binaries that predate burst support continue accepting
+    /// the argument. An unlimited transfer is represented using `"0"`.
     pub bwlimit: Option<OsString>,
     /// Patterns forwarded via repeated `--exclude` flags.
     pub excludes: Vec<OsString>,
