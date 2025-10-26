@@ -162,6 +162,7 @@ const HELP_TEXT: &str = concat!(
     "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
     "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).\n",
+    "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
     "  -u, --update    Skip files that are newer on the destination.\n",
@@ -269,7 +270,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -969,6 +970,7 @@ struct ParsedArgs {
     checksum: bool,
     checksum_choice: Option<StrongChecksumChoice>,
     checksum_choice_arg: Option<OsString>,
+    checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -1279,6 +1281,14 @@ fn clap_command() -> ClapCommand {
                 )
                 .num_args(1)
                 .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("checksum-seed")
+                .long("checksum-seed")
+                .value_name("NUM")
+                .help("Set the checksum seed used by xxhash-based algorithms.")
+                .num_args(1)
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
@@ -2449,6 +2459,19 @@ where
             None => (None, None),
         };
 
+    let checksum_seed = match matches.remove_one::<OsString>("checksum-seed") {
+        Some(value) => match parse_checksum_seed_argument(value.as_os_str()) {
+            Ok(seed) => Some(seed),
+            Err(message) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    message.text().to_string(),
+                ));
+            }
+        },
+        None => None,
+    };
+
     let compress_level = matches.remove_one::<OsString>("compress-level");
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
     let bwlimit = matches.remove_one::<OsString>("bwlimit");
@@ -2529,6 +2552,7 @@ where
         checksum,
         checksum_choice,
         checksum_choice_arg,
+        checksum_seed,
         size_only,
         ignore_existing,
         update,
@@ -2939,6 +2963,7 @@ where
         checksum,
         checksum_choice,
         checksum_choice_arg,
+        checksum_seed,
         size_only,
         ignore_existing,
         update,
@@ -3543,6 +3568,7 @@ where
             max_size: max_size.clone(),
             checksum,
             checksum_choice: checksum_choice_arg.clone(),
+            checksum_seed,
             size_only,
             ignore_existing,
             update,
@@ -3816,6 +3842,7 @@ where
         .devices(preserve_devices)
         .specials(preserve_specials)
         .checksum(checksum)
+        .checksum_seed(checksum_seed)
         .size_only(size_only)
         .ignore_existing(ignore_existing)
         .update(update)
@@ -5238,6 +5265,47 @@ fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
             )
         }
     }
+}
+
+fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(
+            rsync_error!(1, "--checksum-seed value must not be empty").with_role(Role::Client)
+        );
+    }
+
+    if trimmed.starts_with('-') {
+        return Err(rsync_error!(
+            1,
+            format!(
+                "invalid --checksum-seed value '{}': must be non-negative",
+                display
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
+
+    normalized.parse::<u32>().map_err(|_| {
+        rsync_error!(
+            1,
+            format!(
+                "invalid --checksum-seed value '{}': must be between 0 and {}",
+                display,
+                u32::MAX
+            )
+        )
+        .with_role(Role::Client)
+    })
 }
 
 fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message> {
@@ -10358,6 +10426,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_checksum_seed_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--checksum-seed=42"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.checksum_seed, Some(42));
+    }
+
+    #[test]
     fn parse_args_collects_min_max_size_values() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -10426,6 +10507,41 @@ mod tests {
         assert!(
             rendered.contains("deletion limit must be an unsigned integer"),
             "diagnostic missing unsigned message: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_accepts_zero() {
+        let seed = parse_checksum_seed_argument(OsStr::new("0")).expect("parse checksum seed");
+        assert_eq!(seed, 0);
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_accepts_max_u32() {
+        let seed =
+            parse_checksum_seed_argument(OsStr::new("4294967295")).expect("parse checksum seed");
+        assert_eq!(seed, u32::MAX);
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_rejects_negative() {
+        let error =
+            parse_checksum_seed_argument(OsStr::new("-1")).expect_err("negative seed should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("must be non-negative"),
+            "diagnostic missing negativity detail: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_rejects_non_numeric() {
+        let error = parse_checksum_seed_argument(OsStr::new("seed"))
+            .expect_err("non-numeric seed should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("invalid --checksum-seed value"),
+            "diagnostic missing invalid message: {rendered}"
         );
     }
 
