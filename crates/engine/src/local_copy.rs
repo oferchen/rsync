@@ -1676,6 +1676,7 @@ pub struct LocalCopyOptions {
     size_only: bool,
     ignore_existing: bool,
     update: bool,
+    modify_window: Duration,
     partial: bool,
     partial_dir: Option<PathBuf>,
     temp_dir: Option<PathBuf>,
@@ -1745,6 +1746,7 @@ impl LocalCopyOptions {
             size_only: false,
             ignore_existing: false,
             update: false,
+            modify_window: Duration::ZERO,
             partial: false,
             partial_dir: None,
             temp_dir: None,
@@ -2244,6 +2246,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Applies the modification time tolerance used when comparing files.
+    #[must_use]
+    #[doc(alias = "--modify-window")]
+    pub const fn with_modify_window(mut self, window: Duration) -> Self {
+        self.modify_window = window;
+        self
+    }
+
     /// Requests that partial transfers leave temporary files.
     #[must_use]
     #[doc(alias = "--partial")]
@@ -2667,6 +2677,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn update_enabled(&self) -> bool {
         self.update
+    }
+
+    /// Returns the modification time tolerance applied during comparisons.
+    #[must_use]
+    pub const fn modify_window(&self) -> Duration {
+        self.modify_window
     }
 
     /// Reports whether sparse handling has been requested.
@@ -3490,6 +3506,7 @@ impl<'a> CopyContext<'a> {
                 metadata_options,
                 size_only,
                 checksum,
+                self.options.modify_window(),
             ) {
                 return Ok(Some(candidate));
             }
@@ -6898,6 +6915,7 @@ fn find_reference_action(
             metadata_options,
             size_only,
             checksum,
+            context.options.modify_window(),
         ) {
             return Ok(Some(match reference.kind() {
                 ReferenceDirectoryKind::Compare => ReferenceDecision::Skip,
@@ -7408,6 +7426,7 @@ fn copy_file(
             &metadata_options,
             size_only_enabled,
             checksum_enabled,
+            context.options.modify_window(),
         ) {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
@@ -8143,6 +8162,7 @@ fn should_skip_copy(
     options: &MetadataOptions,
     size_only: bool,
     checksum: bool,
+    modify_window: Duration,
 ) -> bool {
     if destination.len() != source.len() {
         return false;
@@ -8158,7 +8178,7 @@ fn should_skip_copy(
 
     if options.times() {
         match (source.modified(), destination.modified()) {
-            (Ok(src), Ok(dst)) if system_time_eq(src, dst) => {}
+            (Ok(src), Ok(dst)) if system_time_within_window(src, dst, modify_window) => {}
             _ => return false,
         }
     } else {
@@ -8168,8 +8188,15 @@ fn should_skip_copy(
     files_match(source_path, destination_path)
 }
 
-fn system_time_eq(a: SystemTime, b: SystemTime) -> bool {
-    a.eq(&b)
+fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
+    if window.is_zero() {
+        return a.eq(&b);
+    }
+
+    match a.duration_since(b) {
+        Ok(diff) => diff <= window,
+        Err(_) => matches!(b.duration_since(a), Ok(diff) if diff <= window),
+    }
 }
 
 fn files_match(source: &Path, destination: &Path) -> bool {
@@ -9071,6 +9098,7 @@ mod tests {
     use super::*;
     use filetime::{FileTime, set_file_mtime, set_file_times};
     use std::ffi::OsString;
+    use std::fs;
     use std::io::{self, Seek, SeekFrom, Write};
     use std::num::{NonZeroU8, NonZeroU64};
     use std::path::Path;
@@ -9138,6 +9166,88 @@ mod tests {
         let options = LocalCopyOptions::default().delete_delay(true);
         assert!(options.delete_delay_enabled());
         assert!(!LocalCopyOptions::default().delete_delay_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_modify_window_round_trip() {
+        let window = Duration::from_secs(5);
+        let options = LocalCopyOptions::default().with_modify_window(window);
+        assert_eq!(options.modify_window(), window);
+        assert_eq!(LocalCopyOptions::default().modify_window(), Duration::ZERO);
+    }
+
+    #[test]
+    fn should_skip_copy_requires_exact_mtime_when_window_zero() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let destination = temp.path().join("dest");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&destination, b"payload").expect("write dest");
+
+        let base = FileTime::from_unix_time(1_700_000_000, 0);
+        let offset = FileTime::from_unix_time(1_700_000_003, 0);
+        set_file_mtime(&source, base).expect("set source mtime");
+        set_file_mtime(&destination, offset).expect("set dest mtime");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let dest_meta = fs::metadata(&destination).expect("dest metadata");
+        let metadata_options = MetadataOptions::new().preserve_times(true);
+
+        assert!(!should_skip_copy(
+            &source,
+            &source_meta,
+            &destination,
+            &dest_meta,
+            &metadata_options,
+            false,
+            false,
+            Duration::ZERO,
+        ));
+    }
+
+    #[test]
+    fn should_skip_copy_allows_difference_within_window() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        let destination = temp.path().join("dest");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&destination, b"payload").expect("write dest");
+
+        let base = FileTime::from_unix_time(1_700_000_100, 0);
+        let within = FileTime::from_unix_time(1_700_000_103, 0);
+        let outside = FileTime::from_unix_time(1_700_000_107, 0);
+        set_file_mtime(&source, base).expect("set source mtime");
+        set_file_mtime(&destination, within).expect("set dest mtime");
+
+        let metadata_options = MetadataOptions::new().preserve_times(true);
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let mut dest_meta = fs::metadata(&destination).expect("dest metadata");
+
+        assert!(should_skip_copy(
+            &source,
+            &source_meta,
+            &destination,
+            &dest_meta,
+            &metadata_options,
+            false,
+            false,
+            Duration::from_secs(5),
+        ));
+
+        set_file_mtime(&destination, outside).expect("set dest outside window");
+        dest_meta = fs::metadata(&destination).expect("dest metadata outside");
+
+        assert!(!should_skip_copy(
+            &source,
+            &source_meta,
+            &destination,
+            &dest_meta,
+            &metadata_options,
+            false,
+            false,
+            Duration::from_secs(5),
+        ));
     }
 
     #[test]
