@@ -587,6 +587,7 @@ pub struct ClientConfig {
     whole_file: bool,
     checksum: bool,
     checksum_choice: StrongChecksumChoice,
+    checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -669,6 +670,7 @@ impl Default for ClientConfig {
             whole_file: true,
             checksum: false,
             checksum_choice: StrongChecksumChoice::default(),
+            checksum_seed: None,
             size_only: false,
             ignore_existing: false,
             update: false,
@@ -1066,7 +1068,26 @@ impl ClientConfig {
     /// Returns the strong checksum algorithm applied during local validation.
     #[must_use]
     pub const fn checksum_signature_algorithm(&self) -> SignatureAlgorithm {
-        self.checksum_choice.file_signature_algorithm()
+        let algorithm = self.checksum_choice.file_signature_algorithm();
+        match (algorithm, self.checksum_seed) {
+            (SignatureAlgorithm::Xxh64 { .. }, Some(seed)) => {
+                SignatureAlgorithm::Xxh64 { seed: seed as u64 }
+            }
+            (SignatureAlgorithm::Xxh3 { .. }, Some(seed)) => {
+                SignatureAlgorithm::Xxh3 { seed: seed as u64 }
+            }
+            (SignatureAlgorithm::Xxh3_128 { .. }, Some(seed)) => {
+                SignatureAlgorithm::Xxh3_128 { seed: seed as u64 }
+            }
+            (other, _) => other,
+        }
+    }
+
+    /// Returns the checksum seed configured via `--checksum-seed`, if any.
+    #[must_use]
+    #[doc(alias = "--checksum-seed")]
+    pub const fn checksum_seed(&self) -> Option<u32> {
+        self.checksum_seed
     }
 
     /// Reports whether size-only change detection should be used when evaluating updates.
@@ -1319,6 +1340,7 @@ pub struct ClientConfigBuilder {
     whole_file: Option<bool>,
     checksum: bool,
     checksum_choice: StrongChecksumChoice,
+    checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -1722,6 +1744,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the checksum seed forwarded to the engine and fallback binary.
+    #[must_use]
+    #[doc(alias = "--checksum-seed")]
+    pub const fn checksum_seed(mut self, seed: Option<u32>) -> Self {
+        self.checksum_seed = seed;
+        self
+    }
+
     /// Enables or disables size-only change detection.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -2120,6 +2150,7 @@ impl ClientConfigBuilder {
             whole_file: self.whole_file.unwrap_or(true),
             checksum: self.checksum,
             checksum_choice: self.checksum_choice,
+            checksum_seed: self.checksum_seed,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
             update: self.update,
@@ -2771,6 +2802,8 @@ pub struct RemoteFallbackArgs {
     pub checksum: bool,
     /// Optional strong checksum selection forwarded via `--checksum-choice`.
     pub checksum_choice: Option<OsString>,
+    /// Optional checksum seed forwarded via `--checksum-seed`.
+    pub checksum_seed: Option<u32>,
     /// Enables `--size-only`.
     pub size_only: bool,
     /// Enables `--ignore-existing`.
@@ -3017,6 +3050,7 @@ where
         max_size,
         checksum,
         checksum_choice,
+        checksum_seed,
         size_only,
         ignore_existing,
         update,
@@ -3155,6 +3189,11 @@ where
     if let Some(choice) = checksum_choice {
         let mut arg = OsString::from("--checksum-choice=");
         arg.push(choice);
+        command_args.push(arg);
+    }
+    if let Some(seed) = checksum_seed {
+        let mut arg = OsString::from("--checksum-seed=");
+        arg.push(seed.to_string());
         command_args.push(arg);
     }
     if size_only {
@@ -4676,6 +4715,7 @@ exit 42
             max_size: None,
             checksum: false,
             checksum_choice: None,
+            checksum_seed: None,
             size_only: false,
             ignore_existing: false,
             update: false,
@@ -5062,6 +5102,22 @@ exit 42
             .build();
 
         assert!(config.checksum());
+    }
+
+    #[test]
+    fn builder_applies_checksum_seed_to_signature_algorithm() {
+        let choice = StrongChecksumChoice::parse("xxh64").expect("checksum choice parsed");
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .checksum_choice(choice)
+            .checksum_seed(Some(7))
+            .build();
+
+        assert_eq!(config.checksum_seed(), Some(7));
+        match config.checksum_signature_algorithm() {
+            SignatureAlgorithm::Xxh64 { seed } => assert_eq!(seed, 7),
+            other => panic!("unexpected signature algorithm: {other:?}"),
+        }
     }
 
     #[test]
@@ -5838,6 +5894,43 @@ exit 42
                 .lines()
                 .any(|line| line == "--checksum-choice=xxh128")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_checksum_seed() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.checksum = true;
+        args.checksum_seed = Some(123);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--checksum"));
+        assert!(captured.lines().any(|line| line == "--checksum-seed=123"));
     }
 
     #[cfg(unix)]
