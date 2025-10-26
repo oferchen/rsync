@@ -49,6 +49,10 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+mod skip_compress;
+
+pub use skip_compress::{SkipCompressList, SkipCompressParseError};
+
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -92,7 +96,6 @@ use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signatu
 use crate::signature::{
     SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
-
 const COPY_BUFFER_SIZE: usize = 128 * 1024;
 static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -1569,6 +1572,7 @@ pub struct LocalCopyOptions {
     compress: bool,
     compression_level_override: Option<CompressionLevel>,
     compression_level: CompressionLevel,
+    skip_compress: SkipCompressList,
     whole_file: bool,
     copy_links: bool,
     copy_dirlinks: bool,
@@ -1635,6 +1639,7 @@ impl LocalCopyOptions {
             compress: false,
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
+            skip_compress: SkipCompressList::default(),
             whole_file: true,
             copy_links: false,
             copy_dirlinks: false,
@@ -1989,6 +1994,13 @@ impl LocalCopyOptions {
     #[doc(alias = "--compress-level")]
     pub const fn with_compression_level(mut self, level: CompressionLevel) -> Self {
         self.compression_level_override = Some(level);
+        self
+    }
+
+    /// Overrides the suffix list used to disable compression for specific files.
+    #[must_use]
+    pub fn with_skip_compress(mut self, list: SkipCompressList) -> Self {
+        self.skip_compress = list;
         self
     }
 
@@ -2519,6 +2531,16 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn checksum_enabled(&self) -> bool {
         self.checksum
+    }
+
+    /// Returns the skip-compress list associated with the options.
+    pub fn skip_compress(&self) -> &SkipCompressList {
+        &self.skip_compress
+    }
+
+    /// Reports whether compression should be bypassed for `path`.
+    pub fn should_skip_compress(&self, path: &Path) -> bool {
+        self.skip_compress.matches_path(path)
     }
 
     /// Reports whether size-only change detection has been requested.
@@ -3704,6 +3726,10 @@ impl<'a> CopyContext<'a> {
 
     fn compress_enabled(&self) -> bool {
         self.options.compress_enabled()
+    }
+
+    fn should_compress(&self, relative: &Path) -> bool {
+        self.compress_enabled() && !self.options.should_skip_compress(relative)
     }
 
     fn compression_level(&self) -> CompressionLevel {
@@ -6933,7 +6959,7 @@ fn copy_file(
     let append_allowed = context.append_enabled();
     let append_verify = context.append_verify_enabled();
     let whole_file_enabled = context.whole_file_enabled();
-    let compress_enabled = context.compress_enabled();
+    let compress_enabled = context.should_compress(record_path.as_path());
     let relative_for_link = relative.unwrap_or(record_path.as_path());
 
     if let Some(existing) = existing_metadata.as_ref() {
