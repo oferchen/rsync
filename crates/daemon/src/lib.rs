@@ -2123,7 +2123,7 @@ impl ModuleDefinitionBuilder {
             bandwidth_limit: self.bandwidth_limit,
             bandwidth_burst: self.bandwidth_burst,
             refuse_options: self.refuse_options.unwrap_or_default(),
-            read_only: self.read_only.unwrap_or(false),
+            read_only: self.read_only.unwrap_or(true),
             numeric_ids: self.numeric_ids.unwrap_or(false),
             uid: self.uid,
             gid: self.gid,
@@ -4109,7 +4109,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         bandwidth_limit: None,
         bandwidth_burst: None,
         refuse_options: Vec::new(),
-        read_only: false,
+        read_only: true,
         numeric_ids: false,
         uid: None,
         gid: None,
@@ -4690,7 +4690,7 @@ mod tests {
             bandwidth_limit: None,
             bandwidth_burst: None,
             refuse_options: Vec::new(),
-            read_only: false,
+            read_only: true,
             numeric_ids: false,
             uid: None,
             gid: None,
@@ -4797,7 +4797,7 @@ mod tests {
             bandwidth_limit: None,
             bandwidth_burst: None,
             refuse_options: Vec::new(),
-            read_only: false,
+            read_only: true,
             numeric_ids: false,
             uid: None,
             gid: None,
@@ -5238,12 +5238,14 @@ mod tests {
         assert!(modules[0].bandwidth_limit().is_none());
         assert!(modules[0].bandwidth_burst().is_none());
         assert!(modules[0].refused_options().is_empty());
+        assert!(modules[0].read_only());
         assert_eq!(modules[1].name, "logs");
         assert_eq!(modules[1].path, PathBuf::from("/var/log"));
         assert!(modules[1].comment.is_none());
         assert!(modules[1].bandwidth_limit().is_none());
         assert!(modules[1].bandwidth_burst().is_none());
         assert!(modules[1].refused_options().is_empty());
+        assert!(modules[1].read_only());
     }
 
     #[test]
@@ -5259,6 +5261,7 @@ mod tests {
         assert_eq!(modules[0].name, "docs");
         assert_eq!(modules[0].path, PathBuf::from("/srv/docs,archive"));
         assert_eq!(modules[0].comment.as_deref(), Some("Project, Docs"));
+        assert!(modules[0].read_only());
     }
 
     #[test]
@@ -5273,6 +5276,7 @@ mod tests {
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].path, PathBuf::from("/var/log\\files"));
         assert_eq!(modules[0].comment.as_deref(), Some("Log share"));
+        assert!(modules[0].read_only());
     }
 
     #[test]
