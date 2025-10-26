@@ -4232,6 +4232,7 @@ fn build_local_copy_options(
         .safe_links(config.safe_links())
         .devices(config.preserve_devices())
         .specials(config.preserve_specials())
+        .one_file_system(config.one_file_system())
         .relative_paths(config.relative_paths())
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
