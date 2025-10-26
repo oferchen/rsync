@@ -61,6 +61,12 @@ run the existing unit and property tests:
 cargo test
 ```
 
+Generate a CycloneDX SBOM for packaging via the workspace helper:
+
+```bash
+cargo run -p xtask -- sbom
+```
+
 The top-level documents provide additional context:
 
 - `docs/production_scope_p1.md` freezes the scope that must be green before the
