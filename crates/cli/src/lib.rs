@@ -164,6 +164,7 @@ const HELP_TEXT: &str = concat!(
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
     "  -u, --update    Skip files that are newer on the destination.\n",
+    "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
     "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
     "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
@@ -267,7 +268,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -973,6 +974,7 @@ struct ParsedArgs {
     max_delete: Option<OsString>,
     min_size: Option<OsString>,
     max_size: Option<OsString>,
+    modify_window: Option<OsString>,
     compress: bool,
     no_compress: bool,
     compress_level: Option<OsString>,
@@ -1282,6 +1284,15 @@ fn clap_command() -> ClapCommand {
                 .short('u')
                 .help("Skip files that are newer on the destination.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("modify-window")
+                .long("modify-window")
+                .value_name("SECS")
+                .help("Treat mtimes within SECS seconds as equal when comparing files.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("sparse")
@@ -2127,6 +2138,7 @@ where
     let max_delete = matches.remove_one::<OsString>("max-delete");
     let min_size = matches.remove_one::<OsString>("min-size");
     let max_size = matches.remove_one::<OsString>("max-size");
+    let modify_window = matches.remove_one::<OsString>("modify-window");
 
     let delete_mode_conflicts = [
         delete_before_flag,
@@ -2489,6 +2501,7 @@ where
         max_delete,
         min_size,
         max_size,
+        modify_window,
         compress,
         no_compress,
         compress_level,
@@ -2896,6 +2909,7 @@ where
         max_delete,
         min_size,
         max_size,
+        modify_window,
         compress: compress_flag,
         no_compress,
         compress_level,
@@ -3226,6 +3240,19 @@ where
         None => None,
     };
 
+    let modify_window_setting = match modify_window.as_ref() {
+        Some(value) => match parse_modify_window_argument(value.as_os_str()) {
+            Ok(window) => Some(window),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
     let compress_level_setting = match compress_level {
         Some(ref value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
@@ -3480,6 +3507,7 @@ where
             size_only,
             ignore_existing,
             update,
+            modify_window: modify_window_setting,
             compress,
             compress_disabled,
             compress_level: compress_level_cli.clone(),
@@ -3743,6 +3771,7 @@ where
         .chmod(chmod_modifiers.clone())
         .permissions(preserve_permissions)
         .times(preserve_times)
+        .modify_window(modify_window_setting)
         .omit_dir_times(omit_dir_times_setting)
         .omit_link_times(omit_link_times_setting)
         .devices(preserve_devices)
@@ -5164,6 +5193,54 @@ fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
                 rsync_error!(1, format!("invalid --max-delete '{}': {}", display, detail))
                     .with_role(Role::Client),
             )
+        }
+    }
+}
+
+fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(
+            rsync_error!(1, "--modify-window value must not be empty").with_role(Role::Client)
+        );
+    }
+
+    if trimmed.starts_with('-') {
+        return Err(rsync_error!(
+            1,
+            format!(
+                "invalid --modify-window '{}': window must be non-negative",
+                display
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let normalized = trimmed.strip_prefix('+').unwrap_or(trimmed);
+
+    match normalized.parse::<u64>() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let detail = match error.kind() {
+                IntErrorKind::InvalidDigit => "window must be an unsigned integer",
+                IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => {
+                    "window exceeds the supported range"
+                }
+                IntErrorKind::Empty => "--modify-window value must not be empty",
+                _ => "window is invalid",
+            };
+            Err(rsync_error!(
+                1,
+                format!("invalid --modify-window '{}': {}", display, detail)
+            )
+            .with_role(Role::Client))
         }
     }
 }
@@ -9113,6 +9190,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_modify_window() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--modify-window=5"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.modify_window, Some(OsString::from("5")));
+    }
+
+    #[test]
     fn parse_args_recognises_owner_overrides() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -10262,6 +10352,45 @@ mod tests {
         assert!(
             rendered.contains("deletion limit must be an unsigned integer"),
             "diagnostic missing unsigned message: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_modify_window_argument_accepts_positive_values() {
+        let value = parse_modify_window_argument(OsStr::new("  42 ")).expect("parse modify-window");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn parse_modify_window_argument_rejects_negative_values() {
+        let error = parse_modify_window_argument(OsStr::new("-1"))
+            .expect_err("negative modify-window should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("window must be non-negative"),
+            "diagnostic missing negativity detail: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_modify_window_argument_rejects_invalid_values() {
+        let error = parse_modify_window_argument(OsStr::new("abc"))
+            .expect_err("non-numeric modify-window should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("window must be an unsigned integer"),
+            "diagnostic missing numeric detail: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_modify_window_argument_rejects_empty_values() {
+        let error = parse_modify_window_argument(OsStr::new("   "))
+            .expect_err("empty modify-window should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("value must not be empty"),
+            "diagnostic missing emptiness detail: {rendered}"
         );
     }
 
@@ -14675,6 +14804,43 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--delete"));
         assert!(args.iter().any(|value| *value == "--max-delete=5"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_modify_window() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--modify-window=5"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--modify-window=5"));
     }
 
     #[cfg(unix)]

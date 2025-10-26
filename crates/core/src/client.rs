@@ -436,6 +436,7 @@ pub struct ClientConfig {
     max_delete: Option<u64>,
     min_file_size: Option<u64>,
     max_file_size: Option<u64>,
+    modify_window: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -516,6 +517,7 @@ impl Default for ClientConfig {
             max_delete: None,
             min_file_size: None,
             max_file_size: None,
+            modify_window: None,
             remove_source_files: false,
             bandwidth_limit: None,
             preserve_owner: false,
@@ -767,6 +769,21 @@ impl ClientConfig {
     #[doc(alias = "--max-size")]
     pub const fn max_file_size(&self) -> Option<u64> {
         self.max_file_size
+    }
+
+    /// Returns the modification time tolerance, if configured.
+    #[must_use]
+    #[doc(alias = "--modify-window")]
+    pub const fn modify_window(&self) -> Option<u64> {
+        self.modify_window
+    }
+
+    /// Returns the modification time tolerance as a [`Duration`].
+    #[must_use]
+    pub fn modify_window_duration(&self) -> Duration {
+        self.modify_window
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::ZERO)
     }
 
     /// Returns whether the sender should remove source files after transfer.
@@ -1136,6 +1153,7 @@ pub struct ClientConfigBuilder {
     max_delete: Option<u64>,
     min_file_size: Option<u64>,
     max_file_size: Option<u64>,
+    modify_window: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -1324,6 +1342,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--max-size")]
     pub const fn max_file_size(mut self, limit: Option<u64>) -> Self {
         self.max_file_size = limit;
+        self
+    }
+
+    /// Sets the modification time tolerance used when comparing files.
+    #[must_use]
+    #[doc(alias = "--modify-window")]
+    pub const fn modify_window(mut self, window: Option<u64>) -> Self {
+        self.modify_window = window;
         self
     }
 
@@ -1919,6 +1945,7 @@ impl ClientConfigBuilder {
             max_delete: self.max_delete,
             min_file_size: self.min_file_size,
             max_file_size: self.max_file_size,
+            modify_window: self.modify_window,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
@@ -2591,6 +2618,8 @@ pub struct RemoteFallbackArgs {
     pub ignore_existing: bool,
     /// Enables `--update`.
     pub update: bool,
+    /// Optional `--modify-window` tolerance forwarded to the fallback binary.
+    pub modify_window: Option<u64>,
     /// Enables `--compress`.
     pub compress: bool,
     /// Enables `--no-compress` when `true` and compression is otherwise disabled.
@@ -2831,6 +2860,7 @@ where
         size_only,
         ignore_existing,
         update,
+        modify_window,
         compress,
         compress_disabled,
         compress_level,
@@ -2970,6 +3000,11 @@ where
     }
     if update {
         command_args.push(OsString::from("--update"));
+    }
+    if let Some(window) = modify_window {
+        let mut arg = OsString::from("--modify-window=");
+        arg.push(window.to_string());
+        command_args.push(arg);
     }
     if compress {
         command_args.push(OsString::from("--compress"));
@@ -4274,6 +4309,7 @@ fn build_local_copy_options(
         .size_only(config.size_only())
         .ignore_existing(config.ignore_existing())
         .update(config.update())
+        .with_modify_window(config.modify_window_duration())
         .with_filter_program(filter_program)
         .numeric_ids(config.numeric_ids())
         .preallocate(config.preallocate())
@@ -4476,6 +4512,7 @@ exit 42
             size_only: false,
             ignore_existing: false,
             update: false,
+            modify_window: None,
             compress: false,
             compress_disabled: false,
             compress_level: None,
@@ -4927,6 +4964,21 @@ exit 42
     }
 
     #[test]
+    fn builder_records_modify_window() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .modify_window(Some(5))
+            .build();
+
+        assert_eq!(config.modify_window(), Some(5));
+        assert_eq!(config.modify_window_duration(), Duration::from_secs(5));
+        assert_eq!(
+            ClientConfig::default().modify_window_duration(),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
     fn builder_collects_reference_directories() {
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -4953,6 +5005,25 @@ exit 42
 
         let options = build_local_copy_options(&config, None);
         assert_eq!(options.timeout(), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn local_copy_options_apply_modify_window() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .modify_window(Some(3))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.modify_window(), Duration::from_secs(3));
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+        assert_eq!(
+            build_local_copy_options(&default_config, None).modify_window(),
+            Duration::ZERO
+        );
     }
 
     #[test]
