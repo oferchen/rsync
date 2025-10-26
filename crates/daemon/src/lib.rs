@@ -3637,7 +3637,7 @@ fn apply_module_bandwidth_limit(
             Some(existing) => {
                 let target_burst = module_burst.or(existing.burst_bytes());
                 if limit < existing.limit_bytes() || module_burst.is_some() {
-                    *existing = BandwidthLimiter::with_burst(limit, target_burst);
+                    existing.update_configuration(limit, target_burst);
                 }
             }
             None => {
@@ -3646,7 +3646,7 @@ fn apply_module_bandwidth_limit(
         }
     } else if let Some(burst) = module_burst {
         if let Some(existing) = limiter {
-            *existing = BandwidthLimiter::with_burst(existing.limit_bytes(), Some(burst));
+            existing.update_configuration(existing.limit_bytes(), Some(burst));
         }
     }
 }
