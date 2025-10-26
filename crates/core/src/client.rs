@@ -2411,6 +2411,8 @@ pub struct RemoteFallbackArgs {
     pub include_from: Vec<OsString>,
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
+    /// Number of times the `-F` shortcut was supplied.
+    pub rsync_filter_shortcuts: u8,
     /// Reference directories forwarded via repeated `--compare-dest` flags.
     pub compare_destinations: Vec<OsString>,
     /// Reference directories forwarded via repeated `--copy-dest` flags.
@@ -2583,6 +2585,7 @@ where
         exclude_from,
         include_from,
         filters,
+        rsync_filter_shortcuts,
         compare_destinations,
         copy_destinations,
         link_destinations,
@@ -2840,6 +2843,9 @@ where
     }
     if cvs_exclude {
         command_args.push(OsString::from("--cvs-exclude"));
+    }
+    for _ in 0..rsync_filter_shortcuts {
+        command_args.push(OsString::from("-F"));
     }
     for filter in filters {
         command_args.push(OsString::from("--filter"));
@@ -4067,6 +4073,7 @@ exit 42
             exclude_from: Vec::new(),
             include_from: Vec::new(),
             filters: Vec::new(),
+            rsync_filter_shortcuts: 0,
             compare_destinations: Vec::new(),
             copy_destinations: Vec::new(),
             link_destinations: Vec::new(),
