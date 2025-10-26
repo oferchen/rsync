@@ -142,6 +142,69 @@ fn create_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
     fs::hard_link(source, destination)
 }
 
+#[cfg(test)]
+thread_local! {
+    static DEVICE_ID_OVERRIDE: RefCell<Option<Box<dyn Fn(&Path, &fs::Metadata) -> Option<u64> + 'static>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn with_device_id_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path, &fs::Metadata) -> Option<u64> + 'static,
+{
+    struct ResetGuard;
+
+    impl Drop for ResetGuard {
+        fn drop(&mut self) {
+            DEVICE_ID_OVERRIDE.with(|cell| {
+                cell.replace(None);
+            });
+        }
+    }
+
+    DEVICE_ID_OVERRIDE.with(|cell| {
+        cell.replace(Some(Box::new(override_fn)));
+    });
+    let guard = ResetGuard;
+    let result = action();
+    drop(guard);
+    result
+}
+
+fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
+    #[cfg(test)]
+    if let Some(value) = DEVICE_ID_OVERRIDE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|override_fn| override_fn(path, metadata))
+    }) {
+        return Some(value);
+    }
+
+    #[cfg(not(test))]
+    let _ = path;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Some(metadata.dev());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return Some(metadata.volume_serial_number() as u64);
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        let _ = metadata;
+        None
+    }
+}
+
 #[cfg(unix)]
 const CROSS_DEVICE_ERROR_CODE: i32 = 18;
 
@@ -1134,6 +1197,8 @@ pub enum LocalCopyAction {
     SkippedNonRegular,
     /// A symbolic link was skipped because it was deemed unsafe by `--safe-links`.
     SkippedUnsafeSymlink,
+    /// A directory was skipped because it resides on a different filesystem.
+    SkippedMountPoint,
     /// An entry was removed due to `--delete`.
     EntryDeleted,
     /// A source entry was removed after a successful transfer.
@@ -1620,6 +1685,7 @@ pub struct LocalCopyOptions {
     collect_events: bool,
     preserve_hard_links: bool,
     relative_paths: bool,
+    one_file_system: bool,
     devices: bool,
     specials: bool,
     implied_dirs: bool,
@@ -1687,6 +1753,7 @@ impl LocalCopyOptions {
             collect_events: false,
             preserve_hard_links: false,
             relative_paths: false,
+            one_file_system: false,
             devices: false,
             specials: false,
             implied_dirs: true,
@@ -1773,6 +1840,21 @@ impl LocalCopyOptions {
     pub const fn hard_links(mut self, preserve: bool) -> Self {
         self.preserve_hard_links = preserve;
         self
+    }
+
+    /// Restricts traversal to a single filesystem when enabled.
+    #[must_use]
+    #[doc(alias = "--one-file-system")]
+    #[doc(alias = "-x")]
+    pub const fn one_file_system(mut self, enabled: bool) -> Self {
+        self.one_file_system = enabled;
+        self
+    }
+
+    /// Returns `true` when the copy should remain on the source filesystem.
+    #[must_use]
+    pub const fn one_file_system_enabled(&self) -> bool {
+        self.one_file_system
     }
 
     /// Returns `true` when hard-link preservation is enabled.
@@ -3292,6 +3374,10 @@ impl<'a> CopyContext<'a> {
         &self.options
     }
 
+    fn one_file_system_enabled(&self) -> bool {
+        self.options.one_file_system_enabled()
+    }
+
     fn record_hard_link(&mut self, metadata: &fs::Metadata, destination: &Path) {
         if self.options.hard_links_enabled() {
             self.hard_links.record(metadata, destination);
@@ -4433,6 +4519,19 @@ impl<'a> CopyContext<'a> {
             self.record(LocalCopyRecord::new(
                 path.to_path_buf(),
                 LocalCopyAction::SkippedNonRegular,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+        }
+    }
+
+    fn record_skipped_mount_point(&mut self, relative: Option<&Path>) {
+        if let Some(path) = relative {
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedMountPoint,
                 0,
                 None,
                 Duration::default(),
@@ -6068,6 +6167,12 @@ fn copy_sources(
                 let file_type = metadata.file_type();
                 let metadata_options = context.metadata_options();
 
+                let root_device = if context.one_file_system_enabled() {
+                    device_identifier(source_path, &metadata)
+                } else {
+                    None
+                };
+
                 let relative_root = if relative_enabled {
                     source.relative_root()
                 } else {
@@ -6115,6 +6220,7 @@ fn copy_sources(
                             relative_root
                                 .as_ref()
                                 .and_then(|root| non_empty_path(root.as_path())),
+                            root_device,
                         )?;
                         continue;
                     }
@@ -6143,6 +6249,7 @@ fn copy_sources(
                         &target,
                         &metadata,
                         non_empty_path(relative.as_path()),
+                        root_device,
                     )?;
                 } else {
                     let name = source_path.file_name().ok_or_else(|| {
@@ -6209,6 +6316,7 @@ fn copy_sources(
                             &target,
                             effective_metadata,
                             non_empty_path(relative.as_path()),
+                            root_device,
                         )?;
                     } else if file_type.is_symlink() && !context.copy_links_enabled() {
                         copy_symlink(
@@ -6303,6 +6411,7 @@ fn copy_directory_recursive(
     destination: &Path,
     metadata: &fs::Metadata,
     relative: Option<&Path>,
+    root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
     #[cfg(any(feature = "acl", feature = "xattr"))]
     let mode = context.mode();
@@ -6313,6 +6422,12 @@ fn copy_directory_recursive(
     #[cfg(feature = "acl")]
     let preserve_acls = context.acls_enabled();
     let prune_enabled = context.prune_empty_dirs_enabled();
+
+    let root_device = if context.one_file_system_enabled() {
+        root_device.or_else(|| device_identifier(source, metadata))
+    } else {
+        None
+    };
 
     let mut destination_missing = false;
 
@@ -6427,6 +6542,7 @@ fn copy_directory_recursive(
     enum EntryAction {
         SkipExcluded,
         SkipNonRegular,
+        SkipMountPoint,
         CopyDirectory,
         CopyFile,
         CopySymlink,
@@ -6494,7 +6610,7 @@ fn copy_directory_recursive(
 
         let mut keep_name = true;
 
-        let action = if !context.allows(&relative_path, effective_type.is_dir()) {
+        let mut action = if !context.allows(&relative_path, effective_type.is_dir()) {
             // Skip excluded entries while optionally allowing deletion sweeps to remove them.
             if context.options().delete_excluded_enabled() {
                 keep_name = false;
@@ -6528,11 +6644,28 @@ fn copy_directory_recursive(
             ));
         };
 
+        if matches!(action, EntryAction::CopyDirectory) {
+            if context.one_file_system_enabled() {
+                if let Some(root) = root_device {
+                    if let Some(entry_device) = device_identifier(
+                        entry.path.as_path(),
+                        metadata_override.as_ref().unwrap_or(entry_metadata),
+                    ) {
+                        if entry_device != root {
+                            action = EntryAction::SkipMountPoint;
+                        }
+                    }
+                }
+            }
+        }
+
         if deletion_enabled && keep_name {
             let preserve_name = match delete_timing {
                 Some(DeleteTiming::Before) => matches!(
                     action,
-                    EntryAction::CopyDirectory | EntryAction::SkipExcluded
+                    EntryAction::CopyDirectory
+                        | EntryAction::SkipExcluded
+                        | EntryAction::SkipMountPoint
                 ),
                 _ => true,
             };
@@ -6565,6 +6698,9 @@ fn copy_directory_recursive(
             EntryAction::SkipNonRegular => {
                 context.record_skipped_non_regular(record_relative);
             }
+            EntryAction::SkipMountPoint => {
+                context.record_skipped_mount_point(record_relative);
+            }
             EntryAction::CopyDirectory => {
                 ensure_directory(context)?;
                 let child_kept = copy_directory_recursive(
@@ -6573,6 +6709,7 @@ fn copy_directory_recursive(
                     &target_path,
                     entry_metadata,
                     Some(planned.relative.as_path()),
+                    root_device,
                 )?;
                 if child_kept {
                     kept_any = true;
@@ -11206,6 +11343,101 @@ mod tests {
             record.action() == &LocalCopyAction::SkippedNonRegular
                 && record.relative_path() == Path::new("skip.pipe")
         }));
+    }
+
+    #[test]
+    fn execute_with_one_file_system_skips_mount_points() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let mount_dir = source_root.join("mount");
+        let mount_file = mount_dir.join("inside.txt");
+        let data_dir = source_root.join("data");
+        let data_file = data_dir.join("file.txt");
+        fs::create_dir_all(&mount_dir).expect("create mount dir");
+        fs::create_dir_all(&data_dir).expect("create data dir");
+        fs::write(&mount_file, b"other fs").expect("write mount file");
+        fs::write(&data_file, b"same fs").expect("write data file");
+
+        let destination = temp.path().join("dest");
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let report = with_device_id_override(
+            |path, _metadata| {
+                if path
+                    .components()
+                    .any(|component| component.as_os_str() == std::ffi::OsStr::new("mount"))
+                {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            },
+            || {
+                plan.execute_with_report(
+                    LocalCopyExecution::Apply,
+                    LocalCopyOptions::default()
+                        .one_file_system(true)
+                        .collect_events(true),
+                )
+            },
+        )
+        .expect("copy executes");
+
+        assert!(destination.join("data").join("file.txt").exists());
+        assert!(!destination.join("mount").exists());
+        assert!(report.records().iter().any(|record| {
+            record.action() == &LocalCopyAction::SkippedMountPoint
+                && record.relative_path().to_string_lossy().contains("mount")
+        }));
+    }
+
+    #[test]
+    fn execute_without_one_file_system_crosses_mount_points() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let mount_dir = source_root.join("mount");
+        let mount_file = mount_dir.join("inside.txt");
+        fs::create_dir_all(&mount_dir).expect("create mount dir");
+        fs::write(&mount_file, b"other fs").expect("write mount file");
+
+        let destination = temp.path().join("dest");
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let report = with_device_id_override(
+            |path, _metadata| {
+                if path
+                    .components()
+                    .any(|component| component.as_os_str() == std::ffi::OsStr::new("mount"))
+                {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            },
+            || {
+                plan.execute_with_report(
+                    LocalCopyExecution::Apply,
+                    LocalCopyOptions::default().collect_events(true),
+                )
+            },
+        )
+        .expect("copy executes");
+
+        assert!(destination.join("mount").join("inside.txt").exists());
+        assert!(
+            report
+                .records()
+                .iter()
+                .all(|record| { record.action() != &LocalCopyAction::SkippedMountPoint })
+        );
     }
 
     #[test]

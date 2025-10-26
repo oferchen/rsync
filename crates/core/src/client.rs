@@ -467,6 +467,7 @@ pub struct ClientConfig {
     keep_dirlinks: bool,
     safe_links: bool,
     relative_paths: bool,
+    one_file_system: bool,
     implied_dirs: bool,
     mkpath: bool,
     prune_empty_dirs: bool,
@@ -545,6 +546,7 @@ impl Default for ClientConfig {
             keep_dirlinks: false,
             safe_links: false,
             relative_paths: false,
+            one_file_system: false,
             implied_dirs: true,
             mkpath: false,
             prune_empty_dirs: false,
@@ -971,6 +973,14 @@ impl ClientConfig {
         self.relative_paths
     }
 
+    /// Reports whether traversal should remain on a single filesystem.
+    #[must_use]
+    #[doc(alias = "--one-file-system")]
+    #[doc(alias = "-x")]
+    pub const fn one_file_system(&self) -> bool {
+        self.one_file_system
+    }
+
     /// Returns whether parent directories implied by the source path should be created.
     #[must_use]
     #[doc(alias = "--implied-dirs")]
@@ -1148,6 +1158,7 @@ pub struct ClientConfigBuilder {
     keep_dirlinks: bool,
     safe_links: bool,
     relative_paths: bool,
+    one_file_system: bool,
     implied_dirs: Option<bool>,
     mkpath: bool,
     prune_empty_dirs: bool,
@@ -1620,6 +1631,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables traversal across filesystem boundaries.
+    #[must_use]
+    #[doc(alias = "--one-file-system")]
+    #[doc(alias = "-x")]
+    pub const fn one_file_system(mut self, enabled: bool) -> Self {
+        self.one_file_system = enabled;
+        self
+    }
+
     /// Enables or disables creation of parent directories implied by the source path.
     #[must_use]
     #[doc(alias = "--implied-dirs")]
@@ -1911,6 +1931,7 @@ impl ClientConfigBuilder {
             keep_dirlinks: self.keep_dirlinks,
             safe_links: self.safe_links,
             relative_paths: self.relative_paths,
+            one_file_system: self.one_file_system,
             implied_dirs: self.implied_dirs.unwrap_or(true),
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
@@ -2572,6 +2593,8 @@ pub struct RemoteFallbackArgs {
     pub specials: Option<bool>,
     /// Optional `--relative`/`--no-relative` toggle.
     pub relative: Option<bool>,
+    /// Optional `--one-file-system`/`--no-one-file-system` toggle.
+    pub one_file_system: Option<bool>,
     /// Optional `--implied-dirs`/`--no-implied-dirs` toggle.
     pub implied_dirs: Option<bool>,
     /// Enables `--mkpath`.
@@ -2784,6 +2807,7 @@ where
         devices,
         specials,
         relative,
+        one_file_system,
         implied_dirs,
         mkpath,
         prune_empty_dirs,
@@ -2979,6 +3003,12 @@ where
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
     push_toggle(&mut command_args, "--relative", "--no-relative", relative);
+    push_toggle(
+        &mut command_args,
+        "--one-file-system",
+        "--no-one-file-system",
+        one_file_system,
+    );
     push_toggle(
         &mut command_args,
         "--implied-dirs",
@@ -3505,6 +3535,8 @@ pub enum ClientEventKind {
     SkippedNonRegular,
     /// A symbolic link was skipped because it was deemed unsafe.
     SkippedUnsafeSymlink,
+    /// A directory was skipped to honour `--one-file-system`.
+    SkippedMountPoint,
     /// An entry was deleted due to `--delete`.
     EntryDeleted,
     /// A source entry was removed after a successful transfer.
@@ -3539,6 +3571,7 @@ impl ClientEvent {
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::SkippedUnsafeSymlink => ClientEventKind::SkippedUnsafeSymlink,
+            LocalCopyAction::SkippedMountPoint => ClientEventKind::SkippedMountPoint,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
@@ -3554,6 +3587,7 @@ impl ClientEvent {
             | LocalCopyAction::SkippedNewerDestination
             | LocalCopyAction::SkippedNonRegular
             | LocalCopyAction::SkippedUnsafeSymlink
+            | LocalCopyAction::SkippedMountPoint
             | LocalCopyAction::EntryDeleted
             | LocalCopyAction::SourceRemoved => false,
         };
@@ -4411,6 +4445,7 @@ exit 42
             devices: None,
             specials: None,
             relative: None,
+            one_file_system: None,
             implied_dirs: None,
             mkpath: false,
             prune_empty_dirs: None,
@@ -5461,6 +5496,55 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_one_file_system_toggle() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.one_file_system = Some(true);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--one-file-system"));
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.one_file_system = Some(false);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--no-one-file-system"));
     }
 
     #[cfg(unix)]
