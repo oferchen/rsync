@@ -303,19 +303,32 @@ fn parse_decimal_components(text: &str) -> Result<(u128, u128, u128), BandwidthP
 }
 
 fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
-    let mut acc = 1u128;
-    for _ in 0..exponent {
-        acc = acc
-            .checked_mul(u128::from(base))
-            .ok_or(BandwidthParseError::TooLarge)?;
+    let mut result = 1u128;
+    let mut factor = u128::from(base);
+    let mut exp = exponent;
+
+    while exp > 0 {
+        if (exp & 1) == 1 {
+            result = result
+                .checked_mul(factor)
+                .ok_or(BandwidthParseError::TooLarge)?;
+        }
+
+        exp >>= 1;
+        if exp > 0 {
+            factor = factor
+                .checked_mul(factor)
+                .ok_or(BandwidthParseError::TooLarge)?;
+        }
     }
-    Ok(acc)
+
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument,
+        BandwidthLimitComponents, BandwidthParseError, pow_u128, parse_bandwidth_argument,
         parse_bandwidth_limit,
     };
     use proptest::prelude::*;
@@ -478,5 +491,20 @@ mod tests {
             let expected = NonZeroU64::new(value * 1024).expect("non-zero");
             prop_assert_eq!(parsed, Some(expected));
         }
+    }
+
+    #[test]
+    fn pow_u128_matches_checked_pow_for_supported_inputs() {
+        let base = 1024u32;
+        for exponent in 0..=5u32 {
+            let expected = u128::from(base).checked_pow(exponent).expect("no overflow");
+            assert_eq!(pow_u128(base, exponent).expect("computation succeeds"), expected);
+        }
+    }
+
+    #[test]
+    fn pow_u128_reports_overflow() {
+        let overflow = pow_u128(u32::MAX, 5);
+        assert_eq!(overflow, Err(BandwidthParseError::TooLarge));
     }
 }
