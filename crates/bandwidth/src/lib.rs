@@ -527,11 +527,24 @@ impl BandwidthLimiter {
     /// configuration and ensures subsequent calls behave as if the limiter had
     /// been freshly constructed with the supplied rate.
     pub fn update_limit(&mut self, limit: NonZeroU64) {
-        let (kib, write_max) = limit_parameters(limit, self.burst_bytes);
+        self.update_configuration(limit, self.burst_bytes);
+    }
+
+    /// Updates the limiter so both the rate and burst configuration take effect.
+    ///
+    /// Upstream rsync resets its token bucket whenever the daemon imposes a new
+    /// `--bwlimit=RATE[:BURST]` combination. Reusing that behaviour keeps
+    /// previously accumulated debt from leaking into the new configuration and
+    /// ensures subsequent calls behave as if the limiter had just been
+    /// constructed via [`BandwidthLimiter::with_burst`].
+    #[doc(alias = "--bwlimit")]
+    pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
+        let (kib, write_max) = limit_parameters(limit, burst);
 
         self.limit_bytes = limit;
         self.kib_per_second = kib;
         self.write_max = write_max;
+        self.burst_bytes = burst;
         self.total_written = 0;
         self.last_instant = None;
         self.simulated_elapsed_us = 0;
@@ -863,6 +876,36 @@ mod tests {
 
         let updated_sleeps = session.take();
         assert_eq!(updated_sleeps, baseline_sleeps);
+    }
+
+    #[test]
+    fn limiter_update_configuration_resets_state_and_updates_burst() {
+        let mut session = crate::recorded_sleep_session();
+        session.clear();
+
+        let initial_limit = NonZeroU64::new(1024).unwrap();
+        let initial_burst = NonZeroU64::new(4096).unwrap();
+        let mut limiter = BandwidthLimiter::with_burst(initial_limit, Some(initial_burst));
+        limiter.register(8192);
+        assert!(limiter.accumulated_debt_for_testing() > 0);
+
+        let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
+        let new_burst = NonZeroU64::new(2048).unwrap();
+        limiter.update_configuration(new_limit, Some(new_burst));
+
+        assert_eq!(limiter.limit_bytes(), new_limit);
+        assert_eq!(limiter.burst_bytes(), Some(new_burst));
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+        session.clear();
+        limiter.register(1024);
+        let recorded = session.take();
+        assert!(
+            recorded.is_empty()
+                || recorded
+                    .iter()
+                    .all(|duration| duration.as_micros() <= MINIMUM_SLEEP_MICROS)
+        );
     }
 
     proptest! {
