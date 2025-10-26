@@ -39,17 +39,17 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Daemon functionality incomplete**
   - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
-    a subset of `rsyncd.conf` supplied through `--config`. When an upstream
-    `rsync` binary is requested via `OC_RSYNC_DAEMON_FALLBACK=auto` or an
-    explicit path (`OC_RSYNC_DAEMON_FALLBACK=/path/to/rsync` or
-    `OC_RSYNC_FALLBACK=…`), the listener delegates the connection to that binary
-    so full module transfers function while the native engine is completed. If
-    delegation is disabled or the helper is missing, the daemon explains that
-    transfers are unavailable after completing
-    authentication. Authentication and authorization flows are in place, and
-    module-level `use chroot` directives are parsed with absolute-path
-    enforcement, but real module serving and the broader directive matrix remain
-    unimplemented when delegation is not possible.
+    a subset of `rsyncd.conf` supplied through `--config`. When the upstream
+    `rsync` binary is available, the daemon now delegates authenticated module
+    sessions to it by default so clients retain end-to-end transfers while the
+    native data path is completed. Delegation can be disabled explicitly via
+    `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
+    override); when disabled or when the helper binary is missing the daemon
+    explains that transfers are unavailable after completing authentication.
+    Authentication and authorization flows are in place, and module-level
+    `use chroot` directives are parsed with absolute-path enforcement, but real
+    module serving and the broader directive matrix remain unimplemented when
+    delegation is not possible.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.
