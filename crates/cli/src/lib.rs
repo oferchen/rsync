@@ -103,8 +103,8 @@ use rsync_core::{
         ClientEntryMetadata, ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver,
         ClientProgressUpdate, ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind,
         DirMergeOptions, FilterRuleKind, FilterRuleSpec, HumanReadableMode, ModuleListOptions,
-        ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext, TransferTimeout,
-        parse_skip_compress_list, run_client_or_fallback,
+        ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext, StrongChecksumChoice,
+        TransferTimeout, parse_skip_compress_list, run_client_or_fallback,
         run_module_list_with_password_and_options,
     },
     fallback::{FallbackOverride, fallback_override},
@@ -161,6 +161,7 @@ const HELP_TEXT: &str = concat!(
     "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
     "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
     "  -c, --checksum   Skip updates for files that already match by checksum.\n",
+    "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
     "  -u, --update    Skip files that are newer on the destination.\n",
@@ -268,7 +269,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -966,6 +967,8 @@ struct ParsedArgs {
     backup_dir: Option<OsString>,
     backup_suffix: Option<OsString>,
     checksum: bool,
+    checksum_choice: Option<StrongChecksumChoice>,
+    checksum_choice_arg: Option<OsString>,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -1265,6 +1268,18 @@ fn clap_command() -> ClapCommand {
                 .short('c')
                 .help("Skip files whose contents already match by checksum.")
                 .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("checksum-choice")
+                .long("checksum-choice")
+                .alias("cc")
+                .value_name("ALGO")
+                .help(
+                    "Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).",
+                )
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("size-only")
@@ -2414,6 +2429,25 @@ where
         .unwrap_or_default();
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
+    let (checksum_choice, checksum_choice_arg) =
+        match matches.remove_one::<OsString>("checksum-choice") {
+            Some(value) => {
+                let text = value.to_string_lossy().into_owned();
+                match StrongChecksumChoice::parse(&text) {
+                    Ok(choice) => {
+                        let normalized = OsString::from(choice.to_argument());
+                        (Some(choice), Some(normalized))
+                    }
+                    Err(message) => {
+                        return Err(clap::Error::raw(
+                            clap::error::ErrorKind::ValueValidation,
+                            message.text().to_string(),
+                        ));
+                    }
+                }
+            }
+            None => (None, None),
+        };
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
@@ -2493,6 +2527,8 @@ where
         backup_dir,
         backup_suffix,
         checksum,
+        checksum_choice,
+        checksum_choice_arg,
         size_only,
         ignore_existing,
         update,
@@ -2901,6 +2937,8 @@ where
         backup_dir,
         backup_suffix,
         checksum,
+        checksum_choice,
+        checksum_choice_arg,
         size_only,
         ignore_existing,
         update,
@@ -3504,6 +3542,7 @@ where
             min_size: min_size.clone(),
             max_size: max_size.clone(),
             checksum,
+            checksum_choice: checksum_choice_arg.clone(),
             size_only,
             ignore_existing,
             update,
@@ -3811,6 +3850,10 @@ where
         .whole_file(whole_file_option.unwrap_or(true))
         .timeout(timeout_setting)
         .connect_timeout(connect_timeout_setting);
+
+    if let Some(choice) = checksum_choice {
+        builder = builder.checksum_choice(choice);
+    }
 
     for path in &compare_destinations {
         builder = builder.compare_destination(PathBuf::from(path));
@@ -9200,6 +9243,37 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.modify_window, Some(OsString::from("5")));
+    }
+
+    #[test]
+    fn parse_args_recognises_checksum_choice() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--checksum-choice=XXH128"),
+        ])
+        .expect("parse");
+
+        let expected = StrongChecksumChoice::parse("xxh128").expect("choice");
+        assert_eq!(parsed.checksum_choice, Some(expected));
+        assert_eq!(parsed.checksum_choice_arg, Some(OsString::from("xxh128")));
+    }
+
+    #[test]
+    fn parse_args_rejects_invalid_checksum_choice() {
+        let error = match parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--checksum-choice=invalid"),
+        ]) {
+            Ok(_) => panic!("parse should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(
+            error
+                .to_string()
+                .contains("invalid --checksum-choice value 'invalid'")
+        );
     }
 
     #[test]
