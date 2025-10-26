@@ -1445,11 +1445,20 @@ impl<'a> LocalCopyProgress<'a> {
 pub struct LocalCopyReport {
     summary: LocalCopySummary,
     records: Vec<LocalCopyRecord>,
+    destination_root: PathBuf,
 }
 
 impl LocalCopyReport {
-    fn new(summary: LocalCopySummary, records: Vec<LocalCopyRecord>) -> Self {
-        Self { summary, records }
+    fn new(
+        summary: LocalCopySummary,
+        records: Vec<LocalCopyRecord>,
+        destination_root: PathBuf,
+    ) -> Self {
+        Self {
+            summary,
+            records,
+            destination_root,
+        }
     }
 
     /// Returns the high-level summary collected during execution.
@@ -1474,6 +1483,12 @@ impl LocalCopyReport {
     #[must_use]
     pub fn into_records(self) -> Vec<LocalCopyRecord> {
         self.records
+    }
+
+    /// Returns the destination root path used during execution.
+    #[must_use]
+    pub fn destination_root(&self) -> &Path {
+        &self.destination_root
     }
 }
 
@@ -3077,6 +3092,7 @@ impl LocalCopySummary {
 struct CopyOutcome {
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
+    destination_root: PathBuf,
 }
 
 impl CopyOutcome {
@@ -3087,7 +3103,10 @@ impl CopyOutcome {
     fn into_summary_and_report(self) -> (LocalCopySummary, LocalCopyReport) {
         let summary = self.summary;
         let records = self.events.unwrap_or_default();
-        (summary, LocalCopyReport::new(summary, records))
+        (
+            summary,
+            LocalCopyReport::new(summary, records, self.destination_root),
+        )
     }
 }
 
@@ -4458,6 +4477,7 @@ impl<'a> CopyContext<'a> {
         CopyOutcome {
             summary: self.summary,
             events: self.events,
+            destination_root: self.destination_root,
         }
     }
 

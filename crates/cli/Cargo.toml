@@ -19,6 +19,7 @@ rsync-daemon = { path = "../daemon" }
 rsync-protocol = { path = "../protocol" }
 rsync-compress = { path = "../compress" }
 rsync-meta = { path = "../meta" }
+rsync-checksums = { path = "../checksums" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
 tempfile = "3.10"
 users = "0.11"
@@ -29,5 +30,4 @@ tempfile = "3.10"
 rsync-filters = { path = "../filters" }
 xattr = "1.6"
 rustix = { version = "0.38", features = ["fs"] }
-rsync-checksums = { path = "../checksums" }
 base64 = "0.22"

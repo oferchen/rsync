@@ -93,6 +93,7 @@ use std::time::{Duration, SystemTime};
 use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
 
 use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
+use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
@@ -653,8 +654,10 @@ impl OutFormat {
                     OutFormatPlaceholder::RemoteHost
                     | OutFormatPlaceholder::RemoteAddress
                     | OutFormatPlaceholder::ModuleName
-                    | OutFormatPlaceholder::ModulePath
-                    | OutFormatPlaceholder::FullChecksum => {}
+                    | OutFormatPlaceholder::ModulePath => {}
+                    OutFormatPlaceholder::FullChecksum => {
+                        buffer.push_str(&format_full_checksum(event));
+                    }
                 },
             }
         }
@@ -819,6 +822,47 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
     }
 
     fields.iter().collect()
+}
+
+fn format_full_checksum(event: &ClientEvent) -> String {
+    const EMPTY_CHECKSUM: &str = "                                ";
+
+    if !matches!(
+        event.kind(),
+        ClientEventKind::DataCopied | ClientEventKind::MetadataReused | ClientEventKind::HardLink
+    ) {
+        return EMPTY_CHECKSUM.to_string();
+    }
+
+    if let Some(metadata) = event.metadata() {
+        if metadata.kind() != ClientEntryKind::File {
+            return EMPTY_CHECKSUM.to_string();
+        }
+    }
+
+    let path = event.destination_path();
+    let mut file = match File::open(&path) {
+        Ok(file) => file,
+        Err(_) => return EMPTY_CHECKSUM.to_string(),
+    };
+
+    let mut hasher = Md5::new();
+    let mut buffer = [0u8; 32 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => hasher.update(&buffer[..read]),
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => return EMPTY_CHECKSUM.to_string(),
+        }
+    }
+
+    let digest = hasher.finalize();
+    let mut rendered = String::with_capacity(32);
+    for byte in digest {
+        rendered.push_str(&format!("{byte:02x}"));
+    }
+    rendered
 }
 
 /// Parsed command produced by [`parse_args`].
@@ -7090,6 +7134,7 @@ fn render_module_list<W: Write, E: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rsync_checksums::strong::Md5;
     use rsync_core::client::FilterRuleKind;
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
@@ -9925,6 +9970,96 @@ mod tests {
     fn out_format_argument_rejects_unknown_placeholders() {
         let error = parse_out_format(OsStr::new("%z")).unwrap_err();
         assert!(error.to_string().contains("unsupported --out-format"));
+    }
+
+    #[test]
+    fn out_format_renders_full_checksum_for_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src dir");
+        std::fs::create_dir(&dst_dir).expect("create dst dir");
+
+        let source = src_dir.join("file.bin");
+        let contents = b"checksum payload";
+        std::fs::write(&source, contents).expect("write source");
+        let destination = dst_dir.join("file.bin");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| event.relative_path().to_string_lossy() == "file.bin")
+            .expect("file event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%C"))
+            .expect("parse %C")
+            .render(event, &mut output)
+            .expect("render %C");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        let mut hasher = Md5::new();
+        hasher.update(contents);
+        let digest = hasher.finalize();
+        let expected: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(rendered, format!("{expected}\n"));
+    }
+
+    #[test]
+    fn out_format_renders_full_checksum_for_non_file_entries_as_spaces() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir_all(src_dir.join("nested")).expect("create source tree");
+        std::fs::create_dir(&dst_dir).expect("create destination root");
+        std::fs::write(src_dir.join("nested").join("file.txt"), b"contents").expect("write file");
+
+        let source_operand = OsString::from(format!("{}/", src_dir.display()));
+        let dest_operand = OsString::from(format!("{}/", dst_dir.display()));
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_operand, dest_operand])
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let dir_event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::DirectoryCreated))
+            .expect("directory event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%C"))
+            .expect("parse %C")
+            .render(dir_event, &mut output)
+            .expect("render %C");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert_eq!(rendered.len(), 33);
+        assert!(rendered[..32].chars().all(|ch| ch == ' '));
+        assert_eq!(rendered.as_bytes()[32], b'\n');
     }
 
     #[cfg(unix)]
