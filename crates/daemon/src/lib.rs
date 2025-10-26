@@ -6990,6 +6990,8 @@ mod tests {
 
     #[test]
     fn run_daemon_accepts_valid_credentials() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
         fs::create_dir_all(&module_dir).expect("module dir");
