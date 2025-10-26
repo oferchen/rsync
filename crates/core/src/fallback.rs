@@ -39,19 +39,25 @@
 //!
 //! # Examples
 //!
-//! Determine which override applies and resolve it to an executable path:
+//! Construct overrides directly and resolve them to executable paths. In real
+//! usage call [`fallback_override`] to parse environment variables into the
+//! [`FallbackOverride`] enum before invoking [`FallbackOverride::resolve_or_default`].
 //!
 //! ```
-//! use rsync_core::fallback::{fallback_override, FallbackOverride};
+//! use rsync_core::fallback::FallbackOverride;
 //! use std::ffi::OsStr;
 //!
-//! std::env::set_var("OC_RSYNC_FALLBACK", "auto");
-//! let override_value = fallback_override("OC_RSYNC_FALLBACK").unwrap();
+//! let default = FallbackOverride::Default;
 //! assert_eq!(
-//!     override_value.resolve_or_default(OsStr::new("rsync")),
+//!     default.resolve_or_default(OsStr::new("rsync")),
 //!     Some("rsync".into())
 //! );
-//! std::env::remove_var("OC_RSYNC_FALLBACK");
+//!
+//! let explicit = FallbackOverride::Explicit("/usr/bin/rsync".into());
+//! assert_eq!(
+//!     explicit.resolve_or_default(OsStr::new("rsync")),
+//!     Some("/usr/bin/rsync".into())
+//! );
 //! ```
 //!
 //! # See also
