@@ -4550,9 +4550,15 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 fn configured_fallback_binary() -> Option<OsString> {
-    env::var_os("OC_RSYNC_DAEMON_FALLBACK")
-        .filter(|value| !value.is_empty())
-        .or_else(|| env::var_os("OC_RSYNC_FALLBACK").filter(|value| !value.is_empty()))
+    if let Some(result) = fallback_env_override("OC_RSYNC_DAEMON_FALLBACK") {
+        return result;
+    }
+
+    if let Some(result) = fallback_env_override("OC_RSYNC_FALLBACK") {
+        return result;
+    }
+
+    None
 }
 
 fn fallback_binary_configured() -> bool {
@@ -4561,6 +4567,27 @@ fn fallback_binary_configured() -> bool {
 
 fn fallback_binary() -> OsString {
     configured_fallback_binary().unwrap_or_else(|| OsString::from("rsync"))
+}
+
+fn fallback_env_override(name: &str) -> Option<Option<OsString>> {
+    let value = env::var_os(name)?;
+
+    if value.is_empty() {
+        return Some(None);
+    }
+
+    if let Some(text) = value.to_str() {
+        let trimmed = text.trim();
+        let lowered = trimmed.to_ascii_lowercase();
+        if matches!(lowered.as_str(), "0" | "false" | "no" | "off") {
+            return Some(None);
+        }
+        if lowered == "auto" {
+            return Some(Some(OsString::from("rsync")));
+        }
+    }
+
+    Some(Some(value))
 }
 
 fn env_flag(name: &str) -> Option<bool> {
@@ -4724,6 +4751,14 @@ mod tests {
             }
             Self { key, previous }
         }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
     }
 
     #[allow(unsafe_code)]
@@ -4739,6 +4774,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn configured_fallback_binary_default_is_none() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::remove("OC_RSYNC_DAEMON_FALLBACK");
+        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        assert!(configured_fallback_binary().is_none());
+    }
+
+    #[test]
+    fn configured_fallback_binary_respects_primary_disable() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        assert!(configured_fallback_binary().is_none());
+    }
+
+    #[test]
+    fn configured_fallback_binary_respects_secondary_disable() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::remove("OC_RSYNC_DAEMON_FALLBACK");
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("no"));
+        assert!(configured_fallback_binary().is_none());
+    }
+
+    #[test]
+    fn configured_fallback_binary_supports_auto_value() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("auto"));
+        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        assert_eq!(configured_fallback_binary(), Some(OsString::from("rsync")));
     }
 
     #[cfg(unix)]
