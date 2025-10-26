@@ -90,7 +90,10 @@ use std::net::{SocketAddr, TcpStream};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::mpsc::{self, Sender};
+use std::sync::{
+    Arc,
+    mpsc::{self, Sender},
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, error::Error};
@@ -2182,10 +2185,11 @@ pub struct ClientSummary {
 impl ClientSummary {
     fn from_report(report: LocalCopyReport) -> Self {
         let stats = *report.summary();
+        let destination_root = Arc::new(report.destination_root().to_path_buf());
         let events = report
             .records()
             .iter()
-            .map(ClientEvent::from_record)
+            .map(|record| ClientEvent::from_record(record, Arc::clone(&destination_root)))
             .collect();
         Self { stats, events }
     }
@@ -3458,10 +3462,12 @@ pub struct ClientEvent {
     elapsed: Duration,
     metadata: Option<ClientEntryMetadata>,
     created: bool,
+    destination_root: Arc<PathBuf>,
+    destination_path: PathBuf,
 }
 
 impl ClientEvent {
-    fn from_record(record: &LocalCopyRecord) -> Self {
+    fn from_record(record: &LocalCopyRecord, destination_root: Arc<PathBuf>) -> Self {
         let kind = match record.action() {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
             LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
@@ -3492,6 +3498,8 @@ impl ClientEvent {
             | LocalCopyAction::EntryDeleted
             | LocalCopyAction::SourceRemoved => false,
         };
+        let destination_path =
+            Self::resolve_destination_path(&destination_root, record.relative_path());
         Self {
             relative_path: record.relative_path().to_path_buf(),
             kind,
@@ -3502,6 +3510,8 @@ impl ClientEvent {
                 .metadata()
                 .map(ClientEntryMetadata::from_local_copy_metadata),
             created,
+            destination_root,
+            destination_path,
         }
     }
 
@@ -3510,7 +3520,9 @@ impl ClientEvent {
         bytes_transferred: u64,
         total_bytes: Option<u64>,
         elapsed: Duration,
+        destination_root: Arc<PathBuf>,
     ) -> Self {
+        let destination_path = Self::resolve_destination_path(&destination_root, relative);
         Self {
             relative_path: relative.to_path_buf(),
             kind: ClientEventKind::DataCopied,
@@ -3519,6 +3531,8 @@ impl ClientEvent {
             elapsed,
             metadata: None,
             created: false,
+            destination_root,
+            destination_path,
         }
     }
 
@@ -3562,6 +3576,33 @@ impl ClientEvent {
     #[must_use]
     pub const fn was_created(&self) -> bool {
         self.created
+    }
+
+    /// Returns the root directory of the destination tree.
+    #[must_use]
+    pub fn destination_root(&self) -> &Path {
+        &self.destination_root
+    }
+
+    /// Returns the absolute destination path associated with this event.
+    #[must_use]
+    pub fn destination_path(&self) -> PathBuf {
+        self.destination_path.clone()
+    }
+
+    fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
+        let candidate = destination_root.join(relative);
+        if candidate.exists() {
+            return candidate;
+        }
+
+        if let Some(file_name) = destination_root.file_name() {
+            if relative == Path::new(file_name) {
+                return destination_root.to_path_buf();
+            }
+        }
+
+        candidate
     }
 }
 
@@ -3797,6 +3838,7 @@ struct ClientProgressForwarder<'a> {
     overall_transferred: u64,
     overall_start: Instant,
     in_flight: HashMap<PathBuf, u64>,
+    destination_root: Arc<PathBuf>,
 }
 
 impl<'a> ClientProgressForwarder<'a> {
@@ -3813,13 +3855,12 @@ impl<'a> ClientProgressForwarder<'a> {
             .execute_with_report(LocalCopyExecution::DryRun, options.clone())
             .map_err(map_local_copy_error)?;
 
+        let destination_root = Arc::new(preview_report.destination_root().to_path_buf());
         let total = preview_report
             .records()
             .iter()
-            .filter(|record| {
-                let event = ClientEvent::from_record(record);
-                event.kind().is_progress()
-            })
+            .map(|record| ClientEvent::from_record(record, Arc::clone(&destination_root)))
+            .filter(|event| event.kind().is_progress())
             .count();
 
         let summary = preview_report.summary();
@@ -3833,6 +3874,7 @@ impl<'a> ClientProgressForwarder<'a> {
             overall_transferred: 0,
             overall_start: Instant::now(),
             in_flight: HashMap::new(),
+            destination_root,
         })
     }
 
@@ -3843,7 +3885,7 @@ impl<'a> ClientProgressForwarder<'a> {
 
 impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
     fn handle(&mut self, record: LocalCopyRecord) {
-        let event = ClientEvent::from_record(&record);
+        let event = ClientEvent::from_record(&record, Arc::clone(&self.destination_root));
         if !event.kind().is_progress() {
             return;
         }
@@ -3892,6 +3934,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             progress.bytes_transferred(),
             progress.total_bytes(),
             progress.elapsed(),
+            Arc::clone(&self.destination_root),
         );
 
         let entry = self
@@ -4158,7 +4201,7 @@ mod tests {
     use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::num::{NonZeroU8, NonZeroU64};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Duration;
@@ -4180,8 +4223,44 @@ mod tests {
         assert!(zeroed.iter().all(|&byte| byte == 0));
     }
 
-    #[cfg(unix)]
-    use std::path::Path;
+    #[test]
+    fn resolve_destination_path_returns_existing_candidate() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("dest");
+        fs::create_dir_all(&root).expect("create dest root");
+        let subdir = root.join("sub");
+        fs::create_dir_all(&subdir).expect("create subdir");
+        let file_path = subdir.join("file.txt");
+        fs::write(&file_path, b"payload").expect("write file");
+
+        let relative = Path::new("sub").join("file.txt");
+        let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative.as_path());
+
+        assert_eq!(resolved, file_path);
+    }
+
+    #[test]
+    fn resolve_destination_path_returns_root_for_file_destination() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("target.bin");
+        let relative = Path::new("target.bin");
+
+        let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative);
+
+        assert_eq!(resolved, root);
+    }
+
+    #[test]
+    fn resolve_destination_path_preserves_missing_entries() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("dest");
+        fs::create_dir_all(&root).expect("create destination root");
+        let relative = Path::new("missing.bin");
+
+        let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative);
+
+        assert_eq!(resolved, root.join(relative));
+    }
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
