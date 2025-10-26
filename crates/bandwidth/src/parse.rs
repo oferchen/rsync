@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 
@@ -75,6 +77,22 @@ pub enum BandwidthParseError {
     /// The requested rate overflowed the supported range.
     TooLarge,
 }
+
+impl fmt::Display for BandwidthParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let description = match self {
+            BandwidthParseError::Invalid => "invalid bandwidth limit syntax",
+            BandwidthParseError::TooSmall => {
+                "bandwidth limit is below the minimum of 512 bytes per second"
+            }
+            BandwidthParseError::TooLarge => "bandwidth limit exceeds the supported range",
+        };
+
+        f.write_str(description)
+    }
+}
+
+impl Error for BandwidthParseError {}
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
 #[doc(alias = "--bwlimit")]
@@ -386,6 +404,22 @@ mod tests {
         assert_eq!(
             components,
             BandwidthLimitComponents::new(NonZeroU64::new(1_048_576), NonZeroU64::new(64 * 1024),)
+        );
+    }
+
+    #[test]
+    fn bandwidth_parse_error_display_messages() {
+        assert_eq!(
+            BandwidthParseError::Invalid.to_string(),
+            "invalid bandwidth limit syntax"
+        );
+        assert_eq!(
+            BandwidthParseError::TooSmall.to_string(),
+            "bandwidth limit is below the minimum of 512 bytes per second"
+        );
+        assert_eq!(
+            BandwidthParseError::TooLarge.to_string(),
+            "bandwidth limit exceeds the supported range"
         );
     }
 
