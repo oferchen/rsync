@@ -1536,6 +1536,8 @@ pub struct LocalCopyOptions {
     delete_timing: DeleteTiming,
     delete_excluded: bool,
     max_deletions: Option<u64>,
+    min_file_size: Option<u64>,
+    max_file_size: Option<u64>,
     remove_source_files: bool,
     preallocate: bool,
     bandwidth_limit: Option<NonZeroU64>,
@@ -1600,6 +1602,8 @@ impl LocalCopyOptions {
             delete_timing: DeleteTiming::default(),
             delete_excluded: false,
             max_deletions: None,
+            min_file_size: None,
+            max_file_size: None,
             remove_source_files: false,
             preallocate: false,
             bandwidth_limit: None,
@@ -1825,6 +1829,22 @@ impl LocalCopyOptions {
     #[doc(alias = "--max-delete")]
     pub const fn max_deletions(mut self, limit: Option<u64>) -> Self {
         self.max_deletions = limit;
+        self
+    }
+
+    /// Applies a minimum size filter for regular files.
+    #[must_use]
+    #[doc(alias = "--min-size")]
+    pub const fn min_file_size(mut self, limit: Option<u64>) -> Self {
+        self.min_file_size = limit;
+        self
+    }
+
+    /// Applies a maximum size filter for regular files.
+    #[must_use]
+    #[doc(alias = "--max-size")]
+    pub const fn max_file_size(mut self, limit: Option<u64>) -> Self {
+        self.max_file_size = limit;
         self
     }
 
@@ -2246,6 +2266,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn max_deletion_limit(&self) -> Option<u64> {
         self.max_deletions
+    }
+
+    /// Returns the minimum file size filter configured for the run.
+    #[must_use]
+    pub const fn min_file_size_limit(&self) -> Option<u64> {
+        self.min_file_size
+    }
+
+    /// Returns the maximum file size filter configured for the run.
+    #[must_use]
+    pub const fn max_file_size_limit(&self) -> Option<u64> {
+        self.max_file_size
     }
 
     /// Returns the configured deletion timing when deletion sweeps are enabled.
@@ -3427,6 +3459,14 @@ impl<'a> CopyContext<'a> {
 
     fn delete_timing(&self) -> Option<DeleteTiming> {
         self.options.delete_timing()
+    }
+
+    fn min_file_size_limit(&self) -> Option<u64> {
+        self.options.min_file_size_limit()
+    }
+
+    fn max_file_size_limit(&self) -> Option<u64> {
+        self.options.max_file_size_limit()
     }
 
     fn metadata_options(&self) -> MetadataOptions {
@@ -6560,6 +6600,18 @@ fn copy_file(
     let file_size = metadata.len();
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
+
+    if let Some(min_limit) = context.min_file_size_limit() {
+        if file_size < min_limit {
+            return Ok(());
+        }
+    }
+
+    if let Some(max_limit) = context.max_file_size_limit() {
+        if file_size > max_limit {
+            return Ok(());
+        }
+    }
     if let Some(parent) = destination.parent() {
         context.prepare_parent_directory(parent)?;
     }
@@ -9890,6 +9942,90 @@ mod tests {
     }
 
     #[test]
+    fn execute_skips_files_smaller_than_min_size_limit() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("tiny.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"abc").expect("write source");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().min_file_size(Some(10)),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.bytes_copied(), 0);
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_skips_files_larger_than_max_size_limit() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("large.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, vec![0u8; 4096]).expect("write large source");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().max_file_size(Some(2048)),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.bytes_copied(), 0);
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn execute_copies_files_matching_size_boundaries() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("boundary.bin");
+        let destination = temp.path().join("dest.bin");
+
+        let payload = vec![0xAA; 2048];
+        fs::write(&source, &payload).expect("write boundary source");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .min_file_size(Some(2048))
+                    .max_file_size(Some(2048)),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.regular_files_total(), 1);
+        assert_eq!(summary.bytes_copied(), 2048);
+        assert_eq!(fs::read(&destination).expect("read destination"), payload);
+    }
+
+    #[test]
     fn execute_with_update_skips_newer_destination() {
         let temp = tempdir().expect("tempdir");
         let source_root = temp.path().join("source");
@@ -10020,6 +10156,31 @@ mod tests {
             record.action() == &LocalCopyAction::DirectoryCreated
                 && record.relative_path() == Path::new("tree")
         }));
+    }
+
+    #[test]
+    fn execute_with_report_dry_run_skips_records_for_filtered_small_files() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("tiny.txt");
+        fs::write(&source, b"abc").expect("write source");
+        let destination = temp.path().join("dest.txt");
+
+        let operands = vec![
+            source.clone().into_os_string(),
+            destination.into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .collect_events(true)
+            .min_file_size(Some(10));
+        let report = plan
+            .execute_with_report(LocalCopyExecution::DryRun, options)
+            .expect("dry run succeeds");
+
+        assert!(report.records().is_empty());
+        assert_eq!(report.summary().files_copied(), 0);
+        assert_eq!(report.summary().regular_files_total(), 1);
+        assert_eq!(report.summary().bytes_copied(), 0);
     }
 
     #[cfg(unix)]
@@ -11831,6 +11992,36 @@ mod tests {
         assert!(target_without.join("empty").is_dir());
         assert!(!target_with.join("empty").exists());
         assert!(summary_with.directories_created() < summary_without.directories_created());
+    }
+
+    #[test]
+    fn execute_prunes_empty_directories_with_size_filters() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("dest");
+        let nested = source_root.join("nested");
+
+        fs::create_dir_all(&nested).expect("create nested source");
+        fs::create_dir_all(&destination_root).expect("create destination root");
+        fs::write(nested.join("tiny.bin"), b"x").expect("write small file");
+
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let options = LocalCopyOptions::default()
+            .min_file_size(Some(10))
+            .prune_empty_dirs(true);
+        let summary = plan
+            .execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = destination_root.join("source");
+        assert!(target_root.exists());
+        assert!(target_root.join("nested").is_dir());
+        assert!(!target_root.join("nested").join("tiny.bin").exists());
+        assert_eq!(summary.files_copied(), 0);
     }
 
     #[test]
