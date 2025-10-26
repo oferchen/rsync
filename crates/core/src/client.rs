@@ -4243,7 +4243,6 @@ fn build_local_copy_options(
         .backup(config.backup())
         .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
         .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
-        .delay_updates(config.delay_updates())
         .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
         .delay_updates(config.delay_updates())
         .extend_link_dests(config.link_dest_paths().iter().cloned())
@@ -4908,6 +4907,26 @@ exit 42
 
         let options = build_local_copy_options(&config, None);
         assert!(options.timeout().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_delay_updates_enable_partial_transfers() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .delay_updates(true)
+            .build();
+
+        let enabled_options = build_local_copy_options(&enabled, None);
+        assert!(enabled_options.delay_updates_enabled());
+        assert!(enabled_options.partial_enabled());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        let disabled_options = build_local_copy_options(&disabled, None);
+        assert!(!disabled_options.delay_updates_enabled());
+        assert!(!disabled_options.partial_enabled());
     }
 
     #[test]
