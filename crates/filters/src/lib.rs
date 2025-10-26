@@ -353,42 +353,60 @@ struct FilterSetInner {
     protect_risk: Vec<CompiledRule>,
 }
 
+fn last_matching_rule<'a, F>(
+    rules: &'a [CompiledRule],
+    path: &Path,
+    is_dir: bool,
+    mut applies: F,
+) -> Option<&'a CompiledRule>
+where
+    F: FnMut(&CompiledRule) -> bool,
+{
+    rules
+        .iter()
+        .rev()
+        .find(|rule| applies(rule) && rule.matches(path, is_dir))
+}
+
 impl FilterSetInner {
     fn decision(&self, path: &Path, is_dir: bool, context: DecisionContext) -> FilterDecision {
         let mut decision = FilterDecision::default();
 
-        for rule in &self.include_exclude {
-            if rule.matches(path, is_dir) {
-                match context {
-                    DecisionContext::Transfer => {
-                        if rule.applies_to_sender {
-                            decision.transfer_allowed =
-                                matches!(rule.action, FilterAction::Include);
-                        }
-                    }
-                    DecisionContext::Deletion => {
-                        if rule.applies_to_receiver {
-                            decision.transfer_allowed =
-                                matches!(rule.action, FilterAction::Include);
-                        }
-                    }
-                }
+        let transfer_rule = match context {
+            DecisionContext::Transfer => {
+                last_matching_rule(&self.include_exclude, path, is_dir, |rule| {
+                    rule.applies_to_sender
+                })
             }
+            DecisionContext::Deletion => {
+                last_matching_rule(&self.include_exclude, path, is_dir, |rule| {
+                    rule.applies_to_receiver
+                })
+            }
+        };
+
+        if let Some(rule) = transfer_rule {
+            decision.transfer_allowed = matches!(rule.action, FilterAction::Include);
         }
 
-        for rule in &self.protect_risk {
-            if rule.matches(path, is_dir) {
-                let applies = match context {
-                    DecisionContext::Transfer => rule.applies_to_sender,
-                    DecisionContext::Deletion => rule.applies_to_receiver,
-                };
-                if applies {
-                    match rule.action {
-                        FilterAction::Protect => decision.protect(),
-                        FilterAction::Risk => decision.unprotect(),
-                        FilterAction::Include | FilterAction::Exclude => {}
-                    }
-                }
+        let protection_rule = match context {
+            DecisionContext::Transfer => {
+                last_matching_rule(&self.protect_risk, path, is_dir, |rule| {
+                    rule.applies_to_sender
+                })
+            }
+            DecisionContext::Deletion => {
+                last_matching_rule(&self.protect_risk, path, is_dir, |rule| {
+                    rule.applies_to_receiver
+                })
+            }
+        };
+
+        if let Some(rule) = protection_rule {
+            match rule.action {
+                FilterAction::Protect => decision.protect(),
+                FilterAction::Risk => decision.unprotect(),
+                FilterAction::Include | FilterAction::Exclude => {}
             }
         }
 
@@ -759,5 +777,25 @@ mod tests {
         let set = FilterSet::from_rules([FilterRule::hide("hidden/**")]).expect("compiled");
         assert!(!set.allows(Path::new("hidden/file.txt"), false));
         assert!(set.allows_deletion(Path::new("hidden/file.txt"), false));
+    }
+
+    #[test]
+    fn receiver_context_skips_sender_only_tail_rule() {
+        let rules = [
+            FilterRule::exclude("*.tmp").with_sides(false, true),
+            FilterRule::include("*.tmp").with_sides(true, false),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(!set.allows_deletion(Path::new("note.tmp"), false));
+    }
+
+    #[test]
+    fn sender_only_risk_does_not_clear_receiver_protection() {
+        let rules = [
+            FilterRule::protect("keep/"),
+            FilterRule::risk("keep/").with_sides(true, false),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
     }
 }
