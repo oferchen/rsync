@@ -188,6 +188,39 @@ impl Default for TransferTimeout {
     }
 }
 
+/// Controls how byte counters are rendered for user-facing output.
+///
+/// Upstream `rsync` accepts optional levels for `--human-readable` that either
+/// disable humanisation entirely, enable suffix-based formatting, or emit both
+/// the humanised and exact decimal value.  The enum mirrors those levels so the
+/// CLI can propagate the caller's preference to both the local renderer and any
+/// fallback `rsync` invocations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[doc(alias = "--human-readable")]
+pub enum HumanReadableMode {
+    /// Disable human-readable formatting and display exact decimal values.
+    Disabled,
+    /// Enable suffix-based formatting (e.g. `1.23K`, `4.56M`).
+    Enabled,
+    /// Display both the human-readable value and the exact decimal value.
+    Combined,
+}
+
+impl HumanReadableMode {
+    /// Reports whether human-readable formatting should be used.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    /// Reports whether the exact decimal value should be included alongside the
+    /// human-readable representation.
+    #[must_use]
+    pub const fn includes_exact(self) -> bool {
+        matches!(self, Self::Combined)
+    }
+}
+
 /// Selects the preferred address family for daemon and remote-shell connections.
 ///
 /// When [`AddressMode::Ipv4`] or [`AddressMode::Ipv6`] is selected, network
@@ -2297,8 +2330,8 @@ pub struct RemoteFallbackArgs {
     /// while `Some(false)` forwards `--no-protect-args`. A `None` value keeps
     /// rsync's default behaviour.
     pub protect_args: Option<bool>,
-    /// Optional `--human-readable`/`--no-human-readable` toggle.
-    pub human_readable: Option<bool>,
+    /// Optional `--human-readable` level forwarded to the fallback binary.
+    pub human_readable: Option<HumanReadableMode>,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Enables `--delete`.
@@ -2526,7 +2559,7 @@ where
         remote_shell,
         remote_options,
         protect_args,
-        human_readable,
+        human_readable: human_readable_mode,
         archive,
         delete,
         delete_mode,
@@ -2805,12 +2838,7 @@ where
         }
     }
 
-    push_toggle(
-        &mut command_args,
-        "--human-readable",
-        "--no-human-readable",
-        human_readable,
-    );
+    push_human_readable(&mut command_args, human_readable_mode);
 
     if let Some(limit) = bwlimit {
         command_args.push(OsString::from("--bwlimit"));
@@ -3086,6 +3114,15 @@ fn push_toggle(args: &mut Vec<OsString>, enable: &str, disable: &str, setting: O
     match setting {
         Some(true) => args.push(OsString::from(enable)),
         Some(false) => args.push(OsString::from(disable)),
+        None => {}
+    }
+}
+
+fn push_human_readable(args: &mut Vec<OsString>, mode: Option<HumanReadableMode>) {
+    match mode {
+        Some(HumanReadableMode::Disabled) => args.push(OsString::from("--no-human-readable")),
+        Some(HumanReadableMode::Enabled) => args.push(OsString::from("--human-readable")),
+        Some(HumanReadableMode::Combined) => args.push(OsString::from("--human-readable=2")),
         None => {}
     }
 }

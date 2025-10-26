@@ -100,8 +100,8 @@ use rsync_core::{
         AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
         ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
         ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
-        FilterRuleKind, FilterRuleSpec, ModuleListOptions, ModuleListRequest, RemoteFallbackArgs,
-        RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
+        FilterRuleKind, FilterRuleSpec, HumanReadableMode, ModuleListOptions, ModuleListRequest,
+        RemoteFallbackArgs, RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
         run_module_list_with_password_and_options,
     },
     message::{Message, Role},
@@ -847,7 +847,7 @@ impl ProgressSetting {
 struct ParsedArgs {
     show_help: bool,
     show_version: bool,
-    human_readable: Option<bool>,
+    human_readable: Option<HumanReadableMode>,
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
@@ -969,8 +969,15 @@ fn clap_command() -> ClapCommand {
             Arg::new("human-readable")
                 .short('h')
                 .long("human-readable")
-                .help("Output numbers in a human-readable format.")
-                .action(ArgAction::SetTrue)
+                .value_name("LEVEL")
+                .help(
+                    "Output numbers in a human-readable format; optional LEVEL selects 0, 1, or 2.",
+                )
+                .num_args(0..=1)
+                .default_missing_value("1")
+                .require_equals(true)
+                .value_parser(OsStringValueParser::new())
+                .action(ArgAction::Set)
                 .overrides_with("no-human-readable"),
         )
         .arg(
@@ -1827,13 +1834,13 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
-    let human_readable = if matches.get_flag("human-readable") {
-        Some(true)
-    } else if matches.get_flag("no-human-readable") {
-        Some(false)
-    } else {
-        None
-    };
+    let mut human_readable = matches
+        .remove_one::<OsString>("human-readable")
+        .map(|value| parse_human_readable_level(value.as_os_str()))
+        .transpose()?;
+    if matches.get_flag("no-human-readable") {
+        human_readable = Some(HumanReadableMode::Disabled);
+    }
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
     let mkpath = matches.get_flag("mkpath");
@@ -2668,7 +2675,8 @@ where
 
     let password_file = password_file.map(PathBuf::from);
     let human_readable_setting = human_readable;
-    let human_readable = human_readable_setting.unwrap_or(false);
+    let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
+    let human_readable_enabled = human_readable_mode.is_enabled();
 
     if password_file
         .as_deref()
@@ -3347,7 +3355,7 @@ where
         .safe_links(safe_links)
         .relative_paths(relative)
         .implied_dirs(implied_dirs)
-        .human_readable(human_readable)
+        .human_readable(human_readable_enabled)
         .mkpath(mkpath)
         .prune_empty_dirs(prune_empty_dirs.unwrap_or(false))
         .verbosity(verbosity)
@@ -3505,7 +3513,7 @@ where
             stdout,
             stderr,
             msgs_to_stderr,
-            |writer| LiveProgress::new(writer, mode, human_readable),
+            |writer| LiveProgress::new(writer, mode, human_readable_mode),
         ))
     } else {
         None
@@ -3542,7 +3550,7 @@ where
                     out_format_template.as_ref(),
                     name_level,
                     name_overridden,
-                    human_readable,
+                    human_readable_mode,
                     writer,
                 )
             }) {
@@ -3586,11 +3594,15 @@ struct LiveProgress<'a> {
     active_path: Option<PathBuf>,
     line_active: bool,
     mode: ProgressMode,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
 }
 
 impl<'a> LiveProgress<'a> {
-    fn new(writer: &'a mut dyn Write, mode: ProgressMode, human_readable: bool) -> Self {
+    fn new(
+        writer: &'a mut dyn Write,
+        mode: ProgressMode,
+        human_readable: HumanReadableMode,
+    ) -> Self {
         Self {
             writer,
             rendered: false,
@@ -3735,7 +3747,7 @@ fn emit_transfer_summary(
     out_format: Option<&OutFormat>,
     name_level: NameOutputLevel,
     name_overridden: bool,
-    human_readable: bool,
+    human_readable_mode: HumanReadableMode,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -3743,7 +3755,7 @@ fn emit_transfer_summary(
     if list_only {
         let mut wrote_listing = false;
         if !events.is_empty() {
-            emit_list_only(events, writer, human_readable)?;
+            emit_list_only(events, writer, human_readable_mode)?;
             wrote_listing = true;
         }
 
@@ -3751,12 +3763,12 @@ fn emit_transfer_summary(
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer, human_readable)?;
+            emit_stats(summary, writer, human_readable_mode)?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_totals(summary, writer, human_readable)?;
+            emit_totals(summary, writer, human_readable_mode)?;
         }
 
         return Ok(());
@@ -3776,7 +3788,7 @@ fn emit_transfer_summary(
     let progress_rendered = if progress_already_rendered {
         true
     } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
-        emit_progress(events, writer, human_readable)?
+        emit_progress(events, writer, human_readable_mode)?
     } else {
         false
     };
@@ -3803,7 +3815,7 @@ fn emit_transfer_summary(
             verbosity,
             name_level,
             name_overridden,
-            human_readable,
+            human_readable_mode,
             writer,
         )?;
         if stats {
@@ -3812,9 +3824,9 @@ fn emit_transfer_summary(
     }
 
     if stats {
-        emit_stats(summary, writer, human_readable)?;
+        emit_stats(summary, writer, human_readable_mode)?;
     } else if verbosity > 0 || (verbosity == 0 && name_enabled) {
-        emit_totals(summary, writer, human_readable)?;
+        emit_totals(summary, writer, human_readable_mode)?;
     }
 
     Ok(())
@@ -3823,7 +3835,7 @@ fn emit_transfer_summary(
 fn emit_list_only<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
 ) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
@@ -3941,7 +3953,7 @@ fn format_list_timestamp(modified: Option<SystemTime>) -> String {
     "1970/01/01 00:00:00".to_string()
 }
 
-fn format_list_size(size: u64, human_readable: bool) -> String {
+fn format_list_size(size: u64, human_readable: HumanReadableMode) -> String {
     let value = format_size(size, human_readable);
     format!("{value:>15}")
 }
@@ -3953,16 +3965,23 @@ fn is_progress_event(kind: &ClientEventKind) -> bool {
 
 /// Formats a byte count using thousands separators when human-readable formatting is disabled. When
 /// enabled, the output uses decimal unit suffixes such as `K`, `M`, or `G` with two fractional
-/// digits.
-fn format_progress_bytes(bytes: u64, human_readable: bool) -> String {
+/// digits. Combined mode includes the exact decimal value in parentheses when the two representations
+/// differ.
+fn format_progress_bytes(bytes: u64, human_readable: HumanReadableMode) -> String {
     format_size(bytes, human_readable)
 }
 
-fn format_size(bytes: u64, human_readable: bool) -> String {
-    if human_readable {
-        format_human_bytes(bytes)
+fn format_size(bytes: u64, human_readable: HumanReadableMode) -> String {
+    let decimal = format_decimal_bytes(bytes);
+    if !human_readable.is_enabled() {
+        return decimal;
+    }
+
+    let human = format_human_bytes(bytes);
+    if human_readable.includes_exact() && human != decimal {
+        format!("{human} ({decimal})")
     } else {
-        format_decimal_bytes(bytes)
+        human
     }
 }
 
@@ -4004,11 +4023,17 @@ fn format_human_bytes(bytes: u64) -> String {
     bytes.to_string()
 }
 
-fn format_summary_rate(rate: f64, human_readable: bool) -> String {
-    if human_readable {
-        format_human_rate(rate)
+fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) -> String {
+    let decimal = format!("{rate:.2}");
+    if !human_readable.is_enabled() {
+        return decimal;
+    }
+
+    let human = format_human_rate(rate);
+    if human_readable.includes_exact() && human != decimal {
+        format!("{human} ({decimal})")
     } else {
-        format!("{rate:.2}")
+        human
     }
 }
 
@@ -4035,27 +4060,55 @@ fn format_human_rate(rate: f64) -> String {
     format!("{rate:.2}")
 }
 
-fn format_verbose_rate(rate: f64, human_readable: bool) -> (String, &'static str) {
-    if human_readable {
-        const UNITS: &[(&str, f64)] = &[
-            ("PB/s", 1_000_000_000_000_000.0),
-            ("TB/s", 1_000_000_000_000.0),
-            ("GB/s", 1_000_000_000.0),
-            ("MB/s", 1_000_000.0),
-            ("kB/s", 1_000.0),
-        ];
+struct VerboseRateDisplay {
+    primary: (String, &'static str),
+    secondary: Option<(String, &'static str)>,
+}
 
-        for (unit, threshold) in UNITS {
-            if rate >= *threshold {
-                let value = rate / *threshold;
-                return (format!("{value:.2}"), *unit);
-            }
-        }
-
-        (format!("{rate:.2}"), "B/s")
-    } else {
-        (format!("{rate:.1}"), "B/s")
+fn format_verbose_rate(rate: f64, human_readable: HumanReadableMode) -> VerboseRateDisplay {
+    let decimal = format_verbose_rate_decimal(rate);
+    if !human_readable.is_enabled() {
+        return VerboseRateDisplay {
+            primary: decimal,
+            secondary: None,
+        };
     }
+
+    let human = format_verbose_rate_human(rate);
+    if human_readable.includes_exact() && (human.0 != decimal.0 || human.1 != decimal.1) {
+        VerboseRateDisplay {
+            primary: human,
+            secondary: Some(decimal),
+        }
+    } else {
+        VerboseRateDisplay {
+            primary: human,
+            secondary: None,
+        }
+    }
+}
+
+fn format_verbose_rate_decimal(rate: f64) -> (String, &'static str) {
+    (format!("{rate:.1}"), "B/s")
+}
+
+fn format_verbose_rate_human(rate: f64) -> (String, &'static str) {
+    const UNITS: &[(&str, f64)] = &[
+        ("PB/s", 1_000_000_000_000_000.0),
+        ("TB/s", 1_000_000_000_000.0),
+        ("GB/s", 1_000_000_000.0),
+        ("MB/s", 1_000_000.0),
+        ("kB/s", 1_000.0),
+    ];
+
+    for (unit, threshold) in UNITS {
+        if rate >= *threshold {
+            let value = rate / *threshold;
+            return (format!("{value:.2}"), *unit);
+        }
+    }
+
+    (format!("{rate:.2}"), "B/s")
 }
 
 /// Formats a progress percentage, producing the upstream `??%` placeholder when totals are
@@ -4073,13 +4126,13 @@ fn format_progress_percent(bytes: u64, total: Option<u64>) -> String {
 }
 
 /// Formats a transfer rate in the `kB/s`, `MB/s`, or `GB/s` ranges.
-fn format_progress_rate(bytes: u64, elapsed: Duration, human_readable: bool) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-
+fn format_progress_rate(
+    bytes: u64,
+    elapsed: Duration,
+    human_readable: HumanReadableMode,
+) -> String {
     if bytes == 0 || elapsed.is_zero() {
-        return if human_readable {
+        return if human_readable.is_enabled() {
             "0.00B/s".to_string()
         } else {
             "0.00kB/s".to_string()
@@ -4088,28 +4141,44 @@ fn format_progress_rate(bytes: u64, elapsed: Duration, human_readable: bool) -> 
 
     let seconds = elapsed.as_secs_f64();
     if seconds <= 0.0 {
-        return if human_readable {
+        return if human_readable.is_enabled() {
             "0.00B/s".to_string()
         } else {
             "0.00kB/s".to_string()
         };
     }
 
-    let bytes_per_second = bytes as f64 / seconds;
-    if human_readable {
-        let (value, unit) = format_verbose_rate(bytes_per_second, true);
-        format!("{value}{unit}")
-    } else {
-        let (value, unit) = if bytes_per_second >= GIB {
-            (bytes_per_second / GIB, "GB/s")
-        } else if bytes_per_second >= MIB {
-            (bytes_per_second / MIB, "MB/s")
-        } else {
-            (bytes_per_second / KIB, "kB/s")
-        };
-
-        format!("{value:.2}{unit}")
+    let rate = bytes as f64 / seconds;
+    let decimal = format_progress_rate_decimal(rate);
+    if !human_readable.is_enabled() {
+        return decimal;
     }
+
+    let human = format_progress_rate_human(rate);
+    if human_readable.includes_exact() && human != decimal {
+        format!("{human} ({decimal})")
+    } else {
+        human
+    }
+}
+
+fn format_progress_rate_decimal(rate: f64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+
+    if rate >= GIB {
+        format!("{:.2}GB/s", rate / GIB)
+    } else if rate >= MIB {
+        format!("{:.2}MB/s", rate / MIB)
+    } else {
+        format!("{:.2}kB/s", rate / KIB)
+    }
+}
+
+fn format_progress_rate_human(rate: f64) -> String {
+    let display = format_verbose_rate_human(rate);
+    format!("{}{}", display.0, display.1)
 }
 
 /// Formats an elapsed duration as `H:MM:SS`, matching rsync's progress output.
@@ -4125,7 +4194,7 @@ fn format_progress_elapsed(elapsed: Duration) -> String {
 fn emit_progress<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
 ) -> io::Result<bool> {
     let progress_events: Vec<_> = events
         .iter()
@@ -4169,7 +4238,7 @@ fn emit_progress<W: Write + ?Sized>(
 fn emit_stats<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
 ) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
@@ -4270,7 +4339,7 @@ fn format_stat_categories(categories: &[(&str, u64)]) -> String {
 fn emit_totals<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
 ) -> io::Result<()> {
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
@@ -4310,7 +4379,7 @@ fn emit_verbose<W: Write + ?Sized>(
     verbosity: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
-    human_readable: bool,
+    human_readable: HumanReadableMode,
     stdout: &mut W,
 ) -> io::Result<()> {
     if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
@@ -4403,11 +4472,23 @@ fn emit_verbose<W: Write + ?Sized>(
         if bytes > 0 {
             let size_text = format_size(bytes, human_readable);
             if let Some(rate) = compute_rate(bytes, event.elapsed()) {
-                let (rate_value, rate_unit) = format_verbose_rate(rate, human_readable);
-                writeln!(
-                    stdout,
-                    "{descriptor}: {rendered} ({size_text} bytes, {rate_value} {rate_unit})"
-                )?;
+                let rate_display = format_verbose_rate(rate, human_readable);
+                if let Some((secondary_value, secondary_unit)) = rate_display.secondary {
+                    writeln!(
+                        stdout,
+                        "{descriptor}: {rendered} ({size_text} bytes, {} {} ({} {}))",
+                        rate_display.primary.0,
+                        rate_display.primary.1,
+                        secondary_value,
+                        secondary_unit
+                    )?;
+                } else {
+                    writeln!(
+                        stdout,
+                        "{descriptor}: {rendered} ({size_text} bytes, {} {})",
+                        rate_display.primary.0, rate_display.primary.1
+                    )?;
+                }
             } else {
                 writeln!(stdout, "{descriptor}: {rendered} ({size_text} bytes)")?;
             }
@@ -4586,6 +4667,36 @@ fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {
                     .with_role(Role::Client),
             )
         }
+    }
+}
+
+fn parse_human_readable_level(value: &OsStr) -> Result<HumanReadableMode, clap::Error> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    if trimmed.is_empty() {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::InvalidValue,
+            "human-readable level must not be empty",
+        ));
+    }
+
+    match trimmed {
+        "0" => Ok(HumanReadableMode::Disabled),
+        "1" => Ok(HumanReadableMode::Enabled),
+        "2" => Ok(HumanReadableMode::Combined),
+        _ => Err(clap::Error::raw(
+            clap::error::ErrorKind::InvalidValue,
+            format!(
+                "invalid human-readable level '{}': expected 0, 1, or 2",
+                display
+            ),
+        )),
     }
 }
 
@@ -6690,7 +6801,7 @@ mod tests {
         ])
         .expect("parse");
 
-        assert_eq!(parsed.human_readable, Some(true));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
     }
 
     #[test]
@@ -6931,6 +7042,30 @@ mod tests {
         assert!(rendered.contains("Total bytes sent: 1.54K"));
     }
 
+    #[test]
+    fn stats_human_readable_combined_formats_totals() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("file.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let dest_combined = tmp.path().join("combined");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--stats"),
+            OsString::from("--human-readable=2"),
+            source.into_os_string(),
+            dest_combined.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("stats output utf8");
+        assert!(rendered.contains("Total file size: 1.54K (1,536) bytes"));
+        assert!(rendered.contains("Total bytes sent: 1.54K (1,536)"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
@@ -7001,6 +7136,29 @@ mod tests {
     }
 
     #[test]
+    fn verbose_human_readable_combined_formats_sizes() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("sizes.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let destination = tmp.path().join("combined.bin");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-vv"),
+            OsString::from("--human-readable=2"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("verbose output utf8");
+        assert!(rendered.contains("1.54K (1,536) bytes"));
+    }
+
+    #[test]
     fn progress_transfer_renders_progress_lines() {
         use tempfile::tempdir;
 
@@ -7065,6 +7223,30 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("progress output utf8");
         let normalized = rendered.replace('\r', "\n");
         assert!(normalized.contains("1.54K"));
+    }
+
+    #[test]
+    fn progress_human_readable_combined_formats_sizes() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("human-progress.bin");
+        std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+
+        let destination = tmp.path().join("combined-progress.out");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--progress"),
+            OsString::from("--human-readable=2"),
+            source.into_os_string(),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("progress output utf8");
+        let normalized = rendered.replace('\r', "\n");
+        assert!(normalized.contains("1.54K (1,536)"));
     }
 
     #[test]
@@ -8831,7 +9013,7 @@ mod tests {
         ])
         .expect("parse");
 
-        assert_eq!(parsed.human_readable, Some(true));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
     }
 
     #[test]
@@ -8844,7 +9026,20 @@ mod tests {
         ])
         .expect("parse");
 
-        assert_eq!(parsed.human_readable, Some(false));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+
+    #[test]
+    fn parse_args_recognises_human_readable_level_two() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--human-readable=2"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
     }
 
     #[test]
@@ -13055,6 +13250,7 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--human-readable"));
         assert!(!args.contains(&"--no-human-readable"));
+        assert!(!args.contains(&"--human-readable=2"));
     }
 
     #[cfg(unix)]
@@ -13093,6 +13289,46 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--no-human-readable"));
         assert!(!args.contains(&"--human-readable"));
+        assert!(!args.contains(&"--human-readable=2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_human_readable_level_two() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--human-readable=2"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.contains(&"--human-readable=2"));
+        assert!(!args.contains(&"--human-readable"));
+        assert!(!args.contains(&"--no-human-readable"));
     }
 
     #[cfg(unix)]
@@ -13905,7 +14141,7 @@ exit 0
             .expect("file entry present");
 
         let expected_permissions = "-rw-r--r--";
-        let expected_size = format_list_size(1_234, false);
+        let expected_size = format_list_size(1_234, HumanReadableMode::Disabled);
         let system_time = SystemTime::UNIX_EPOCH
             + Duration::from_secs(
                 u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"),
@@ -13936,7 +14172,7 @@ exit 0
             .lines()
             .find(|line| line.ends_with("data.bin"))
             .expect("file entry present");
-        let expected_human_size = format_list_size(1_234, true);
+        let expected_human_size = format_list_size(1_234, HumanReadableMode::Enabled);
         let expected_human =
             format!("{expected_permissions} {expected_human_size} {expected_timestamp} data.bin");
         assert_eq!(human_line, expected_human);
@@ -13993,11 +14229,11 @@ exit 0
 
         let expected_exec = format!(
             "-rwsrwsrwt {} {expected_timestamp} exec-special",
-            format_list_size(4, false)
+            format_list_size(4, HumanReadableMode::Disabled)
         );
         let expected_plain = format!(
             "-rwSrwSrwT {} {expected_timestamp} plain-special",
-            format_list_size(5, false)
+            format_list_size(5, HumanReadableMode::Disabled)
         );
 
         let mut exec_line = None;
@@ -14400,5 +14636,39 @@ exit 0
             .expect("read dest xattr")
             .expect("xattr present");
         assert_eq!(copied, b"value");
+    }
+
+    #[test]
+    fn format_size_combined_includes_exact_component() {
+        assert_eq!(
+            format_size(1_536, HumanReadableMode::Combined),
+            "1.54K (1,536)"
+        );
+    }
+
+    #[test]
+    fn format_progress_rate_zero_bytes_matches_mode() {
+        assert_eq!(
+            format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Disabled),
+            "0.00kB/s"
+        );
+        assert_eq!(
+            format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Enabled),
+            "0.00B/s"
+        );
+        assert_eq!(
+            format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Combined),
+            "0.00B/s"
+        );
+    }
+
+    #[test]
+    fn format_progress_rate_combined_includes_decimal_component() {
+        let rendered = format_progress_rate(
+            1_048_576,
+            Duration::from_secs(1),
+            HumanReadableMode::Combined,
+        );
+        assert_eq!(rendered, "1.05MB/s (1.00MB/s)");
     }
 }
