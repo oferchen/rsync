@@ -2889,6 +2889,12 @@ where
         None => None,
     };
 
+    let fallback_bwlimit = match (bandwidth_limit.as_ref(), bwlimit.as_ref()) {
+        (Some(limit), _) => Some(OsString::from(limit.bytes_per_second().get().to_string())),
+        (None, Some(_)) => Some(OsString::from("0")),
+        (None, None) => None,
+    };
+
     let max_delete_limit = match max_delete {
         Some(ref value) => match parse_max_delete_argument(value.as_os_str()) {
             Ok(limit) => Some(limit),
@@ -3171,7 +3177,7 @@ where
             inplace,
             msgs_to_stderr,
             whole_file: whole_file_option,
-            bwlimit: bwlimit.clone(),
+            bwlimit: fallback_bwlimit.clone(),
             excludes: excludes.clone(),
             includes: includes.clone(),
             exclude_from: exclude_from.clone(),
@@ -12964,6 +12970,54 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(!recorded.lines().any(|line| line == "--preallocate"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_sanitises_bwlimit_argument() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--bwlimit=1M:64K"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--bwlimit"));
+        assert!(!recorded.contains("1M:64K"));
+
+        let mut lines = recorded.lines();
+        while let Some(line) = lines.next() {
+            if line == "--bwlimit" {
+                let value = lines.next().expect("bwlimit value recorded");
+                assert_eq!(value, "1048576");
+                return;
+            }
+        }
+
+        panic!("--bwlimit argument not forwarded to fallback");
     }
 
     #[cfg(unix)]
