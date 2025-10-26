@@ -2439,6 +2439,9 @@ pub struct RemoteFallbackArgs {
     pub remote_options: Vec<OsString>,
     /// Optional command executed to reach rsync:// daemons.
     pub connect_program: Option<OsString>,
+    /// Default daemon port forwarded via `--port` when contacting rsync:// daemons.
+    #[doc(alias = "--port")]
+    pub port: Option<u16>,
     /// Controls whether remote shell arguments are protected from expansion.
     ///
     /// When `Some(true)` the fallback command receives `--protect-args`,
@@ -2688,6 +2691,7 @@ where
         remote_shell,
         remote_options,
         connect_program,
+        port,
         protect_args,
         human_readable: human_readable_mode,
         archive,
@@ -3133,6 +3137,12 @@ where
         AddressMode::Default => {}
         AddressMode::Ipv4 => command_args.push(OsString::from("--ipv4")),
         AddressMode::Ipv6 => command_args.push(OsString::from("--ipv6")),
+    }
+
+    if let Some(port) = port {
+        let mut arg = OsString::from("--port=");
+        arg.push(port.to_string());
+        command_args.push(arg);
     }
 
     if let Some(path) = rsync_path {
@@ -4225,6 +4235,7 @@ exit 42
             remote_shell: None,
             remote_options: Vec::new(),
             connect_program: None,
+            port: None,
             protect_args: None,
             human_readable: None,
             address_mode: AddressMode::Default,
@@ -6514,6 +6525,16 @@ exit 42
     }
 
     #[test]
+    fn module_list_request_honours_custom_default_port() {
+        let operands = vec![OsString::from("rsync://example.com/")];
+        let request = ModuleListRequest::from_operands_with_port(&operands, 10_873)
+            .expect("parse succeeds")
+            .expect("request detected");
+        assert_eq!(request.address().host(), "example.com");
+        assert_eq!(request.address().port(), 10_873);
+    }
+
+    #[test]
     fn module_list_request_rejects_remote_transfer() {
         let operands = vec![OsString::from("rsync://example.com/module")];
         let request = ModuleListRequest::from_operands(&operands).expect("parse succeeds");
@@ -6846,6 +6867,42 @@ exit 42
         {
             assert_eq!(rendered, OsString::from("netcat daemon.example 10873 %"));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_port_option() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.port = Some(10_873);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--port=10873"));
     }
 
     #[test]
@@ -8160,25 +8217,36 @@ pub struct ModuleListRequest {
 }
 
 impl ModuleListRequest {
+    /// Default TCP port used by rsync daemons when a port is not specified.
+    pub const DEFAULT_PORT: u16 = 873;
+
     /// Attempts to derive a module listing request from CLI-style operands.
     pub fn from_operands(operands: &[OsString]) -> Result<Option<Self>, ClientError> {
+        Self::from_operands_with_port(operands, Self::DEFAULT_PORT)
+    }
+
+    /// Equivalent to [`from_operands`] but allows overriding the default daemon port.
+    pub fn from_operands_with_port(
+        operands: &[OsString],
+        default_port: u16,
+    ) -> Result<Option<Self>, ClientError> {
         if operands.len() != 1 {
             return Ok(None);
         }
 
-        Self::from_operand(&operands[0])
+        Self::from_operand(&operands[0], default_port)
     }
 
-    fn from_operand(operand: &OsString) -> Result<Option<Self>, ClientError> {
+    fn from_operand(operand: &OsString, default_port: u16) -> Result<Option<Self>, ClientError> {
         let text = operand.to_string_lossy();
 
         if let Some(rest) = strip_prefix_ignore_ascii_case(&text, "rsync://") {
-            return parse_rsync_url(rest);
+            return parse_rsync_url(rest, default_port);
         }
 
         if let Some((host_part, module_part)) = split_daemon_host_module(&text)? {
             if module_part.is_empty() {
-                let target = parse_host_port(host_part)?;
+                let target = parse_host_port(host_part, default_port)?;
                 return Ok(Some(Self::new(target.address, target.username)));
             }
             return Ok(None);
@@ -8289,7 +8357,10 @@ impl Default for ModuleListOptions {
     }
 }
 
-fn parse_rsync_url(rest: &str) -> Result<Option<ModuleListRequest>, ClientError> {
+fn parse_rsync_url(
+    rest: &str,
+    default_port: u16,
+) -> Result<Option<ModuleListRequest>, ClientError> {
     let mut parts = rest.splitn(2, '/');
     let host_port = parts.next().unwrap_or("");
     let remainder = parts.next();
@@ -8298,7 +8369,7 @@ fn parse_rsync_url(rest: &str) -> Result<Option<ModuleListRequest>, ClientError>
         return Ok(None);
     }
 
-    let target = parse_host_port(host_port)?;
+    let target = parse_host_port(host_port, default_port)?;
     Ok(Some(ModuleListRequest::new(
         target.address,
         target.username,
@@ -8310,20 +8381,19 @@ struct ParsedDaemonTarget {
     username: Option<String>,
 }
 
-fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
-    const DEFAULT_PORT: u16 = 873;
+fn parse_host_port(input: &str, default_port: u16) -> Result<ParsedDaemonTarget, ClientError> {
     const DEFAULT_HOST: &str = "localhost";
 
     let (username, input) = split_daemon_username(input)?;
     let username = username.map(decode_daemon_username).transpose()?;
 
     if input.is_empty() {
-        let address = DaemonAddress::new(DEFAULT_HOST.to_string(), DEFAULT_PORT)?;
+        let address = DaemonAddress::new(DEFAULT_HOST.to_string(), default_port)?;
         return Ok(ParsedDaemonTarget { address, username });
     }
 
     if let Some(host) = input.strip_prefix('[') {
-        let (address, port) = parse_bracketed_host(host, DEFAULT_PORT)?;
+        let (address, port) = parse_bracketed_host(host, default_port)?;
         let address = DaemonAddress::new(address, port)?;
         return Ok(ParsedDaemonTarget { address, username });
     }
@@ -8338,7 +8408,7 @@ fn parse_host_port(input: &str) -> Result<ParsedDaemonTarget, ClientError> {
     }
 
     let host = decode_host_component(input)?;
-    let address = DaemonAddress::new(host, DEFAULT_PORT)?;
+    let address = DaemonAddress::new(host, default_port)?;
     Ok(ParsedDaemonTarget { address, username })
 }
 
