@@ -457,6 +457,9 @@ pub struct ClientConfig {
     connect_timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
+    /// Optional command executed to reach rsync:// daemons.
+    #[doc(alias = "--connect-program")]
+    connect_program: Option<OsString>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -528,6 +531,7 @@ impl Default for ClientConfig {
             connect_timeout: TransferTimeout::Default,
             link_dest_paths: Vec::new(),
             reference_directories: Vec::new(),
+            connect_program: None,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -572,6 +576,13 @@ impl ClientConfig {
     #[doc(alias = "--ipv6")]
     pub const fn address_mode(&self) -> AddressMode {
         self.address_mode
+    }
+
+    /// Returns the configured connect program, if any.
+    #[must_use]
+    #[doc(alias = "--connect-program")]
+    pub fn connect_program(&self) -> Option<&OsStr> {
+        self.connect_program.as_deref()
     }
 
     /// Reports whether a transfer was explicitly requested.
@@ -1109,6 +1120,7 @@ pub struct ClientConfigBuilder {
     connect_timeout: TransferTimeout,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
+    connect_program: Option<OsString>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -1770,6 +1782,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the command used to reach rsync:// daemons.
+    #[must_use]
+    #[doc(alias = "--connect-program")]
+    pub fn connect_program(mut self, program: Option<OsString>) -> Self {
+        self.connect_program = program;
+        self
+    }
+
     /// Selects the preferred address family for network operations.
     #[must_use]
     #[doc(alias = "--ipv4")]
@@ -1845,6 +1865,7 @@ impl ClientConfigBuilder {
             connect_timeout: self.connect_timeout,
             link_dest_paths: self.link_dest_paths,
             reference_directories: self.reference_directories,
+            connect_program: self.connect_program,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -2381,6 +2402,8 @@ pub struct RemoteFallbackArgs {
     pub remote_shell: Option<OsString>,
     /// Additional options forwarded to the remote rsync invocation via `--remote-option`/`-M`.
     pub remote_options: Vec<OsString>,
+    /// Optional command executed to reach rsync:// daemons.
+    pub connect_program: Option<OsString>,
     /// Controls whether remote shell arguments are protected from expansion.
     ///
     /// When `Some(true)` the fallback command receives `--protect-args`,
@@ -2627,6 +2650,7 @@ where
         list_only,
         remote_shell,
         remote_options,
+        connect_program,
         protect_args,
         human_readable: human_readable_mode,
         archive,
@@ -3049,6 +3073,11 @@ where
     for option in remote_options {
         command_args.push(OsString::from("--remote-option"));
         command_args.push(option);
+    }
+
+    if let Some(program) = connect_program {
+        command_args.push(OsString::from("--connect-program"));
+        command_args.push(program);
     }
 
     if let Some(shell) = remote_shell {
@@ -4140,6 +4169,7 @@ exit 42
             list_only: false,
             remote_shell: None,
             remote_options: Vec::new(),
+            connect_program: None,
             protect_args: None,
             human_readable: None,
             address_mode: AddressMode::Default,
@@ -8096,10 +8126,11 @@ impl ModuleListRequest {
 }
 
 /// Configuration toggles that influence daemon module listings.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleListOptions {
     suppress_motd: bool,
     address_mode: AddressMode,
+    connect_program: Option<OsString>,
 }
 
 impl ModuleListOptions {
@@ -8109,6 +8140,7 @@ impl ModuleListOptions {
         Self {
             suppress_motd: false,
             address_mode: AddressMode::Default,
+            connect_program: None,
         }
     }
 
@@ -8121,7 +8153,7 @@ impl ModuleListOptions {
 
     /// Returns whether MOTD lines should be suppressed.
     #[must_use]
-    pub const fn suppresses_motd(self) -> bool {
+    pub const fn suppresses_motd(&self) -> bool {
         self.suppress_motd
     }
 
@@ -8138,6 +8170,20 @@ impl ModuleListOptions {
     #[must_use]
     pub const fn address_mode(&self) -> AddressMode {
         self.address_mode
+    }
+
+    /// Supplies an explicit connect program command.
+    #[must_use]
+    #[doc(alias = "--connect-program")]
+    pub fn with_connect_program(mut self, program: Option<OsString>) -> Self {
+        self.connect_program = program;
+        self
+    }
+
+    /// Returns the configured connect program command, if any.
+    #[must_use]
+    pub fn connect_program(&self) -> Option<&OsStr> {
+        self.connect_program.as_deref()
     }
 }
 
@@ -8510,8 +8556,9 @@ fn open_daemon_stream(
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
     address_mode: AddressMode,
+    connect_program: Option<&OsStr>,
 ) -> Result<DaemonStream, ClientError> {
-    if let Some(program) = load_daemon_connect_program()? {
+    if let Some(program) = load_daemon_connect_program(connect_program)? {
         return connect_via_program(addr, &program);
     }
 
@@ -8786,7 +8833,22 @@ fn connect_via_program(
     )))
 }
 
-fn load_daemon_connect_program() -> Result<Option<ConnectProgramConfig>, ClientError> {
+fn load_daemon_connect_program(
+    override_template: Option<&OsStr>,
+) -> Result<Option<ConnectProgramConfig>, ClientError> {
+    if let Some(template) = override_template {
+        if template.is_empty() {
+            return Err(connect_program_configuration_error(
+                "the --connect-program option requires a non-empty command",
+            ));
+        }
+
+        let shell = env::var_os("RSYNC_SHELL").filter(|value| !value.is_empty());
+        return ConnectProgramConfig::new(OsString::from(template), shell)
+            .map(Some)
+            .map_err(connect_program_configuration_error);
+    }
+
     let Some(template) = env::var_os("RSYNC_CONNECT_PROG") else {
         return Ok(None);
     };
@@ -9287,7 +9349,13 @@ pub fn run_module_list_with_password_and_options(
     let effective_timeout = timeout.effective(DAEMON_SOCKET_TIMEOUT);
     let connect_duration = resolve_connect_timeout(connect_timeout, timeout, DAEMON_SOCKET_TIMEOUT);
 
-    let stream = open_daemon_stream(addr, connect_duration, effective_timeout, address_mode)?;
+    let stream = open_daemon_stream(
+        addr,
+        connect_duration,
+        effective_timeout,
+        address_mode,
+        options.connect_program(),
+    )?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;

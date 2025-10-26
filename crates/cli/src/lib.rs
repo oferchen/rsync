@@ -11,7 +11,7 @@
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
-//! `--append`/`--append-verify`, `--remote-option`, and `--sparse`) and delegates local copy operations to
+//! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and `--sparse`) and delegates local copy operations to
 //! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
 //! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
@@ -131,6 +131,7 @@ const HELP_TEXT: &str = concat!(
     "  -V, --version    Output version information and exit.\n",
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
     "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
+    "      --connect-program=COMMAND  Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).\n",
     "  -M, --remote-option=OPTION  Forward OPTION to the remote rsync command.\n",
     "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
@@ -255,6 +256,7 @@ const HELP_TEXT: &str = concat!(
 );
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -856,6 +858,7 @@ struct ParsedArgs {
     dry_run: bool,
     list_only: bool,
     remote_shell: Option<OsString>,
+    connect_program: Option<OsString>,
     remote_options: Vec<OsString>,
     rsync_path: Option<OsString>,
     protect_args: Option<bool>,
@@ -1041,6 +1044,18 @@ fn clap_command() -> ClapCommand {
                 .help("Use PROGRAM as the remote rsync executable during remote transfers.")
                 .num_args(1)
                 .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("connect-program")
+                .long("connect-program")
+                .value_name("COMMAND")
+                .help(
+                    "Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).",
+                )
+                .num_args(1)
+                .action(ArgAction::Set)
+                .allow_hyphen_values(true)
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
@@ -1915,6 +1930,9 @@ where
     let rsync_path = matches
         .remove_one::<OsString>("rsync-path")
         .filter(|value| !value.is_empty());
+    let connect_program = matches
+        .remove_one::<OsString>("connect-program")
+        .filter(|value| !value.is_empty());
     let remote_options = matches
         .remove_many::<OsString>("remote-option")
         .map(|values| values.collect())
@@ -2265,6 +2283,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        connect_program,
         remote_options,
         rsync_path,
         protect_args,
@@ -2655,6 +2674,7 @@ where
         dry_run,
         list_only,
         remote_shell,
+        connect_program,
         remote_options,
         rsync_path,
         protect_args,
@@ -3129,7 +3149,8 @@ where
 
                 let list_options = ModuleListOptions::default()
                     .suppress_motd(no_motd)
-                    .with_address_mode(address_mode);
+                    .with_address_mode(address_mode)
+                    .with_connect_program(connect_program.clone());
                 return match run_module_list_with_password_and_options(
                     request,
                     list_options,
@@ -3204,6 +3225,7 @@ where
             list_only,
             remote_shell: remote_shell.clone(),
             remote_options: remote_options.clone(),
+            connect_program: connect_program.clone(),
             protect_args,
             human_readable: human_readable_setting,
             archive,
@@ -3357,6 +3379,21 @@ where
             }
             return 1;
         }
+
+        if connect_program.is_some() {
+            let message = rsync_error!(
+                1,
+                "the --connect-program option may only be used when accessing an rsync daemon"
+            )
+            .with_role(Role::Client);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(
+                    stderr.writer_mut(),
+                    "the --connect-program option may only be used when accessing an rsync daemon"
+                );
+            }
+            return 1;
+        }
     }
 
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
@@ -3423,6 +3460,7 @@ where
     let mut builder = ClientConfig::builder()
         .transfer_args(transfer_operands)
         .address_mode(address_mode)
+        .connect_program(connect_program.clone())
         .dry_run(dry_run)
         .list_only(list_only)
         .delete(delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some())
@@ -11776,6 +11814,34 @@ exit 99
     }
 
     #[test]
+    fn module_list_uses_connect_program_option() {
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let script_path = temp.path().join("connect-program.sh");
+        let script = r#"#!/bin/sh
+set -eu
+printf "@RSYNCD: 31.0\n"
+read _greeting
+printf "@RSYNCD: OK\n"
+read _request
+printf "example\tvia connect program\n@RSYNCD: EXIT\n"
+"#;
+        write_executable_script(&script_path, script);
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--connect-program={}", script_path.display())),
+            OsString::from("rsync://example/"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        let rendered = String::from_utf8(stdout).expect("module listing is UTF-8");
+        assert!(rendered.contains("example\tvia connect program"));
+    }
+
+    #[test]
     fn module_list_username_prefix_legacy_syntax_is_accepted() {
         let (addr, handle) =
             spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
@@ -14374,6 +14440,42 @@ exit 0
     }
 
     #[test]
+    fn remote_fallback_forwards_connect_program_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--connect-program=nc %H %P"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--connect-program"));
+        assert!(recorded.lines().any(|line| line == "nc %H %P"));
+    }
+
+    #[test]
     fn remote_fallback_forwards_remote_option() {
         use tempfile::tempdir;
 
@@ -14546,6 +14648,31 @@ exit 0
         assert!(
             message.contains("the --rsync-path option may only be used with remote connections")
         );
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn connect_program_requires_remote_operands() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let dest = temp.path().join("dest.txt");
+        std::fs::write(&source, b"content").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--connect-program=/usr/bin/nc %H %P"),
+            source.clone().into_os_string(),
+            dest.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let message = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(message.contains(
+            "the --connect-program option may only be used when accessing an rsync daemon"
+        ));
         assert!(!dest.exists());
     }
 
