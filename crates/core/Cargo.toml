@@ -20,6 +20,7 @@ libc = "0.2"
 base64 = "0.22"
 rsync-checksums = { path = "../checksums" }
 tempfile = "3.10"
+socket2 = "0.4"
 
 [features]
 default = []
