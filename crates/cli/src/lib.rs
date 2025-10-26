@@ -104,6 +104,7 @@ use rsync_core::{
         RemoteFallbackArgs, RemoteFallbackContext, TransferTimeout, run_client_or_fallback,
         run_module_list_with_password_and_options,
     },
+    fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
     version::VersionInfoReport,
@@ -2438,9 +2439,19 @@ where
     let _ = stdout.flush();
     let _ = stderr.flush();
 
-    let fallback = env::var_os("OC_RSYNC_FALLBACK")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| OsString::from("rsync"));
+    let fallback = match fallback_override("OC_RSYNC_FALLBACK") {
+        Some(FallbackOverride::Disabled) => {
+            write_server_fallback_error(
+                stderr,
+                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream rsync binary",
+            );
+            return 1;
+        }
+        Some(other) => other
+            .resolve_or_default(OsStr::new("rsync"))
+            .unwrap_or_else(|| OsString::from("rsync")),
+        None => OsString::from("rsync"),
+    };
 
     let mut command = Command::new(&fallback);
     command.args(args.iter().skip(1));
@@ -12174,6 +12185,37 @@ exit 0
         assert_eq!(exit_code, 0);
         assert!(stdout.ends_with(b"fallback stdout line\n"));
         assert!(stderr.ends_with(b"fallback stderr line\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_mode_reports_disabled_fallback_override() {
+        use std::io;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("no"));
+
+        let mut stdout = io::sink();
+        let mut stderr = Vec::new();
+        let exit_code = run(
+            [
+                OsString::from("oc-rsync"),
+                OsString::from("--server"),
+                OsString::from("--sender"),
+                OsString::from("."),
+                OsString::from("dest"),
+            ],
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(exit_code, 1);
+        let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
+        assert!(
+            stderr_text.contains(
+                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled",
+            )
+        );
     }
 
     #[cfg(unix)]
