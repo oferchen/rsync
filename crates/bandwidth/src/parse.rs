@@ -1,4 +1,5 @@
 use std::num::NonZeroU64;
+use std::str::FromStr;
 
 /// Parsed `--bwlimit` components consisting of an optional rate and burst size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +25,20 @@ impl BandwidthLimitComponents {
     #[must_use]
     pub const fn burst(self) -> Option<NonZeroU64> {
         self.burst
+    }
+
+    /// Indicates whether the limit disables throttling.
+    #[must_use]
+    pub const fn is_unlimited(self) -> bool {
+        self.rate.is_none()
+    }
+}
+
+impl FromStr for BandwidthLimitComponents {
+    type Err = BandwidthParseError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        parse_bandwidth_limit(text)
     }
 }
 
@@ -352,9 +367,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_bandwidth_limit_from_str_round_trips() {
+        let components: BandwidthLimitComponents = "2M:32K".parse().expect("parse succeeds");
+        assert_eq!(components.rate(), NonZeroU64::new(2 * 1024 * 1024));
+        assert_eq!(components.burst(), NonZeroU64::new(32 * 1024));
+    }
+
+    #[test]
     fn parse_bandwidth_limit_zero_rate_disables_burst() {
         let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
         assert_eq!(components, BandwidthLimitComponents::new(None, None));
+    }
+
+    #[test]
+    fn parse_bandwidth_limit_reports_unlimited_state() {
+        let components = parse_bandwidth_limit("0").expect("parse succeeds");
+        assert!(components.is_unlimited());
+        let limited = parse_bandwidth_limit("1M").expect("parse succeeds");
+        assert!(!limited.is_unlimited());
     }
 
     #[test]
