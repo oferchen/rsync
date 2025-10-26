@@ -15,6 +15,7 @@ members = [
     "crates/protocol",
     "crates/walk",
     "crates/transport",
+    "xtask",
 ]
 resolver = "2"
 
