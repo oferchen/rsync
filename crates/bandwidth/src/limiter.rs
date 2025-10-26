@@ -1,0 +1,457 @@
+use std::num::NonZeroU64;
+use std::time::{Duration, Instant};
+
+#[cfg(any(test, feature = "test-support"))]
+use std::mem;
+
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+const MICROS_PER_SECOND: u128 = 1_000_000;
+const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
+const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
+
+#[cfg(any(test, feature = "test-support"))]
+fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
+    static RECORDED_SLEEPS: OnceLock<Mutex<Vec<Duration>>> = OnceLock::new();
+    RECORDED_SLEEPS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn recorded_sleep_session_lock() -> &'static Mutex<()> {
+    static SESSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    SESSION_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+/// Guard that provides exclusive access to the recorded sleep durations.
+///
+/// Tests obtain a [`RecordedSleepSession`] at the start of a scenario, call
+/// [`RecordedSleepSession::clear`] to discard previous measurements, execute the
+/// code under test, and finally inspect the captured durations via
+/// [`RecordedSleepSession::take`]. Holding the guard ensures concurrent tests do
+/// not drain or append to the shared buffer while assertions run, eliminating
+/// the data races observed when multiple tests exercised the limiter in
+/// parallel.
+pub struct RecordedSleepSession<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<'a> RecordedSleepSession<'a> {
+    /// Removes any previously recorded durations.
+    #[inline]
+    pub fn clear(&mut self) {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .clear();
+    }
+
+    /// Returns `true` when no sleep durations have been recorded.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .is_empty()
+    }
+
+    /// Returns the number of recorded sleep intervals.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .len()
+    }
+
+    /// Drains the recorded sleep durations, returning ownership of the vector.
+    #[inline]
+    pub fn take(&mut self) -> Vec<Duration> {
+        let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
+        mem::take(&mut *guard)
+    }
+
+    /// Consumes the session and returns the recorded durations.
+    ///
+    /// This convenience helper mirrors [`take`](Self::take) while allowing
+    /// callers to move the guard by value. It is particularly useful in tests
+    /// that wish to collect the recorded sleeps without keeping the session
+    /// borrowed mutably for the remainder of the scope.
+    #[inline]
+    pub fn into_vec(mut self) -> Vec<Duration> {
+        self.take()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+/// Obtains a guard that serialises access to recorded sleep durations.
+#[must_use]
+pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
+    RecordedSleepSession {
+        _guard: recorded_sleep_session_lock()
+            .lock()
+            .expect("lock recorded sleep session"),
+    }
+}
+
+fn duration_from_microseconds(us: u128) -> Duration {
+    if us == 0 {
+        return Duration::ZERO;
+    }
+
+    let seconds = us / MICROS_PER_SECOND;
+    let micros = (us % MICROS_PER_SECOND) as u32;
+
+    if seconds >= u128::from(u64::MAX) {
+        Duration::MAX
+    } else {
+        Duration::new(seconds as u64, micros.saturating_mul(1_000))
+    }
+}
+
+fn sleep_for(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps")
+            .push(duration);
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        std::thread::sleep(duration);
+    }
+}
+
+fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64, usize) {
+    let kib = limit
+        .get()
+        .checked_div(1024)
+        .and_then(NonZeroU64::new)
+        .expect("bandwidth limit must be at least 1024 bytes per second");
+
+    let mut write_max = u128::from(kib.get()).saturating_mul(128);
+    if write_max < 512 {
+        write_max = 512;
+    }
+    let mut write_max = write_max.min(usize::MAX as u128) as usize;
+
+    if let Some(burst) = burst {
+        let burst = burst.get().min(usize::MAX as u64);
+        write_max = usize::try_from(burst).unwrap_or(usize::MAX).max(1);
+    }
+
+    (kib, write_max)
+}
+
+/// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
+#[doc(alias = "--bwlimit")]
+#[derive(Clone, Debug)]
+pub struct BandwidthLimiter {
+    limit_bytes: NonZeroU64,
+    kib_per_second: NonZeroU64,
+    write_max: usize,
+    burst_bytes: Option<NonZeroU64>,
+    total_written: u128,
+    last_instant: Option<Instant>,
+    simulated_elapsed_us: u128,
+}
+
+impl BandwidthLimiter {
+    /// Constructs a new limiter from the supplied byte-per-second rate.
+    #[must_use]
+    pub fn new(limit: NonZeroU64) -> Self {
+        Self::with_burst(limit, None)
+    }
+
+    /// Constructs a new limiter from the supplied rate and optional burst size.
+    #[must_use]
+    pub fn with_burst(limit: NonZeroU64, burst: Option<NonZeroU64>) -> Self {
+        let (kib, write_max) = limit_parameters(limit, burst);
+
+        Self {
+            limit_bytes: limit,
+            kib_per_second: kib,
+            write_max,
+            burst_bytes: burst,
+            total_written: 0,
+            last_instant: None,
+            simulated_elapsed_us: 0,
+        }
+    }
+
+    /// Updates the limiter so a new byte-per-second limit takes effect.
+    ///
+    /// Upstream rsync applies daemon-imposed caps by resetting its pacing state
+    /// before continuing the transfer with the negotiated limit. Mirroring that
+    /// behaviour keeps previously accumulated debt from leaking into the new
+    /// configuration and ensures subsequent calls behave as if the limiter had
+    /// been freshly constructed with the supplied rate.
+    pub fn update_limit(&mut self, limit: NonZeroU64) {
+        self.update_configuration(limit, self.burst_bytes);
+    }
+
+    /// Updates the limiter so both the rate and burst configuration take effect.
+    ///
+    /// Upstream rsync resets its token bucket whenever the daemon imposes a new
+    /// `--bwlimit=RATE[:BURST]` combination. Reusing that behaviour keeps
+    /// previously accumulated debt from leaking into the new configuration and
+    /// ensures subsequent calls behave as if the limiter had just been
+    /// constructed via [`BandwidthLimiter::with_burst`].
+    #[doc(alias = "--bwlimit")]
+    pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
+        let (kib, write_max) = limit_parameters(limit, burst);
+
+        self.limit_bytes = limit;
+        self.kib_per_second = kib;
+        self.write_max = write_max;
+        self.burst_bytes = burst;
+        self.total_written = 0;
+        self.last_instant = None;
+        self.simulated_elapsed_us = 0;
+    }
+
+    #[inline]
+    fn clamp_debt_to_burst(&mut self) {
+        if let Some(burst) = self.burst_bytes {
+            let limit = u128::from(burst.get());
+            if self.total_written > limit {
+                self.total_written = limit;
+            }
+        }
+    }
+
+    /// Returns the configured limit in bytes per second.
+    #[must_use]
+    pub const fn limit_bytes(&self) -> NonZeroU64 {
+        self.limit_bytes
+    }
+
+    /// Returns the configured burst size in bytes, if any.
+    #[must_use]
+    pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
+        self.burst_bytes
+    }
+
+    /// Returns the maximum chunk size that should be written before sleeping.
+    #[must_use]
+    pub fn recommended_read_size(&self, buffer_len: usize) -> usize {
+        let limit = self.write_max.max(1);
+        buffer_len.min(limit)
+    }
+
+    /// Records a completed write and sleeps if the limiter accumulated debt.
+    pub fn register(&mut self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
+
+        self.total_written = self.total_written.saturating_add(bytes as u128);
+        self.clamp_debt_to_burst();
+
+        let start = Instant::now();
+
+        let mut elapsed_us = self.simulated_elapsed_us;
+        if let Some(previous) = self.last_instant {
+            let elapsed = start.duration_since(previous);
+            let measured = elapsed.as_micros().min(u128::from(u64::MAX));
+            elapsed_us = elapsed_us.saturating_add(measured);
+        }
+        self.simulated_elapsed_us = 0;
+        if elapsed_us > 0 {
+            let allowed = elapsed_us.saturating_mul(u128::from(self.kib_per_second.get()))
+                / MICROS_PER_SECOND_DIV_1024;
+            if allowed >= self.total_written {
+                self.total_written = 0;
+            } else {
+                self.total_written -= allowed;
+            }
+        }
+
+        self.clamp_debt_to_burst();
+
+        let sleep_us = self
+            .total_written
+            .saturating_mul(MICROS_PER_SECOND_DIV_1024)
+            / u128::from(self.kib_per_second.get());
+
+        if sleep_us < MINIMUM_SLEEP_MICROS {
+            self.last_instant = Some(start);
+            return;
+        }
+
+        let requested = duration_from_microseconds(sleep_us);
+        if !requested.is_zero() {
+            sleep_for(requested);
+        }
+
+        let end = Instant::now();
+        let elapsed_us = end
+            .checked_duration_since(start)
+            .map(|duration| duration.as_micros().min(u128::from(u64::MAX)))
+            .unwrap_or(0);
+        if sleep_us > elapsed_us {
+            self.simulated_elapsed_us = sleep_us - elapsed_us;
+        }
+        let remaining_us = sleep_us.saturating_sub(elapsed_us);
+        let leftover = remaining_us.saturating_mul(u128::from(self.kib_per_second.get()))
+            / MICROS_PER_SECOND_DIV_1024;
+
+        self.total_written = leftover;
+        self.clamp_debt_to_burst();
+        self.last_instant = Some(end);
+    }
+
+    /// Returns the outstanding byte debt accumulated by the limiter.
+    ///
+    /// The accessor is compiled for tests (and the `test-support` feature) so
+    /// scenarios can assert on the internal pacing state without relying on
+    /// private fields. Production builds omit the helper entirely.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
+    pub(crate) fn accumulated_debt_for_testing(&self) -> u128 {
+        self.total_written
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BandwidthLimiter, MINIMUM_SLEEP_MICROS, recorded_sleep_session};
+    use std::num::NonZeroU64;
+    use std::time::Duration;
+
+    #[test]
+    fn limiter_limits_chunk_size_for_slow_rates() {
+        let limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        assert_eq!(limiter.recommended_read_size(8192), 512);
+        assert_eq!(limiter.recommended_read_size(256), 256);
+    }
+
+    #[test]
+    fn limiter_preserves_buffer_for_fast_rates() {
+        let limiter = BandwidthLimiter::new(NonZeroU64::new(8 * 1024 * 1024).unwrap());
+        assert_eq!(limiter.recommended_read_size(8192), 8192);
+    }
+
+    #[test]
+    fn limiter_respects_custom_burst() {
+        let limiter = BandwidthLimiter::with_burst(
+            NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+            NonZeroU64::new(2048),
+        );
+        assert_eq!(limiter.recommended_read_size(8192), 2048);
+    }
+
+    #[test]
+    fn limiter_records_sleep_for_large_writes() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(4096);
+        let recorded = session.take();
+        assert!(
+            recorded
+                .iter()
+                .any(|duration| duration >= &Duration::from_micros(MINIMUM_SLEEP_MICROS as u64))
+        );
+    }
+
+    #[test]
+    fn limiter_clamps_debt_to_configured_burst() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let burst = NonZeroU64::new(4096).expect("non-zero burst");
+        let mut limiter = BandwidthLimiter::with_burst(
+            NonZeroU64::new(8 * 1024 * 1024).expect("non-zero limit"),
+            Some(burst),
+        );
+
+        limiter.register(1 << 20);
+
+        assert!(
+            limiter.accumulated_debt_for_testing() <= u128::from(burst.get()),
+            "debt exceeds configured burst"
+        );
+    }
+
+    #[test]
+    fn recorded_sleep_session_into_vec_consumes_guard() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(2048);
+
+        let recorded = session.into_vec();
+        assert!(!recorded.is_empty());
+
+        let mut follow_up = recorded_sleep_session();
+        assert!(follow_up.is_empty());
+        let _ = follow_up.take();
+    }
+
+    #[test]
+    fn limiter_update_limit_resets_internal_state() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
+        let mut baseline = BandwidthLimiter::new(new_limit);
+        baseline.register(4096);
+        let baseline_sleeps = session.take();
+
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(4096);
+        session.clear();
+
+        limiter.update_limit(new_limit);
+        limiter.register(4096);
+        assert_eq!(limiter.limit_bytes(), new_limit);
+        assert_eq!(limiter.recommended_read_size(1 << 20), 1 << 20);
+
+        let updated_sleeps = session.take();
+        assert_eq!(updated_sleeps, baseline_sleeps);
+    }
+
+    #[test]
+    fn limiter_update_configuration_resets_state_and_updates_burst() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let initial_limit = NonZeroU64::new(1024).unwrap();
+        let initial_burst = NonZeroU64::new(4096).unwrap();
+        let mut limiter = BandwidthLimiter::with_burst(initial_limit, Some(initial_burst));
+        limiter.register(8192);
+        assert!(limiter.accumulated_debt_for_testing() > 0);
+
+        let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
+        let new_burst = NonZeroU64::new(2048).unwrap();
+        limiter.update_configuration(new_limit, Some(new_burst));
+
+        assert_eq!(limiter.limit_bytes(), new_limit);
+        assert_eq!(limiter.burst_bytes(), Some(new_burst));
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+        session.clear();
+        limiter.register(1024);
+        let recorded = session.take();
+        assert!(
+            recorded.is_empty()
+                || recorded
+                    .iter()
+                    .all(|duration| duration.as_micros() <= MINIMUM_SLEEP_MICROS)
+        );
+    }
+}
