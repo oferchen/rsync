@@ -84,6 +84,7 @@ use std::collections::HashMap;
 use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::fs;
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::ToSocketAddrs;
@@ -3655,7 +3656,11 @@ impl ClientEvent {
             return candidate;
         }
 
-        if let Some(file_name) = destination_root.file_name() {
+        if let Ok(metadata) = fs::metadata(destination_root) {
+            if !metadata.is_dir() {
+                return destination_root.to_path_buf();
+            }
+        } else if let Some(file_name) = destination_root.file_name() {
             if relative == Path::new(file_name) {
                 return destination_root.to_path_buf();
             }
@@ -4304,6 +4309,20 @@ mod tests {
         let root = temp.path().join("target.bin");
         let relative = Path::new("target.bin");
 
+        let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative);
+
+        assert_eq!(resolved, root);
+    }
+
+    #[test]
+    fn resolve_destination_path_detects_renamed_file_destination() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("dest").join("renamed.bin");
+        fs::create_dir_all(root.parent().expect("destination parent"))
+            .expect("create destination dir");
+        fs::write(&root, b"payload").expect("write renamed destination");
+
+        let relative = Path::new("source.bin");
         let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative);
 
         assert_eq!(resolved, root);
