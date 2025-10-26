@@ -113,6 +113,7 @@ use rsync_engine::local_copy::{
     ReferenceDirectory as EngineReferenceDirectory,
     ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
+use rsync_engine::signature::SignatureAlgorithm;
 use rsync_filters::FilterRule as EngineFilterRule;
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{
@@ -225,6 +226,137 @@ impl HumanReadableMode {
     #[must_use]
     pub const fn includes_exact(self) -> bool {
         matches!(self, Self::Combined)
+    }
+}
+
+/// Enumerates the strong checksum algorithms recognised by the client.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StrongChecksumAlgorithm {
+    /// Automatically selects the negotiated algorithm (locally resolved to MD5).
+    Auto,
+    /// MD4 strong checksum.
+    Md4,
+    /// MD5 strong checksum.
+    Md5,
+    /// XXH64 strong checksum.
+    Xxh64,
+    /// XXH3/64 strong checksum.
+    Xxh3,
+    /// XXH3/128 strong checksum.
+    Xxh128,
+}
+
+impl StrongChecksumAlgorithm {
+    /// Converts the selection into the [`SignatureAlgorithm`] used by the transfer engine.
+    #[must_use]
+    pub const fn to_signature_algorithm(self) -> SignatureAlgorithm {
+        match self {
+            StrongChecksumAlgorithm::Auto | StrongChecksumAlgorithm::Md5 => SignatureAlgorithm::Md5,
+            StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
+            StrongChecksumAlgorithm::Xxh64 => SignatureAlgorithm::Xxh64 { seed: 0 },
+            StrongChecksumAlgorithm::Xxh3 => SignatureAlgorithm::Xxh3 { seed: 0 },
+            StrongChecksumAlgorithm::Xxh128 => SignatureAlgorithm::Xxh3_128 { seed: 0 },
+        }
+    }
+
+    /// Returns the canonical flag spelling for the algorithm.
+    #[must_use]
+    pub const fn canonical_name(self) -> &'static str {
+        match self {
+            StrongChecksumAlgorithm::Auto => "auto",
+            StrongChecksumAlgorithm::Md4 => "md4",
+            StrongChecksumAlgorithm::Md5 => "md5",
+            StrongChecksumAlgorithm::Xxh64 => "xxh64",
+            StrongChecksumAlgorithm::Xxh3 => "xxh3",
+            StrongChecksumAlgorithm::Xxh128 => "xxh128",
+        }
+    }
+}
+
+/// Resolved checksum-choice configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StrongChecksumChoice {
+    transfer: StrongChecksumAlgorithm,
+    file: StrongChecksumAlgorithm,
+}
+
+impl StrongChecksumChoice {
+    /// Parses a `--checksum-choice` argument and resolves the negotiated algorithms.
+    pub fn parse(text: &str) -> Result<Self, Message> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(rsync_error!(
+                1,
+                "invalid --checksum-choice value '': value must name a checksum algorithm"
+            )
+            .with_role(Role::Client));
+        }
+
+        let mut parts = trimmed.splitn(2, ',');
+        let transfer = Self::parse_single(parts.next().unwrap())?;
+        let file = match parts.next() {
+            Some(part) => Self::parse_single(part)?,
+            None => transfer,
+        };
+
+        Ok(Self { transfer, file })
+    }
+
+    fn parse_single(label: &str) -> Result<StrongChecksumAlgorithm, Message> {
+        let normalized = label.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "auto" => Ok(StrongChecksumAlgorithm::Auto),
+            "md4" => Ok(StrongChecksumAlgorithm::Md4),
+            "md5" => Ok(StrongChecksumAlgorithm::Md5),
+            "xxh64" | "xxhash" => Ok(StrongChecksumAlgorithm::Xxh64),
+            "xxh3" | "xxh3-64" => Ok(StrongChecksumAlgorithm::Xxh3),
+            "xxh128" | "xxh3-128" => Ok(StrongChecksumAlgorithm::Xxh128),
+            _ => Err(rsync_error!(
+                1,
+                format!("invalid --checksum-choice value '{normalized}': unsupported checksum")
+            )
+            .with_role(Role::Client)),
+        }
+    }
+
+    /// Returns the transfer-algorithm selection (first component).
+    #[must_use]
+    pub const fn transfer(self) -> StrongChecksumAlgorithm {
+        self.transfer
+    }
+
+    /// Returns the checksum used for `--checksum` validation (second component).
+    #[must_use]
+    #[doc(alias = "--checksum-choice")]
+    pub const fn file(self) -> StrongChecksumAlgorithm {
+        self.file
+    }
+
+    /// Resolves the file checksum algorithm into a [`SignatureAlgorithm`].
+    #[must_use]
+    pub const fn file_signature_algorithm(self) -> SignatureAlgorithm {
+        self.file.to_signature_algorithm()
+    }
+
+    /// Renders the selection into the canonical argument form accepted by `--checksum-choice`.
+    #[must_use]
+    pub fn to_argument(self) -> String {
+        let transfer = self.transfer.canonical_name();
+        let file = self.file.canonical_name();
+        if self.transfer == self.file {
+            transfer.to_string()
+        } else {
+            format!("{transfer},{file}")
+        }
+    }
+}
+
+impl Default for StrongChecksumChoice {
+    fn default() -> Self {
+        Self {
+            transfer: StrongChecksumAlgorithm::Auto,
+            file: StrongChecksumAlgorithm::Auto,
+        }
     }
 }
 
@@ -454,6 +586,7 @@ pub struct ClientConfig {
     skip_compress: SkipCompressList,
     whole_file: bool,
     checksum: bool,
+    checksum_choice: StrongChecksumChoice,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -535,6 +668,7 @@ impl Default for ClientConfig {
             skip_compress: SkipCompressList::default(),
             whole_file: true,
             checksum: false,
+            checksum_choice: StrongChecksumChoice::default(),
             size_only: false,
             ignore_existing: false,
             update: false,
@@ -922,6 +1056,19 @@ impl ClientConfig {
         self.checksum
     }
 
+    /// Returns the negotiated strong checksum choice.
+    #[must_use]
+    #[doc(alias = "--checksum-choice")]
+    pub const fn checksum_choice(&self) -> StrongChecksumChoice {
+        self.checksum_choice
+    }
+
+    /// Returns the strong checksum algorithm applied during local validation.
+    #[must_use]
+    pub const fn checksum_signature_algorithm(&self) -> SignatureAlgorithm {
+        self.checksum_choice.file_signature_algorithm()
+    }
+
     /// Reports whether size-only change detection should be used when evaluating updates.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -1171,6 +1318,7 @@ pub struct ClientConfigBuilder {
     skip_compress: SkipCompressList,
     whole_file: Option<bool>,
     checksum: bool,
+    checksum_choice: StrongChecksumChoice,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -1563,6 +1711,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "-c")]
     pub const fn checksum(mut self, checksum: bool) -> Self {
         self.checksum = checksum;
+        self
+    }
+
+    /// Overrides the strong checksum selection used during validation.
+    #[must_use]
+    #[doc(alias = "--checksum-choice")]
+    pub const fn checksum_choice(mut self, choice: StrongChecksumChoice) -> Self {
+        self.checksum_choice = choice;
         self
     }
 
@@ -1963,6 +2119,7 @@ impl ClientConfigBuilder {
             skip_compress: self.skip_compress,
             whole_file: self.whole_file.unwrap_or(true),
             checksum: self.checksum,
+            checksum_choice: self.checksum_choice,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
             update: self.update,
@@ -2612,6 +2769,8 @@ pub struct RemoteFallbackArgs {
     pub max_size: Option<OsString>,
     /// Enables `--checksum`.
     pub checksum: bool,
+    /// Optional strong checksum selection forwarded via `--checksum-choice`.
+    pub checksum_choice: Option<OsString>,
     /// Enables `--size-only`.
     pub size_only: bool,
     /// Enables `--ignore-existing`.
@@ -2857,6 +3016,7 @@ where
         min_size,
         max_size,
         checksum,
+        checksum_choice,
         size_only,
         ignore_existing,
         update,
@@ -2991,6 +3151,11 @@ where
     }
     if checksum {
         command_args.push(OsString::from("--checksum"));
+    }
+    if let Some(choice) = checksum_choice {
+        let mut arg = OsString::from("--checksum-choice=");
+        arg.push(choice);
+        command_args.push(arg);
     }
     if size_only {
         command_args.push(OsString::from("--size-only"));
@@ -4306,6 +4471,7 @@ fn build_local_copy_options(
         .omit_dir_times(config.omit_dir_times())
         .omit_link_times(config.omit_link_times())
         .checksum(config.checksum())
+        .with_checksum_algorithm(config.checksum_signature_algorithm())
         .size_only(config.size_only())
         .ignore_existing(config.ignore_existing())
         .update(config.update())
@@ -4509,6 +4675,7 @@ exit 42
             min_size: None,
             max_size: None,
             checksum: false,
+            checksum_choice: None,
             size_only: false,
             ignore_existing: false,
             update: false,
@@ -5630,6 +5797,47 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--no-copy-links"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_checksum_choice() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.checksum = true;
+        args.checksum_choice = Some(OsString::from("xxh128"));
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--checksum"));
+        assert!(
+            captured
+                .lines()
+                .any(|line| line == "--checksum-choice=xxh128")
+        );
     }
 
     #[cfg(unix)]

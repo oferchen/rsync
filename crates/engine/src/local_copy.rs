@@ -78,7 +78,7 @@ use rustix::{
 use globset::{GlobBuilder, GlobMatcher};
 use rsync_bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use rsync_checksums::RollingChecksum;
-use rsync_checksums::strong::Md5;
+use rsync_checksums::strong::{Md4, Md5, Xxh3, Xxh3_128, Xxh64};
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 use rsync_filters::{FilterRule, FilterSet};
 #[cfg(feature = "acl")]
@@ -1673,6 +1673,7 @@ pub struct LocalCopyOptions {
     numeric_ids: bool,
     sparse: bool,
     checksum: bool,
+    checksum_algorithm: SignatureAlgorithm,
     size_only: bool,
     ignore_existing: bool,
     update: bool,
@@ -1743,6 +1744,7 @@ impl LocalCopyOptions {
             numeric_ids: false,
             sparse: false,
             checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
             size_only: false,
             ignore_existing: false,
             update: false,
@@ -2222,6 +2224,13 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Selects the strong checksum algorithm used when verifying files.
+    #[must_use]
+    pub const fn with_checksum_algorithm(mut self, algorithm: SignatureAlgorithm) -> Self {
+        self.checksum_algorithm = algorithm;
+        self
+    }
+
     /// Enables size-only change detection.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -2649,6 +2658,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn checksum_enabled(&self) -> bool {
         self.checksum
+    }
+
+    /// Returns the strong checksum algorithm used for comparisons.
+    #[must_use]
+    pub const fn checksum_algorithm(&self) -> SignatureAlgorithm {
+        self.checksum_algorithm
     }
 
     /// Returns the skip-compress list associated with the options.
@@ -3506,6 +3521,7 @@ impl<'a> CopyContext<'a> {
                 metadata_options,
                 size_only,
                 checksum,
+                self.options.checksum_algorithm(),
                 self.options.modify_window(),
             ) {
                 return Ok(Some(candidate));
@@ -6915,6 +6931,7 @@ fn find_reference_action(
             metadata_options,
             size_only,
             checksum,
+            context.options.checksum_algorithm(),
             context.options.modify_window(),
         ) {
             return Ok(Some(match reference.kind() {
@@ -7426,6 +7443,7 @@ fn copy_file(
             &metadata_options,
             size_only_enabled,
             checksum_enabled,
+            context.options.checksum_algorithm(),
             context.options.modify_window(),
         ) {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
@@ -8162,6 +8180,7 @@ fn should_skip_copy(
     options: &MetadataOptions,
     size_only: bool,
     checksum: bool,
+    checksum_algorithm: SignatureAlgorithm,
     modify_window: Duration,
 ) -> bool {
     if destination.len() != source.len() {
@@ -8169,7 +8188,8 @@ fn should_skip_copy(
     }
 
     if checksum {
-        return files_checksum_match(source_path, destination_path).unwrap_or(false);
+        return files_checksum_match(source_path, destination_path, checksum_algorithm)
+            .unwrap_or(false);
     }
 
     if size_only {
@@ -8236,12 +8256,56 @@ fn files_match(source: &Path, destination: &Path) -> bool {
     }
 }
 
-fn files_checksum_match(source: &Path, destination: &Path) -> io::Result<bool> {
+enum StrongHasher {
+    Md4(Md4),
+    Md5(Md5),
+    Xxh64(Xxh64),
+    Xxh3(Xxh3),
+    Xxh128(Xxh3_128),
+}
+
+impl StrongHasher {
+    fn new(algorithm: SignatureAlgorithm) -> Self {
+        match algorithm {
+            SignatureAlgorithm::Md4 => StrongHasher::Md4(Md4::new()),
+            SignatureAlgorithm::Md5 => StrongHasher::Md5(Md5::new()),
+            SignatureAlgorithm::Xxh64 { seed } => StrongHasher::Xxh64(Xxh64::new(seed)),
+            SignatureAlgorithm::Xxh3 { seed } => StrongHasher::Xxh3(Xxh3::new(seed)),
+            SignatureAlgorithm::Xxh3_128 { seed } => StrongHasher::Xxh128(Xxh3_128::new(seed)),
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            StrongHasher::Md4(state) => state.update(data),
+            StrongHasher::Md5(state) => state.update(data),
+            StrongHasher::Xxh64(state) => state.update(data),
+            StrongHasher::Xxh3(state) => state.update(data),
+            StrongHasher::Xxh128(state) => state.update(data),
+        }
+    }
+
+    fn finalize(self) -> Vec<u8> {
+        match self {
+            StrongHasher::Md4(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Md5(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Xxh64(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Xxh3(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Xxh128(state) => state.finalize().as_ref().to_vec(),
+        }
+    }
+}
+
+fn files_checksum_match(
+    source: &Path,
+    destination: &Path,
+    algorithm: SignatureAlgorithm,
+) -> io::Result<bool> {
     let mut source_file = fs::File::open(source)?;
     let mut destination_file = fs::File::open(destination)?;
 
-    let mut source_hasher = Md5::new();
-    let mut destination_hasher = Md5::new();
+    let mut source_hasher = StrongHasher::new(algorithm);
+    let mut destination_hasher = StrongHasher::new(algorithm);
 
     let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
     let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
@@ -8262,7 +8326,7 @@ fn files_checksum_match(source: &Path, destination: &Path) -> io::Result<bool> {
         destination_hasher.update(&destination_buffer[..destination_read]);
     }
 
-    Ok(source_hasher.finalize().as_ref() == destination_hasher.finalize().as_ref())
+    Ok(source_hasher.finalize() == destination_hasher.finalize())
 }
 
 fn copy_fifo(
@@ -9201,6 +9265,7 @@ mod tests {
             &metadata_options,
             false,
             false,
+            SignatureAlgorithm::Md5,
             Duration::ZERO,
         ));
     }
@@ -9232,6 +9297,7 @@ mod tests {
             &metadata_options,
             false,
             false,
+            SignatureAlgorithm::Md5,
             Duration::from_secs(5),
         ));
 
@@ -9246,6 +9312,7 @@ mod tests {
             &metadata_options,
             false,
             false,
+            SignatureAlgorithm::Md5,
             Duration::from_secs(5),
         ));
     }
@@ -9286,10 +9353,51 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_checksum_algorithm_round_trip() {
+        let options = LocalCopyOptions::default()
+            .with_checksum_algorithm(SignatureAlgorithm::Xxh3 { seed: 42 });
+        assert_eq!(
+            options.checksum_algorithm(),
+            SignatureAlgorithm::Xxh3 { seed: 42 }
+        );
+        assert_eq!(
+            LocalCopyOptions::default().checksum_algorithm(),
+            SignatureAlgorithm::Md5
+        );
+    }
+
+    #[test]
     fn local_copy_options_omit_dir_times_round_trip() {
         let options = LocalCopyOptions::default().omit_dir_times(true);
         assert!(options.omit_dir_times_enabled());
         assert!(!LocalCopyOptions::default().omit_dir_times_enabled());
+    }
+
+    #[test]
+    fn files_checksum_match_respects_algorithm_selection() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&destination, b"payload").expect("write destination");
+
+        let algorithms = [
+            SignatureAlgorithm::Md4,
+            SignatureAlgorithm::Md5,
+            SignatureAlgorithm::Xxh64 { seed: 7 },
+            SignatureAlgorithm::Xxh3 { seed: 13 },
+            SignatureAlgorithm::Xxh3_128 { seed: 0 },
+        ];
+
+        for &algorithm in &algorithms {
+            assert!(files_checksum_match(&source, &destination, algorithm).expect("hash ok"));
+        }
+
+        fs::write(&destination, b"payloae").expect("write differing payload");
+
+        for &algorithm in &algorithms {
+            assert!(!files_checksum_match(&source, &destination, algorithm).expect("hash ok"));
+        }
     }
 
     #[test]
