@@ -3590,6 +3590,10 @@ where
     transfer_operands.append(&mut file_list_operands);
     transfer_operands.extend(remainder);
 
+    let super_default = match super_mode {
+        Some(value) => value,
+        None => archive,
+    };
     let preserve_owner = if parsed_chown
         .as_ref()
         .and_then(|value| value.owner)
@@ -3598,10 +3602,8 @@ where
         true
     } else if let Some(value) = owner {
         value
-    } else if super_mode == Some(true) {
-        true
     } else {
-        archive
+        super_default
     };
     let preserve_group = if parsed_chown
         .as_ref()
@@ -3611,17 +3613,13 @@ where
         true
     } else if let Some(value) = group {
         value
-    } else if super_mode == Some(true) {
-        true
     } else {
-        archive
+        super_default
     };
     let preserve_permissions = if let Some(value) = perms {
         value
-    } else if super_mode == Some(true) {
-        true
     } else {
-        archive
+        super_default
     };
     let preserve_times = times.unwrap_or(archive);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
