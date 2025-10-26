@@ -6828,7 +6828,10 @@ fn resolve_bind_address(text: &str) -> io::Result<SocketAddr> {
     let mut resolved = candidate.to_socket_addrs()?;
     resolved
         .next()
-        .map(|addr| SocketAddr::new(addr.ip(), 0))
+        .map(|mut addr| {
+            addr.set_port(0);
+            addr
+        })
         .ok_or_else(|| {
             io::Error::new(
                 ErrorKind::AddrNotAvailable,
@@ -10070,6 +10073,16 @@ mod tests {
         let expected = "192.0.2.1".parse::<IpAddr>().expect("ip literal");
         assert_eq!(parsed.socket().ip(), expected);
         assert_eq!(parsed.raw(), OsStr::new("192.0.2.1"));
+    }
+
+    #[test]
+    fn bind_address_argument_preserves_ipv6_scope_id() {
+        let parsed =
+            parse_bind_address_argument(OsStr::new("fe80::1%5")).expect("parse bind address");
+        match parsed.socket() {
+            SocketAddr::V6(addr) => assert_eq!(addr.scope_id(), 5),
+            other => panic!("expected IPv6 socket, got {other:?}"),
+        }
     }
 
     #[test]
