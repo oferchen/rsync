@@ -1552,6 +1552,7 @@ pub struct LocalCopyOptions {
     preserve_group: bool,
     preserve_permissions: bool,
     preserve_times: bool,
+    omit_link_times: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
     omit_dir_times: bool,
@@ -1618,6 +1619,7 @@ impl LocalCopyOptions {
             owner_override: None,
             group_override: None,
             omit_dir_times: false,
+            omit_link_times: false,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             filters: None,
@@ -1999,6 +2001,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--omit-dir-times")]
     pub const fn omit_dir_times(mut self, omit: bool) -> Self {
         self.omit_dir_times = omit;
+        self
+    }
+
+    /// Controls whether symbolic link timestamps are preserved.
+    #[must_use]
+    #[doc(alias = "--omit-link-times")]
+    pub const fn omit_link_times(mut self, omit: bool) -> Self {
+        self.omit_link_times = omit;
         self
     }
 
@@ -2403,6 +2413,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn omit_dir_times_enabled(&self) -> bool {
         self.omit_dir_times
+    }
+
+    /// Returns whether symbolic link timestamps should be skipped.
+    #[must_use]
+    pub const fn omit_link_times_enabled(&self) -> bool {
+        self.omit_link_times
     }
 
     #[cfg(feature = "acl")]
@@ -3492,6 +3508,10 @@ impl<'a> CopyContext<'a> {
 
     fn omit_dir_times_enabled(&self) -> bool {
         self.options.omit_dir_times_enabled()
+    }
+
+    fn omit_link_times_enabled(&self) -> bool {
+        self.options.omit_link_times_enabled()
     }
 
     fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
@@ -8364,7 +8384,12 @@ fn copy_symlink(
         destination_previously_existed,
     );
 
-    apply_symlink_metadata_with_options(destination, metadata, metadata_options.clone())
+    let symlink_options = if context.omit_link_times_enabled() {
+        metadata_options.clone().preserve_times(false)
+    } else {
+        metadata_options.clone()
+    };
+    apply_symlink_metadata_with_options(destination, metadata, symlink_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
@@ -8693,6 +8718,13 @@ mod tests {
         let options = LocalCopyOptions::default().omit_dir_times(true);
         assert!(options.omit_dir_times_enabled());
         assert!(!LocalCopyOptions::default().omit_dir_times_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_omit_link_times_round_trip() {
+        let options = LocalCopyOptions::default().omit_link_times(true);
+        assert!(options.omit_link_times_enabled());
+        assert!(!LocalCopyOptions::default().omit_link_times_enabled());
     }
 
     #[test]

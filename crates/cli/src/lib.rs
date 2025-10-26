@@ -238,6 +238,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-times   Disable modification time preservation.\n",
     "      --omit-dir-times  Skip preserving directory modification times.\n",
     "      --no-omit-dir-times  Preserve directory modification times.\n",
+    "      --omit-link-times  Skip preserving symlink modification times.\n",
+    "      --no-omit-link-times  Preserve symlink modification times.\n",
     "  -A, --acls      Preserve POSIX ACLs when supported.\n",
     "      --no-acls   Disable POSIX ACL preservation.\n",
     "  -X, --xattrs     Preserve extended attributes when supported.\n",
@@ -250,7 +252,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -879,6 +881,7 @@ struct ParsedArgs {
     perms: Option<bool>,
     times: Option<bool>,
     omit_dir_times: Option<bool>,
+    omit_link_times: Option<bool>,
     acls: Option<bool>,
     numeric_ids: Option<bool>,
     hard_links: Option<bool>,
@@ -1696,6 +1699,20 @@ fn clap_command() -> ClapCommand {
                 .overrides_with("omit-dir-times"),
         )
         .arg(
+            Arg::new("omit-link-times")
+                .long("omit-link-times")
+                .help("Skip preserving symlink modification times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-omit-link-times"),
+        )
+        .arg(
+            Arg::new("no-omit-link-times")
+                .long("no-omit-link-times")
+                .help("Preserve symlink modification times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("omit-link-times"),
+        )
+        .arg(
             Arg::new("acls")
                 .long("acls")
                 .short('A')
@@ -1857,6 +1874,13 @@ where
     let prune_empty_dirs = if matches.get_flag("no-prune-empty-dirs") {
         Some(false)
     } else if matches.get_flag("prune-empty-dirs") {
+        Some(true)
+    } else {
+        None
+    };
+    let omit_link_times = if matches.get_flag("no-omit-link-times") {
+        Some(false)
+    } else if matches.get_flag("omit-link-times") {
         Some(true)
     } else {
         None
@@ -2246,6 +2270,7 @@ where
         perms,
         times,
         omit_dir_times,
+        omit_link_times,
         numeric_ids,
         hard_links,
         sparse,
@@ -2633,6 +2658,7 @@ where
         perms,
         times,
         omit_dir_times,
+        omit_link_times,
         acls,
         excludes,
         includes,
@@ -3141,6 +3167,7 @@ where
             perms,
             times,
             omit_dir_times,
+            omit_link_times,
             numeric_ids: numeric_ids_option,
             hard_links,
             copy_links,
@@ -3297,6 +3324,7 @@ where
     let preserve_permissions = perms.unwrap_or(archive);
     let preserve_times = times.unwrap_or(archive);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
+    let omit_link_times_setting = omit_link_times.unwrap_or(false);
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
     let preserve_hard_links = hard_links.unwrap_or(false);
@@ -3355,6 +3383,7 @@ where
         .permissions(preserve_permissions)
         .times(preserve_times)
         .omit_dir_times(omit_dir_times_setting)
+        .omit_link_times(omit_link_times_setting)
         .devices(preserve_devices)
         .specials(preserve_specials)
         .checksum(checksum)
@@ -8354,6 +8383,7 @@ mod tests {
             OsString::from("--perms"),
             OsString::from("--times"),
             OsString::from("--omit-dir-times"),
+            OsString::from("--omit-link-times"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -8362,6 +8392,7 @@ mod tests {
         assert_eq!(parsed.perms, Some(true));
         assert_eq!(parsed.times, Some(true));
         assert_eq!(parsed.omit_dir_times, Some(true));
+        assert_eq!(parsed.omit_link_times, Some(true));
 
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -8369,6 +8400,7 @@ mod tests {
             OsString::from("--no-perms"),
             OsString::from("--no-times"),
             OsString::from("--no-omit-dir-times"),
+            OsString::from("--no-omit-link-times"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -8377,6 +8409,7 @@ mod tests {
         assert_eq!(parsed.perms, Some(false));
         assert_eq!(parsed.times, Some(false));
         assert_eq!(parsed.omit_dir_times, Some(false));
+        assert_eq!(parsed.omit_link_times, Some(false));
     }
 
     #[test]
@@ -10993,6 +11026,52 @@ mod tests {
 
         assert_ne!(dest_dir_mtime, dir_mtime);
         assert_eq!(dest_file_mtime, dir_mtime);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
+        use filetime::{FileTime, set_file_times, set_symlink_file_times};
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source_root = tmp.path().join("source");
+        let dest_root = tmp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source dir");
+
+        let source_target = source_root.join("target.txt");
+        let source_link = source_root.join("link.txt");
+        fs::write(&source_target, b"payload").expect("write source target");
+        symlink("target.txt", &source_link).expect("create symlink");
+
+        let timestamp = FileTime::from_unix_time(1_700_300_000, 0);
+        set_file_times(&source_target, timestamp, timestamp).expect("set file times");
+        set_symlink_file_times(&source_link, timestamp, timestamp).expect("set symlink times");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-a"),
+            OsString::from("--omit-link-times"),
+            source_root.clone().into_os_string(),
+            dest_root.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let dest_target = dest_root.join("target.txt");
+        let dest_link = dest_root.join("link.txt");
+
+        let dest_target_metadata = fs::metadata(&dest_target).expect("dest target metadata");
+        let dest_link_metadata = fs::symlink_metadata(&dest_link).expect("dest link metadata");
+        let dest_target_mtime = FileTime::from_last_modification_time(&dest_target_metadata);
+        let dest_link_mtime = FileTime::from_last_modification_time(&dest_link_metadata);
+
+        assert_eq!(dest_target_mtime, timestamp);
+        assert_ne!(dest_link_mtime, timestamp);
     }
 
     #[test]
@@ -14162,6 +14241,42 @@ exit 0
         assert!(!recorded.contains("--no-omit-dir-times"));
     }
 
+    #[test]
+    fn remote_fallback_forwards_omit_link_times_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--omit-link-times"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--omit-link-times"));
+        assert!(!recorded.contains("--no-omit-link-times"));
+    }
+
     #[cfg(all(unix, feature = "acl"))]
     #[test]
     fn remote_fallback_forwards_no_acls_toggle() {
@@ -14231,6 +14346,41 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.contains("--no-omit-dir-times"));
+    }
+
+    #[test]
+    fn remote_fallback_forwards_no_omit_link_times_toggle() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-omit-link-times"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-omit-link-times"));
     }
 
     #[test]

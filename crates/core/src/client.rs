@@ -410,6 +410,7 @@ pub struct ClientConfig {
     group_override: Option<u32>,
     chmod: Option<ChmodModifiers>,
     omit_dir_times: bool,
+    omit_link_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
@@ -478,6 +479,7 @@ impl Default for ClientConfig {
             group_override: None,
             chmod: None,
             omit_dir_times: false,
+            omit_link_times: false,
             compress: false,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
@@ -753,6 +755,13 @@ impl ClientConfig {
     #[doc(alias = "--omit-dir-times")]
     pub const fn omit_dir_times(&self) -> bool {
         self.omit_dir_times
+    }
+
+    /// Indicates whether symbolic link modification times should be skipped.
+    #[must_use]
+    #[doc(alias = "--omit-link-times")]
+    pub const fn omit_link_times(&self) -> bool {
+        self.omit_link_times
     }
 
     /// Reports whether POSIX ACLs should be preserved.
@@ -1035,6 +1044,7 @@ pub struct ClientConfigBuilder {
     group_override: Option<u32>,
     chmod: Option<ChmodModifiers>,
     omit_dir_times: bool,
+    omit_link_times: bool,
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
@@ -1309,6 +1319,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--omit-dir-times")]
     pub const fn omit_dir_times(mut self, omit: bool) -> Self {
         self.omit_dir_times = omit;
+        self
+    }
+
+    /// Controls whether symbolic link modification times should be preserved.
+    #[must_use]
+    #[doc(alias = "--omit-link-times")]
+    pub const fn omit_link_times(mut self, omit: bool) -> Self {
+        self.omit_link_times = omit;
         self
     }
 
@@ -1744,6 +1762,7 @@ impl ClientConfigBuilder {
             group_override: self.group_override,
             chmod: self.chmod,
             omit_dir_times: self.omit_dir_times,
+            omit_link_times: self.omit_link_times,
             compress: self.compress,
             compression_level: self.compression_level,
             compression_setting: self.compression_setting,
@@ -2370,6 +2389,8 @@ pub struct RemoteFallbackArgs {
     pub times: Option<bool>,
     /// Optional `--omit-dir-times`/`--no-omit-dir-times` toggle.
     pub omit_dir_times: Option<bool>,
+    /// Optional `--omit-link-times`/`--no-omit-link-times` toggle.
+    pub omit_link_times: Option<bool>,
     /// Optional `--numeric-ids`/`--no-numeric-ids` toggle.
     pub numeric_ids: Option<bool>,
     /// Optional `--hard-links`/`--no-hard-links` toggle.
@@ -2581,6 +2602,7 @@ where
         perms,
         times,
         omit_dir_times,
+        omit_link_times,
         numeric_ids,
         hard_links,
         copy_links,
@@ -2729,6 +2751,12 @@ where
         "--omit-dir-times",
         "--no-omit-dir-times",
         omit_dir_times,
+    );
+    push_toggle(
+        &mut command_args,
+        "--omit-link-times",
+        "--no-omit-link-times",
+        omit_link_times,
     );
     push_toggle(
         &mut command_args,
@@ -3898,6 +3926,7 @@ fn build_local_copy_options(
         .permissions(config.preserve_permissions())
         .times(config.preserve_times())
         .omit_dir_times(config.omit_dir_times())
+        .omit_link_times(config.omit_link_times())
         .checksum(config.checksum())
         .size_only(config.size_only())
         .ignore_existing(config.ignore_existing())
@@ -4073,6 +4102,7 @@ exit 42
             perms: None,
             times: None,
             omit_dir_times: None,
+            omit_link_times: None,
             numeric_ids: None,
             hard_links: None,
             copy_links: None,
@@ -4760,6 +4790,17 @@ exit 42
 
         assert!(config.omit_dir_times());
         assert!(!ClientConfig::default().omit_dir_times());
+    }
+
+    #[test]
+    fn builder_controls_omit_link_times_flag() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .omit_link_times(true)
+            .build();
+
+        assert!(config.omit_link_times());
+        assert!(!ClientConfig::default().omit_link_times());
     }
 
     #[test]
