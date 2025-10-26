@@ -400,6 +400,8 @@ pub struct ClientConfig {
     delete_mode: DeleteMode,
     delete_excluded: bool,
     max_delete: Option<u64>,
+    min_file_size: Option<u64>,
+    max_file_size: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -469,6 +471,8 @@ impl Default for ClientConfig {
             delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
             max_delete: None,
+            min_file_size: None,
+            max_file_size: None,
             remove_source_files: false,
             bandwidth_limit: None,
             preserve_owner: false,
@@ -687,6 +691,20 @@ impl ClientConfig {
     #[doc(alias = "--max-delete")]
     pub const fn max_delete(&self) -> Option<u64> {
         self.max_delete
+    }
+
+    /// Returns the minimum file size filter, if configured.
+    #[must_use]
+    #[doc(alias = "--min-size")]
+    pub const fn min_file_size(&self) -> Option<u64> {
+        self.min_file_size
+    }
+
+    /// Returns the maximum file size filter, if configured.
+    #[must_use]
+    #[doc(alias = "--max-size")]
+    pub const fn max_file_size(&self) -> Option<u64> {
+        self.max_file_size
     }
 
     /// Returns whether the sender should remove source files after transfer.
@@ -1034,6 +1052,8 @@ pub struct ClientConfigBuilder {
     delete_mode: DeleteMode,
     delete_excluded: bool,
     max_delete: Option<u64>,
+    min_file_size: Option<u64>,
+    max_file_size: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
     preserve_owner: bool,
@@ -1193,6 +1213,22 @@ impl ClientConfigBuilder {
     #[doc(alias = "--max-delete")]
     pub const fn max_delete(mut self, limit: Option<u64>) -> Self {
         self.max_delete = limit;
+        self
+    }
+
+    /// Sets the minimum file size to transfer.
+    #[must_use]
+    #[doc(alias = "--min-size")]
+    pub const fn min_file_size(mut self, limit: Option<u64>) -> Self {
+        self.min_file_size = limit;
+        self
+    }
+
+    /// Sets the maximum file size to transfer.
+    #[must_use]
+    #[doc(alias = "--max-size")]
+    pub const fn max_file_size(mut self, limit: Option<u64>) -> Self {
+        self.max_file_size = limit;
         self
     }
 
@@ -1752,6 +1788,8 @@ impl ClientConfigBuilder {
             delete_mode: self.delete_mode,
             delete_excluded: self.delete_excluded,
             max_delete: self.max_delete,
+            min_file_size: self.min_file_size,
+            max_file_size: self.max_file_size,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,
             preserve_owner: self.preserve_owner,
@@ -2361,6 +2399,10 @@ pub struct RemoteFallbackArgs {
     pub delete_excluded: bool,
     /// Limits deletions via `--max-delete`.
     pub max_delete: Option<u64>,
+    /// Skips files smaller than the provided size via `--min-size`.
+    pub min_size: Option<OsString>,
+    /// Skips files larger than the provided size via `--max-size`.
+    pub max_size: Option<OsString>,
     /// Enables `--checksum`.
     pub checksum: bool,
     /// Enables `--size-only`.
@@ -2592,6 +2634,8 @@ where
         delete_mode,
         delete_excluded,
         max_delete,
+        min_size,
+        max_size,
         checksum,
         size_only,
         ignore_existing,
@@ -2708,6 +2752,16 @@ where
     if let Some(limit) = max_delete {
         let mut arg = OsString::from("--max-delete=");
         arg.push(limit.to_string());
+        command_args.push(arg);
+    }
+    if let Some(spec) = min_size {
+        let mut arg = OsString::from("--min-size=");
+        arg.push(spec);
+        command_args.push(arg);
+    }
+    if let Some(spec) = max_size {
+        let mut arg = OsString::from("--max-size=");
+        arg.push(spec);
         command_args.push(arg);
     }
     if checksum {
@@ -3907,6 +3961,8 @@ fn build_local_copy_options(
     options = options
         .delete_excluded(config.delete_excluded())
         .max_deletions(config.max_delete())
+        .min_file_size(config.min_file_size())
+        .max_file_size(config.max_file_size())
         .remove_source_files(config.remove_source_files())
         .bandwidth_limit(
             config
@@ -4092,6 +4148,8 @@ exit 42
             delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
             max_delete: None,
+            min_size: None,
+            max_size: None,
             checksum: false,
             size_only: false,
             ignore_existing: false,
@@ -4338,6 +4396,34 @@ exit 42
             config.compression_setting().level_or_default(),
             CompressionLevel::Default
         );
+    }
+
+    #[test]
+    fn builder_sets_min_file_size_limit() {
+        let config = ClientConfig::builder().min_file_size(Some(1_024)).build();
+
+        assert_eq!(config.min_file_size(), Some(1_024));
+
+        let cleared = ClientConfig::builder()
+            .min_file_size(Some(2048))
+            .min_file_size(None)
+            .build();
+
+        assert_eq!(cleared.min_file_size(), None);
+    }
+
+    #[test]
+    fn builder_sets_max_file_size_limit() {
+        let config = ClientConfig::builder().max_file_size(Some(8_192)).build();
+
+        assert_eq!(config.max_file_size(), Some(8_192));
+
+        let cleared = ClientConfig::builder()
+            .max_file_size(Some(4_096))
+            .max_file_size(None)
+            .build();
+
+        assert_eq!(cleared.max_file_size(), None);
     }
 
     #[test]

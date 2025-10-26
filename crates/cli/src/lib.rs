@@ -149,6 +149,8 @@ const HELP_TEXT: &str = concat!(
     "      --delete-after  Remove destination files after transfers complete.\n",
     "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
     "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
+    "      --min-size=SIZE  Skip files smaller than SIZE.\n",
+    "      --max-size=SIZE  Skip files larger than SIZE.\n",
     "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
     "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
     "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
@@ -252,7 +254,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -871,6 +873,8 @@ struct ParsedArgs {
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
     max_delete: Option<OsString>,
+    min_size: Option<OsString>,
+    max_size: Option<OsString>,
     compress: bool,
     no_compress: bool,
     compress_level: Option<OsString>,
@@ -1476,6 +1480,22 @@ fn clap_command() -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("min-size")
+                .long("min-size")
+                .value_name("SIZE")
+                .help("Skip files smaller than the specified size.")
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("max-size")
+                .long("max-size")
+                .value_name("SIZE")
+                .help("Skip files larger than the specified size.")
+                .num_args(1)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("backup")
                 .long("backup")
                 .short('b')
@@ -1921,6 +1941,8 @@ where
     let delete_after_flag = matches.get_flag("delete-after");
     let delete_excluded = matches.get_flag("delete-excluded");
     let max_delete = matches.remove_one::<OsString>("max-delete");
+    let min_size = matches.remove_one::<OsString>("min-size");
+    let max_size = matches.remove_one::<OsString>("max-size");
 
     let delete_mode_conflicts = [
         delete_before_flag,
@@ -2260,6 +2282,8 @@ where
         remainder,
         bwlimit,
         max_delete,
+        min_size,
+        max_size,
         compress,
         no_compress,
         compress_level,
@@ -2648,6 +2672,8 @@ where
         remainder: raw_remainder,
         bwlimit,
         max_delete,
+        min_size,
+        max_size,
         compress: compress_flag,
         no_compress,
         compress_level,
@@ -2934,6 +2960,32 @@ where
         None => None,
     };
 
+    let min_size_limit = match min_size.as_ref() {
+        Some(value) => match parse_size_limit_argument(value.as_os_str(), "--min-size") {
+            Ok(limit) => Some(limit),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    let max_size_limit = match max_size.as_ref() {
+        Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-size") {
+            Ok(limit) => Some(limit),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{}", message);
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
+
     let compress_level_setting = match compress_level {
         Some(ref value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
@@ -3159,6 +3211,8 @@ where
             delete_mode,
             delete_excluded,
             max_delete: max_delete_limit,
+            min_size: min_size.clone(),
+            max_size: max_size.clone(),
             checksum,
             size_only,
             ignore_existing,
@@ -3374,6 +3428,8 @@ where
         .delete(delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some())
         .delete_excluded(delete_excluded)
         .max_delete(max_delete_limit)
+        .min_file_size(min_size_limit)
+        .max_file_size(max_size_limit)
         .backup(backup)
         .backup_directory(backup_dir.clone().map(PathBuf::from))
         .backup_suffix(backup_suffix.clone())
@@ -4793,6 +4849,219 @@ fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {
             )
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SizeParseError {
+    Empty,
+    Negative,
+    Invalid,
+    TooLarge,
+}
+
+fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    match parse_size_spec(trimmed) {
+        Ok(limit) => Ok(limit),
+        Err(SizeParseError::Empty) => {
+            Err(rsync_error!(1, format!("{flag} value must not be empty")).with_role(Role::Client))
+        }
+        Err(SizeParseError::Negative) => Err(rsync_error!(
+            1,
+            format!("invalid {flag} '{display}': size must be non-negative")
+        )
+        .with_role(Role::Client)),
+        Err(SizeParseError::Invalid) => Err(rsync_error!(
+            1,
+            format!(
+                "invalid {flag} '{display}': expected a size with an optional K/M/G/T/P/E suffix"
+            )
+        )
+        .with_role(Role::Client)),
+        Err(SizeParseError::TooLarge) => Err(rsync_error!(
+            1,
+            format!("invalid {flag} '{display}': size exceeds the supported range")
+        )
+        .with_role(Role::Client)),
+    }
+}
+
+fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
+    if text.is_empty() {
+        return Err(SizeParseError::Empty);
+    }
+
+    let mut unsigned = text;
+    let mut negative = false;
+
+    if let Some(first) = unsigned.chars().next() {
+        match first {
+            '+' => {
+                unsigned = &unsigned[first.len_utf8()..];
+            }
+            '-' => {
+                negative = true;
+                unsigned = &unsigned[first.len_utf8()..];
+            }
+            _ => {}
+        }
+    }
+
+    if unsigned.is_empty() {
+        return Err(SizeParseError::Empty);
+    }
+
+    if negative {
+        return Err(SizeParseError::Negative);
+    }
+
+    let mut digits_seen = false;
+    let mut decimal_seen = false;
+    let mut numeric_end = unsigned.len();
+
+    for (index, ch) in unsigned.char_indices() {
+        if ch.is_ascii_digit() {
+            digits_seen = true;
+            continue;
+        }
+
+        if (ch == '.' || ch == ',') && !decimal_seen {
+            decimal_seen = true;
+            continue;
+        }
+
+        numeric_end = index;
+        break;
+    }
+
+    let numeric_part = &unsigned[..numeric_end];
+    let remainder = &unsigned[numeric_end..];
+
+    if !digits_seen || numeric_part == "." || numeric_part == "," {
+        return Err(SizeParseError::Invalid);
+    }
+
+    let (integer_part, fractional_part, denominator) =
+        parse_decimal_components_for_size(numeric_part)?;
+
+    let (exponent, mut remainder_after_suffix) = if remainder.is_empty() {
+        (0u32, remainder)
+    } else {
+        let mut chars = remainder.chars();
+        let ch = chars.next().unwrap();
+        (
+            match ch.to_ascii_lowercase() {
+                'b' => 0,
+                'k' => 1,
+                'm' => 2,
+                'g' => 3,
+                't' => 4,
+                'p' => 5,
+                'e' => 6,
+                _ => return Err(SizeParseError::Invalid),
+            },
+            chars.as_str(),
+        )
+    };
+
+    let mut base = 1024u32;
+
+    if !remainder_after_suffix.is_empty() {
+        let bytes = remainder_after_suffix.as_bytes();
+        match bytes[0] {
+            b'b' | b'B' => {
+                base = 1000;
+                remainder_after_suffix = &remainder_after_suffix[1..];
+            }
+            b'i' | b'I' => {
+                if bytes.len() < 2 {
+                    return Err(SizeParseError::Invalid);
+                }
+                if matches!(bytes[1], b'b' | b'B') {
+                    remainder_after_suffix = &remainder_after_suffix[2..];
+                } else {
+                    return Err(SizeParseError::Invalid);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !remainder_after_suffix.is_empty() {
+        return Err(SizeParseError::Invalid);
+    }
+
+    let scale = pow_u128_for_size(base, exponent)?;
+
+    let numerator = integer_part
+        .checked_mul(denominator)
+        .and_then(|value| value.checked_add(fractional_part))
+        .ok_or(SizeParseError::TooLarge)?;
+    let product = numerator
+        .checked_mul(scale)
+        .ok_or(SizeParseError::TooLarge)?;
+
+    let value = product / denominator;
+    if value > u64::MAX as u128 {
+        return Err(SizeParseError::TooLarge);
+    }
+
+    Ok(value as u64)
+}
+
+fn parse_decimal_components_for_size(text: &str) -> Result<(u128, u128, u128), SizeParseError> {
+    let mut integer = 0u128;
+    let mut fraction = 0u128;
+    let mut denominator = 1u128;
+    let mut saw_decimal = false;
+
+    for ch in text.chars() {
+        match ch {
+            '0'..='9' => {
+                let digit = u128::from(ch as u8 - b'0');
+                if saw_decimal {
+                    denominator = denominator
+                        .checked_mul(10)
+                        .ok_or(SizeParseError::TooLarge)?;
+                    fraction = fraction
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or(SizeParseError::TooLarge)?;
+                } else {
+                    integer = integer
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit))
+                        .ok_or(SizeParseError::TooLarge)?;
+                }
+            }
+            '.' | ',' => {
+                if saw_decimal {
+                    return Err(SizeParseError::Invalid);
+                }
+                saw_decimal = true;
+            }
+            _ => return Err(SizeParseError::Invalid),
+        }
+    }
+
+    Ok((integer, fraction, denominator))
+}
+
+fn pow_u128_for_size(base: u32, exponent: u32) -> Result<u128, SizeParseError> {
+    let mut acc = 1u128;
+    for _ in 0..exponent {
+        acc = acc
+            .checked_mul(u128::from(base))
+            .ok_or(SizeParseError::TooLarge)?;
+    }
+    Ok(acc)
 }
 
 impl Default for ProgressSetting {
@@ -9459,9 +9728,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_collects_min_max_size_values() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--min-size=1.5K"),
+            OsString::from("--max-size=2M"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.min_size, Some(OsString::from("1.5K")));
+        assert_eq!(parsed.max_size, Some(OsString::from("2M")));
+    }
+
+    #[test]
     fn parse_max_delete_argument_accepts_zero() {
         let limit = parse_max_delete_argument(OsStr::new("0")).expect("parse max-delete");
         assert_eq!(limit, 0);
+    }
+
+    #[test]
+    fn parse_size_limit_argument_accepts_fractional_units() {
+        let value =
+            parse_size_limit_argument(OsStr::new("1.5K"), "--min-size").expect("parse size limit");
+        assert_eq!(value, 1536);
+    }
+
+    #[test]
+    fn parse_size_limit_argument_rejects_negative() {
+        let error = parse_size_limit_argument(OsStr::new("-2"), "--min-size")
+            .expect_err("negative rejected");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("size must be non-negative"),
+            "missing detail: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_size_limit_argument_rejects_invalid_suffix() {
+        let error = parse_size_limit_argument(OsStr::new("10QB"), "--max-size")
+            .expect_err("invalid suffix rejected");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("expected a size with an optional"),
+            "missing message: {rendered}"
+        );
     }
 
     #[test]
@@ -13461,6 +13774,45 @@ exit 0
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--delete"));
         assert!(args.iter().any(|value| *value == "--max-delete=5"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_min_max_size_arguments() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let destination = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--min-size=1.5K"),
+            OsString::from("--max-size=2M"),
+            OsString::from("remote::module"),
+            destination.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let args: Vec<&str> = recorded.lines().collect();
+        assert!(args.iter().any(|value| *value == "--min-size=1.5K"));
+        assert!(args.iter().any(|value| *value == "--max-size=2M"));
     }
 
     #[cfg(unix)]
