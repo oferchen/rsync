@@ -150,7 +150,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -183,6 +183,7 @@ use rsync_core::{
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
     },
+    fallback::fallback_override,
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     version::{RUST_VERSION, VersionInfoReport},
@@ -4550,12 +4551,12 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 fn configured_fallback_binary() -> Option<OsString> {
-    if let Some(result) = fallback_env_override("OC_RSYNC_DAEMON_FALLBACK") {
-        return result;
+    if let Some(selection) = fallback_override("OC_RSYNC_DAEMON_FALLBACK") {
+        return selection.resolve_or_default(OsStr::new("rsync"));
     }
 
-    if let Some(result) = fallback_env_override("OC_RSYNC_FALLBACK") {
-        return result;
+    if let Some(selection) = fallback_override("OC_RSYNC_FALLBACK") {
+        return selection.resolve_or_default(OsStr::new("rsync"));
     }
 
     None
@@ -4567,27 +4568,6 @@ fn fallback_binary_configured() -> bool {
 
 fn fallback_binary() -> OsString {
     configured_fallback_binary().unwrap_or_else(|| OsString::from("rsync"))
-}
-
-fn fallback_env_override(name: &str) -> Option<Option<OsString>> {
-    let value = env::var_os(name)?;
-
-    if value.is_empty() {
-        return Some(None);
-    }
-
-    if let Some(text) = value.to_str() {
-        let trimmed = text.trim();
-        let lowered = trimmed.to_ascii_lowercase();
-        if matches!(lowered.as_str(), "0" | "false" | "no" | "off") {
-            return Some(None);
-        }
-        if lowered == "auto" {
-            return Some(Some(OsString::from("rsync")));
-        }
-    }
-
-    Some(Some(value))
 }
 
 fn env_flag(name: &str) -> Option<bool> {

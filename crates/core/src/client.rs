@@ -121,6 +121,7 @@ use tempfile::NamedTempFile;
 
 use crate::{
     bandwidth::{self, BandwidthParseError},
+    fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
 };
@@ -3098,11 +3099,21 @@ where
 
     command_args.append(&mut remainder);
 
-    let binary = fallback_binary.unwrap_or_else(|| {
-        env::var_os("OC_RSYNC_FALLBACK")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| OsString::from("rsync"))
-    });
+    let binary = if let Some(path) = fallback_binary {
+        path
+    } else {
+        match fallback_override("OC_RSYNC_FALLBACK") {
+            Some(FallbackOverride::Disabled) => {
+                return Err(fallback_error(
+                    "remote transfers are unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream rsync binary",
+                ));
+            }
+            Some(other) => other
+                .resolve_or_default(OsStr::new("rsync"))
+                .unwrap_or_else(|| OsString::from("rsync")),
+            None => OsString::from("rsync"),
+        }
+    };
 
     let mut command = Command::new(&binary);
     command.args(&command_args);
@@ -5804,6 +5815,24 @@ exit 42
         assert_eq!(error.exit_code(), 1);
         let message = format!("{error}");
         assert!(message.contains("failed to forward fallback stdout"));
+    }
+
+    #[test]
+    fn remote_fallback_reports_disabled_override() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set_os("OC_RSYNC_FALLBACK", OsStr::new("no"));
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let args = baseline_fallback_args();
+        let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect_err("disabled override prevents fallback execution");
+
+        assert_eq!(error.exit_code(), 1);
+        let message = format!("{error}");
+        assert!(message.contains(
+            "remote transfers are unavailable because OC_RSYNC_FALLBACK is disabled",
+        ));
     }
 
     #[test]
