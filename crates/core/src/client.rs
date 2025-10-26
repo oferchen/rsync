@@ -477,6 +477,7 @@ pub struct ClientConfig {
     human_readable: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    temp_directory: Option<PathBuf>,
     backup: bool,
     backup_dir: Option<PathBuf>,
     backup_suffix: Option<OsString>,
@@ -556,6 +557,7 @@ impl Default for ClientConfig {
             human_readable: false,
             partial: false,
             partial_dir: None,
+            temp_directory: None,
             backup: false,
             backup_dir: None,
             backup_suffix: None,
@@ -1055,6 +1057,13 @@ impl ClientConfig {
         self.partial_dir.as_deref()
     }
 
+    /// Returns the configured temporary directory used for staged updates.
+    #[doc(alias = "--temp-dir")]
+    #[doc(alias = "--tmp-dir")]
+    pub fn temp_directory(&self) -> Option<&Path> {
+        self.temp_directory.as_deref()
+    }
+
     /// Returns the ordered list of link-destination directories supplied by the caller.
     #[must_use]
     #[doc(alias = "--link-dest")]
@@ -1168,6 +1177,7 @@ pub struct ClientConfigBuilder {
     human_readable: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    temp_directory: Option<PathBuf>,
     backup: bool,
     backup_dir: Option<PathBuf>,
     backup_suffix: Option<OsString>,
@@ -1760,6 +1770,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the directory used for temporary files when staging updates.
+    #[must_use]
+    #[doc(alias = "--temp-dir")]
+    #[doc(alias = "--tmp-dir")]
+    pub fn temp_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.temp_directory = directory.map(Into::into);
+        self
+    }
+
     /// Extends the link-destination list used when creating hard links for unchanged files.
     #[must_use]
     #[doc(alias = "--link-dest")]
@@ -1941,6 +1960,7 @@ impl ClientConfigBuilder {
             human_readable: self.human_readable,
             partial: self.partial,
             partial_dir: self.partial_dir,
+            temp_directory: self.temp_directory,
             backup: self.backup,
             backup_dir: self.backup_dir,
             backup_suffix: self.backup_suffix,
@@ -2641,6 +2661,8 @@ pub struct RemoteFallbackArgs {
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.
     pub partial_dir: Option<PathBuf>,
+    /// Optional directory forwarded via `--temp-dir`.
+    pub temp_directory: Option<PathBuf>,
     /// Enables `--backup`.
     pub backup: bool,
     /// Optional directory forwarded via `--backup-dir`.
@@ -2844,6 +2866,7 @@ where
         preallocate,
         delay_updates,
         partial_dir,
+        temp_directory,
         backup,
         backup_dir,
         backup_suffix,
@@ -3085,6 +3108,10 @@ where
     }
     if let Some(dir) = partial_dir {
         command_args.push(OsString::from("--partial-dir"));
+        command_args.push(dir.into_os_string());
+    }
+    if let Some(dir) = temp_directory {
+        command_args.push(OsString::from("--temp-dir"));
         command_args.push(dir.into_os_string());
     }
     for dir in link_dests {
@@ -4266,6 +4293,7 @@ fn build_local_copy_options(
         .append(config.append())
         .append_verify(config.append_verify())
         .partial(config.partial())
+        .with_temp_directory(config.temp_directory().map(|path| path.to_path_buf()))
         .backup(config.backup())
         .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
         .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
@@ -4483,6 +4511,7 @@ exit 42
             preallocate: false,
             delay_updates: false,
             partial_dir: None,
+            temp_directory: None,
             backup: false,
             backup_dir: None,
             backup_suffix: None,
@@ -4954,6 +4983,27 @@ exit 42
         let disabled_options = build_local_copy_options(&disabled, None);
         assert!(!disabled_options.delay_updates_enabled());
         assert!(!disabled_options.partial_enabled());
+    }
+
+    #[test]
+    fn local_copy_options_honour_temp_directory_setting() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .temp_directory(Some(PathBuf::from(".staging")))
+            .build();
+
+        let options = build_local_copy_options(&config, None);
+        assert_eq!(options.temp_directory_path(), Some(Path::new(".staging")));
+
+        let default_config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(
+            build_local_copy_options(&default_config, None)
+                .temp_directory_path()
+                .is_none()
+        );
     }
 
     #[test]

@@ -209,6 +209,7 @@ const HELP_TEXT: &str = concat!(
     "      --partial    Keep partially transferred files on errors.\n",
     "      --no-partial Discard partially transferred files on errors.\n",
     "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
+    "      --temp-dir=DIR  Store temporary files in DIR while transferring.\n",
     "      --delay-updates  Put completed updates in place after transfers finish.\n",
     "      --no-delay-updates  Disable delayed updates.\n",
     "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
@@ -266,7 +267,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -1009,6 +1010,7 @@ struct ParsedArgs {
     preallocate: bool,
     delay_updates: bool,
     partial_dir: Option<PathBuf>,
+    temp_dir: Option<PathBuf>,
     link_dests: Vec<PathBuf>,
     remove_source_files: bool,
     inplace: Option<bool>,
@@ -1510,6 +1512,14 @@ fn clap_command() -> ClapCommand {
                 .help("Store partially transferred files in DIR.")
                 .value_parser(OsStringValueParser::new())
                 .overrides_with("no-partial"),
+        )
+        .arg(
+            Arg::new("temp-dir")
+                .long("temp-dir")
+                .visible_alias("tmp-dir")
+                .value_name("DIR")
+                .help("Store temporary files in DIR while transferring.")
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("whole-file")
@@ -2321,7 +2331,10 @@ where
     let preallocate = matches.get_flag("preallocate");
     let mut delay_updates = matches.get_flag("delay-updates");
     let mut partial_dir = matches
-        .get_one::<OsString>("partial-dir")
+        .remove_one::<OsString>("partial-dir")
+        .map(PathBuf::from);
+    let temp_dir = matches
+        .remove_one::<OsString>("temp-dir")
         .map(PathBuf::from);
     if partial_dir.is_some() {
         partial = true;
@@ -2512,6 +2525,7 @@ where
         preallocate,
         delay_updates,
         partial_dir,
+        temp_dir,
         link_dests,
         remove_source_files,
         inplace,
@@ -2933,6 +2947,7 @@ where
         preallocate,
         delay_updates,
         partial_dir,
+        temp_dir,
         link_dests,
         remove_source_files,
         inplace,
@@ -3499,6 +3514,7 @@ where
             preallocate,
             delay_updates,
             partial_dir: partial_dir.clone(),
+            temp_directory: temp_dir.clone(),
             backup,
             backup_dir: backup_dir.clone().map(PathBuf::from),
             backup_suffix: backup_suffix.clone(),
@@ -3756,6 +3772,7 @@ where
         .preallocate(preallocate)
         .delay_updates(delay_updates)
         .partial_directory(partial_dir.clone())
+        .temp_directory(temp_dir.clone())
         .delay_updates(delay_updates)
         .extend_link_dests(link_dests.clone())
         .remove_source_files(remove_source_files)
@@ -9469,6 +9486,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_temp_dir_flag() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--temp-dir=.rsync-tmp"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.temp_dir.as_deref(), Some(Path::new(".rsync-tmp")));
+    }
+
+    #[test]
     fn parse_args_resets_delay_updates_with_no_delay_updates() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -13526,6 +13556,54 @@ exit 0
         );
 
         // Ensure destination operand still forwarded correctly alongside partial dir args.
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == dest_path.display().to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_temp_dir_argument() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let temp_dir = temp.path().join("temp-stage");
+        let dest_path = temp.path().join("dest");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from(format!("--temp-dir={}", temp_dir.display())),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--temp-dir"));
+        assert!(
+            recorded
+                .lines()
+                .any(|line| line == temp_dir.display().to_string())
+        );
         assert!(
             recorded
                 .lines()
