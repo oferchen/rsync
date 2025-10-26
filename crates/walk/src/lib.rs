@@ -148,12 +148,23 @@ impl WalkBuilder {
             finished: false,
         };
 
-        if walker
-            .root_metadata
-            .as_ref()
-            .is_some_and(|m| m.file_type().is_dir())
-        {
-            walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
+        if let Some(metadata) = walker.root_metadata.as_ref() {
+            let file_type = metadata.file_type();
+            if file_type.is_dir() {
+                walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
+            } else if file_type.is_symlink() && walker.follow_symlinks {
+                match fs::metadata(&walker.root) {
+                    Ok(target) if target.is_dir() => {
+                        let canonical = fs::canonicalize(&walker.root)
+                            .map_err(|error| WalkError::canonicalize(walker.root.clone(), error))?;
+                        walker.push_directory(canonical, PathBuf::new(), 0)?;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        return Err(WalkError::metadata(walker.root.clone(), error));
+                    }
+                }
+            }
         }
 
         Ok(walker)
@@ -612,6 +623,48 @@ mod tests {
             paths,
             vec![PathBuf::from("link"), PathBuf::from("link/inner.txt")]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_root_symlink_followed_when_enabled() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        fs::write(target.join("file.txt"), b"data").expect("write file");
+
+        let link = temp.path().join("link");
+        symlink(&target, &link).expect("create symlink");
+
+        let walker = WalkBuilder::new(&link)
+            .follow_symlinks(true)
+            .build()
+            .expect("build walker");
+        let paths = collect_relative_paths(walker);
+
+        assert_eq!(paths, vec![PathBuf::from("file.txt")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_root_symlink_not_followed_by_default() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        fs::write(target.join("file.txt"), b"data").expect("write file");
+
+        let link = temp.path().join("link");
+        symlink(&target, &link).expect("create symlink");
+
+        let mut walker = WalkBuilder::new(&link).build().expect("build walker");
+        let root = walker.next().expect("root entry").expect("root ok");
+        assert!(root.is_root());
+        assert!(root.metadata().file_type().is_symlink());
+        assert!(walker.next().is_none());
     }
 
     #[cfg(unix)]
