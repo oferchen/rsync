@@ -537,6 +537,16 @@ impl BandwidthLimiter {
         self.simulated_elapsed_us = 0;
     }
 
+    #[inline]
+    fn clamp_debt_to_burst(&mut self) {
+        if let Some(burst) = self.burst_bytes {
+            let limit = u128::from(burst.get());
+            if self.total_written > limit {
+                self.total_written = limit;
+            }
+        }
+    }
+
     /// Returns the configured limit in bytes per second.
     #[must_use]
     pub const fn limit_bytes(&self) -> NonZeroU64 {
@@ -563,6 +573,7 @@ impl BandwidthLimiter {
         }
 
         self.total_written = self.total_written.saturating_add(bytes as u128);
+        self.clamp_debt_to_burst();
 
         let start = Instant::now();
 
@@ -582,6 +593,8 @@ impl BandwidthLimiter {
                 self.total_written -= allowed;
             }
         }
+
+        self.clamp_debt_to_burst();
 
         let sleep_us = self
             .total_written
@@ -611,7 +624,19 @@ impl BandwidthLimiter {
             / MICROS_PER_SECOND_DIV_1024;
 
         self.total_written = leftover;
+        self.clamp_debt_to_burst();
         self.last_instant = Some(end);
+    }
+
+    /// Returns the outstanding byte debt accumulated by the limiter.
+    ///
+    /// The accessor is compiled for tests (and the `test-support` feature) so
+    /// scenarios can assert on the internal pacing state without relying on
+    /// private fields. Production builds omit the helper entirely.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
+    pub(crate) fn accumulated_debt_for_testing(&self) -> u128 {
+        self.total_written
     }
 }
 
@@ -777,6 +802,25 @@ mod tests {
             recorded
                 .iter()
                 .any(|duration| duration >= &Duration::from_micros(MINIMUM_SLEEP_MICROS as u64))
+        );
+    }
+
+    #[test]
+    fn limiter_clamps_debt_to_configured_burst() {
+        let mut session = crate::recorded_sleep_session();
+        session.clear();
+
+        let burst = NonZeroU64::new(4096).expect("non-zero burst");
+        let mut limiter = BandwidthLimiter::with_burst(
+            NonZeroU64::new(8 * 1024 * 1024).expect("non-zero limit"),
+            Some(burst),
+        );
+
+        limiter.register(1 << 20);
+
+        assert!(
+            limiter.accumulated_debt_for_testing() <= u128::from(burst.get()),
+            "debt exceeds configured burst"
         );
     }
 
