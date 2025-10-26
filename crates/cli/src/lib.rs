@@ -133,6 +133,7 @@ const HELP_TEXT: &str = concat!(
     "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
     "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
     "      --connect-program=COMMAND  Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).\n",
+    "      --port=PORT  Connect to rsync:// daemons on TCP PORT when not specified by the source.\n",
     "  -M, --remote-option=OPTION  Forward OPTION to the remote rsync command.\n",
     "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
     "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
@@ -258,7 +259,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -944,6 +945,7 @@ struct ParsedArgs {
     timeout: Option<OsString>,
     contimeout: Option<OsString>,
     out_format: Option<OsString>,
+    daemon_port: Option<u16>,
 }
 
 fn env_protect_args_default() -> Option<bool> {
@@ -1060,6 +1062,15 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::Set)
                 .allow_hyphen_values(true)
                 .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("port")
+                .long("port")
+                .value_name("PORT")
+                .help("Use PORT as the default rsync:// daemon TCP port when none is specified.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(clap::value_parser!(u16)),
         )
         .arg(
             Arg::new("remote-option")
@@ -1945,6 +1956,7 @@ where
     let connect_program = matches
         .remove_one::<OsString>("connect-program")
         .filter(|value| !value.is_empty());
+    let daemon_port = matches.remove_one::<u16>("port");
     let remote_options = matches
         .remove_many::<OsString>("remote-option")
         .map(|values| values.collect())
@@ -2297,6 +2309,7 @@ where
         list_only,
         remote_shell,
         connect_program,
+        daemon_port,
         remote_options,
         rsync_path,
         protect_args,
@@ -2699,6 +2712,7 @@ where
         list_only,
         remote_shell,
         connect_program,
+        daemon_port,
         remote_options,
         rsync_path,
         protect_args,
@@ -3168,7 +3182,8 @@ where
     };
 
     if file_list_operands.is_empty() {
-        match ModuleListRequest::from_operands(&remainder) {
+        let module_list_port = daemon_port.unwrap_or(ModuleListRequest::DEFAULT_PORT);
+        match ModuleListRequest::from_operands_with_port(&remainder, module_list_port) {
             Ok(Some(request)) => {
                 let request = if let Some(protocol) = desired_protocol {
                     request.with_protocol(protocol)
@@ -3265,6 +3280,7 @@ where
             remote_shell: remote_shell.clone(),
             remote_options: remote_options.clone(),
             connect_program: connect_program.clone(),
+            port: daemon_port,
             protect_args,
             human_readable: human_readable_setting,
             archive,
@@ -9600,6 +9616,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_recognises_port_value() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--port=10873"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.daemon_port, Some(10873));
+    }
+
+    #[test]
     fn parse_args_recognises_list_only_flag() {
         let parsed = parse_args([
             OsString::from("oc-rsync"),
@@ -14628,6 +14657,41 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.lines().any(|line| line == "--connect-program"));
         assert!(recorded.lines().any(|line| line == "nc %H %P"));
+    }
+
+    #[test]
+    fn remote_fallback_forwards_port_option() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--port=10873"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.lines().any(|line| line == "--port=10873"));
     }
 
     #[test]
