@@ -83,7 +83,7 @@ pub use delta::{
 };
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
-    LocalCopySummary,
+    LocalCopySummary, SkipCompressList, SkipCompressParseError,
 };
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,

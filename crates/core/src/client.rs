@@ -99,6 +99,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
+use rsync_engine::SkipCompressList;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyAction,
@@ -417,6 +418,7 @@ pub struct ClientConfig {
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
+    skip_compress: SkipCompressList,
     whole_file: bool,
     checksum: bool,
     size_only: bool,
@@ -491,6 +493,7 @@ impl Default for ClientConfig {
             compress: false,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
+            skip_compress: SkipCompressList::default(),
             whole_file: true,
             checksum: false,
             size_only: false,
@@ -825,6 +828,11 @@ impl ClientConfig {
         self.compression_setting
     }
 
+    /// Returns the suffix list that disables compression for matching files.
+    pub fn skip_compress(&self) -> &SkipCompressList {
+        &self.skip_compress
+    }
+
     /// Reports whether whole-file transfers should be used.
     #[must_use]
     #[doc(alias = "--whole-file")]
@@ -1080,6 +1088,7 @@ pub struct ClientConfigBuilder {
     compress: bool,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
+    skip_compress: SkipCompressList,
     whole_file: Option<bool>,
     checksum: bool,
     size_only: bool,
@@ -1428,6 +1437,14 @@ impl ClientConfigBuilder {
         if !self.compress {
             self.compression_level = None;
         }
+        self
+    }
+
+    /// Overrides the suffix list used to disable compression for specific extensions.
+    #[must_use]
+    #[doc(alias = "--skip-compress")]
+    pub fn skip_compress(mut self, list: SkipCompressList) -> Self {
+        self.skip_compress = list;
         self
     }
 
@@ -1825,6 +1842,7 @@ impl ClientConfigBuilder {
             compress: self.compress,
             compression_level: self.compression_level,
             compression_setting: self.compression_setting,
+            skip_compress: self.skip_compress,
             whole_file: self.whole_file.unwrap_or(true),
             checksum: self.checksum,
             size_only: self.size_only,
@@ -1873,6 +1891,22 @@ impl ClientConfigBuilder {
             preserve_xattrs: self.preserve_xattrs,
         }
     }
+}
+
+/// Parses a `--skip-compress` specification into a [`SkipCompressList`].
+pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Message> {
+    let text = value.to_str().ok_or_else(|| {
+        rsync_error!(
+            1,
+            "--skip-compress accepts only UTF-8 patterns in this build"
+        )
+        .with_role(Role::Client)
+    })?;
+
+    SkipCompressList::parse(text).map_err(|error| {
+        rsync_error!(1, format!("invalid --skip-compress specification: {error}"))
+            .with_role(Role::Client)
+    })
 }
 
 /// Classifies a filter rule as inclusive or exclusive.
@@ -2441,6 +2475,8 @@ pub struct RemoteFallbackArgs {
     pub compress_disabled: bool,
     /// Optional compression level forwarded via `--compress-level`.
     pub compress_level: Option<OsString>,
+    /// Optional suffix list forwarded via `--skip-compress`.
+    pub skip_compress: Option<OsString>,
     /// Optional ownership override forwarded via `--chown`.
     pub chown: Option<OsString>,
     /// Optional `--owner`/`--no-owner` toggle.
@@ -2668,6 +2704,7 @@ where
         compress,
         compress_disabled,
         compress_level,
+        skip_compress,
         chown,
         owner,
         group,
@@ -2812,6 +2849,12 @@ where
     if let Some(level) = compress_level {
         command_args.push(OsString::from("--compress-level"));
         command_args.push(level);
+    }
+
+    if let Some(spec) = skip_compress {
+        let mut arg = OsString::from("--skip-compress=");
+        arg.push(spec);
+        command_args.push(arg);
     }
 
     if let Some(spec) = chown {
@@ -4015,6 +4058,7 @@ fn build_local_copy_options(
                 .and_then(|limit| limit.burst_bytes()),
         )
         .with_default_compression_level(config.compression_setting().level_or_default())
+        .with_skip_compress(config.skip_compress().clone())
         .whole_file(config.whole_file())
         .compress(config.compress())
         .with_compression_level_override(config.compression_level())
@@ -4198,6 +4242,7 @@ exit 42
             compress: false,
             compress_disabled: false,
             compress_level: None,
+            skip_compress: None,
             chown: None,
             owner: None,
             group: None,
@@ -5926,6 +5971,28 @@ exit 42
             .expect("compressed bytes recorded");
         assert!(compressed > 0);
         assert!(compressed <= summary.bytes_copied());
+    }
+
+    #[test]
+    fn run_client_skip_compress_disables_compression_for_matching_suffix() {
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("archive.gz");
+        let destination = tmp.path().join("dest.gz");
+        let payload = vec![b'X'; 16 * 1024];
+        fs::write(&source, &payload).expect("write source");
+
+        let skip = SkipCompressList::parse("gz").expect("parse list");
+        let config = ClientConfig::builder()
+            .transfer_args([source.clone(), destination.clone()])
+            .compress(true)
+            .skip_compress(skip)
+            .build();
+
+        let summary = run_client(config).expect("copy succeeds");
+
+        assert_eq!(fs::read(&destination).expect("read dest"), payload);
+        assert!(!summary.compression_used());
+        assert!(summary.compressed_bytes().is_none());
     }
 
     #[test]
