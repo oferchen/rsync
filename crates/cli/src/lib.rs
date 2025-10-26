@@ -81,6 +81,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -98,12 +99,13 @@ use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
     client::{
-        AddressMode, BandwidthLimit, ClientConfig, ClientEntryKind, ClientEntryMetadata,
-        ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver, ClientProgressUpdate,
-        ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind, DirMergeOptions,
-        FilterRuleKind, FilterRuleSpec, HumanReadableMode, ModuleListOptions, ModuleListRequest,
-        RemoteFallbackArgs, RemoteFallbackContext, TransferTimeout, parse_skip_compress_list,
-        run_client_or_fallback, run_module_list_with_password_and_options,
+        AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientEntryKind,
+        ClientEntryMetadata, ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver,
+        ClientProgressUpdate, ClientSummary, CompressionSetting, DeleteMode, DirMergeEnforcedKind,
+        DirMergeOptions, FilterRuleKind, FilterRuleSpec, HumanReadableMode, ModuleListOptions,
+        ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext, TransferTimeout,
+        parse_skip_compress_list, run_client_or_fallback,
+        run_module_list_with_password_and_options,
     },
     fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
@@ -910,6 +912,7 @@ struct ParsedArgs {
     rsync_path: Option<OsString>,
     protect_args: Option<bool>,
     address_mode: AddressMode,
+    bind_address: Option<OsString>,
     archive: bool,
     delete_mode: DeleteMode,
     delete_excluded: bool,
@@ -1157,6 +1160,13 @@ fn clap_command() -> ClapCommand {
                 .help("Prefer IPv6 when contacting remote hosts.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("ipv4"),
+        )
+        .arg(
+            Arg::new("address")
+                .long("address")
+                .value_name("ADDRESS")
+                .help("Bind outgoing connections to ADDRESS when contacting remotes.")
+                .value_parser(OsStringValueParser::new()),
         )
         .arg(
             Arg::new("dry-run")
@@ -2019,6 +2029,7 @@ where
     } else {
         AddressMode::Default
     };
+    let bind_address_raw = matches.remove_one::<OsString>("address");
     let archive = matches.get_flag("archive");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
@@ -2358,6 +2369,7 @@ where
         rsync_path,
         protect_args,
         address_mode,
+        bind_address: bind_address_raw,
         archive,
         delete_mode,
         delete_excluded,
@@ -2761,6 +2773,7 @@ where
         rsync_path,
         protect_args,
         address_mode,
+        bind_address: bind_address_raw,
         archive,
         delete_mode,
         delete_excluded,
@@ -2952,6 +2965,20 @@ where
         }
         return 0;
     }
+
+    let bind_address = match bind_address_raw {
+        Some(value) => match parse_bind_address_argument(&value) {
+            Ok(parsed) => Some(parsed),
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        },
+        None => None,
+    };
 
     let remainder = match extract_operands(raw_remainder) {
         Ok(operands) => operands,
@@ -3248,6 +3275,7 @@ where
                 let list_options = ModuleListOptions::default()
                     .suppress_motd(no_motd)
                     .with_address_mode(address_mode)
+                    .with_bind_address(bind_address.as_ref().map(|addr| addr.socket()))
                     .with_connect_program(connect_program.clone());
                 return match run_module_list_with_password_and_options(
                     request,
@@ -3325,6 +3353,9 @@ where
             remote_options: remote_options.clone(),
             connect_program: connect_program.clone(),
             port: daemon_port,
+            bind_address: bind_address
+                .as_ref()
+                .map(|address| address.raw().to_os_string()),
             protect_args,
             human_readable: human_readable_setting,
             archive,
@@ -3561,6 +3592,7 @@ where
         .transfer_args(transfer_operands)
         .address_mode(address_mode)
         .connect_program(connect_program.clone())
+        .bind_address(bind_address.clone())
         .dry_run(dry_run)
         .list_only(list_only)
         .delete(delete_mode.is_enabled() || delete_excluded || max_delete_limit.is_some())
@@ -6758,6 +6790,51 @@ fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     trim_trailing_newlines(&mut bytes);
 
     Ok(bytes)
+}
+
+fn parse_bind_address_argument(value: &OsStr) -> Result<BindAddress, Message> {
+    if value.is_empty() {
+        return Err(rsync_error!(1, "--address requires a non-empty value").with_role(Role::Client));
+    }
+
+    let text = value.to_string_lossy();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(rsync_error!(1, "--address requires a non-empty value").with_role(Role::Client));
+    }
+
+    match resolve_bind_address(trimmed) {
+        Ok(socket) => Ok(BindAddress::new(value.to_os_string(), socket)),
+        Err(error) => {
+            let formatted = format!("failed to resolve --address value '{}': {}", trimmed, error);
+            Err(rsync_error!(1, formatted).with_role(Role::Client))
+        }
+    }
+}
+
+fn resolve_bind_address(text: &str) -> io::Result<SocketAddr> {
+    if let Ok(ip) = text.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, 0));
+    }
+
+    let candidate = if text.starts_with('[') {
+        format!("{text}:0")
+    } else if text.contains(':') {
+        format!("[{text}]:0")
+    } else {
+        format!("{text}:0")
+    };
+
+    let mut resolved = candidate.to_socket_addrs()?;
+    resolved
+        .next()
+        .map(|addr| SocketAddr::new(addr.ip(), 0))
+        .ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::AddrNotAvailable,
+                "address resolution returned no results",
+            )
+        })
 }
 
 /// Loads operands referenced by `--files-from` arguments.
@@ -9984,6 +10061,25 @@ mod tests {
     fn timeout_argument_negative_reports_error() {
         let error = parse_timeout_argument(OsStr::new("-1")).unwrap_err();
         assert!(error.to_string().contains("timeout must be non-negative"));
+    }
+
+    #[test]
+    fn bind_address_argument_accepts_ipv4_literal() {
+        let parsed =
+            parse_bind_address_argument(OsStr::new("192.0.2.1")).expect("parse bind address");
+        let expected = "192.0.2.1".parse::<IpAddr>().expect("ip literal");
+        assert_eq!(parsed.socket().ip(), expected);
+        assert_eq!(parsed.raw(), OsStr::new("192.0.2.1"));
+    }
+
+    #[test]
+    fn bind_address_argument_rejects_empty_value() {
+        let error = parse_bind_address_argument(OsStr::new(" ")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("--address requires a non-empty value")
+        );
     }
 
     #[test]

@@ -84,6 +84,7 @@ use std::collections::HashMap;
 use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::ToSocketAddrs;
 use std::net::{SocketAddr, TcpStream};
@@ -119,6 +120,7 @@ use rsync_protocol::{
     parse_legacy_daemon_message, parse_legacy_error_message, parse_legacy_warning_message,
 };
 use rsync_transport::negotiate_legacy_daemon_session;
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 #[cfg(test)]
 use std::cell::RefCell;
 use tempfile::NamedTempFile;
@@ -398,7 +400,34 @@ impl ReferenceDirectory {
 }
 
 /// Configuration describing the requested client operation.
+/// Describes a bind address specified via `--address`.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BindAddress {
+    raw: OsString,
+    socket: SocketAddr,
+}
+
+impl BindAddress {
+    /// Creates a new bind address from the caller-provided specification.
+    #[must_use]
+    pub const fn new(raw: OsString, socket: SocketAddr) -> Self {
+        Self { raw, socket }
+    }
+
+    /// Returns the raw command-line representation forwarded to the fallback binary.
+    #[must_use]
+    pub fn raw(&self) -> &OsStr {
+        self.raw.as_os_str()
+    }
+
+    /// Returns the socket address (with port zero) used when binding local connections.
+    #[must_use]
+    pub const fn socket(&self) -> SocketAddr {
+        self.socket
+    }
+}
+
+/// Configuration describing the requested client operation.
 pub struct ClientConfig {
     transfer_args: Vec<OsString>,
     dry_run: bool,
@@ -466,6 +495,9 @@ pub struct ClientConfig {
     /// Optional command executed to reach rsync:// daemons.
     #[doc(alias = "--connect-program")]
     connect_program: Option<OsString>,
+    /// Optional local bind address forwarded to network transports.
+    #[doc(alias = "--address")]
+    bind_address: Option<BindAddress>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -539,6 +571,7 @@ impl Default for ClientConfig {
             link_dest_paths: Vec::new(),
             reference_directories: Vec::new(),
             connect_program: None,
+            bind_address: None,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -590,6 +623,13 @@ impl ClientConfig {
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {
         self.connect_program.as_deref()
+    }
+
+    /// Returns the optional bind address configured via `--address`.
+    #[must_use]
+    #[doc(alias = "--address")]
+    pub fn bind_address(&self) -> Option<&BindAddress> {
+        self.bind_address.as_ref()
     }
 
     /// Reports whether a transfer was explicitly requested.
@@ -1134,6 +1174,7 @@ pub struct ClientConfigBuilder {
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
     connect_program: Option<OsString>,
+    bind_address: Option<BindAddress>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -1166,6 +1207,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--list-only")]
     pub const fn list_only(mut self, list_only: bool) -> Self {
         self.list_only = list_only;
+        self
+    }
+
+    /// Configures the local bind address applied to network transports.
+    #[must_use]
+    #[doc(alias = "--address")]
+    pub fn bind_address(mut self, address: Option<BindAddress>) -> Self {
+        self.bind_address = address;
         self
     }
 
@@ -1888,6 +1937,7 @@ impl ClientConfigBuilder {
             link_dest_paths: self.link_dest_paths,
             reference_directories: self.reference_directories,
             connect_program: self.connect_program,
+            bind_address: self.bind_address,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]
@@ -2446,6 +2496,8 @@ pub struct RemoteFallbackArgs {
     /// Default daemon port forwarded via `--port` when contacting rsync:// daemons.
     #[doc(alias = "--port")]
     pub port: Option<u16>,
+    /// Optional bind address forwarded via `--address`.
+    pub bind_address: Option<OsString>,
     /// Controls whether remote shell arguments are protected from expansion.
     ///
     /// When `Some(true)` the fallback command receives `--protect-args`,
@@ -2696,6 +2748,7 @@ where
         remote_options,
         connect_program,
         port,
+        bind_address,
         protect_args,
         human_readable: human_readable_mode,
         archive,
@@ -3146,6 +3199,12 @@ where
     if let Some(port) = port {
         let mut arg = OsString::from("--port=");
         arg.push(port.to_string());
+        command_args.push(arg);
+    }
+
+    if let Some(address) = bind_address {
+        let mut arg = OsString::from("--address=");
+        arg.push(address);
         command_args.push(arg);
     }
 
@@ -4315,6 +4374,7 @@ exit 42
             remote_options: Vec::new(),
             connect_program: None,
             port: None,
+            bind_address: None,
             protect_args: None,
             human_readable: None,
             address_mode: AddressMode::Default,
@@ -4431,6 +4491,21 @@ exit 42
         );
         assert!(config.has_transfer_request());
         assert!(!config.dry_run());
+    }
+
+    #[test]
+    fn builder_records_bind_address() {
+        let bind = BindAddress::new(
+            OsString::from("127.0.0.1"),
+            "127.0.0.1:0".parse().expect("socket"),
+        );
+        let config = ClientConfig::builder()
+            .bind_address(Some(bind.clone()))
+            .build();
+
+        let recorded = config.bind_address().expect("bind address present");
+        assert_eq!(recorded.raw(), bind.raw());
+        assert_eq!(recorded.socket(), bind.socket());
     }
 
     #[test]
@@ -4853,6 +4928,7 @@ exit 42
             Some(Duration::from_secs(10)),
             timeout,
             AddressMode::Default,
+            None,
         )
         .expect("connect directly");
 
@@ -4898,8 +4974,9 @@ exit 42
         });
 
         let timeout = Some(Duration::from_secs(6));
-        let stream = connect_via_proxy(&target, &proxy, Some(Duration::from_secs(9)), timeout)
-            .expect("proxy connect");
+        let stream =
+            connect_via_proxy(&target, &proxy, Some(Duration::from_secs(9)), timeout, None)
+                .expect("proxy connect");
 
         assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
         assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
@@ -6748,6 +6825,16 @@ exit 42
     }
 
     #[test]
+    fn module_list_options_records_bind_address() {
+        let socket = "198.51.100.4:0".parse().expect("socket");
+        let options = ModuleListOptions::default().with_bind_address(Some(socket));
+        assert_eq!(options.bind_address(), Some(socket));
+
+        let default_options = ModuleListOptions::default();
+        assert!(default_options.bind_address().is_none());
+    }
+
+    #[test]
     fn resolve_daemon_addresses_filters_ipv4_mode() {
         let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
         let addresses = resolve_daemon_addresses(&address, AddressMode::Ipv4)
@@ -8374,6 +8461,7 @@ pub struct ModuleListOptions {
     suppress_motd: bool,
     address_mode: AddressMode,
     connect_program: Option<OsString>,
+    bind_address: Option<SocketAddr>,
 }
 
 impl ModuleListOptions {
@@ -8384,6 +8472,7 @@ impl ModuleListOptions {
             suppress_motd: false,
             address_mode: AddressMode::Default,
             connect_program: None,
+            bind_address: None,
         }
     }
 
@@ -8427,6 +8516,19 @@ impl ModuleListOptions {
     #[must_use]
     pub fn connect_program(&self) -> Option<&OsStr> {
         self.connect_program.as_deref()
+    }
+
+    /// Configures the bind address used when contacting the daemon directly or via a proxy.
+    #[must_use]
+    pub const fn with_bind_address(mut self, address: Option<SocketAddr>) -> Self {
+        self.bind_address = address;
+        self
+    }
+
+    /// Returns the configured bind address, if any.
+    #[must_use]
+    pub const fn bind_address(&self) -> Option<SocketAddr> {
+        self.bind_address
     }
 }
 
@@ -8802,14 +8904,21 @@ fn open_daemon_stream(
     io_timeout: Option<Duration>,
     address_mode: AddressMode,
     connect_program: Option<&OsStr>,
+    bind_address: Option<SocketAddr>,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = load_daemon_connect_program(connect_program)? {
         return connect_via_program(addr, &program);
     }
 
     let stream = match load_daemon_proxy()? {
-        Some(proxy) => connect_via_proxy(addr, &proxy, connect_timeout, io_timeout)?,
-        None => connect_direct(addr, connect_timeout, io_timeout, address_mode)?,
+        Some(proxy) => connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address)?,
+        None => connect_direct(
+            addr,
+            connect_timeout,
+            io_timeout,
+            address_mode,
+            bind_address,
+        )?,
     };
 
     Ok(DaemonStream::tcp(stream))
@@ -8820,18 +8929,13 @@ fn connect_direct(
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
     address_mode: AddressMode,
+    bind_address: Option<SocketAddr>,
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
     let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
     for candidate in addresses {
-        let attempt = if let Some(duration) = connect_timeout {
-            TcpStream::connect_timeout(&candidate, duration)
-        } else {
-            TcpStream::connect(candidate)
-        };
-
-        match attempt {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout) {
             Ok(stream) => {
                 if let Some(duration) = io_timeout {
                     stream.set_read_timeout(Some(duration)).map_err(|error| {
@@ -8911,48 +9015,86 @@ fn resolve_daemon_addresses(
     Ok(filtered)
 }
 
+fn connect_with_optional_bind(
+    target: SocketAddr,
+    bind_address: Option<SocketAddr>,
+    timeout: Option<Duration>,
+) -> io::Result<TcpStream> {
+    if let Some(bind) = bind_address {
+        if target.is_ipv4() != bind.is_ipv4() {
+            return Err(io::Error::new(
+                ErrorKind::AddrNotAvailable,
+                "bind address family does not match target",
+            ));
+        }
+
+        let domain = if target.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
+
+        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+        let mut bind_addr = bind;
+        match &mut bind_addr {
+            SocketAddr::V4(addr) => addr.set_port(0),
+            SocketAddr::V6(addr) => addr.set_port(0),
+        }
+        socket.bind(&SockAddr::from(bind_addr))?;
+
+        let target_addr = SockAddr::from(target);
+        if let Some(duration) = timeout {
+            socket.connect_timeout(&target_addr, duration)?;
+        } else {
+            socket.connect(&target_addr)?;
+        }
+
+        Ok(socket.into())
+    } else if let Some(duration) = timeout {
+        TcpStream::connect_timeout(&target, duration)
+    } else {
+        TcpStream::connect(target)
+    }
+}
+
 fn connect_via_proxy(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
+    bind_address: Option<SocketAddr>,
 ) -> Result<TcpStream, ClientError> {
-    let mut stream = if let Some(duration) = connect_timeout {
-        let target = (proxy.host.as_str(), proxy.port);
-        let addrs = target
-            .to_socket_addrs()
-            .map_err(|error| socket_error("resolve proxy address for", proxy.display(), error))?;
+    let target = (proxy.host.as_str(), proxy.port);
+    let addrs = target
+        .to_socket_addrs()
+        .map_err(|error| socket_error("resolve proxy address for", proxy.display(), error))?;
 
-        let mut last_error: Option<(SocketAddr, io::Error)> = None;
-        let mut result: Option<TcpStream> = None;
+    let mut last_error: Option<(SocketAddr, io::Error)> = None;
+    let mut stream_result: Option<TcpStream> = None;
 
-        for candidate in addrs {
-            match TcpStream::connect_timeout(&candidate, duration) {
-                Ok(stream) => {
-                    result = Some(stream);
-                    break;
-                }
-                Err(error) => last_error = Some((candidate, error)),
+    for candidate in addrs {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout) {
+            Ok(stream) => {
+                stream_result = Some(stream);
+                break;
             }
+            Err(error) => last_error = Some((candidate, error)),
         }
+    }
 
-        if let Some(stream) = result {
-            stream
-        } else if let Some((candidate, error)) = last_error {
-            return Err(socket_error("connect to", candidate, error));
-        } else {
-            return Err(socket_error(
-                "resolve proxy address for",
-                proxy.display(),
-                io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    "proxy resolution returned no addresses",
-                ),
-            ));
-        }
+    let mut stream = if let Some(stream) = stream_result {
+        stream
+    } else if let Some((candidate, error)) = last_error {
+        return Err(socket_error("connect to", candidate, error));
     } else {
-        TcpStream::connect((proxy.host.as_str(), proxy.port))
-            .map_err(|error| socket_error("connect to", proxy.display(), error))?
+        return Err(socket_error(
+            "resolve proxy address for",
+            proxy.display(),
+            io::Error::new(
+                ErrorKind::AddrNotAvailable,
+                "proxy resolution returned no addresses",
+            ),
+        ));
     };
 
     establish_proxy_tunnel(&mut stream, addr, proxy)?;
@@ -9600,6 +9742,7 @@ pub fn run_module_list_with_password_and_options(
         effective_timeout,
         address_mode,
         options.connect_program(),
+        options.bind_address(),
     )?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())

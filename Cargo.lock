@@ -644,6 +644,7 @@ dependencies = [
  "rsync-meta",
  "rsync-protocol",
  "rsync-transport",
+ "socket2",
  "tempfile",
 ]
 
