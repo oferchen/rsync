@@ -1678,6 +1678,7 @@ pub struct LocalCopyOptions {
     update: bool,
     partial: bool,
     partial_dir: Option<PathBuf>,
+    temp_dir: Option<PathBuf>,
     delay_updates: bool,
     inplace: bool,
     append: bool,
@@ -1746,6 +1747,7 @@ impl LocalCopyOptions {
             update: false,
             partial: false,
             partial_dir: None,
+            temp_dir: None,
             delay_updates: false,
             inplace: false,
             append: false,
@@ -2250,6 +2252,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Selects the directory used for temporary files when staging updates.
+    #[must_use]
+    #[doc(alias = "--temp-dir")]
+    #[doc(alias = "--tmp-dir")]
+    pub fn with_temp_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
+        self.temp_dir = directory.map(Into::into);
+        self
+    }
+
     /// Requests that updated files be renamed into place after the transfer completes.
     #[must_use]
     #[doc(alias = "--delay-updates")]
@@ -2711,6 +2722,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn partial_directory_path(&self) -> Option<&Path> {
         self.partial_dir.as_deref()
+    }
+
+    /// Returns the configured temporary directory for staged updates when present.
+    #[must_use]
+    pub fn temp_directory_path(&self) -> Option<&Path> {
+        self.temp_dir.as_deref()
     }
 
     /// Reports whether destination updates should be delayed until the end of the transfer.
@@ -3862,6 +3879,10 @@ impl<'a> CopyContext<'a> {
 
     fn partial_directory_path(&self) -> Option<&Path> {
         self.options.partial_directory_path()
+    }
+
+    fn temp_directory_path(&self) -> Option<&Path> {
+        self.options.temp_directory_path()
     }
 
     fn inplace_enabled(&self) -> bool {
@@ -7470,6 +7491,7 @@ fn copy_file(
             destination,
             partial_enabled,
             context.partial_directory_path(),
+            context.temp_directory_path(),
         )?;
         staging_path = Some(new_guard.staging_path().to_path_buf());
         guard = Some(new_guard);
@@ -7853,13 +7875,20 @@ fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
     }
 }
 
-fn temporary_destination_path(destination: &Path, unique: usize) -> PathBuf {
+fn temporary_destination_path(
+    destination: &Path,
+    unique: usize,
+    temp_dir: Option<&Path>,
+) -> PathBuf {
     let file_name = destination
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "temp".to_string());
     let temp_name = format!(".oc-rsync-tmp-{file_name}-{}-{}", process::id(), unique);
-    destination.with_file_name(temp_name)
+    match temp_dir {
+        Some(dir) => dir.join(temp_name),
+        None => destination.with_file_name(temp_name),
+    }
 }
 
 struct DestinationWriteGuard {
@@ -7874,6 +7903,7 @@ impl DestinationWriteGuard {
         destination: &Path,
         partial: bool,
         partial_dir: Option<&Path>,
+        temp_dir: Option<&Path>,
     ) -> Result<(Self, fs::File), LocalCopyError> {
         if partial {
             let temp_path = if let Some(dir) = partial_dir {
@@ -7908,7 +7938,7 @@ impl DestinationWriteGuard {
         } else {
             loop {
                 let unique = NEXT_TEMP_FILE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                let temp_path = temporary_destination_path(destination, unique);
+                let temp_path = temporary_destination_path(destination, unique, temp_dir);
                 match fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -9401,6 +9431,15 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_temp_directory_round_trip() {
+        let options = LocalCopyOptions::default().with_temp_directory(Some(PathBuf::from(".temp")));
+        assert_eq!(options.temp_directory_path(), Some(Path::new(".temp")));
+
+        let cleared = options.with_temp_directory::<PathBuf>(None);
+        assert!(cleared.temp_directory_path().is_none());
+    }
+
+    #[test]
     fn parse_filter_directive_show_is_sender_only() {
         let rule = match parse_filter_directive_line("show images/**").expect("parse") {
             Some(ParsedFilterDirective::Rule(rule)) => rule,
@@ -9654,7 +9693,7 @@ mod tests {
         );
 
         let (guard, mut file) =
-            DestinationWriteGuard::new(destination.as_path(), true, None).expect("guard");
+            DestinationWriteGuard::new(destination.as_path(), true, None, None).expect("guard");
         file.write_all(b"payload").expect("write temp");
         drop(file);
 
@@ -13045,7 +13084,7 @@ mod tests {
         let partial_dir = Path::new(".custom-partial");
 
         let (guard, mut file) =
-            DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir))
+            DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir), None)
                 .expect("guard");
         let temp_path = guard.temp_path.clone();
         file.write_all(b"partial payload").expect("write partial");
@@ -13067,9 +13106,13 @@ mod tests {
         let destination = destination_dir.join("file.txt");
         let partial_dir = temp.path().join("partials");
 
-        let (guard, mut file) =
-            DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir.as_path()))
-                .expect("guard");
+        let (guard, mut file) = DestinationWriteGuard::new(
+            destination.as_path(),
+            true,
+            Some(partial_dir.as_path()),
+            None,
+        )
+        .expect("guard");
         let temp_path = guard.temp_path.clone();
         file.write_all(b"committed payload").expect("write payload");
         drop(file);
@@ -13079,5 +13122,36 @@ mod tests {
         assert!(!temp_path.exists());
         let committed = fs::read(&destination).expect("read committed file");
         assert_eq!(committed, b"committed payload");
+    }
+
+    #[test]
+    fn destination_write_guard_uses_custom_temp_directory_for_non_partial() {
+        let temp = tempdir().expect("tempdir");
+        let destination_dir = temp.path().join("dest");
+        fs::create_dir_all(&destination_dir).expect("dest dir");
+        let destination = destination_dir.join("file.txt");
+        let temp_dir = temp.path().join("tmp-area");
+        fs::create_dir_all(&temp_dir).expect("temp dir");
+
+        let (guard, mut file) = DestinationWriteGuard::new(
+            destination.as_path(),
+            false,
+            None,
+            Some(temp_dir.as_path()),
+        )
+        .expect("guard");
+
+        let staging_path = guard.staging_path().to_path_buf();
+        file.write_all(b"temporary payload").expect("write temp");
+        drop(file);
+
+        guard.commit().expect("commit");
+
+        assert!(staging_path.starts_with(&temp_dir));
+        assert_eq!(
+            fs::read(&destination).expect("read destination"),
+            b"temporary payload"
+        );
+        assert!(!staging_path.exists());
     }
 }
