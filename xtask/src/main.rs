@@ -97,6 +97,11 @@ where
             let workspace = workspace_root()?;
             execute_sbom(&workspace, options)
         }
+        "package" => {
+            let options = parse_package_args(args)?;
+            let workspace = workspace_root()?;
+            execute_package(&workspace, options)
+        }
         other => Err(TaskError::Usage(format!(
             "unrecognised command '{other}'; run with --help for available tasks"
         ))),
@@ -110,6 +115,13 @@ fn is_help_flag(value: &OsString) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SbomOptions {
     output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PackageOptions {
+    build_deb: bool,
+    build_rpm: bool,
+    profile: Option<OsString>,
 }
 
 fn parse_sbom_args<I>(args: I) -> Result<SbomOptions, TaskError>
@@ -166,28 +178,24 @@ fn execute_sbom(workspace: &Path, options: SbomOptions) -> Result<(), TaskError>
     println!("Generating SBOM at {}", output_path.display());
 
     let manifest_path = workspace.join("Cargo.toml");
-    let status = Command::new("cargo")
-        .arg("cyclonedx")
-        .arg("--manifest-path")
-        .arg(&manifest_path)
-        .arg("--workspace")
-        .arg("--format")
-        .arg("json")
-        .arg("--output")
-        .arg(&output_path)
-        .arg("--all-features")
-        .arg("--locked")
-        .status()
-        .map_err(|error| map_command_error(error, "cargo cyclonedx"))?;
+    let mut args = Vec::new();
+    args.push(OsString::from("cyclonedx"));
+    args.push(OsString::from("--manifest-path"));
+    args.push(manifest_path.into_os_string());
+    args.push(OsString::from("--workspace"));
+    args.push(OsString::from("--format"));
+    args.push(OsString::from("json"));
+    args.push(OsString::from("--output"));
+    args.push(output_path.into_os_string());
+    args.push(OsString::from("--all-features"));
+    args.push(OsString::from("--locked"));
 
-    if !status.success() {
-        return Err(TaskError::CommandFailed {
-            program: String::from("cargo cyclonedx"),
-            status,
-        });
-    }
-
-    Ok(())
+    run_cargo_tool(
+        workspace,
+        args,
+        "cargo cyclonedx",
+        "install the cargo-cyclonedx subcommand (cargo install cargo-cyclonedx)",
+    )
 }
 
 fn workspace_root() -> Result<PathBuf, TaskError> {
@@ -209,13 +217,19 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  sbom    Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help    Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  package Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom    Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help    Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
     )
 }
 
 fn sbom_usage() -> String {
     String::from(
         "Usage: cargo xtask sbom [--output PATH]\n\nOptions:\n  --output PATH    Override the SBOM output path (relative to the workspace root unless absolute)\n  -h, --help       Show this help message",
+    )
+}
+
+fn package_usage() -> String {
+    String::from(
+        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --release        Build using the release profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
     )
 }
 
@@ -251,19 +265,182 @@ impl From<io::Error> for TaskError {
     }
 }
 
-fn map_command_error(error: io::Error, program: &str) -> TaskError {
+fn map_command_error(error: io::Error, program: &str, install_hint: &str) -> TaskError {
     if error.kind() == io::ErrorKind::NotFound {
-        TaskError::ToolMissing(format!(
-            "{program} is unavailable; install the cargo-cyclonedx plugin to generate SBOMs"
-        ))
+        TaskError::ToolMissing(format!("{program} is unavailable; {install_hint}"))
     } else {
         TaskError::Io(error)
     }
 }
 
+fn run_cargo_tool(
+    workspace: &Path,
+    args: Vec<OsString>,
+    display: &str,
+    install_hint: &str,
+) -> Result<(), TaskError> {
+    let output = Command::new("cargo")
+        .current_dir(workspace)
+        .args(&args)
+        .output()
+        .map_err(|error| map_command_error(error, display, install_hint))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("no such subcommand") || stderr.contains("no such command") {
+        return Err(TaskError::ToolMissing(format!(
+            "{display} is unavailable; {install_hint}"
+        )));
+    }
+
+    Err(TaskError::CommandFailed {
+        program: display.to_string(),
+        status: output.status,
+    })
+}
+
+fn parse_package_args<I>(args: I) -> Result<PackageOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut build_deb = false;
+    let mut build_rpm = false;
+    let mut profile = Some(OsString::from("release"));
+    let mut profile_explicit = false;
+
+    while let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(package_usage()));
+        }
+
+        if arg == "--deb" {
+            build_deb = true;
+            continue;
+        }
+
+        if arg == "--rpm" {
+            build_rpm = true;
+            continue;
+        }
+
+        if arg == "--release" {
+            set_profile_option(
+                &mut profile,
+                &mut profile_explicit,
+                Some(OsString::from("release")),
+            )?;
+            continue;
+        }
+
+        if arg == "--debug" {
+            set_profile_option(
+                &mut profile,
+                &mut profile_explicit,
+                Some(OsString::from("debug")),
+            )?;
+            continue;
+        }
+
+        if arg == "--no-profile" {
+            set_profile_option(&mut profile, &mut profile_explicit, None)?;
+            continue;
+        }
+
+        if arg == "--profile" {
+            let value = args.next().ok_or_else(|| {
+                TaskError::Usage(String::from(
+                    "--profile requires a value; see `cargo xtask package --help`",
+                ))
+            })?;
+
+            if value.is_empty() {
+                return Err(TaskError::Usage(String::from(
+                    "--profile requires a non-empty value",
+                )));
+            }
+
+            set_profile_option(&mut profile, &mut profile_explicit, Some(value))?;
+            continue;
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for package command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    if !build_deb && !build_rpm {
+        build_deb = true;
+        build_rpm = true;
+    }
+
+    Ok(PackageOptions {
+        build_deb,
+        build_rpm,
+        profile,
+    })
+}
+
+fn set_profile_option(
+    profile: &mut Option<OsString>,
+    explicit: &mut bool,
+    value: Option<OsString>,
+) -> Result<(), TaskError> {
+    if *explicit {
+        return Err(TaskError::Usage(String::from(
+            "profile specified multiple times; choose at most one of --profile/--release/--debug/--no-profile",
+        )));
+    }
+
+    *profile = value;
+    *explicit = true;
+    Ok(())
+}
+
+fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), TaskError> {
+    if options.build_deb {
+        println!("Building Debian package with cargo deb");
+        let mut deb_args = vec![OsString::from("deb"), OsString::from("--locked")];
+        if let Some(profile) = &options.profile {
+            deb_args.push(OsString::from("--profile"));
+            deb_args.push(profile.clone());
+        }
+        run_cargo_tool(
+            workspace,
+            deb_args,
+            "cargo deb",
+            "install the cargo-deb subcommand (cargo install cargo-deb)",
+        )?;
+    }
+
+    if options.build_rpm {
+        println!("Building RPM package with cargo rpm build");
+        let mut rpm_args = vec![OsString::from("rpm"), OsString::from("build")];
+        if let Some(profile) = &options.profile {
+            rpm_args.push(OsString::from("--profile"));
+            rpm_args.push(profile.clone());
+        }
+        run_cargo_tool(
+            workspace,
+            rpm_args,
+            "cargo rpm build",
+            "install the cargo-rpm subcommand (cargo install cargo-rpm)",
+        )?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SbomOptions, TaskError, parse_sbom_args, sbom_usage, top_level_usage};
+    use super::{
+        PackageOptions, SbomOptions, TaskError, package_usage, parse_package_args, parse_sbom_args,
+        sbom_usage, top_level_usage,
+    };
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -319,5 +496,114 @@ mod tests {
     fn top_level_usage_mentions_sbom_command() {
         let usage = top_level_usage();
         assert!(usage.contains("sbom"));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_package_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("package"));
+    }
+
+    #[test]
+    fn parse_package_args_accepts_default_configuration() {
+        let options = parse_package_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: true,
+                build_rpm: true,
+                profile: Some(OsString::from("release")),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_package_args_selects_deb_only() {
+        let options = parse_package_args([OsString::from("--deb")]).expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: true,
+                build_rpm: false,
+                profile: Some(OsString::from("release")),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_package_args_selects_rpm_only() {
+        let options = parse_package_args([OsString::from("--rpm")]).expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: false,
+                build_rpm: true,
+                profile: Some(OsString::from("release")),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_package_args_accepts_custom_profile() {
+        let options = parse_package_args([
+            OsString::from("--profile"),
+            OsString::from("debug"),
+            OsString::from("--deb"),
+        ])
+        .expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: true,
+                build_rpm: false,
+                profile: Some(OsString::from("debug")),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_package_args_supports_no_profile() {
+        let options = parse_package_args([OsString::from("--no-profile")]).expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: true,
+                build_rpm: true,
+                profile: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_package_args_rejects_duplicate_profile_flags() {
+        let error = parse_package_args([
+            OsString::from("--profile"),
+            OsString::from("release"),
+            OsString::from("--debug"),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Usage(message)
+                if message.contains("profile specified multiple times")
+        ));
+    }
+
+    #[test]
+    fn parse_package_args_requires_profile_value() {
+        let error = parse_package_args([OsString::from("--profile")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--profile")));
+    }
+
+    #[test]
+    fn parse_package_args_reports_help_request() {
+        let error = parse_package_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == package_usage()));
+    }
+
+    #[test]
+    fn parse_package_args_rejects_unknown_argument() {
+        let error = parse_package_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("unknown")));
     }
 }
