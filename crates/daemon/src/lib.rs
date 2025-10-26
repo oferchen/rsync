@@ -76,7 +76,7 @@
 //! assert!(!stdout.is_empty());
 //! ```
 //!
-//! Launching the daemon binds a TCP listener (defaulting to `127.0.0.1:873`),
+//! Launching the daemon binds a TCP listener (defaulting to `0.0.0.0:873`),
 //! accepts a legacy connection, and responds with an explanatory error.
 //!
 //! ```
@@ -205,7 +205,7 @@ const SOCKET_IO_EXIT_CODE: i32 = 10;
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 /// Default bind address when no CLI overrides are provided.
-const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
@@ -239,9 +239,9 @@ const HELP_TEXT: &str = concat!(
     "  --help        Show this help message and exit.\n",
     "  --version     Output version information and exit.\n",
     "  --delegate-system-rsync  Launch the system rsync daemon with the supplied arguments.\n",
-    "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 127.0.0.1).\n",
+    "  --bind ADDR         Bind to the supplied IPv4/IPv6 address (default 0.0.0.0).\n",
     "  --ipv4             Restrict the listener to IPv4 sockets.\n",
-    "  --ipv6             Restrict the listener to IPv6 sockets (defaults to ::1 when no bind address is provided).\n",
+    "  --ipv6             Restrict the listener to IPv6 sockets (defaults to :: when no bind address is provided).\n",
     "  --port PORT         Listen on the supplied TCP port (default 873).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
@@ -958,9 +958,9 @@ impl RuntimeOptions {
                             "cannot use --ipv4 with an IPv6 bind address".to_string(),
                         ));
                     }
-                    self.bind_address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+                    self.bind_address = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
                 } else if !self.bind_address_overridden {
-                    self.bind_address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+                    self.bind_address = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
                 }
             }
             AddressFamily::Ipv6 => {
@@ -970,9 +970,9 @@ impl RuntimeOptions {
                             "cannot use --ipv6 with an IPv4 bind address".to_string(),
                         ));
                     }
-                    self.bind_address = IpAddr::V6(Ipv6Addr::LOCALHOST);
+                    self.bind_address = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
                 } else if !self.bind_address_overridden {
-                    self.bind_address = IpAddr::V6(Ipv6Addr::LOCALHOST);
+                    self.bind_address = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
                 }
             }
         }
@@ -2626,7 +2626,7 @@ impl Error for DaemonError {}
 
 /// Runs the daemon orchestration using the provided configuration.
 ///
-/// The helper binds a TCP listener (defaulting to `127.0.0.1:873`), accepts a
+/// The helper binds a TCP listener (defaulting to `0.0.0.0:873`), accepts a
 /// single connection, performs the legacy ASCII handshake, and replies with a
 /// deterministic `@ERROR` message explaining that module serving is not yet
 /// available. This behaviour gives higher layers a concrete negotiation target
@@ -5472,7 +5472,7 @@ mod tests {
         let options =
             RuntimeOptions::parse(&[OsString::from("--ipv6")]).expect("parse --ipv6 succeeds");
 
-        assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(options.bind_address(), IpAddr::V6(Ipv6Addr::UNSPECIFIED));
         assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
     }
 
