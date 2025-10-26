@@ -9,8 +9,12 @@
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
 //! authenticating `auth users` entries via the upstream challenge/response
-//! exchange backed by the configured secrets file, and replying with
-//! explanatory `@ERROR` messages when module transfers are not yet available.
+//! exchange backed by the configured secrets file, and delegating authenticated
+//! module sessions to the upstream `rsync` binary by default so clients retain
+//! full transfers while the native engine is completed. Operators can disable
+//! delegation via the documented `OC_RSYNC_*` environment overrides, in which
+//! case the daemon responds with explanatory `@ERROR` messages until the
+//! built-in data path lands.
 //! Clients that initiate the newer binary negotiation (protocols ≥ 30) are
 //! recognised automatically: the daemon responds with the negotiated protocol
 //! advertisement and emits multiplexed error frames describing the current
@@ -87,6 +91,11 @@
 //! use std::time::Duration;
 //!
 //! # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+//! # unsafe {
+//! #     std::env::set_var("OC_RSYNC_DAEMON_FALLBACK", "0");
+//! #     std::env::set_var("OC_RSYNC_FALLBACK", "0");
+//! # }
+//!
 //! let listener = TcpListener::bind("127.0.0.1:0")?;
 //! let port = listener.local_addr()?.port();
 //! drop(listener);
@@ -4597,7 +4606,7 @@ fn configured_fallback_binary() -> Option<OsString> {
         return selection.resolve_or_default(OsStr::new("rsync"));
     }
 
-    None
+    Some(OsString::from("rsync"))
 }
 
 fn fallback_binary_configured() -> bool {
@@ -4812,11 +4821,11 @@ mod tests {
     }
 
     #[test]
-    fn configured_fallback_binary_default_is_none() {
+    fn configured_fallback_binary_defaults_to_rsync() {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let _primary = EnvGuard::remove("OC_RSYNC_DAEMON_FALLBACK");
         let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
-        assert!(configured_fallback_binary().is_none());
+        assert_eq!(configured_fallback_binary(), Some(OsString::from("rsync")));
     }
 
     #[test]
@@ -6700,6 +6709,10 @@ mod tests {
 
     #[test]
     fn run_daemon_serves_single_legacy_connection() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -6750,6 +6763,10 @@ mod tests {
     #[test]
     fn run_daemon_handles_binary_negotiation() {
         use rsync_protocol::{BorrowedMessageFrames, MessageCode};
+
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -6808,6 +6825,10 @@ mod tests {
 
     #[test]
     fn run_daemon_requests_authentication_for_protected_module() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
         fs::create_dir_all(&module_dir).expect("module dir");
@@ -6902,6 +6923,10 @@ mod tests {
 
     #[test]
     fn run_daemon_enforces_module_connection_limit() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
         fs::create_dir_all(&module_dir).expect("module dir");
@@ -7046,6 +7071,8 @@ mod tests {
     #[test]
     fn run_daemon_accepts_valid_credentials() {
         let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
@@ -7152,6 +7179,10 @@ mod tests {
 
     #[test]
     fn run_daemon_honours_max_sessions() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7203,6 +7234,10 @@ mod tests {
 
     #[test]
     fn run_daemon_handles_parallel_sessions() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7264,6 +7299,10 @@ mod tests {
 
     #[test]
     fn run_daemon_lists_modules_on_request() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7320,6 +7359,10 @@ mod tests {
 
     #[test]
     fn run_daemon_writes_and_removes_pid_file() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7369,6 +7412,10 @@ mod tests {
 
     #[test]
     fn run_daemon_enforces_bwlimit_during_module_list() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let mut recorder = rsync_bandwidth::recorded_sleep_session();
         recorder.clear();
 
@@ -7460,6 +7507,10 @@ mod tests {
 
     #[test]
     fn run_daemon_omits_unlisted_modules_from_listing() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7601,6 +7652,10 @@ mod tests {
 
     #[test]
     fn run_daemon_refuses_disallowed_module_options() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7671,6 +7726,10 @@ mod tests {
 
     #[test]
     fn run_daemon_denies_module_when_host_not_allowed() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7733,6 +7792,10 @@ mod tests {
 
     #[test]
     fn run_daemon_filters_modules_during_list_request() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7792,6 +7855,10 @@ mod tests {
 
     #[test]
     fn run_daemon_lists_modules_with_motd_lines() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -7869,6 +7936,10 @@ mod tests {
 
     #[test]
     fn run_daemon_records_log_file_entries() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
+        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
