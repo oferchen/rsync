@@ -11,8 +11,8 @@
 //!
 //! # Design
 //!
-//! The current surface consists of the [`client`], [`message`], and [`version`]
-//! modules. The message facade implements [`Message`] together with helpers such as
+//! The current surface consists of the [`client`], [`fallback`], [`message`], and
+//! [`version`] modules. The message facade implements [`Message`] together with helpers such as
 //! [`message::message_source`] for capturing repo-relative source locations.
 //! Higher layers construct messages through this API to ensure trailer roles and
 //! version suffixes are formatted consistently. The [`version`] module exposes
@@ -59,6 +59,8 @@
 //!   populate before invoking the transfer engine.
 //! - [`client::ModuleListRequest`] exposes the daemon module listing helpers used
 //!   by the CLI to retrieve `rsync://` module tables during development.
+//! - [`fallback::fallback_override`] parses delegation overrides shared by the
+//!   client and daemon wrappers.
 //! - [`rsync_exit_code!`] constructs canonical exit-code diagnostics while recording
 //!   the caller's source location, keeping message provenance consistent across the
 //!   workspace.
@@ -71,6 +73,8 @@
 pub mod bandwidth;
 /// Client orchestration helpers consumed by the CLI binary.
 pub mod client;
+/// Helpers for interpreting fallback environment overrides shared across crates.
+pub mod fallback;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
 /// Version constants and capability helpers used by CLI and daemon entry points.
