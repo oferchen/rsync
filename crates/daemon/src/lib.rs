@@ -759,6 +759,8 @@ struct RuntimeOptions {
     reverse_lookup_configured: bool,
     lock_file: Option<PathBuf>,
     lock_file_from_config: bool,
+    delegate_arguments: Vec<OsString>,
+    inline_modules: bool,
 }
 
 impl Default for RuntimeOptions {
@@ -783,6 +785,8 @@ impl Default for RuntimeOptions {
             reverse_lookup_configured: false,
             lock_file: None,
             lock_file_from_config: false,
+            delegate_arguments: Vec::new(),
+            inline_modules: false,
         }
     }
 }
@@ -796,13 +800,21 @@ impl RuntimeOptions {
         while let Some(argument) = iter.next() {
             if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
+                options.delegate_arguments.push(OsString::from("--port"));
+                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
+                options.delegate_arguments.push(OsString::from("--address"));
+                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--address")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
+                options.delegate_arguments.push(OsString::from("--address"));
+                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
+                options.delegate_arguments.push(OsString::from("--config"));
+                options.delegate_arguments.push(value.clone());
                 options.load_config_modules(&value, &mut seen_modules)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
                 options.load_motd_file(&value)?;
@@ -813,8 +825,12 @@ impl RuntimeOptions {
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bwlimit")? {
                 let components = parse_runtime_bwlimit(&value)?;
                 options.set_bandwidth_limit(components.rate(), components.burst())?;
+                options.delegate_arguments.push(OsString::from("--bwlimit"));
+                options.delegate_arguments.push(value.clone());
             } else if argument == "--no-bwlimit" {
                 options.set_bandwidth_limit(None, None)?;
+                options.delegate_arguments.push(OsString::from("--bwlimit"));
+                options.delegate_arguments.push(OsString::from("0"));
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
@@ -822,14 +838,28 @@ impl RuntimeOptions {
                 options.set_max_sessions(max)?;
             } else if argument == "--ipv4" {
                 options.force_address_family(AddressFamily::Ipv4)?;
+                options.delegate_arguments.push(OsString::from("--ipv4"));
             } else if argument == "--ipv6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
+                options.delegate_arguments.push(OsString::from("--ipv6"));
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
-                options.set_log_file(PathBuf::from(value))?;
+                options.set_log_file(PathBuf::from(value.clone()))?;
+                options
+                    .delegate_arguments
+                    .push(OsString::from("--log-file"));
+                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
-                options.set_lock_file(PathBuf::from(value))?;
+                options.set_lock_file(PathBuf::from(value.clone()))?;
+                options
+                    .delegate_arguments
+                    .push(OsString::from("--lock-file"));
+                options.delegate_arguments.push(value.clone());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
-                options.set_pid_file(PathBuf::from(value))?;
+                options.set_pid_file(PathBuf::from(value.clone()))?;
+                options
+                    .delegate_arguments
+                    .push(OsString::from("--pid-file"));
+                options.delegate_arguments.push(value.clone());
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -842,6 +872,7 @@ impl RuntimeOptions {
                     return Err(duplicate_module(&module.name));
                 }
                 options.modules.push(module);
+                options.inline_modules = true;
             } else {
                 return Err(unsupported_option(argument.clone()));
             }
@@ -2755,8 +2786,18 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         pid_file,
         reverse_lookup,
         lock_file,
+        delegate_arguments,
+        inline_modules,
         ..
     } = options;
+
+    let delegation = configured_fallback_binary().and_then(|binary| {
+        if inline_modules {
+            None
+        } else {
+            Some(SessionDelegation::new(binary, delegate_arguments))
+        }
+    });
 
     let pid_guard = if let Some(path) = pid_file {
         Some(PidFileGuard::create(path)?)
@@ -2826,6 +2867,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                 let modules = Arc::clone(&modules);
                 let motd_lines = Arc::clone(&motd_lines);
                 let log_for_worker = log_sink.as_ref().map(Arc::clone);
+                let delegation_clone = delegation.clone();
                 let handle = thread::spawn(move || {
                     let modules_vec = modules.as_ref();
                     let motd_vec = motd_lines.as_ref();
@@ -2838,6 +2880,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                         bandwidth_burst,
                         log_for_worker,
                         reverse_lookup,
+                        delegation_clone,
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -3004,12 +3047,12 @@ fn handle_session(
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
+    delegation: Option<SessionDelegation>,
 ) -> io::Result<()> {
-    let fallback_binary = configured_fallback_binary();
-    if let Some(binary) = fallback_binary.clone() {
+    if let Some(delegation) = delegation.as_ref() {
         let delegated = stream
             .try_clone()
-            .and_then(|clone| delegate_binary_session(clone, &binary, log_sink.as_ref()));
+            .and_then(|clone| delegate_binary_session(clone, delegation, log_sink.as_ref()));
         if delegated.is_ok() {
             drop(stream);
             return Ok(());
@@ -3018,14 +3061,14 @@ fn handle_session(
         if let Some(log) = log_sink.as_ref() {
             let text = format!(
                 "failed to delegate session to '{}'; continuing with internal handler",
-                Path::new(&binary).display()
+                Path::new(delegation.binary()).display()
             );
             let message = rsync_warning!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
     }
 
-    let style = detect_session_style(&stream, fallback_binary.is_some())?;
+    let style = detect_session_style(&stream, delegation.is_some())?;
     configure_stream(&stream)?;
 
     let peer_host = if reverse_lookup {
@@ -3297,11 +3340,35 @@ fn forward_client_to_child(
     Ok(forwarded)
 }
 
+#[derive(Clone)]
+struct SessionDelegation {
+    binary: OsString,
+    args: Arc<[OsString]>,
+}
+
+impl SessionDelegation {
+    fn new(binary: OsString, args: Vec<OsString>) -> Self {
+        Self {
+            binary,
+            args: Arc::from(args.into_boxed_slice()),
+        }
+    }
+
+    fn binary(&self) -> &OsString {
+        &self.binary
+    }
+
+    fn args(&self) -> &[OsString] {
+        &self.args
+    }
+}
+
 fn delegate_binary_session(
     stream: TcpStream,
-    binary: &OsString,
+    delegation: &SessionDelegation,
     log_sink: Option<&SharedLogSink>,
 ) -> io::Result<()> {
+    let binary = delegation.binary();
     if let Some(log) = log_sink {
         let text = format!(
             "delegating binary session to '{}'",
@@ -3314,6 +3381,7 @@ fn delegate_binary_session(
     let mut command = ProcessCommand::new(binary);
     command.arg("--daemon");
     command.arg("--no-detach");
+    command.args(delegation.args());
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::inherit());
@@ -5159,6 +5227,118 @@ mod tests {
         assert!(marker_path.exists());
 
         handle.join().expect("daemon thread").expect("daemon run");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_session_delegation_propagates_runtime_arguments() {
+        use std::io::BufReader;
+
+        let _lock = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().expect("tempdir");
+
+        let module_dir = temp.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let config_path = temp.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!("[docs]\n    path = {}\n", module_dir.display()),
+        )
+        .expect("write config");
+
+        let mut frames = Vec::new();
+        MessageFrame::new(
+            MessageCode::Error,
+            HANDSHAKE_ERROR_PAYLOAD.as_bytes().to_vec(),
+        )
+        .expect("frame")
+        .encode_into_writer(&mut frames)
+        .expect("encode error frame");
+        let exit_code = u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE).unwrap_or_default();
+        MessageFrame::new(MessageCode::ErrorExit, exit_code.to_be_bytes().to_vec())
+            .expect("exit frame")
+            .encode_into_writer(&mut frames)
+            .expect("encode exit frame");
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes());
+        expected.extend_from_slice(&frames);
+        let expected_hex: String = expected.iter().map(|byte| format!("{byte:02x}")).collect();
+
+        let script_path = temp.path().join("binary-args.py");
+        let args_log_path = temp.path().join("delegation-args.log");
+        let script = "#!/usr/bin/env python3\n".to_string()
+            + "import os, sys, binascii\n"
+            + "args_log = os.environ.get('ARGS_LOG')\n"
+            + "if args_log:\n"
+            + "    with open(args_log, 'w', encoding='utf-8') as handle:\n"
+            + "        handle.write(' '.join(sys.argv[1:]))\n"
+            + "sys.stdin.buffer.read(4)\n"
+            + "payload = binascii.unhexlify(os.environ['BINARY_RESPONSE_HEX'])\n"
+            + "sys.stdout.buffer.write(payload)\n"
+            + "sys.stdout.buffer.flush()\n";
+        write_executable_script(&script_path, &script);
+
+        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
+        let _args = EnvGuard::set("ARGS_LOG", args_log_path.as_os_str());
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        drop(listener);
+
+        let log_path = temp.path().join("daemon.log");
+        let pid_path = temp.path().join("daemon.pid");
+        let lock_path = temp.path().join("daemon.lock");
+
+        let config = DaemonConfig::builder()
+            .arguments([
+                OsString::from("--port"),
+                OsString::from(port.to_string()),
+                OsString::from("--config"),
+                config_path.clone().into_os_string(),
+                OsString::from("--log-file"),
+                log_path.clone().into_os_string(),
+                OsString::from("--pid-file"),
+                pid_path.clone().into_os_string(),
+                OsString::from("--lock-file"),
+                lock_path.clone().into_os_string(),
+                OsString::from("--bwlimit"),
+                OsString::from("96"),
+                OsString::from("--ipv4"),
+                OsString::from("--once"),
+            ])
+            .build();
+
+        let handle = thread::spawn(move || run_daemon(config));
+
+        let mut stream = connect_with_retries(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+        stream
+            .write_all(&u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes())
+            .expect("send handshake");
+        stream.flush().expect("flush handshake");
+
+        let mut response = Vec::new();
+        reader.read_to_end(&mut response).expect("read response");
+        assert_eq!(response, expected);
+
+        handle.join().expect("daemon thread").expect("daemon run");
+
+        let recorded = fs::read_to_string(&args_log_path).expect("read args log");
+        assert!(recorded.contains("--port"));
+        assert!(recorded.contains(&port.to_string()));
+        assert!(recorded.contains("--config"));
+        assert!(recorded.contains(config_path.to_str().expect("utf8 config")));
+        assert!(recorded.contains("--log-file"));
+        assert!(recorded.contains(log_path.to_str().expect("utf8 log")));
+        assert!(recorded.contains("--pid-file"));
+        assert!(recorded.contains(pid_path.to_str().expect("utf8 pid")));
+        assert!(recorded.contains("--lock-file"));
+        assert!(recorded.contains(lock_path.to_str().expect("utf8 lock")));
+        assert!(recorded.contains("--bwlimit"));
+        assert!(recorded.contains("96"));
+        assert!(recorded.contains("--ipv4"));
     }
 
     #[cfg(unix)]
