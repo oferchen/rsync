@@ -193,6 +193,8 @@ const HELP_TEXT: &str = concat!(
     "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
     "  -R, --relative   Preserve source path components relative to the current directory.\n",
     "      --no-relative  Disable preservation of source path components.\n",
+    "  -x, --one-file-system  Don't cross filesystem boundaries during traversal.\n",
+    "      --no-one-file-system  Allow traversal across filesystem boundaries.\n",
     "      --implied-dirs  Create parent directories implied by source paths.\n",
     "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
     "      --mkpath     Create destination's missing path components.\n",
@@ -262,7 +264,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -774,7 +776,8 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         | SkippedExisting
         | SkippedNewerDestination
         | SkippedNonRegular
-        | SkippedUnsafeSymlink => '.',
+        | SkippedUnsafeSymlink
+        | SkippedMountPoint => '.',
         HardLink => 'h',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         _ => '.',
@@ -951,6 +954,7 @@ struct ParsedArgs {
     devices: Option<bool>,
     specials: Option<bool>,
     relative: Option<bool>,
+    one_file_system: Option<bool>,
     implied_dirs: Option<bool>,
     mkpath: bool,
     prune_empty_dirs: Option<bool>,
@@ -1363,6 +1367,21 @@ fn clap_command() -> ClapCommand {
                 .help("Disable preservation of source path components.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("relative"),
+        )
+        .arg(
+            Arg::new("one-file-system")
+                .long("one-file-system")
+                .short('x')
+                .help("Do not cross filesystem boundaries during traversal.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-one-file-system"),
+        )
+        .arg(
+            Arg::new("no-one-file-system")
+                .long("no-one-file-system")
+                .help("Allow traversal across filesystem boundaries.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("one-file-system"),
         )
         .arg(
             Arg::new("implied-dirs")
@@ -2204,6 +2223,13 @@ where
     } else {
         None
     };
+    let one_file_system = if matches.get_flag("no-one-file-system") {
+        Some(false)
+    } else if matches.get_flag("one-file-system") {
+        Some(true)
+    } else {
+        None
+    };
     let implied_dirs = if matches.get_flag("implied-dirs") {
         Some(true)
     } else if matches.get_flag("no-implied-dirs") {
@@ -2407,6 +2433,7 @@ where
         devices,
         specials,
         relative,
+        one_file_system,
         implied_dirs,
         mkpath,
         prune_empty_dirs,
@@ -2826,6 +2853,7 @@ where
         devices,
         specials,
         relative,
+        one_file_system,
         implied_dirs,
         mkpath,
         prune_empty_dirs,
@@ -3321,6 +3349,7 @@ where
     let fallback_required = requires_remote_fallback;
 
     let append_for_fallback = if append_verify { Some(true) } else { append };
+    let fallback_one_file_system = one_file_system;
 
     let fallback_args = if fallback_required {
         let mut fallback_info_flags = info.clone();
@@ -3391,6 +3420,7 @@ where
             devices,
             specials,
             relative,
+            one_file_system: fallback_one_file_system,
             implied_dirs: implied_dirs_option,
             mkpath,
             prune_empty_dirs,
@@ -3560,6 +3590,7 @@ where
     let copy_links = copy_links.unwrap_or(false);
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative = relative.unwrap_or(false);
+    let one_file_system = fallback_one_file_system.unwrap_or(false);
 
     let mut chmod_modifiers: Option<ChmodModifiers> = None;
     for spec in &chmod {
@@ -3630,6 +3661,7 @@ where
         .keep_dirlinks(keep_dirlinks_flag)
         .safe_links(safe_links)
         .relative_paths(relative)
+        .one_file_system(one_file_system)
         .implied_dirs(implied_dirs)
         .human_readable(human_readable_enabled)
         .mkpath(mkpath)
@@ -4730,6 +4762,14 @@ fn emit_verbose<W: Write + ?Sized>(
                 writeln!(stdout, "{rendered}")?;
                 continue;
             }
+            ClientEventKind::SkippedMountPoint => {
+                writeln!(
+                    stdout,
+                    "skipping mount point \"{}\"",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
             _ => {}
         }
 
@@ -4819,6 +4859,7 @@ fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::SkippedExisting => "skipped existing file",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
         ClientEventKind::SkippedUnsafeSymlink => "skipped unsafe symlink",
+        ClientEventKind::SkippedMountPoint => "skipped mount point",
         ClientEventKind::SkippedNewerDestination => "skipped newer destination file",
         ClientEventKind::EntryDeleted => "deleted",
         ClientEventKind::SourceRemoved => "source removed",
@@ -9482,6 +9523,39 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.relative, Some(false));
+    }
+
+    #[test]
+    fn parse_args_recognises_one_file_system_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--one-file-system"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.one_file_system, Some(true));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-one-file-system"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.one_file_system, Some(false));
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-x"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.one_file_system, Some(true));
     }
 
     #[test]
@@ -15377,6 +15451,55 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.contains("--no-omit-link-times"));
+    }
+
+    #[test]
+    fn remote_fallback_forwards_one_file_system_toggles() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let dest_path = temp.path().join("dest");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--one-file-system"),
+            OsString::from("remote::module"),
+            dest_path.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--one-file-system"));
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-one-file-system"),
+            OsString::from("remote::module"),
+            dest_path.into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        assert!(recorded.contains("--no-one-file-system"));
     }
 
     #[test]
