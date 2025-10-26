@@ -609,7 +609,11 @@ impl OutFormat {
                         let _ = write!(&mut buffer, "{bytes}");
                     }
                     OutFormatPlaceholder::ChecksumBytes => {
-                        buffer.push('0');
+                        let checksum_bytes = match event.kind() {
+                            ClientEventKind::DataCopied => event.bytes_transferred(),
+                            _ => 0,
+                        };
+                        let _ = write!(&mut buffer, "{checksum_bytes}");
                     }
                     OutFormatPlaceholder::Operation => {
                         buffer.push_str(describe_event_kind(event.kind()));
@@ -10333,6 +10337,105 @@ mod tests {
         assert_eq!(rendered.len(), 33);
         assert!(rendered[..32].chars().all(|ch| ch == ' '));
         assert_eq!(rendered.as_bytes()[32], b'\n');
+    }
+
+    #[test]
+    fn out_format_renders_checksum_bytes_for_data_copy_events() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src");
+        std::fs::create_dir(&dst_dir).expect("create dst");
+
+        let source = src_dir.join("payload.bin");
+        let contents = b"checksum-bytes";
+        std::fs::write(&source, contents).expect("write source");
+        let destination = dst_dir.join("payload.bin");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .times(true)
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
+            .expect("data copy event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%c"))
+            .expect("parse %c")
+            .render(event, &mut output)
+            .expect("render %c");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert_eq!(rendered.trim_end(), contents.len().to_string());
+    }
+
+    #[test]
+    fn out_format_renders_checksum_bytes_as_zero_when_metadata_reused() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src");
+        std::fs::create_dir(&dst_dir).expect("create dst");
+
+        let source = src_dir.join("unchanged.txt");
+        std::fs::write(&source, b"same contents").expect("write source");
+        let destination = dst_dir.join("unchanged.txt");
+
+        let build_config = || {
+            ClientConfig::builder()
+                .transfer_args([
+                    source.as_os_str().to_os_string(),
+                    destination.as_os_str().to_os_string(),
+                ])
+                .times(true)
+                .force_event_collection(true)
+                .build()
+        };
+
+        // First run populates the destination.
+        let outcome = run_client_or_fallback::<io::Sink, io::Sink>(build_config(), None, None)
+            .expect("initial copy");
+        if let ClientOutcome::Fallback(_) = outcome {
+            panic!("unexpected fallback outcome during initial copy");
+        }
+
+        // Second run should reuse metadata and avoid copying data bytes.
+        let outcome = run_client_or_fallback::<io::Sink, io::Sink>(build_config(), None, None)
+            .expect("re-run");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::MetadataReused))
+            .expect("metadata reuse event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%c"))
+            .expect("parse %c")
+            .render(event, &mut output)
+            .expect("render %c");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert_eq!(rendered.trim_end(), "0");
     }
 
     #[cfg(unix)]
