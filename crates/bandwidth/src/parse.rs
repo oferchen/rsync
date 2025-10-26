@@ -1,6 +1,8 @@
 use std::num::NonZeroU64;
 use std::str::FromStr;
 
+use crate::limiter::BandwidthLimiter;
+
 /// Parsed `--bwlimit` components consisting of an optional rate and burst size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BandwidthLimitComponents {
@@ -31,6 +33,27 @@ impl BandwidthLimitComponents {
     #[must_use]
     pub const fn is_unlimited(self) -> bool {
         self.rate.is_none()
+    }
+
+    /// Converts the parsed components into a [`BandwidthLimiter`].
+    ///
+    /// When the rate component is absent (representing an unlimited
+    /// configuration), the method returns `None`. Otherwise the limiter mirrors
+    /// upstream rsync's token bucket by honouring the optional burst size.
+    #[must_use]
+    pub fn to_limiter(&self) -> Option<BandwidthLimiter> {
+        self.rate
+            .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))
+    }
+
+    /// Consumes the components and constructs a [`BandwidthLimiter`].
+    ///
+    /// The behaviour matches [`Self::to_limiter`]; the by-value variant avoids
+    /// cloning when the caller wishes to move ownership of the parsed
+    /// components.
+    #[must_use]
+    pub fn into_limiter(self) -> Option<BandwidthLimiter> {
+        self.to_limiter()
     }
 }
 
@@ -400,6 +423,21 @@ mod tests {
     fn parse_bandwidth_trims_surrounding_whitespace() {
         let limit = parse_bandwidth_argument("\t 2M \n").expect("parse succeeds");
         assert_eq!(limit, NonZeroU64::new(2_097_152));
+    }
+
+    #[test]
+    fn components_into_limiter_respects_rate_and_burst() {
+        let components =
+            BandwidthLimitComponents::new(NonZeroU64::new(1024), NonZeroU64::new(4096));
+        let limiter = components.into_limiter().expect("limiter");
+        assert_eq!(limiter.limit_bytes().get(), 1024);
+        assert_eq!(limiter.burst_bytes().map(NonZeroU64::get), Some(4096));
+    }
+
+    #[test]
+    fn components_into_limiter_returns_none_when_unlimited() {
+        let components = BandwidthLimitComponents::new(None, NonZeroU64::new(4096));
+        assert!(components.into_limiter().is_none());
     }
 
     #[test]

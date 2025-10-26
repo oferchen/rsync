@@ -76,7 +76,7 @@ use rustix::{
 };
 
 use globset::{GlobBuilder, GlobMatcher};
-use rsync_bandwidth::BandwidthLimiter;
+use rsync_bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use rsync_checksums::RollingChecksum;
 use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
@@ -3311,9 +3311,8 @@ impl<'a> CopyContext<'a> {
         destination_root: PathBuf,
     ) -> Self {
         let burst = options.bandwidth_burst_bytes();
-        let limiter = options
-            .bandwidth_limit_bytes()
-            .map(|limit| BandwidthLimiter::with_burst(limit, burst));
+        let limiter =
+            BandwidthLimitComponents::new(options.bandwidth_limit_bytes(), burst).into_limiter();
         let collect_events = options.events_enabled();
         let filter_program = options.filter_program().cloned();
         let dir_merge_layers = filter_program
