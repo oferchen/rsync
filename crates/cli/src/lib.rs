@@ -5999,6 +5999,10 @@ fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective, Message> 
         return Err(message);
     }
 
+    if trimmed.eq_ignore_ascii_case("clear") {
+        return Ok(FilterDirective::Clear);
+    }
+
     const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
 
     if let Some(result) = parse_filter_shorthand(trimmed, 'P', "P", FilterRuleSpec::protect) {
@@ -10636,6 +10640,15 @@ mod tests {
         let clear_with_whitespace =
             parse_filter_directive(OsStr::new("  !   ")).expect("clear with whitespace parses");
         assert_eq!(clear_with_whitespace, FilterDirective::Clear);
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_clear_keyword() {
+        let keyword = parse_filter_directive(OsStr::new("clear")).expect("keyword parses");
+        assert_eq!(keyword, FilterDirective::Clear);
+
+        let uppercase = parse_filter_directive(OsStr::new("  CLEAR  ")).expect("uppercase parses");
+        assert_eq!(uppercase, FilterDirective::Clear);
     }
 
     #[test]

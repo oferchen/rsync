@@ -4707,14 +4707,17 @@ fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                if token == "!" {
+                let token_lower = token.to_ascii_lowercase();
+                if token == "!" || token_lower == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
+                        entries.exclude_if_present.clear();
                         continue;
                     }
-                    return Err(map_error(FilterParseError::new(
-                        "list-clearing '!' is not permitted in this filter file",
-                    )));
+                    let directive = if token == "!" { "!" } else { token };
+                    return Err(map_error(FilterParseError::new(format!(
+                        "list-clearing '{directive}' is not permitted in this filter file"
+                    ))));
                 }
 
                 if let Some(kind) = enforce_kind {
@@ -4752,6 +4755,10 @@ fn load_dir_merge_rules_recursive(
                     }
                     Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
                         entries.push_exclude_if_present(rule);
+                    }
+                    Ok(Some(ParsedFilterDirective::Clear)) => {
+                        entries.rules.clear();
+                        entries.exclude_if_present.clear();
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
@@ -4796,14 +4803,16 @@ fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                if trimmed == "!" {
+                if trimmed == "!" || trimmed.eq_ignore_ascii_case("clear") {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
+                        entries.exclude_if_present.clear();
                         continue;
                     }
-                    return Err(map_error(FilterParseError::new(
-                        "list-clearing '!' is not permitted in this filter file",
-                    )));
+                    return Err(map_error(FilterParseError::new(format!(
+                        "list-clearing '{}' is not permitted in this filter file",
+                        trimmed
+                    ))));
                 }
 
                 if let Some(kind) = enforce_kind {
@@ -4845,6 +4854,10 @@ fn load_dir_merge_rules_recursive(
                             entries.extend(nested_entries);
                         }
                     }
+                    Ok(Some(ParsedFilterDirective::Clear)) => {
+                        entries.rules.clear();
+                        entries.exclude_if_present.clear();
+                    }
                     Ok(None) => {}
                     Err(error) => return Err(map_error(error)),
                 }
@@ -4864,6 +4877,7 @@ enum ParsedFilterDirective {
         options: Option<DirMergeOptions>,
     },
     ExcludeIfPresent(ExcludeIfPresentRule),
+    Clear,
 }
 
 #[derive(Debug)]
@@ -4897,6 +4911,12 @@ fn parse_filter_directive_line(
     let trimmed = text.trim_start();
     if trimmed.is_empty() {
         return Ok(None);
+    }
+
+    let trimmed = trimmed.trim_end();
+
+    if trimmed == "!" || trimmed.eq_ignore_ascii_case("clear") {
+        return Ok(Some(ParsedFilterDirective::Clear));
     }
 
     if let Some(directive) = parse_short_merge_directive_line(trimmed)? {
@@ -9322,6 +9342,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_clear_keyword() {
+        let directive = parse_filter_directive_line("clear").expect("parse clear");
+        assert!(matches!(directive, Some(ParsedFilterDirective::Clear)));
+
+        let uppercase = parse_filter_directive_line("  CLEAR  ").expect("parse uppercase");
+        assert!(matches!(uppercase, Some(ParsedFilterDirective::Clear)));
+
+        let bang = parse_filter_directive_line("!").expect("parse bang");
+        assert!(matches!(bang, Some(ParsedFilterDirective::Clear)));
+    }
+
+    #[test]
     fn parse_filter_directive_exclude_if_present_support() {
         let directive = parse_filter_directive_line("exclude-if-present=.git")
             .expect("parse")
@@ -12408,6 +12440,42 @@ mod tests {
             "list-clearing rule should discard earlier excludes"
         );
         assert!(!target_root.join("skip.bak").exists());
+    }
+
+    #[test]
+    fn dir_merge_clear_keyword_discards_previous_rules() {
+        let temp = tempdir().expect("tempdir");
+        let filter = temp.path().join("filter.rules");
+        fs::write(&filter, b"exclude-if-present=.git\nclear\n- skip\n").expect("write filter");
+
+        let mut visited = Vec::new();
+        let options = DirMergeOptions::default();
+        let entries =
+            load_dir_merge_rules_recursive(&filter, &options, &mut visited).expect("parse filter");
+
+        assert_eq!(entries.rules.len(), 1);
+        assert!(entries.rules.iter().any(|rule| {
+            rule.pattern() == "skip"
+                && matches!(rule.action(), rsync_filters::FilterAction::Exclude)
+        }));
+        assert!(entries.exclude_if_present.is_empty());
+    }
+
+    #[test]
+    fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
+        let temp = tempdir().expect("tempdir");
+        let filter = temp.path().join("filter.rules");
+        fs::write(&filter, b"exclude-if-present=.git clear -skip").expect("write filter");
+
+        let mut visited = Vec::new();
+        let options = DirMergeOptions::default()
+            .use_whitespace()
+            .allow_list_clearing(true);
+        let entries =
+            load_dir_merge_rules_recursive(&filter, &options, &mut visited).expect("parse filter");
+
+        assert_eq!(entries.rules.len(), 1);
+        assert!(entries.exclude_if_present.is_empty());
     }
 
     #[test]
