@@ -3110,7 +3110,7 @@ fn handle_legacy_session(
     reverse_lookup: bool,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
-    let mut limiter = daemon_limit.map(|limit| BandwidthLimiter::with_burst(limit, daemon_burst));
+    let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
 
     let greeting = legacy_daemon_greeting();
     write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
@@ -3208,7 +3208,7 @@ fn handle_binary_session_internal(
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
 ) -> io::Result<()> {
-    let mut limiter = daemon_limit.map(|limit| BandwidthLimiter::with_burst(limit, daemon_burst));
+    let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
 
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
@@ -3641,7 +3641,7 @@ fn apply_module_bandwidth_limit(
                 }
             }
             None => {
-                *limiter = Some(BandwidthLimiter::with_burst(limit, module_burst));
+                *limiter = BandwidthLimitComponents::new(Some(limit), module_burst).into_limiter();
             }
         }
     } else if let Some(burst) = module_burst {
