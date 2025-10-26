@@ -74,7 +74,7 @@
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
 //! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -167,6 +167,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-hard-links  Disable hard link preservation.\n",
     "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
     "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+    "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
     "      --files-from=FILE  Read additional source operands from FILE.\n",
     "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
@@ -249,7 +250,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --checksum/-c, --size-only, --ignore-existing, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -918,6 +919,7 @@ struct ParsedArgs {
     copy_destinations: Vec<OsString>,
     link_destinations: Vec<OsString>,
     cvs_exclude: bool,
+    rsync_filter_shortcuts: u8,
     files_from: Vec<OsString>,
     from0: bool,
     info: Vec<OsString>,
@@ -1569,6 +1571,12 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::Append),
         )
         .arg(
+            Arg::new("rsync-filter")
+                .short('F')
+                .help("Shortcut for per-directory .rsync-filter handling (repeat to also load receiver-side files).")
+                .action(ArgAction::Count),
+        )
+        .arg(
             Arg::new("files-from")
                 .long("files-from")
                 .value_name("FILE")
@@ -1830,6 +1838,8 @@ where
         args.push(OsString::from("oc-rsync"));
     }
 
+    let raw_args = args.clone();
+    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&raw_args);
     let mut matches = clap_command().try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
@@ -2172,10 +2182,12 @@ where
         .remove_many::<OsString>("include-from")
         .map(|values| values.collect())
         .unwrap_or_default();
-    let filters = matches
+    let filters: Vec<OsString> = matches
         .remove_many::<OsString>("filter")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let rsync_filter_shortcuts = rsync_filter_indices.len() as u8;
+    let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let files_from = matches
         .remove_many::<OsString>("files-from")
@@ -2271,8 +2283,9 @@ where
         link_destinations,
         exclude_from,
         include_from,
-        filters,
+        filters: filter_args.clone(),
         cvs_exclude,
+        rsync_filter_shortcuts,
         files_from,
         from0,
         info,
@@ -2630,6 +2643,7 @@ where
         include_from,
         filters,
         cvs_exclude,
+        rsync_filter_shortcuts,
         files_from,
         from0,
         info,
@@ -3163,6 +3177,7 @@ where
             exclude_from: exclude_from.clone(),
             include_from: include_from.clone(),
             filters: filters.clone(),
+            rsync_filter_shortcuts,
             compare_destinations: compare_destinations.clone(),
             copy_destinations: copy_destinations.clone(),
             link_destinations: link_destinations.clone(),
@@ -3449,7 +3464,7 @@ where
 
     let mut merge_stack = HashSet::new();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    for filter in filters {
+    for filter in &filters {
         match parse_filter_directive(filter.as_os_str()) {
             Ok(FilterDirective::Rule(spec)) => filter_rules.push(spec),
             Ok(FilterDirective::Merge(directive)) => {
@@ -5696,6 +5711,106 @@ fn append_filter_rules_from_files(
         }));
     }
     Ok(())
+}
+
+fn locate_filter_arguments(args: &[OsString]) -> (Vec<usize>, Vec<usize>) {
+    let mut filter_indices = Vec::new();
+    let mut rsync_filter_indices = Vec::new();
+    let mut after_double_dash = false;
+    let mut expect_filter_value = false;
+
+    for (index, arg) in args.iter().enumerate().skip(1) {
+        if after_double_dash {
+            continue;
+        }
+
+        if expect_filter_value {
+            expect_filter_value = false;
+            continue;
+        }
+
+        if arg == "--" {
+            after_double_dash = true;
+            continue;
+        }
+
+        if arg == "--filter" {
+            filter_indices.push(index);
+            expect_filter_value = true;
+            continue;
+        }
+
+        let value = arg.to_string_lossy();
+
+        if value.starts_with("--filter=") {
+            filter_indices.push(index);
+            continue;
+        }
+
+        if value.starts_with('-') && !value.starts_with("--") && value.len() > 1 {
+            for ch in value[1..].chars() {
+                if ch == 'F' {
+                    rsync_filter_indices.push(index);
+                }
+            }
+        }
+    }
+
+    (filter_indices, rsync_filter_indices)
+}
+
+fn collect_filter_arguments(
+    filters: &[OsString],
+    filter_indices: &[usize],
+    rsync_filter_indices: &[usize],
+) -> Vec<OsString> {
+    if rsync_filter_indices.is_empty() {
+        return filters.to_vec();
+    }
+
+    let mut raw_queue: VecDeque<(usize, &OsString)> =
+        filter_indices.iter().copied().zip(filters.iter()).collect();
+    let mut alias_queue: VecDeque<(usize, usize)> = rsync_filter_indices
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(occurrence, position)| (position, occurrence))
+        .collect();
+    let mut merged = Vec::with_capacity(raw_queue.len() + alias_queue.len() * 2);
+
+    while !raw_queue.is_empty() || !alias_queue.is_empty() {
+        match (raw_queue.front(), alias_queue.front()) {
+            (Some((raw_index, _)), Some((alias_index, _))) => {
+                if alias_index <= raw_index {
+                    let (_, occurrence) = alias_queue.pop_front().unwrap();
+                    push_rsync_filter_shortcut(&mut merged, occurrence);
+                } else {
+                    let (_, value) = raw_queue.pop_front().unwrap();
+                    merged.push(value.clone());
+                }
+            }
+            (Some(_), None) => {
+                let (_, value) = raw_queue.pop_front().unwrap();
+                merged.push(value.clone());
+            }
+            (None, Some(_)) => {
+                let (_, occurrence) = alias_queue.pop_front().unwrap();
+                push_rsync_filter_shortcut(&mut merged, occurrence);
+            }
+            (None, None) => break,
+        }
+    }
+
+    merged
+}
+
+fn push_rsync_filter_shortcut(target: &mut Vec<OsString>, occurrence: usize) {
+    if occurrence == 0 {
+        target.push(OsString::from("dir-merge /.rsync-filter"));
+        target.push(OsString::from("exclude .rsync-filter"));
+    } else {
+        target.push(OsString::from("dir-merge .rsync-filter"));
+    }
 }
 
 fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) -> Result<(), Message> {
@@ -10048,6 +10163,46 @@ mod tests {
     }
 
     #[test]
+    fn collect_filter_arguments_merges_shortcuts_with_filters() {
+        use std::ffi::OsString;
+
+        let filters = vec![OsString::from("+ foo"), OsString::from("- bar")];
+        let filter_indices = vec![5_usize, 9_usize];
+        let rsync_indices = vec![1_usize, 7_usize];
+
+        let merged = collect_filter_arguments(&filters, &filter_indices, &rsync_indices);
+
+        assert_eq!(
+            merged,
+            vec![
+                OsString::from("dir-merge /.rsync-filter"),
+                OsString::from("exclude .rsync-filter"),
+                OsString::from("+ foo"),
+                OsString::from("dir-merge .rsync-filter"),
+                OsString::from("- bar"),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_filter_arguments_handles_shortcuts_without_filters() {
+        use std::ffi::OsString;
+
+        let filters: Vec<OsString> = Vec::new();
+        let filter_indices: Vec<usize> = Vec::new();
+        let merged = collect_filter_arguments(&filters, &filter_indices, &[2_usize, 4_usize]);
+
+        assert_eq!(
+            merged,
+            vec![
+                OsString::from("dir-merge /.rsync-filter"),
+                OsString::from("exclude .rsync-filter"),
+                OsString::from("dir-merge .rsync-filter"),
+            ]
+        );
+    }
+
+    #[test]
     fn parse_filter_directive_accepts_dir_merge_with_cvs_modifier() {
         let directive = parse_filter_directive(OsStr::new("dir-merge,C"))
             .expect("dir-merge with 'C' modifier parses");
@@ -11989,6 +12144,80 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         assert!(recorded.contains("--ipv6"));
         assert!(!recorded.contains("--ipv4"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_filter_shortcut() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-F"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let occurrences = recorded.lines().filter(|line| *line == "-F").count();
+        assert_eq!(occurrences, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_double_filter_shortcut() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("-FF"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let occurrences = recorded.lines().filter(|line| *line == "-F").count();
+        assert_eq!(occurrences, 2);
     }
 
     #[cfg(unix)]
