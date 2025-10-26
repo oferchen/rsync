@@ -351,6 +351,14 @@ enum OutFormatPlaceholder {
     FullChecksum,
 }
 
+#[derive(Clone, Debug, Default)]
+struct OutFormatContext {
+    remote_host: Option<String>,
+    remote_address: Option<String>,
+    module_name: Option<String>,
+    module_path: Option<String>,
+}
+
 fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
     let text = value.to_string_lossy();
     if text.is_empty() {
@@ -566,7 +574,12 @@ fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
 }
 
 impl OutFormat {
-    fn render<W: Write + ?Sized>(&self, event: &ClientEvent, writer: &mut W) -> io::Result<()> {
+    fn render<W: Write + ?Sized>(
+        &self,
+        event: &ClientEvent,
+        context: &OutFormatContext,
+        writer: &mut W,
+    ) -> io::Result<()> {
         use std::fmt::Write as _;
         let mut buffer = String::new();
         for token in &self.tokens {
@@ -662,10 +675,22 @@ impl OutFormat {
                         let pid = std::process::id();
                         let _ = write!(&mut buffer, "{pid}");
                     }
-                    OutFormatPlaceholder::RemoteHost
-                    | OutFormatPlaceholder::RemoteAddress
-                    | OutFormatPlaceholder::ModuleName
-                    | OutFormatPlaceholder::ModulePath => {}
+                    OutFormatPlaceholder::RemoteHost => {
+                        append_remote_placeholder(&mut buffer, context.remote_host.as_deref(), 'h');
+                    }
+                    OutFormatPlaceholder::RemoteAddress => {
+                        append_remote_placeholder(
+                            &mut buffer,
+                            context.remote_address.as_deref(),
+                            'a',
+                        );
+                    }
+                    OutFormatPlaceholder::ModuleName => {
+                        append_remote_placeholder(&mut buffer, context.module_name.as_deref(), 'm');
+                    }
+                    OutFormatPlaceholder::ModulePath => {
+                        append_remote_placeholder(&mut buffer, context.module_path.as_deref(), 'P');
+                    }
                     OutFormatPlaceholder::FullChecksum => {
                         buffer.push_str(&format_full_checksum(event));
                     }
@@ -682,13 +707,23 @@ impl OutFormat {
     }
 }
 
+fn append_remote_placeholder(buffer: &mut String, value: Option<&str>, token: char) {
+    if let Some(text) = value {
+        buffer.push_str(text);
+    } else {
+        buffer.push('%');
+        buffer.push(token);
+    }
+}
+
 fn emit_out_format<W: Write + ?Sized>(
     events: &[ClientEvent],
     format: &OutFormat,
+    context: &OutFormatContext,
     writer: &mut W,
 ) -> io::Result<()> {
     for event in events {
-        format.render(event, writer)?;
+        format.render(event, context, writer)?;
     }
     Ok(())
 }
@@ -3898,6 +3933,7 @@ where
                 }
             }
 
+            let out_format_context = OutFormatContext::default();
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -3907,6 +3943,7 @@ where
                     progress_rendered_live,
                     list_only,
                     out_format_template.as_ref(),
+                    &out_format_context,
                     name_level,
                     name_overridden,
                     human_readable_mode,
@@ -4104,6 +4141,7 @@ fn emit_transfer_summary(
     progress_already_rendered: bool,
     list_only: bool,
     out_format: Option<&OutFormat>,
+    out_format_context: &OutFormatContext,
     name_level: NameOutputLevel,
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
@@ -4137,7 +4175,7 @@ fn emit_transfer_summary(
         if events.is_empty() {
             false
         } else {
-            emit_out_format(events, format, writer)?;
+            emit_out_format(events, format, out_format_context, writer)?;
             true
         }
     } else {
@@ -10250,6 +10288,49 @@ mod tests {
     }
 
     #[test]
+    fn out_format_remote_placeholders_preserve_literals_without_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir(&src_dir).expect("create src");
+        std::fs::create_dir(&dst_dir).expect("create dst");
+
+        let source = src_dir.join("file.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+        let destination = dst_dir.join("file.txt");
+
+        let config = ClientConfig::builder()
+            .transfer_args([
+                source.as_os_str().to_os_string(),
+                destination.as_os_str().to_os_string(),
+            ])
+            .force_event_collection(true)
+            .build();
+
+        let outcome =
+            run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+        let summary = match outcome {
+            ClientOutcome::Local(summary) => *summary,
+            ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+        };
+
+        let event = summary
+            .events()
+            .iter()
+            .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
+            .expect("data event present");
+
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new("%h %a %m %P"))
+            .expect("parse placeholders")
+            .render(event, &OutFormatContext::default(), &mut output)
+            .expect("render placeholders");
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert_eq!(rendered, "%h %a %m %P\n");
+    }
+
+    #[test]
     fn out_format_renders_full_checksum_for_files() {
         let temp = tempfile::tempdir().expect("tempdir");
         let src_dir = temp.path().join("src");
@@ -10286,7 +10367,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%C"))
             .expect("parse %C")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %C");
 
         let rendered = String::from_utf8(output).expect("utf8");
@@ -10330,7 +10411,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%C"))
             .expect("parse %C")
-            .render(dir_event, &mut output)
+            .render(dir_event, &OutFormatContext::default(), &mut output)
             .expect("render %C");
 
         let rendered = String::from_utf8(output).expect("utf8");
@@ -10377,7 +10458,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%c"))
             .expect("parse %c")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %c");
 
         let rendered = String::from_utf8(output).expect("utf8");
@@ -10431,7 +10512,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%c"))
             .expect("parse %c")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %c");
 
         let rendered = String::from_utf8(output).expect("utf8");
@@ -10499,14 +10580,14 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%B"))
             .expect("parse out-format")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %B");
         assert_eq!(output, b"rwxr-xr-x\n");
 
         output.clear();
         parse_out_format(OsStr::new("%p"))
             .expect("parse %p")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %p");
         let expected_pid = format!("{}\n", std::process::id());
         assert_eq!(output, expected_pid.as_bytes());
@@ -10514,28 +10595,28 @@ mod tests {
         output.clear();
         parse_out_format(OsStr::new("%U"))
             .expect("parse %U")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %U");
         assert_eq!(output, format!("{expected_uid}\n").as_bytes());
 
         output.clear();
         parse_out_format(OsStr::new("%G"))
             .expect("parse %G")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %G");
         assert_eq!(output, format!("{expected_gid}\n").as_bytes());
 
         output.clear();
         parse_out_format(OsStr::new("%u"))
             .expect("parse %u")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %u");
         assert_eq!(output, format!("{expected_user}\n").as_bytes());
 
         output.clear();
         parse_out_format(OsStr::new("%g"))
             .expect("parse %g")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %g");
         assert_eq!(output, format!("{expected_group}\n").as_bytes());
     }
@@ -10570,7 +10651,7 @@ mod tests {
         let format = parse_out_format(OsStr::new("%M")).expect("parse out-format");
         let mut output = Vec::new();
         format
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render out-format");
 
         assert!(String::from_utf8_lossy(&output).trim().contains('-'));
@@ -10612,7 +10693,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%i"))
             .expect("parse %i")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %i");
 
         assert_eq!(output, b">f+++++++++\n");
@@ -10660,7 +10741,7 @@ mod tests {
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%i"))
             .expect("parse %i")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %i");
 
         assert_eq!(output, b"*deleting\n");
@@ -16092,7 +16173,7 @@ exit 0
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%L"))
             .expect("parse %L")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %L");
 
         assert_eq!(output, b" -> file.txt\n");
@@ -16139,7 +16220,7 @@ exit 0
         let mut output = Vec::new();
         parse_out_format(OsStr::new("%N"))
             .expect("parse %N")
-            .render(event, &mut output)
+            .render(event, &OutFormatContext::default(), &mut output)
             .expect("render %N");
 
         assert_eq!(output, b"src/link.txt -> file.txt\n");
