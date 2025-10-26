@@ -687,6 +687,28 @@ impl ExcludeIfPresentRule {
     }
 }
 
+fn directory_has_marker(
+    rules: &[ExcludeIfPresentRule],
+    directory: &Path,
+) -> Result<bool, LocalCopyError> {
+    for rule in rules {
+        match rule.marker_exists(directory) {
+            Ok(true) => return Ok(true),
+            Ok(false) => continue,
+            Err(error) => {
+                let path = rule.marker_path(directory);
+                return Err(LocalCopyError::io(
+                    "inspect exclude-if-present marker",
+                    path,
+                    error,
+                ));
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 #[derive(Clone, Debug)]
 enum FilterInstruction {
     Segment(FilterSegment),
@@ -769,6 +791,8 @@ impl FilterSegment {
 
 type FilterSegmentLayers = Vec<Vec<FilterSegment>>;
 type FilterSegmentStack = Vec<Vec<(usize, FilterSegment)>>;
+type ExcludeIfPresentLayers = Vec<Vec<ExcludeIfPresentRule>>;
+type ExcludeIfPresentStack = Vec<Vec<(usize, Vec<ExcludeIfPresentRule>)>>;
 
 #[derive(Clone, Copy, Debug)]
 struct FilterOutcome {
@@ -3054,8 +3078,10 @@ struct CopyContext<'a> {
     events: Option<Vec<LocalCopyRecord>>,
     filter_program: Option<FilterProgram>,
     dir_merge_layers: Rc<RefCell<FilterSegmentLayers>>,
+    dir_merge_marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
+    dir_merge_marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
     deferred_deletions: Vec<DeferredDeletion>,
     deferred_updates: Vec<DeferredUpdate>,
     timeout: Option<Duration>,
@@ -3171,7 +3197,12 @@ impl<'a> CopyContext<'a> {
             .as_ref()
             .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
             .unwrap_or_default();
+        let dir_merge_marker_layers = filter_program
+            .as_ref()
+            .map(|program| vec![Vec::new(); program.dir_merge_rules().len()])
+            .unwrap_or_default();
         let dir_merge_ephemeral = Vec::new();
+        let dir_merge_marker_ephemeral = Vec::new();
         let timeout = options.timeout();
         Self {
             mode,
@@ -3186,8 +3217,10 @@ impl<'a> CopyContext<'a> {
             },
             filter_program,
             dir_merge_layers: Rc::new(RefCell::new(dir_merge_layers)),
+            dir_merge_marker_layers: Rc::new(RefCell::new(dir_merge_marker_layers)),
             observer,
             dir_merge_ephemeral: Rc::new(RefCell::new(dir_merge_ephemeral)),
+            dir_merge_marker_ephemeral: Rc::new(RefCell::new(dir_merge_marker_ephemeral)),
             deferred_deletions: Vec::new(),
             deferred_updates: Vec::new(),
             timeout,
@@ -3764,7 +3797,10 @@ impl<'a> CopyContext<'a> {
         let Some(program) = &self.filter_program else {
             return Ok(DirectoryFilterGuard::new(
                 Rc::clone(&self.dir_merge_layers),
+                Rc::clone(&self.dir_merge_marker_layers),
                 Rc::clone(&self.dir_merge_ephemeral),
+                Rc::clone(&self.dir_merge_marker_ephemeral),
+                Vec::new(),
                 Vec::new(),
                 false,
                 false,
@@ -3772,9 +3808,13 @@ impl<'a> CopyContext<'a> {
         };
 
         let mut added_indices = Vec::new();
+        let mut marker_counts = Vec::new();
         let mut layers = self.dir_merge_layers.borrow_mut();
+        let mut marker_layers = self.dir_merge_marker_layers.borrow_mut();
         let mut ephemeral_stack = self.dir_merge_ephemeral.borrow_mut();
+        let mut marker_ephemeral_stack = self.dir_merge_marker_ephemeral.borrow_mut();
         ephemeral_stack.push(Vec::new());
+        marker_ephemeral_stack.push(Vec::new());
 
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
@@ -3784,6 +3824,7 @@ impl<'a> CopyContext<'a> {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
                     ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
                     return Err(LocalCopyError::io(
                         "inspect filter file",
                         candidate.clone(),
@@ -3797,22 +3838,24 @@ impl<'a> CopyContext<'a> {
             }
 
             let mut visited = Vec::new();
-            let rules = match load_dir_merge_rules_recursive(
+            let mut entries = match load_dir_merge_rules_recursive(
                 candidate.as_path(),
                 rule.options(),
                 &mut visited,
             ) {
-                Ok(rules) => rules,
+                Ok(entries) => entries,
                 Err(error) => {
                     ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
                     return Err(error);
                 }
             };
 
             let mut segment = FilterSegment::default();
-            for compiled in rules {
+            for compiled in entries.rules.drain(..) {
                 if let Err(error) = segment.push_rule(compiled) {
                     ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
                     return Err(filter_program_local_error(&candidate, error));
                 }
             }
@@ -3821,34 +3864,90 @@ impl<'a> CopyContext<'a> {
                 let pattern = rule.pattern().to_string_lossy().into_owned();
                 if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
                     ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
                     return Err(filter_program_local_error(&candidate, error));
                 }
             }
 
-            if segment.is_empty() {
+            let has_segment = !segment.is_empty();
+            let markers = entries.exclude_if_present;
+            if !has_segment && markers.is_empty() {
                 continue;
             }
 
             if rule.options().inherit_rules() {
-                layers[index].push(segment);
-                added_indices.push(index);
-            } else if let Some(current) = ephemeral_stack.last_mut() {
-                current.push((index, segment));
+                if has_segment {
+                    layers[index].push(segment);
+                    added_indices.push(index);
+                }
+                if !markers.is_empty() {
+                    let count = markers.len();
+                    marker_layers[index].extend(markers.into_iter());
+                    marker_counts.push((index, count));
+                }
+            } else {
+                if has_segment {
+                    if let Some(current) = ephemeral_stack.last_mut() {
+                        current.push((index, segment));
+                    }
+                }
+                if !markers.is_empty() {
+                    if let Some(current) = marker_ephemeral_stack.last_mut() {
+                        current.push((index, markers));
+                    }
+                }
             }
         }
 
         drop(layers);
+        drop(marker_layers);
         drop(ephemeral_stack);
+        drop(marker_ephemeral_stack);
 
-        let excluded = program.should_exclude_directory(source)?;
+        let excluded = self.directory_excluded(source, program)?;
 
         Ok(DirectoryFilterGuard::new(
             Rc::clone(&self.dir_merge_layers),
+            Rc::clone(&self.dir_merge_marker_layers),
             Rc::clone(&self.dir_merge_ephemeral),
+            Rc::clone(&self.dir_merge_marker_ephemeral),
             added_indices,
+            marker_counts,
             true,
             excluded,
         ))
+    }
+
+    fn directory_excluded(
+        &self,
+        directory: &Path,
+        program: &FilterProgram,
+    ) -> Result<bool, LocalCopyError> {
+        if program.should_exclude_directory(directory)? {
+            return Ok(true);
+        }
+
+        {
+            let layers = self.dir_merge_marker_layers.borrow();
+            for rules in layers.iter() {
+                if directory_has_marker(rules, directory)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        {
+            let stack = self.dir_merge_marker_ephemeral.borrow();
+            if let Some(entries) = stack.last() {
+                for (_, rules) in entries.iter() {
+                    if directory_has_marker(rules, directory)? {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     fn summary_mut(&mut self) -> &mut LocalCopySummary {
@@ -4395,8 +4494,11 @@ impl<'a> CopyContext<'a> {
 
 struct DirectoryFilterGuard {
     layers: Rc<RefCell<FilterSegmentLayers>>,
+    marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
     ephemeral: Rc<RefCell<FilterSegmentStack>>,
+    marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
     indices: Vec<usize>,
+    marker_counts: Vec<(usize, usize)>,
     ephemeral_active: bool,
     excluded: bool,
 }
@@ -4404,15 +4506,21 @@ struct DirectoryFilterGuard {
 impl DirectoryFilterGuard {
     fn new(
         layers: Rc<RefCell<FilterSegmentLayers>>,
+        marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
         ephemeral: Rc<RefCell<FilterSegmentStack>>,
+        marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
         indices: Vec<usize>,
+        marker_counts: Vec<(usize, usize)>,
         ephemeral_active: bool,
         excluded: bool,
     ) -> Self {
         Self {
             layers,
+            marker_layers,
             ephemeral,
+            marker_ephemeral,
             indices,
+            marker_counts,
             ephemeral_active,
             excluded,
         }
@@ -4428,16 +4536,27 @@ impl Drop for DirectoryFilterGuard {
         if self.ephemeral_active {
             let mut stack = self.ephemeral.borrow_mut();
             stack.pop();
+            let mut marker_stack = self.marker_ephemeral.borrow_mut();
+            marker_stack.pop();
         }
 
-        if self.indices.is_empty() {
-            return;
+        if !self.marker_counts.is_empty() {
+            let mut marker_layers = self.marker_layers.borrow_mut();
+            for (index, count) in self.marker_counts.drain(..).rev() {
+                if let Some(layer) = marker_layers.get_mut(index) {
+                    for _ in 0..count {
+                        layer.pop();
+                    }
+                }
+            }
         }
 
-        let mut layers = self.layers.borrow_mut();
-        for index in self.indices.drain(..).rev() {
-            if let Some(layer) = layers.get_mut(index) {
-                layer.pop();
+        if !self.indices.is_empty() {
+            let mut layers = self.layers.borrow_mut();
+            for index in self.indices.drain(..).rev() {
+                if let Some(layer) = layers.get_mut(index) {
+                    layer.pop();
+                }
             }
         }
     }
@@ -4477,11 +4596,33 @@ fn apply_dir_merge_rule_defaults(mut rule: FilterRule, options: &DirMergeOptions
     rule
 }
 
+#[derive(Default)]
+struct DirMergeEntries {
+    rules: Vec<FilterRule>,
+    exclude_if_present: Vec<ExcludeIfPresentRule>,
+}
+
+impl DirMergeEntries {
+    fn push_rule(&mut self, rule: FilterRule) {
+        self.rules.push(rule);
+    }
+
+    fn push_exclude_if_present(&mut self, rule: ExcludeIfPresentRule) {
+        self.exclude_if_present.push(rule);
+    }
+
+    fn extend(&mut self, mut other: DirMergeEntries) {
+        self.rules.extend(other.rules.drain(..));
+        self.exclude_if_present
+            .extend(other.exclude_if_present.drain(..));
+    }
+}
+
 fn load_dir_merge_rules_recursive(
     path: &Path,
     options: &DirMergeOptions,
     visited: &mut Vec<PathBuf>,
-) -> Result<Vec<FilterRule>, LocalCopyError> {
+) -> Result<DirMergeEntries, LocalCopyError> {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if visited.contains(&canonical) {
         let message = format!("recursive filter merge detected for '{}'", path.display());
@@ -4496,7 +4637,7 @@ fn load_dir_merge_rules_recursive(
 
     let file = fs::File::open(path)
         .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
-    let mut rules = Vec::new();
+    let mut entries = DirMergeEntries::default();
 
     let map_error = |error: FilterParseError| {
         LocalCopyError::io(
@@ -4522,7 +4663,7 @@ fn load_dir_merge_rules_recursive(
 
                 if token == "!" {
                     if options.list_clear_allowed() {
-                        rules.clear();
+                        entries.rules.clear();
                         continue;
                     }
                     return Err(map_error(FilterParseError::new(
@@ -4535,7 +4676,7 @@ fn load_dir_merge_rules_recursive(
                         DirMergeEnforcedKind::Include => FilterRule::include(token.to_string()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_string()),
                     };
-                    rules.push(apply_dir_merge_rule_defaults(rule, options));
+                    entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
                     continue;
                 }
 
@@ -4543,7 +4684,13 @@ fn load_dir_merge_rules_recursive(
                 let lower = directive.to_ascii_lowercase();
                 let needs_argument = matches!(
                     lower.as_str(),
-                    "merge" | "include" | "exclude" | "show" | "hide" | "protect"
+                    "merge"
+                        | "include"
+                        | "exclude"
+                        | "show"
+                        | "hide"
+                        | "protect"
+                        | "exclude-if-present"
                 ) || lower.starts_with("dir-merge");
 
                 if needs_argument {
@@ -4555,7 +4702,10 @@ fn load_dir_merge_rules_recursive(
 
                 match parse_filter_directive_line(&directive) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        rules.push(apply_dir_merge_rule_defaults(rule, options));
+                        entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                    }
+                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
+                        entries.push_exclude_if_present(rule);
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
@@ -4568,16 +4718,16 @@ fn load_dir_merge_rules_recursive(
                             parent.join(merge_path)
                         };
                         if let Some(options_override) = merge_options {
-                            let nested_rules = load_dir_merge_rules_recursive(
+                            let nested_entries = load_dir_merge_rules_recursive(
                                 &nested,
                                 &options_override,
                                 visited,
                             )?;
-                            rules.extend(nested_rules);
+                            entries.extend(nested_entries);
                         } else {
-                            let nested_rules =
+                            let nested_entries =
                                 load_dir_merge_rules_recursive(&nested, options, visited)?;
-                            rules.extend(nested_rules);
+                            entries.extend(nested_entries);
                         }
                     }
                     Ok(None) => {}
@@ -4602,7 +4752,7 @@ fn load_dir_merge_rules_recursive(
 
                 if trimmed == "!" {
                     if options.list_clear_allowed() {
-                        rules.clear();
+                        entries.rules.clear();
                         continue;
                     }
                     return Err(map_error(FilterParseError::new(
@@ -4615,13 +4765,16 @@ fn load_dir_merge_rules_recursive(
                         DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_string()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_string()),
                     };
-                    rules.push(apply_dir_merge_rule_defaults(rule, options));
+                    entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
                     continue;
                 }
 
                 match parse_filter_directive_line(trimmed) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        rules.push(apply_dir_merge_rule_defaults(rule, options));
+                        entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                    }
+                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
+                        entries.push_exclude_if_present(rule);
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
@@ -4634,16 +4787,16 @@ fn load_dir_merge_rules_recursive(
                             parent.join(merge_path)
                         };
                         if let Some(options_override) = merge_options {
-                            let nested_rules = load_dir_merge_rules_recursive(
+                            let nested_entries = load_dir_merge_rules_recursive(
                                 &nested,
                                 &options_override,
                                 visited,
                             )?;
-                            rules.extend(nested_rules);
+                            entries.extend(nested_entries);
                         } else {
-                            let nested_rules =
+                            let nested_entries =
                                 load_dir_merge_rules_recursive(&nested, options, visited)?;
-                            rules.extend(nested_rules);
+                            entries.extend(nested_entries);
                         }
                     }
                     Ok(None) => {}
@@ -4654,7 +4807,7 @@ fn load_dir_merge_rules_recursive(
     }
 
     visited.pop();
-    Ok(rules)
+    Ok(entries)
 }
 
 #[derive(Debug)]
@@ -4664,6 +4817,7 @@ enum ParsedFilterDirective {
         path: PathBuf,
         options: Option<DirMergeOptions>,
     },
+    ExcludeIfPresent(ExcludeIfPresentRule),
 }
 
 #[derive(Debug)]
@@ -4709,6 +4863,30 @@ fn parse_filter_directive_line(
 
     if let Some(directive) = parse_dir_merge_directive(trimmed)? {
         return Ok(Some(directive));
+    }
+
+    const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
+
+    if trimmed.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
+        && trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()]
+            .eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
+    {
+        let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..]
+            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        if let Some(rest) = remainder.strip_prefix('=') {
+            remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        }
+
+        let pattern_text = remainder.trim();
+        if pattern_text.is_empty() {
+            return Err(FilterParseError::new(
+                "filter directive 'exclude-if-present' requires a marker file",
+            ));
+        }
+
+        return Ok(Some(ParsedFilterDirective::ExcludeIfPresent(
+            ExcludeIfPresentRule::new(pattern_text),
+        )));
     }
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
@@ -9098,6 +9276,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_filter_directive_exclude_if_present_support() {
+        let directive = parse_filter_directive_line("exclude-if-present=.git")
+            .expect("parse")
+            .expect("directive");
+
+        match directive {
+            ParsedFilterDirective::ExcludeIfPresent(rule) => {
+                assert_eq!(rule.marker_path(Path::new(".")), PathBuf::from("./.git"));
+            }
+            other => panic!("expected exclude-if-present directive, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_filter_directive_dir_merge_without_modifiers() {
         let directive = parse_filter_directive_line("dir-merge .rsync-filter")
             .expect("parse")
@@ -12089,6 +12281,48 @@ mod tests {
         let target_root = destination_root.join("source");
         assert!(target_root.join("keep.txt").exists());
         assert!(!target_root.join("skip").exists());
+    }
+
+    #[test]
+    fn dir_merge_exclude_if_present_from_filter_file() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("create source");
+        fs::create_dir_all(&destination_root).expect("create dest");
+
+        fs::write(
+            source_root.join(".rsync-filter"),
+            b"exclude-if-present=.git\n",
+        )
+        .expect("write filter");
+        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+
+        let project = source_root.join("project");
+        fs::create_dir_all(&project).expect("create project");
+        fs::write(project.join(".git"), b"marker").expect("write marker");
+        fs::write(project.join("data.txt"), b"ignored").expect("write data");
+
+        let operands = vec![
+            source_root.clone().into_os_string(),
+            destination_root.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let program = FilterProgram::new([FilterProgramEntry::DirMerge(DirMergeRule::new(
+            PathBuf::from(".rsync-filter"),
+            DirMergeOptions::default(),
+        ))])
+        .expect("compile filter program");
+
+        let options = LocalCopyOptions::default().with_filter_program(Some(program));
+
+        plan.execute_with_options(LocalCopyExecution::Apply, options)
+            .expect("copy succeeds");
+
+        let target_root = destination_root.join("source");
+        assert!(target_root.join("keep.txt").exists());
+        assert!(!target_root.join("project").exists());
     }
 
     #[test]
