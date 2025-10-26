@@ -142,6 +142,7 @@
 //! - [`rsync_core::client`] for the analogous client-facing orchestration.
 
 use dns_lookup::{lookup_addr, lookup_host};
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::RefCell;
 #[cfg(test)]
@@ -3608,8 +3609,9 @@ fn deny_module(
     peer_ip: IpAddr,
     limiter: &mut Option<BandwidthLimiter>,
 ) -> io::Result<()> {
+    let module_display = sanitize_module_identifier(&module.name);
     let payload = ACCESS_DENIED_PAYLOAD
-        .replace("{module}", &module.name)
+        .replace("{module}", module_display.as_ref())
         .replace("{addr}", &peer_ip.to_string());
     write_limited(stream, limiter, payload.as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
@@ -3775,7 +3777,8 @@ fn respond_with_module_request(
                 send_daemon_ok(reader.get_mut(), limiter)?;
             }
 
-            let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", request);
+            let module_display = sanitize_module_identifier(request);
+            let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", module_display.as_ref());
             let stream = reader.get_mut();
             write_limited(stream, limiter, payload.as_bytes())?;
             write_limited(stream, limiter, b"\n")?;
@@ -3800,7 +3803,8 @@ fn respond_with_module_request(
             return Ok(());
         }
     } else {
-        let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", request);
+        let module_display = sanitize_module_identifier(request);
+        let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
         let stream = reader.get_mut();
         write_limited(stream, limiter, payload.as_bytes())?;
         write_limited(stream, limiter, b"\n")?;
@@ -3870,6 +3874,31 @@ fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
+/// Returns a sanitised view of a module identifier suitable for diagnostics.
+///
+/// Module names originate from user input (daemon operands) or configuration
+/// files. When composing diagnostics the value must not embed control
+/// characters, otherwise adversarial requests could smuggle terminal control
+/// sequences or split log lines. The helper replaces ASCII control characters
+/// with a visible `'?'` marker while borrowing clean identifiers to avoid
+/// unnecessary allocations.
+fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
+    if input.chars().all(|ch| !ch.is_control()) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut sanitized = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_control() {
+            sanitized.push('?');
+        } else {
+            sanitized.push(ch);
+        }
+    }
+
+    Cow::Owned(sanitized)
+}
+
 fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
     let display = format_host(host, peer_addr.ip());
     let text = format!("connect from {} ({})", display, peer_addr.ip());
@@ -3886,9 +3915,10 @@ fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAd
 
 fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "module '{}' requested from {} ({})",
-        module, display, peer_ip
+        module_display, display, peer_ip
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3902,9 +3932,10 @@ fn log_module_limit(
     limit: NonZeroU32,
 ) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "refusing module '{}' from {} ({}): max connections {}",
-        module, display, peer_ip, limit,
+        module_display, display, peer_ip, limit,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3918,9 +3949,10 @@ fn log_module_lock_error(
     error: &io::Error,
 ) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "failed to update lock for module '{}' requested from {} ({}): {}",
-        module, display, peer_ip, error
+        module_display, display, peer_ip, error
     );
     let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3934,9 +3966,10 @@ fn log_module_refused_option(
     refused: &str,
 ) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "refusing option '{}' for module '{}' from {} ({})",
-        refused, module, display, peer_ip,
+        refused, module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3944,9 +3977,10 @@ fn log_module_refused_option(
 
 fn log_module_auth_failure(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "authentication failed for module '{}' from {} ({})",
-        module, display, peer_ip,
+        module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3954,9 +3988,10 @@ fn log_module_auth_failure(log: &SharedLogSink, host: Option<&str>, peer_ip: IpA
 
 fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "authentication succeeded for module '{}' from {} ({})",
-        module, display, peer_ip,
+        module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3964,9 +3999,10 @@ fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpA
 
 fn log_module_unavailable(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "module '{}' transfers unavailable for {} ({})",
-        module, display, peer_ip,
+        module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3974,9 +4010,10 @@ fn log_module_unavailable(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAd
 
 fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "access denied to module '{}' from {} ({})",
-        module, display, peer_ip,
+        module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -3984,9 +4021,10 @@ fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, m
 
 fn log_unknown_module(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
     let text = format!(
         "unknown module '{}' requested from {} ({})",
-        module, display, peer_ip,
+        module_display, display, peer_ip,
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -4670,6 +4708,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
     use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
@@ -4713,6 +4752,22 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
+    }
+
+    #[test]
+    fn sanitize_module_identifier_preserves_clean_input() {
+        let ident = "secure-module";
+        match sanitize_module_identifier(ident) {
+            Cow::Borrowed(value) => assert_eq!(value, ident),
+            Cow::Owned(_) => panic!("clean identifiers should not allocate"),
+        }
+    }
+
+    #[test]
+    fn sanitize_module_identifier_replaces_control_characters() {
+        let ident = "bad\nname\t";
+        let sanitized = sanitize_module_identifier(ident);
+        assert_eq!(sanitized.as_ref(), "bad?name?");
     }
 
     #[test]
