@@ -2,6 +2,10 @@ use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
 #[cfg(any(test, feature = "test-support"))]
+use std::iter::{ExactSizeIterator, FusedIterator};
+#[cfg(any(test, feature = "test-support"))]
+use std::marker::PhantomData;
+#[cfg(any(test, feature = "test-support"))]
 use std::mem;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -176,6 +180,41 @@ impl<'a> RecordedSleepSession<'a> {
     pub fn into_vec(mut self) -> Vec<Duration> {
         self.take()
     }
+
+    /// Iterates over the recorded sleep durations without consuming them.
+    ///
+    /// The iterator owns a lock on the shared buffer for the duration of the
+    /// traversal, guaranteeing exclusive access while avoiding additional
+    /// allocations. Unlike [`take`](Self::take), `iter` keeps the recorded
+    /// samples intact so callers can perform multiple passes or follow-up
+    /// assertions after collecting the yielded durations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "test-support")]
+    /// # {
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use std::num::NonZeroU64;
+    ///
+    /// let mut session = recorded_sleep_session();
+    /// session.clear();
+    ///
+    /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+    /// limiter.register(2048);
+    ///
+    /// let durations: Vec<_> = session.iter().collect();
+    /// assert_eq!(durations, session.take());
+    /// # }
+    /// ```
+    #[inline]
+    pub fn iter(&self) -> RecordedSleepIter<'_> {
+        RecordedSleepIter {
+            guard: lock_recorded_sleeps(),
+            index: 0,
+            _session: PhantomData,
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -213,6 +252,48 @@ impl<'a> IntoIterator for RecordedSleepSession<'a> {
         self.take().into_iter()
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
+/// Iterator over the durations captured by a [`RecordedSleepSession`].
+///
+/// The iterator keeps the underlying buffer intact, allowing tests to inspect
+/// the pacing schedule multiple times while retaining exclusive access to the
+/// shared storage guarded by [`recorded_sleep_session`]. Instances are created
+/// via [`RecordedSleepSession::iter`].
+pub struct RecordedSleepIter<'a> {
+    guard: MutexGuard<'static, Vec<Duration>>,
+    index: usize,
+    _session: PhantomData<&'a RecordedSleepSession<'a>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Iterator for RecordedSleepIter<'_> {
+    type Item = Duration;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.guard.get(self.index).copied();
+        if item.is_some() {
+            self.index += 1;
+        }
+        item
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.guard.len().saturating_sub(self.index);
+        (remaining, Some(remaining))
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ExactSizeIterator for RecordedSleepIter<'_> {
+    fn len(&self) -> usize {
+        self.guard.len().saturating_sub(self.index)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FusedIterator for RecordedSleepIter<'_> {}
 
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
