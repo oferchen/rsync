@@ -106,6 +106,12 @@ fn parse_bandwidth_limit_rejects_invalid_burst() {
 }
 
 #[test]
+fn parse_bandwidth_limit_rejects_negative_burst() {
+    let error = parse_bandwidth_limit("1M:-64K").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn parse_bandwidth_limit_zero_rate_disables_burst() {
     let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
     assert_eq!(components, BandwidthLimitComponents::unlimited());
@@ -200,6 +206,12 @@ fn parse_bandwidth_rejects_whitespace_within_adjustment() {
         let error = parse_bandwidth_argument(text).unwrap_err();
         assert_eq!(error, BandwidthParseError::Invalid);
     }
+}
+
+#[test]
+fn parse_bandwidth_rejects_incomplete_iec_suffix() {
+    let error = parse_bandwidth_argument("1Ki").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
