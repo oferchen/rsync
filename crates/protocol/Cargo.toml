@@ -7,6 +7,12 @@ license.workspace = true
 authors.workspace = true
 description = "Protocol negotiation utilities for the Rust rsync implementation"
 
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 
 [dev-dependencies]
