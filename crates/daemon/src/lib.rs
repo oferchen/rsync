@@ -191,8 +191,8 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{
-        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, apply_effective_limit,
-        parse_bandwidth_limit,
+        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
+        apply_effective_limit, parse_bandwidth_limit,
     },
     fallback::fallback_override,
     message::{Message, Role},
@@ -3799,6 +3799,9 @@ fn send_daemon_ok(
 /// honouring explicitly configured bursts. When a module omits the directive
 /// the limiter remains in the state established by the daemon scope, ensuring
 /// clients observe inherited throttling exactly as the C implementation does.
+/// The function returns the [`LimiterChange`] reported by
+/// [`apply_effective_limit`], allowing callers and tests to verify whether the
+/// limiter configuration changed as a result of the module overrides.
 fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
@@ -3806,13 +3809,16 @@ fn apply_module_bandwidth_limit(
     module_limit_configured: bool,
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
-) {
+) -> LimiterChange {
     if module_limit_configured && module_limit.is_none() {
         let burst_only_override =
             module_burst_specified && module_burst.is_some() && limiter.is_some();
         if !burst_only_override {
-            *limiter = None;
-            return;
+            return if limiter.take().is_some() {
+                LimiterChange::Disabled
+            } else {
+                LimiterChange::Unchanged
+            };
         }
     }
 
@@ -3827,7 +3833,7 @@ fn apply_module_bandwidth_limit(
         limit_specified,
         module_burst,
         burst_specified,
-    );
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3843,7 +3849,7 @@ fn respond_with_module_request(
     reverse_lookup: bool,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             limiter,
             module.bandwidth_limit(),
             module.bandwidth_limit_specified(),
@@ -3851,6 +3857,8 @@ fn respond_with_module_request(
             module.bandwidth_burst(),
             module.bandwidth_burst_specified(),
         );
+
+        let _ = change;
 
         let mut hostname_cache: Option<Option<String>> = None;
         let module_peer_host =
@@ -7969,7 +7977,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(8 * 1024 * 1024),
             true,
@@ -7977,6 +7985,8 @@ mod tests {
             None,
             false,
         );
+
+        assert_eq!(change, LimiterChange::Unchanged);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
@@ -7992,7 +8002,7 @@ mod tests {
             NonZeroU64::new(8 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(1024 * 1024),
             true,
@@ -8000,6 +8010,8 @@ mod tests {
             None,
             false,
         );
+
+        assert_eq!(change, LimiterChange::Updated);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(limiter.limit_bytes(), NonZeroU64::new(1024 * 1024).unwrap());
@@ -8012,7 +8024,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(8 * 1024 * 1024),
             true,
@@ -8020,6 +8032,8 @@ mod tests {
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
         );
+
+        assert_eq!(change, LimiterChange::Updated);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
@@ -8036,7 +8050,7 @@ mod tests {
     fn module_bwlimit_configures_unlimited_daemon() {
         let mut limiter = None;
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(2 * 1024 * 1024),
             true,
@@ -8044,6 +8058,8 @@ mod tests {
             None,
             false,
         );
+
+        assert_eq!(change, LimiterChange::Enabled);
 
         let limiter = limiter.expect("limiter configured by module");
         assert_eq!(
@@ -8053,7 +8069,7 @@ mod tests {
         assert!(limiter.burst_bytes().is_none());
 
         let mut limiter = Some(limiter);
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             None,
             false,
@@ -8061,6 +8077,8 @@ mod tests {
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
         );
+
+        assert_eq!(change, LimiterChange::Updated);
         let limiter = limiter.expect("limiter preserved");
         assert_eq!(
             limiter.limit_bytes(),
@@ -8077,7 +8095,9 @@ mod tests {
         let limit = NonZeroU64::new(3 * 1024 * 1024).unwrap();
         let mut limiter = Some(BandwidthLimiter::new(limit));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, false, None, false);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, false, false, None, false);
+
+        assert_eq!(change, LimiterChange::Unchanged);
 
         let limiter = limiter.expect("limiter remains in effect");
         assert_eq!(limiter.limit_bytes(), limit);
@@ -8090,7 +8110,7 @@ mod tests {
             NonZeroU64::new(4 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(4 * 1024 * 1024),
             true,
@@ -8098,6 +8118,8 @@ mod tests {
             Some(NonZeroU64::new(512 * 1024).unwrap()),
             true,
         );
+
+        assert_eq!(change, LimiterChange::Updated);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
@@ -8117,7 +8139,7 @@ mod tests {
             Some(NonZeroU64::new(512 * 1024).unwrap()),
         ));
 
-        apply_module_bandwidth_limit(
+        let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(4 * 1024 * 1024),
             true,
@@ -8125,6 +8147,8 @@ mod tests {
             None,
             true,
         );
+
+        assert_eq!(change, LimiterChange::Updated);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
@@ -8140,7 +8164,9 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, true, true, None, false);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, true, true, None, false);
+
+        assert_eq!(change, LimiterChange::Disabled);
 
         assert!(limiter.is_none());
     }
@@ -8151,7 +8177,9 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, true, true, None, true);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, true, true, None, true);
+
+        assert_eq!(change, LimiterChange::Disabled);
 
         assert!(limiter.is_none());
     }
@@ -8162,7 +8190,9 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, true, None, false);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, false, true, None, false);
+
+        assert_eq!(change, LimiterChange::Disabled);
 
         assert!(limiter.is_none());
     }
@@ -8173,7 +8203,9 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, true, None, true);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, false, true, None, true);
+
+        assert_eq!(change, LimiterChange::Disabled);
 
         assert!(limiter.is_none());
     }
@@ -8182,7 +8214,9 @@ mod tests {
     fn module_bwlimit_unlimited_is_noop_when_no_cap() {
         let mut limiter: Option<BandwidthLimiter> = None;
 
-        apply_module_bandwidth_limit(&mut limiter, None, true, true, None, false);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, true, true, None, false);
+
+        assert_eq!(change, LimiterChange::Unchanged);
 
         assert!(limiter.is_none());
     }
@@ -8193,7 +8227,9 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, false, None, false);
+        let change = apply_module_bandwidth_limit(&mut limiter, None, false, false, None, false);
+
+        assert_eq!(change, LimiterChange::Unchanged);
 
         let limiter = limiter.expect("daemon cap should remain active");
         assert_eq!(
