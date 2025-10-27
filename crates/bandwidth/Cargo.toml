@@ -9,6 +9,12 @@ description = "Bandwidth parsing and pacing utilities for the Rust rsync impleme
 repository = "https://github.com/oferchen/rsync"
 publish = false
 
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [features]
 default = []
 test-support = []
