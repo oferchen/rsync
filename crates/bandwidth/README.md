@@ -52,7 +52,11 @@ Enabling the `test-support` feature exposes helpers that record sleep requests
 instead of calling [`std::thread::sleep`]. Tests obtain a
 [`recorded_sleep_session`](crate::recorded_sleep_session) guard to serialise
 access to the captured durations, ensuring race-free assertions when scenarios
-run in parallel.
+run in parallel. Convenience accessors such as
+[`snapshot`](crate::RecordedSleepSession::snapshot),
+[`last_duration`](crate::RecordedSleepSession::last_duration), and
+[`total_duration`](crate::RecordedSleepSession::total_duration) let tests
+inspect the pacing history without draining it.
 
 ## Example
 
