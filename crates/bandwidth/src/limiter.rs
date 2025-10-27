@@ -163,38 +163,46 @@ fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
+    limit_specified: bool,
     burst: Option<NonZeroU64>,
     burst_specified: bool,
 ) {
-    if limit.is_none() && !burst_specified {
-        if limiter.is_some() {
-            *limiter = None;
-        }
+    if !limit_specified && !burst_specified {
         return;
     }
 
-    if let Some(limit) = limit {
-        match limiter {
-            Some(existing) => {
-                let target_limit = existing.limit_bytes().min(limit);
-                let target_burst = if burst_specified {
-                    burst
-                } else {
-                    burst.or(existing.burst_bytes())
-                };
+    if limit_specified {
+        match limit {
+            Some(limit) => match limiter {
+                Some(existing) => {
+                    let target_limit = existing.limit_bytes().min(limit);
+                    let target_burst = if burst_specified {
+                        burst
+                    } else {
+                        burst.or(existing.burst_bytes())
+                    };
 
-                let limit_changed = target_limit != existing.limit_bytes();
-                let burst_changed = burst_specified && target_burst != existing.burst_bytes();
+                    let limit_changed = target_limit != existing.limit_bytes();
+                    let burst_changed = burst_specified && target_burst != existing.burst_bytes();
 
-                if limit_changed || burst_changed {
-                    existing.update_configuration(target_limit, target_burst);
+                    if limit_changed || burst_changed {
+                        existing.update_configuration(target_limit, target_burst);
+                    }
                 }
-            }
+                None => {
+                    *limiter = Some(BandwidthLimiter::with_burst(limit, burst));
+                }
+            },
             None => {
-                *limiter = Some(BandwidthLimiter::with_burst(limit, burst));
+                if limiter.is_some() {
+                    *limiter = None;
+                }
+                return;
             }
         }
-    } else if burst_specified {
+    }
+
+    if burst_specified && !limit_specified {
         if let Some(existing) = limiter.as_mut() {
             if existing.burst_bytes() != burst {
                 existing.update_configuration(existing.limit_bytes(), burst);
@@ -554,7 +562,7 @@ mod tests {
     fn apply_effective_limit_disables_limiter_when_unrestricted() {
         let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
-        apply_effective_limit(&mut limiter, None, None, false);
+        apply_effective_limit(&mut limiter, None, true, None, false);
 
         assert!(limiter.is_none());
     }
@@ -566,7 +574,7 @@ mod tests {
         ));
         let cap = NonZeroU64::new(1024 * 1024).unwrap();
 
-        apply_effective_limit(&mut limiter, Some(cap), None, false);
+        apply_effective_limit(&mut limiter, Some(cap), true, None, false);
 
         let limiter = limiter.expect("limiter should remain active");
         assert_eq!(limiter.limit_bytes(), cap);
@@ -577,7 +585,7 @@ mod tests {
         let mut limiter = None;
         let cap = NonZeroU64::new(4 * 1024 * 1024).unwrap();
 
-        apply_effective_limit(&mut limiter, Some(cap), None, false);
+        apply_effective_limit(&mut limiter, Some(cap), true, None, false);
 
         let limiter = limiter.expect("limiter should be created");
         assert_eq!(limiter.limit_bytes(), cap);
@@ -590,7 +598,7 @@ mod tests {
         ));
         let burst = NonZeroU64::new(2048).unwrap();
 
-        apply_effective_limit(&mut limiter, Some(burst), Some(burst), true);
+        apply_effective_limit(&mut limiter, Some(burst), true, Some(burst), true);
 
         let limiter = limiter.expect("limiter should remain active");
         assert_eq!(limiter.burst_bytes(), Some(burst));
@@ -605,11 +613,9 @@ mod tests {
         ));
 
         let current_limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
-        let new_burst = NonZeroU64::new(4096).unwrap();
 
-        // Without an explicit override, supplying a new burst while keeping the same limit should
-        // leave the existing configuration untouched.
-        apply_effective_limit(&mut limiter, Some(current_limit), Some(new_burst), false);
+        // Reaffirming the existing limit without marking a burst override keeps the original burst.
+        apply_effective_limit(&mut limiter, Some(current_limit), true, None, false);
         assert_eq!(
             limiter
                 .as_ref()
@@ -618,8 +624,15 @@ mod tests {
             Some(burst)
         );
 
-        // When the limit changes, the implicit burst value propagates just as in upstream rsync.
-        apply_effective_limit(&mut limiter, Some(burst), Some(new_burst), false);
+        // Explicit overrides update the burst even when the rate remains unchanged.
+        let new_burst = NonZeroU64::new(4096).unwrap();
+        apply_effective_limit(
+            &mut limiter,
+            Some(current_limit),
+            true,
+            Some(new_burst),
+            true,
+        );
         assert_eq!(
             limiter
                 .as_ref()
@@ -628,14 +641,18 @@ mod tests {
             Some(new_burst)
         );
 
-        // Explicit overrides update the burst even when no new rate is provided.
-        apply_effective_limit(&mut limiter, None, Some(new_burst), true);
+        // Burst-only overrides honour the existing limiter but leave absent limiters untouched.
+        apply_effective_limit(&mut limiter, None, false, Some(burst), true);
         assert_eq!(
             limiter
                 .as_ref()
                 .expect("limiter should remain active")
                 .burst_bytes(),
-            Some(new_burst)
+            Some(burst)
         );
+
+        let mut absent: Option<BandwidthLimiter> = None;
+        apply_effective_limit(&mut absent, None, false, Some(new_burst), true);
+        assert!(absent.is_none());
     }
 }
