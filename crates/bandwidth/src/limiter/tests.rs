@@ -1,6 +1,7 @@
 use super::{
     BandwidthLimiter, LimiterChange, MAX_SLEEP_DURATION, MINIMUM_SLEEP_MICROS,
-    apply_effective_limit, duration_from_microseconds, recorded_sleep_session, sleep_for,
+    RecordedSleepSession, apply_effective_limit, duration_from_microseconds,
+    recorded_sleep_session, sleep_for,
 };
 use std::num::NonZeroU64;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -233,6 +234,19 @@ fn recorded_sleep_session_total_duration_reports_sum_without_draining() {
             Duration::from_micros(MINIMUM_SLEEP_MICROS as u64),
             Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64),
         ]
+    );
+}
+
+#[test]
+fn recorded_sleep_session_default_acquires_guard() {
+    let mut session = RecordedSleepSession::default();
+    session.clear();
+
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
+
+    assert_eq!(
+        session.take(),
+        [Duration::from_micros(MINIMUM_SLEEP_MICROS as u64)]
     );
 }
 
