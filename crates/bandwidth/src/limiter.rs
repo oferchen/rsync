@@ -597,14 +597,14 @@ mod tests {
 
     #[test]
     fn apply_effective_limit_updates_burst_when_specified() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(4 * 1024 * 1024).unwrap(),
-        ));
+        let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
+        let mut limiter = Some(BandwidthLimiter::new(limit));
         let burst = NonZeroU64::new(2048).unwrap();
 
-        apply_effective_limit(&mut limiter, Some(burst), true, Some(burst), true);
+        apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), true);
 
         let limiter = limiter.expect("limiter should remain active");
+        assert_eq!(limiter.limit_bytes(), limit);
         assert_eq!(limiter.burst_bytes(), Some(burst));
     }
 
