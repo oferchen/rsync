@@ -14,9 +14,17 @@ pub struct BandwidthLimitComponents {
 
 impl BandwidthLimitComponents {
     /// Constructs a new component set from the provided parts.
+    ///
+    /// When the rate is `None` the combination represents an unlimited
+    /// configuration. Upstream rsync ignores any burst component in that case,
+    /// so the helper mirrors that behaviour by discarding the supplied burst.
     #[must_use]
     pub const fn new(rate: Option<NonZeroU64>, burst: Option<NonZeroU64>) -> Self {
-        Self { rate, burst }
+        let effective_burst = if rate.is_some() { burst } else { None };
+        Self {
+            rate,
+            burst: effective_burst,
+        }
     }
 
     /// Returns the configured byte-per-second rate, if any.
@@ -448,6 +456,14 @@ mod tests {
     fn parse_bandwidth_limit_zero_rate_disables_burst() {
         let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
         assert_eq!(components, BandwidthLimitComponents::new(None, None));
+    }
+
+    #[test]
+    fn components_discard_burst_for_unlimited_rate() {
+        let burst = NonZeroU64::new(4096);
+        let components = BandwidthLimitComponents::new(None, burst);
+        assert!(components.is_unlimited());
+        assert_eq!(components.burst(), None);
     }
 
     #[test]
