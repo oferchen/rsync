@@ -3807,6 +3807,11 @@ fn apply_module_bandwidth_limit(
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
 ) {
+    if module_limit_configured && module_limit.is_none() && !module_burst_specified {
+        *limiter = None;
+        return;
+    }
+
     let limit_specified =
         module_limit_specified || (module_limit_configured && module_limit.is_some());
     let burst_specified =
@@ -8132,6 +8137,17 @@ mod tests {
         ));
 
         apply_module_bandwidth_limit(&mut limiter, None, true, true, None, false);
+
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, None, false, true, None, false);
 
         assert!(limiter.is_none());
     }
