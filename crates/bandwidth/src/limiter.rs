@@ -170,6 +170,28 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 /// allowing the module to override the configured burst size. Centralising the precedence logic
 /// keeps higher layers from duplicating the combination rules and ensures daemon and client
 /// behaviour stays in sync.
+///
+/// # Examples
+///
+/// ```rust
+/// use rsync_bandwidth::{apply_effective_limit, BandwidthLimiter};
+/// use std::num::NonZeroU64;
+///
+/// let mut limiter = Some(BandwidthLimiter::new(
+///     NonZeroU64::new(1024).expect("non-zero limit"),
+/// ));
+///
+/// apply_effective_limit(
+///     &mut limiter,
+///     Some(NonZeroU64::new(512).expect("non-zero cap")),
+///     true,
+///     None,
+///     false,
+/// );
+///
+/// let limiter = limiter.expect("limiter remains active");
+/// assert_eq!(limiter.limit_bytes().get(), 512);
+/// ```
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
