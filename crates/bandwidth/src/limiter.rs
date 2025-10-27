@@ -52,7 +52,7 @@ impl<'a> RecordedSleepSession<'a> {
     #[inline]
     fn with_recorded_sleeps_mut<R>(&self, op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
         let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
-        op(&mut *guard)
+        op(&mut guard)
     }
 
     /// Removes any previously recorded durations.
@@ -78,7 +78,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
-        self.with_recorded_sleeps_mut(|durations| mem::take(durations))
+        self.with_recorded_sleeps_mut(mem::take)
     }
 
     /// Consumes the session and returns the recorded durations.
