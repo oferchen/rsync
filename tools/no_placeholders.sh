@@ -31,20 +31,21 @@ rg_args=(
     --glob '!.git/**'
 )
 
+tmp_matches_file="$(mktemp -t rsync_no_placeholders_matches.XXXXXX)"
+trap 'rm -f "${tmp_matches_file}"' EXIT
+
 violations=0
 
 for pattern in "${patterns[@]}"; do
-    if rg "${rg_args[@]}" --pcre2 "${pattern}" >/tmp/rsync_no_placeholders_matches.$$ 2>/dev/null; then
+    if rg "${rg_args[@]}" --pcre2 "${pattern}" >"${tmp_matches_file}" 2>/dev/null; then
         if (( violations == 0 )); then
             echo "Prohibited placeholders found:" >&2
         fi
-        cat /tmp/rsync_no_placeholders_matches.$$ >&2
-        : > /tmp/rsync_no_placeholders_matches.$$
+        cat "${tmp_matches_file}" >&2
+        : > "${tmp_matches_file}"
         violations=1
     fi
 done
-
-rm -f /tmp/rsync_no_placeholders_matches.$$
 
 if (( violations )); then
     exit 1
