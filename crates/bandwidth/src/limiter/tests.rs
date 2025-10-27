@@ -71,6 +71,36 @@ fn limiter_records_precise_sleep_for_single_second() {
 }
 
 #[test]
+fn limiter_accumulates_debt_across_small_writes() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+
+    for _ in 0..16 {
+        limiter.register(64);
+    }
+
+    let recorded = session.take();
+    assert!(
+        !recorded.is_empty(),
+        "expected aggregated debt to trigger a sleep"
+    );
+
+    let total = recorded
+        .iter()
+        .copied()
+        .try_fold(Duration::ZERO, |acc, chunk| acc.checked_add(chunk))
+        .expect("sum fits within Duration::MAX");
+    assert!(
+        total >= Duration::from_micros(MINIMUM_SLEEP_MICROS as u64),
+        "total sleep {:?} shorter than threshold {:?}",
+        total,
+        Duration::from_micros(MINIMUM_SLEEP_MICROS as u64)
+    );
+}
+
+#[test]
 fn limiter_clamps_debt_to_configured_burst() {
     let mut session = recorded_sleep_session();
     session.clear();
