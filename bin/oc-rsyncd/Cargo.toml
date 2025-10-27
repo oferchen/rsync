@@ -1,0 +1,15 @@
+[package]
+name = "oc-rsyncd-bin"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Rust implementation of the oc-rsyncd daemon binary"
+
+[[bin]]
+name = "oc-rsyncd"
+path = "src/main.rs"
+
+[dependencies]
+rsync-daemon = { path = "../../crates/daemon" }
