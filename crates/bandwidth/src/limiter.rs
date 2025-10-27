@@ -295,6 +295,44 @@ impl<'a> IntoIterator for RecordedSleepSession<'a> {
 
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
+impl<'session, 'iter> IntoIterator for &'iter RecordedSleepSession<'session>
+where
+    'session: 'iter,
+{
+    type Item = Duration;
+    type IntoIter = RecordedSleepIter<'iter>;
+
+    /// Iterates over the recorded durations without consuming the guard.
+    ///
+    /// The implementation forwards to [`RecordedSleepSession::iter`], keeping
+    /// the shared buffer intact so callers can perform multiple passes while
+    /// still holding the session lock.
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
+impl<'session, 'iter> IntoIterator for &'iter mut RecordedSleepSession<'session>
+where
+    'session: 'iter,
+{
+    type Item = Duration;
+    type IntoIter = RecordedSleepIter<'iter>;
+
+    /// Iterates over the recorded durations without consuming the guard.
+    ///
+    /// The implementation forwards to [`RecordedSleepSession::iter`], keeping
+    /// the shared buffer intact so callers can perform multiple passes while
+    /// still holding the session lock.
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Iterator over the durations captured by a [`RecordedSleepSession`].
 ///
 /// The iterator keeps the underlying buffer intact, allowing tests to inspect
