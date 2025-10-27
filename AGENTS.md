@@ -218,4 +218,67 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 
 ---
 
+## Lint & Hygiene Agents
+
+### 2.2 `enforce_limits` Agent
+- **Script:** `tools/enforce_limits.sh`
+- **Purpose:** Enforce **LoC caps** (target ≤400; hard **≤600** lines) and comment policy.
+- **Config:** `MAX_RUST_LINES` (default `600`).
+- **Run locally:**
+  ```sh
+  MAX_RUST_LINES=600 bash tools/enforce_limits.sh
+  ```
+
+### 2.4 `no_placeholders` Agent
+- **Script:** `tools/no_placeholders.sh`
+- **Purpose:** Ban `todo!`, `unimplemented!`, `FIXME`, `XXX`, and obvious placeholder panics in Rust sources.
+- **Run locally:**
+  ```sh
+  bash tools/no_placeholders.sh
+  ```
+
+---
+
+## 3) Build & Test Agents
+
+### 3.1 `lint` Agent (fmt + clippy)
+- **Invoker:** CI job `lint` (see workflow).  
+- **Purpose:** Enforce formatting and deny warnings.
+- **Run locally:**
+  ```sh
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-targets -- -Dwarnings
+  ```
+
+### 3.2 `test-linux` Agent (coverage-gated)
+- **Purpose:** Run unit/integration tests and enforce **≥95%** line/block coverage.
+- **Run locally (example):**
+  ```sh
+  rustup component add llvm-tools-preview
+  cargo install cargo-llvm-cov
+  cargo llvm-cov --workspace --lcov --output-path coverage.lcov --fail-under-lines 95
+  ```
+- **Artifacts:** `coverage.lcov`
+
+### 3.3 `build-matrix` Agent
+- **Purpose:** Release builds for Linux/macOS/Windows (x86_64 + aarch64 as applicable).  
+- **Run locally (Linux example):**
+  ```sh
+  cargo build --release --workspace
+  ```
+
+### 3.4 `package-linux` Agent (+ SBOM)
+- **Purpose:** Build `.deb`, `.rpm`, and generate CycloneDX SBOM.
+- **Run locally (examples):**
+  ```sh
+  cargo install cargo-deb cargo-rpm
+  cargo deb --no-build
+  cargo rpm build
+  cargo install cyclonedx-bom || true
+  cyclonedx-bom -o target/sbom/oc-rsync.cdx.json
+  ```
+
+---
+
+
 
