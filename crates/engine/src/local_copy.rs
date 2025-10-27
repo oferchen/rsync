@@ -8452,6 +8452,8 @@ fn copy_fifo(
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
@@ -8587,6 +8589,8 @@ fn copy_device(
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
@@ -8939,6 +8943,8 @@ fn copy_symlink(
     let file_type = metadata.file_type();
     #[cfg(feature = "xattr")]
     let preserve_xattrs = context.xattrs_enabled();
+    #[cfg(feature = "acl")]
+    let preserve_acls = context.acls_enabled();
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
