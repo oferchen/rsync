@@ -8,7 +8,7 @@ use std::mem;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const MICROS_PER_SECOND: u128 = 1_000_000;
-const MICROS_PER_SECOND_DIV_1024: u128 = MICROS_PER_SECOND / 1024;
+const BYTES_PER_KIB: u128 = 1024;
 const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -328,6 +328,7 @@ impl BandwidthLimiter {
 
         let start = Instant::now();
         let kib_per_second = u128::from(self.kib_per_second.get());
+        let bytes_per_second = kib_per_second.saturating_mul(BYTES_PER_KIB);
 
         let mut elapsed_us = self.simulated_elapsed_us;
         if let Some(previous) = self.last_instant {
@@ -337,7 +338,7 @@ impl BandwidthLimiter {
         }
         self.simulated_elapsed_us = 0;
         if elapsed_us > 0 {
-            let allowed = elapsed_us.saturating_mul(kib_per_second) / MICROS_PER_SECOND_DIV_1024;
+            let allowed = elapsed_us.saturating_mul(bytes_per_second) / MICROS_PER_SECOND;
             if allowed >= self.total_written {
                 self.total_written = 0;
             } else {
@@ -347,10 +348,7 @@ impl BandwidthLimiter {
 
         self.clamp_debt_to_burst();
 
-        let sleep_us = self
-            .total_written
-            .saturating_mul(MICROS_PER_SECOND_DIV_1024)
-            / kib_per_second;
+        let sleep_us = self.total_written.saturating_mul(MICROS_PER_SECOND) / bytes_per_second;
 
         if sleep_us < MINIMUM_SLEEP_MICROS {
             self.last_instant = Some(start);
@@ -371,7 +369,7 @@ impl BandwidthLimiter {
             self.simulated_elapsed_us = sleep_us - elapsed_us;
         }
         let remaining_us = sleep_us.saturating_sub(elapsed_us);
-        let leftover = remaining_us.saturating_mul(kib_per_second) / MICROS_PER_SECOND_DIV_1024;
+        let leftover = remaining_us.saturating_mul(bytes_per_second) / MICROS_PER_SECOND;
 
         self.total_written = leftover;
         self.clamp_debt_to_burst();
@@ -432,6 +430,18 @@ mod tests {
                 .iter()
                 .any(|duration| duration >= &Duration::from_micros(MINIMUM_SLEEP_MICROS as u64))
         );
+    }
+
+    #[test]
+    fn limiter_records_precise_sleep_for_single_second() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+        limiter.register(1024);
+
+        let recorded = session.take();
+        assert_eq!(recorded, [Duration::from_secs(1)]);
     }
 
     #[test]
