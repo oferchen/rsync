@@ -267,11 +267,31 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
     let mut adjust = 0i8;
     if !remainder_after_suffix.is_empty() {
-        if remainder_after_suffix == "+1" && numeric_end > 0 {
-            adjust = 1;
-            remainder_after_suffix = "";
-        } else if remainder_after_suffix == "-1" && numeric_end > 0 {
-            adjust = -1;
+        // Upstream accepts optional ASCII whitespace between the adjustment sign and
+        // the literal `1` suffix (e.g. `--bwlimit=1K+ 1`). Parsing byte-wise keeps
+        // the logic close to the original `char*` implementation while remaining
+        // allocation free.
+        let parse_adjust = |text: &[u8]| -> Option<i8> {
+            let (sign, remainder) = text.split_first()?;
+            if *sign != b'+' && *sign != b'-' {
+                return None;
+            }
+
+            let mut digits = remainder
+                .iter()
+                .copied()
+                .skip_while(|byte| char::from(*byte).is_ascii_whitespace());
+
+            match (digits.next(), digits.next()) {
+                (Some(b'1'), None) => Some(if *sign == b'+' { 1 } else { -1 }),
+                _ => None,
+            }
+        };
+
+        if let Some(delta) =
+            parse_adjust(remainder_after_suffix.as_bytes()).filter(|_| numeric_end > 0)
+        {
+            adjust = delta;
             remainder_after_suffix = "";
         }
     }

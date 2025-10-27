@@ -181,6 +181,24 @@ fn parse_bandwidth_accepts_whitespace_before_adjustment() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_whitespace_within_adjustment() {
+    let limit = parse_bandwidth_argument("1K+ 1").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1024));
+
+    let limit = parse_bandwidth_argument("1K + 1").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1024));
+
+    let limit = parse_bandwidth_argument("1K- 1").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1024));
+}
+
+#[test]
+fn parse_bandwidth_rejects_non_unit_adjustment_value() {
+    let error = parse_bandwidth_argument("1K+ 2").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn parse_bandwidth_honours_negative_adjustment_for_small_values() {
     let limit = parse_bandwidth_argument("0.001M-1").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(0x400));
