@@ -8,6 +8,12 @@ description = "Metadata preservation helpers for the Rust rsync implementation"
 repository = "https://github.com/oferchen/rsync"
 build = "build.rs"
 
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 filetime = "0.2"
 rustix = { version = "0.38", features = ["fs", "process"] }
