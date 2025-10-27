@@ -3743,12 +3743,17 @@ fn apply_module_bandwidth_limit(
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
 ) {
+    let limit_specified =
+        module_limit_specified || (module_limit_configured && module_limit.is_some());
+    let burst_specified =
+        module_burst_specified && (module_limit_configured || module_limit_specified);
+
     apply_effective_limit(
         limiter,
         module_limit,
-        module_limit_specified,
+        limit_specified,
         module_burst,
-        module_burst_specified,
+        burst_specified,
     );
 }
 
@@ -4449,6 +4454,7 @@ fn apply_inline_module_options(
                 module.bandwidth_limit = components.rate();
                 module.bandwidth_burst = components.burst();
                 module.bandwidth_burst_specified = components.burst_specified();
+                module.bandwidth_limit_specified = true;
                 module.bandwidth_limit_configured = true;
             }
             "refuse options" | "refuse-options" => {
@@ -7803,6 +7809,7 @@ mod tests {
             true,
             None,
             false,
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7825,6 +7832,7 @@ mod tests {
             true,
             None,
             false,
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7867,6 +7875,7 @@ mod tests {
             true,
             None,
             false,
+            true,
         );
 
         let limiter = limiter.expect("limiter configured by module");
@@ -7945,6 +7954,7 @@ mod tests {
             true,
             None,
             true,
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7961,7 +7971,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, true, None, false);
+        apply_module_bandwidth_limit(&mut limiter, None, true, None, false, true);
 
         assert!(limiter.is_none());
     }
@@ -7970,7 +7980,7 @@ mod tests {
     fn module_bwlimit_unlimited_is_noop_when_no_cap() {
         let mut limiter: Option<BandwidthLimiter> = None;
 
-        apply_module_bandwidth_limit(&mut limiter, None, true, None, false);
+        apply_module_bandwidth_limit(&mut limiter, None, true, None, false, true);
 
         assert!(limiter.is_none());
     }
@@ -7981,7 +7991,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, None, false);
+        apply_module_bandwidth_limit(&mut limiter, None, false, None, false, false);
 
         let limiter = limiter.expect("daemon cap should remain active");
         assert_eq!(
