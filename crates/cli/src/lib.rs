@@ -234,6 +234,8 @@ const HELP_TEXT: &str = concat!(
     "      --no-sparse Disable sparse file handling.\n",
     "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
     "      --no-copy-links  Preserve symlinks instead of following them.\n",
+    "      --copy-unsafe-links  Transform unsafe symlinks into referent files/directories.\n",
+    "      --no-copy-unsafe-links  Preserve unsafe symlinks instead of following them.\n",
     "      --safe-links     Skip symlinks that point outside the transfer root.\n",
     "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
     "  -K, --keep-dirlinks  Treat destination symlinks to directories as directories.\n",
@@ -271,7 +273,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-unsafe-links, --no-copy-unsafe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -1001,6 +1003,7 @@ struct ParsedArgs {
     sparse: Option<bool>,
     copy_links: Option<bool>,
     copy_dirlinks: bool,
+    copy_unsafe_links: Option<bool>,
     keep_dirlinks: Option<bool>,
     safe_links: bool,
     devices: Option<bool>,
@@ -1345,6 +1348,13 @@ fn clap_command() -> ClapCommand {
                 .conflicts_with("no-copy-links"),
         )
         .arg(
+            Arg::new("copy-unsafe-links")
+                .long("copy-unsafe-links")
+                .help("Transform unsafe symlinks into referent files/directories.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("no-copy-unsafe-links"),
+        )
+        .arg(
             Arg::new("hard-links")
                 .long("hard-links")
                 .short('H')
@@ -1373,6 +1383,13 @@ fn clap_command() -> ClapCommand {
                 .help("Preserve symlinks instead of following them.")
                 .action(ArgAction::SetTrue)
                 .conflicts_with("copy-links"),
+        )
+        .arg(
+            Arg::new("no-copy-unsafe-links")
+                .long("no-copy-unsafe-links")
+                .help("Preserve unsafe symlinks instead of following them.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("copy-unsafe-links"),
         )
         .arg(
             Arg::new("no-hard-links")
@@ -2313,6 +2330,13 @@ where
     } else {
         None
     };
+    let copy_unsafe_links_option = if matches.get_flag("no-copy-unsafe-links") {
+        Some(false)
+    } else if matches.get_flag("copy-unsafe-links") {
+        Some(true)
+    } else {
+        None
+    };
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
     let keep_dirlinks = if matches.get_flag("no-keep-dirlinks") {
         Some(false)
@@ -2321,7 +2345,10 @@ where
     } else {
         None
     };
-    let safe_links = matches.get_flag("safe-links");
+    let mut safe_links = matches.get_flag("safe-links");
+    if copy_unsafe_links_option == Some(true) {
+        safe_links = true;
+    }
     let archive_devices = matches.get_flag("archive-devices");
     let devices = if matches.get_flag("no-devices") {
         Some(false)
@@ -2590,6 +2617,7 @@ where
         sparse,
         copy_links,
         copy_dirlinks,
+        copy_unsafe_links: copy_unsafe_links_option,
         keep_dirlinks,
         safe_links,
         devices,
@@ -3017,6 +3045,7 @@ where
         sparse,
         copy_links,
         copy_dirlinks,
+        copy_unsafe_links,
         keep_dirlinks,
         safe_links,
         devices,
@@ -3602,6 +3631,7 @@ where
             hard_links,
             copy_links,
             copy_dirlinks,
+            copy_unsafe_links,
             keep_dirlinks,
             safe_links,
             sparse,
@@ -3791,6 +3821,7 @@ where
     let preserve_hard_links = hard_links.unwrap_or(false);
     let sparse = sparse.unwrap_or(false);
     let copy_links = copy_links.unwrap_or(false);
+    let copy_unsafe_links = copy_unsafe_links.unwrap_or(false);
     let keep_dirlinks_flag = keep_dirlinks.unwrap_or(false);
     let relative = relative.unwrap_or(false);
     let one_file_system = fallback_one_file_system.unwrap_or(false);
@@ -3864,6 +3895,7 @@ where
         .sparse(sparse)
         .copy_links(copy_links)
         .copy_dirlinks(copy_dirlinks)
+        .copy_unsafe_links(copy_unsafe_links)
         .keep_dirlinks(keep_dirlinks_flag)
         .safe_links(safe_links)
         .relative_paths(relative)
@@ -9616,6 +9648,30 @@ mod tests {
         .expect("parse");
 
         assert_eq!(parsed.copy_links, Some(true));
+    }
+
+    #[test]
+    fn parse_args_recognises_copy_unsafe_links_flags() {
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--copy-unsafe-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.copy_unsafe_links, Some(true));
+        assert!(parsed.safe_links);
+
+        let parsed = parse_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--no-copy-unsafe-links"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.copy_unsafe_links, Some(false));
     }
 
     #[test]
