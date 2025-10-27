@@ -167,6 +167,23 @@ fn recorded_sleep_session_snapshot_preserves_buffer() {
 }
 
 #[test]
+fn recorded_sleep_session_last_duration_observes_latest_sample() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    assert!(session.last_duration().is_none());
+
+    let first = Duration::from_micros(MINIMUM_SLEEP_MICROS as u64);
+    sleep_for(first);
+    assert_eq!(session.last_duration(), Some(first));
+
+    let second = Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64);
+    sleep_for(second);
+    assert_eq!(session.last_duration(), Some(second));
+    assert_eq!(session.len(), 2);
+}
+
+#[test]
 fn recorded_sleep_session_total_duration_reports_sum_without_draining() {
     let mut session = recorded_sleep_session();
     session.clear();
