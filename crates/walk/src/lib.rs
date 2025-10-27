@@ -155,9 +155,7 @@ impl WalkBuilder {
             } else if file_type.is_symlink() && walker.follow_symlinks {
                 match fs::metadata(&walker.root) {
                     Ok(target) if target.is_dir() => {
-                        let canonical = fs::canonicalize(&walker.root)
-                            .map_err(|error| WalkError::canonicalize(walker.root.clone(), error))?;
-                        walker.push_directory(canonical, PathBuf::new(), 0)?;
+                        walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -645,6 +643,45 @@ mod tests {
         let paths = collect_relative_paths(walker);
 
         assert_eq!(paths, vec![PathBuf::from("file.txt")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_root_symlink_preserves_full_paths() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        let file = target.join("file.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let link = temp.path().join("link");
+        symlink(&target, &link).expect("create symlink");
+
+        let mut walker = WalkBuilder::new(&link)
+            .follow_symlinks(true)
+            .build()
+            .expect("build walker");
+
+        let root = walker
+            .next()
+            .expect("root entry")
+            .expect("root ok");
+        assert!(root.is_root());
+        assert!(root.metadata().file_type().is_symlink());
+        assert_eq!(root.full_path(), link.as_path());
+        assert!(root.relative_path().as_os_str().is_empty());
+
+        let child = walker
+            .next()
+            .expect("child entry")
+            .expect("child ok");
+        assert_eq!(child.relative_path(), std::path::Path::new("file.txt"));
+        assert_eq!(child.full_path(), link.join("file.txt"));
+        assert!(child.metadata().is_file());
+
+        assert!(walker.next().is_none());
     }
 
     #[cfg(unix)]
