@@ -11,6 +11,8 @@ const MICROS_PER_SECOND: u128 = 1_000_000;
 const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 const MAX_REPRESENTABLE_MICROSECONDS: u128 =
     (u64::MAX as u128) * MICROS_PER_SECOND + (MICROS_PER_SECOND - 1);
+/// Maximum duration supported by [`std::thread::sleep`] without panicking on the current platform.
+const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
 
 #[cfg(any(test, feature = "test-support"))]
 fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
@@ -119,17 +121,19 @@ fn sleep_for(duration: Duration) {
         return;
     }
 
+    let effective = duration.min(MAX_SLEEP_DURATION);
+
     #[cfg(any(test, feature = "test-support"))]
     {
         recorded_sleeps()
             .lock()
             .expect("lock recorded sleeps")
-            .push(duration);
+            .push(effective);
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
     {
-        std::thread::sleep(duration);
+        std::thread::sleep(effective);
     }
 }
 

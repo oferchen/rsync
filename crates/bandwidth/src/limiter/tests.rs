@@ -1,6 +1,6 @@
 use super::{
-    BandwidthLimiter, MINIMUM_SLEEP_MICROS, apply_effective_limit, duration_from_microseconds,
-    recorded_sleep_session, sleep_for,
+    BandwidthLimiter, MAX_SLEEP_DURATION, MINIMUM_SLEEP_MICROS, apply_effective_limit,
+    duration_from_microseconds, recorded_sleep_session, sleep_for,
 };
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -357,4 +357,16 @@ fn sleep_for_zero_duration_skips_recording() {
 
     assert!(session.is_empty());
     let _ = session.take();
+}
+
+#[test]
+fn sleep_for_clamps_to_maximum_duration() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Request a duration that exceeds what std::thread::sleep supports without panicking.
+    sleep_for(Duration::from_secs(u64::MAX));
+
+    let recorded = session.take();
+    assert_eq!(recorded, [MAX_SLEEP_DURATION]);
 }
