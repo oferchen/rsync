@@ -18,6 +18,12 @@ fn parse_bandwidth_accepts_decimal_units() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_space_between_value_and_suffix() {
+    let limit = parse_bandwidth_argument("1 M").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1_048_576));
+}
+
+#[test]
 fn parse_bandwidth_accepts_iec_suffixes() {
     let limit = parse_bandwidth_argument("1MiB").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1_048_576));
@@ -165,6 +171,12 @@ fn parse_bandwidth_limit_records_explicit_burst_presence() {
 #[test]
 fn parse_bandwidth_accepts_positive_adjustment() {
     let limit = parse_bandwidth_argument("1K+1").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1024));
+}
+
+#[test]
+fn parse_bandwidth_accepts_whitespace_before_adjustment() {
+    let limit = parse_bandwidth_argument("1K +1").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1024));
 }
 
