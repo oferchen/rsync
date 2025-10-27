@@ -1676,6 +1676,7 @@ pub struct LocalCopyOptions {
     checksum_algorithm: SignatureAlgorithm,
     size_only: bool,
     ignore_existing: bool,
+    ignore_missing_args: bool,
     update: bool,
     modify_window: Duration,
     partial: bool,
@@ -1747,6 +1748,7 @@ impl LocalCopyOptions {
             checksum_algorithm: SignatureAlgorithm::Md5,
             size_only: false,
             ignore_existing: false,
+            ignore_missing_args: false,
             update: false,
             modify_window: Duration::ZERO,
             partial: false,
@@ -2247,6 +2249,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that missing source arguments be ignored instead of causing an error.
+    #[must_use]
+    #[doc(alias = "--ignore-missing-args")]
+    pub const fn ignore_missing_args(mut self, ignore: bool) -> Self {
+        self.ignore_missing_args = ignore;
+        self
+    }
+
     /// Requests that newer destination files be preserved.
     #[must_use]
     #[doc(alias = "--update")]
@@ -2686,6 +2696,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn ignore_existing_enabled(&self) -> bool {
         self.ignore_existing
+    }
+
+    /// Reports whether missing source arguments should be ignored.
+    #[must_use]
+    pub const fn ignore_missing_args_enabled(&self) -> bool {
+        self.ignore_missing_args
     }
 
     /// Reports whether newer destination files should be preserved.
@@ -3900,6 +3916,10 @@ impl<'a> CopyContext<'a> {
 
     fn ignore_existing_enabled(&self) -> bool {
         self.options.ignore_existing_enabled()
+    }
+
+    fn ignore_missing_args_enabled(&self) -> bool {
+        self.options.ignore_missing_args_enabled()
     }
 
     fn update_enabled(&self) -> bool {
@@ -6213,9 +6233,23 @@ fn copy_sources(
                 context.enforce_timeout()?;
                 let source_path = source.path();
                 let metadata_start = Instant::now();
-                let metadata = fs::symlink_metadata(source_path).map_err(|error| {
-                    LocalCopyError::io("access source", source_path.to_path_buf(), error)
-                })?;
+                let metadata = match fs::symlink_metadata(source_path) {
+                    Ok(metadata) => metadata,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::NotFound
+                            && context.ignore_missing_args_enabled() =>
+                    {
+                        context.record_file_list_generation(metadata_start.elapsed());
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "access source",
+                            source_path.to_path_buf(),
+                            error,
+                        ));
+                    }
+                };
                 context.record_file_list_generation(metadata_start.elapsed());
                 let file_type = metadata.file_type();
                 let metadata_options = context.metadata_options();
@@ -9590,6 +9624,13 @@ mod tests {
     }
 
     #[test]
+    fn local_copy_options_ignore_missing_args_round_trip() {
+        let options = LocalCopyOptions::default().ignore_missing_args(true);
+        assert!(options.ignore_missing_args_enabled());
+        assert!(!LocalCopyOptions::default().ignore_missing_args_enabled());
+    }
+
+    #[test]
     fn local_copy_options_update_round_trip() {
         let options = LocalCopyOptions::default().update(true);
         assert!(options.update_enabled());
@@ -10602,6 +10643,36 @@ mod tests {
         assert_eq!(summary.regular_files_matched(), 0);
         assert_eq!(summary.regular_files_ignored_existing(), 1);
         assert_eq!(fs::read(dest_path).expect("read destination"), b"original");
+    }
+
+    #[test]
+    fn execute_with_ignore_missing_args_skips_absent_sources() {
+        let temp = tempdir().expect("tempdir");
+        let missing = temp.path().join("missing.txt");
+        let destination_root = temp.path().join("dest");
+        fs::create_dir_all(&destination_root).expect("create destination root");
+        let destination = destination_root.join("output.txt");
+        fs::write(&destination, b"existing").expect("write destination");
+
+        let operands = vec![
+            missing.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().ignore_missing_args(true),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.bytes_copied(), 0);
+        assert_eq!(
+            fs::read(destination).expect("read destination"),
+            b"existing"
+        );
     }
 
     #[test]
