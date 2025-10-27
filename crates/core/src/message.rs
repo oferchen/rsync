@@ -803,6 +803,12 @@ impl fmt::Display for CopyToSliceError {
 
 impl std::error::Error for CopyToSliceError {}
 
+impl From<CopyToSliceError> for io::Error {
+    fn from(err: CopyToSliceError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 /// Version tag appended to message trailers.
 pub const VERSION_SUFFIX: &str = crate::version::RUST_VERSION;
 
@@ -3676,6 +3682,24 @@ mod tests {
             .expect("empty segments succeed for empty buffers");
 
         assert_eq!(copied, 0);
+    }
+
+    #[test]
+    fn message_copy_to_slice_error_converts_into_io_error() {
+        let err = CopyToSliceError::new(16, 8);
+        let io_err: io::Error = err.into();
+
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        let display = io_err.to_string();
+        assert_eq!(display, err.to_string());
+
+        let inner = io_err
+            .into_inner()
+            .expect("conversion retains source error");
+        let recovered = inner
+            .downcast::<CopyToSliceError>()
+            .expect("inner error matches original type");
+        assert_eq!(*recovered, err);
     }
 
     #[test]
