@@ -3715,8 +3715,9 @@ fn apply_module_bandwidth_limit(
         match limiter {
             Some(existing) => {
                 let target_burst = module_burst.or(existing.burst_bytes());
-                if limit < existing.limit_bytes() || module_burst.is_some() {
-                    existing.update_configuration(limit, target_burst);
+                let target_limit = existing.limit_bytes().min(limit);
+                if target_limit < existing.limit_bytes() || module_burst.is_some() {
+                    existing.update_configuration(target_limit, target_burst);
                 }
             }
             None => {
@@ -7775,6 +7776,29 @@ mod tests {
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(limiter.limit_bytes(), NonZeroU64::new(1024 * 1024).unwrap());
         assert!(limiter.burst_bytes().is_none());
+    }
+
+    #[test]
+    fn module_bwlimit_burst_does_not_raise_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(
+            &mut limiter,
+            NonZeroU64::new(8 * 1024 * 1024),
+            Some(NonZeroU64::new(256 * 1024).unwrap()),
+        );
+
+        let limiter = limiter.expect("limiter remains configured");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
+        assert_eq!(
+            limiter.burst_bytes(),
+            Some(NonZeroU64::new(256 * 1024).unwrap())
+        );
     }
 
     #[test]
