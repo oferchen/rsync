@@ -201,6 +201,27 @@ fn parse_bandwidth_accepts_whitespace_within_adjustment() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_scientific_notation_without_suffix() {
+    let limit = parse_bandwidth_argument("1e3").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(1_024_000));
+
+    let uppercase = parse_bandwidth_argument("1E3").expect("parse succeeds");
+    assert_eq!(uppercase, limit);
+}
+
+#[test]
+fn parse_bandwidth_accepts_scientific_notation_with_suffix() {
+    let limit = parse_bandwidth_argument("2.5e2M").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(262_144_000));
+}
+
+#[test]
+fn parse_bandwidth_accepts_negative_scientific_notation() {
+    let limit = parse_bandwidth_argument("1e-1M").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(104_448));
+}
+
+#[test]
 fn parse_bandwidth_rejects_non_unit_adjustment_value() {
     let error = parse_bandwidth_argument("1K+ 2").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
@@ -241,6 +262,14 @@ fn parse_bandwidth_negative_adjustment_can_trigger_too_small() {
 fn parse_bandwidth_rejects_trailing_data_after_adjustment() {
     let error = parse_bandwidth_argument("1K+1extra").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_incomplete_exponent() {
+    for text in ["1e", "1e+", "1E-", "1e "] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
 }
 
 #[test]
