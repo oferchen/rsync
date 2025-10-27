@@ -57,6 +57,10 @@ pub struct SkipCompressList {
 
 impl SkipCompressList {
     /// Parses a user-supplied `--skip-compress` specification.
+    ///
+    /// Upstream rsync treats both `/` and `,` as separators between suffix
+    /// patterns, so the implementation mirrors that behaviour to remain
+    /// interoperable with existing configurations.
     pub fn parse(spec: &str) -> Result<Self, SkipCompressParseError> {
         if spec.is_empty() {
             return Ok(Self {
@@ -65,7 +69,7 @@ impl SkipCompressList {
         }
 
         let mut patterns = Vec::new();
-        for part in spec.split('/') {
+        for part in spec.split(|ch| matches!(ch, '/' | ',')) {
             let trimmed = part.trim();
             if trimmed.is_empty() {
                 continue;
@@ -214,6 +218,15 @@ mod tests {
         assert!(list.matches_path(Path::new("track.mp4")));
         assert!(!list.matches_path(Path::new("track.mp5")));
         assert!(list.matches_path(Path::new("archive.zst")));
+    }
+
+    #[test]
+    fn parse_accepts_comma_separator() {
+        let list = SkipCompressList::parse("gz, xz ,zip").expect("parse succeeds");
+        assert!(list.matches_path(Path::new("archive.gz")));
+        assert!(list.matches_path(Path::new("archive.xz")));
+        assert!(list.matches_path(Path::new("bundle.ZIP")));
+        assert!(!list.matches_path(Path::new("notes.txt")));
     }
 
     #[test]
