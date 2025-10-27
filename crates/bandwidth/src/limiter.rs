@@ -243,7 +243,7 @@ fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 
     #[cfg(any(test, feature = "test-support"))]
-    let mut recorded_chunks = Vec::new();
+    let mut recorded_chunks: Option<Vec<Duration>> = None;
 
     while !remaining.is_zero() {
         let chunk = remaining.min(MAX_SLEEP_DURATION);
@@ -254,7 +254,7 @@ fn sleep_for(duration: Duration) {
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            recorded_chunks.push(chunk);
+            recorded_chunks.get_or_insert_with(Vec::new).push(chunk);
         }
 
         #[cfg(not(any(test, feature = "test-support")))]
@@ -266,8 +266,8 @@ fn sleep_for(duration: Duration) {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    if !recorded_chunks.is_empty() {
-        lock_recorded_sleeps().extend(recorded_chunks);
+    if let Some(chunks) = recorded_chunks {
+        lock_recorded_sleeps().extend(chunks);
     }
 }
 
