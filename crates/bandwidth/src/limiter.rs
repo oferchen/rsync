@@ -27,6 +27,7 @@ fn recorded_sleep_session_lock() -> &'static Mutex<()> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Guard that provides exclusive access to the recorded sleep durations.
 ///
 /// Tests obtain a [`RecordedSleepSession`] at the start of a scenario, call
@@ -93,6 +94,7 @@ impl<'a> RecordedSleepSession<'a> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Obtains a guard that serialises access to recorded sleep durations.
 #[must_use]
 pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
