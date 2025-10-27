@@ -163,6 +163,51 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
     write_max
 }
 
+/// Describes how [`apply_effective_limit`] modified a limiter.
+///
+/// The return value allows higher layers to react to configuration changes
+/// without re-reading the limiter state. For instance, callers can detect when a
+/// module disabled throttling entirely and skip further limiter-dependent work.
+///
+/// # Variants
+///
+/// * [`LimiterChange::Unchanged`] — the limiter configuration and activation
+///   state remained the same.
+/// * [`LimiterChange::Enabled`] — a new [`BandwidthLimiter`] was created.
+/// * [`LimiterChange::Updated`] — the active limiter changed rate or burst
+///   configuration.
+/// * [`LimiterChange::Disabled`] — throttling was removed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LimiterChange {
+    /// No adjustments were performed.
+    Unchanged,
+    /// Throttling was enabled by creating a new [`BandwidthLimiter`].
+    Enabled,
+    /// The existing limiter was reconfigured.
+    Updated,
+    /// Throttling was disabled.
+    Disabled,
+}
+
+impl LimiterChange {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::Unchanged => 0,
+            Self::Updated => 1,
+            Self::Enabled => 2,
+            Self::Disabled => 3,
+        }
+    }
+
+    const fn combine(self, other: Self) -> Self {
+        if self.priority() >= other.priority() {
+            self
+        } else {
+            other
+        }
+    }
+}
+
 /// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream rsync's
 /// precedence rules.
 ///
@@ -171,17 +216,20 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 /// keeps higher layers from duplicating the combination rules and ensures daemon and client
 /// behaviour stays in sync.
 ///
+/// The helper reports how the limiter changed so callers can react without
+/// inspecting internal state.
+///
 /// # Examples
 ///
 /// ```rust
-/// use rsync_bandwidth::{apply_effective_limit, BandwidthLimiter};
+/// use rsync_bandwidth::{apply_effective_limit, BandwidthLimiter, LimiterChange};
 /// use std::num::NonZeroU64;
 ///
 /// let mut limiter = Some(BandwidthLimiter::new(
 ///     NonZeroU64::new(1024).expect("non-zero limit"),
 /// ));
 ///
-/// apply_effective_limit(
+/// let change = apply_effective_limit(
 ///     &mut limiter,
 ///     Some(NonZeroU64::new(512).expect("non-zero cap")),
 ///     true,
@@ -189,6 +237,7 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 ///     false,
 /// );
 ///
+/// assert_eq!(change, LimiterChange::Updated);
 /// let limiter = limiter.expect("limiter remains active");
 /// assert_eq!(limiter.limit_bytes().get(), 512);
 /// ```
@@ -198,10 +247,12 @@ pub fn apply_effective_limit(
     limit_specified: bool,
     burst: Option<NonZeroU64>,
     burst_specified: bool,
-) {
+) -> LimiterChange {
     if !limit_specified && !burst_specified {
-        return;
+        return LimiterChange::Unchanged;
     }
+
+    let mut change = LimiterChange::Unchanged;
 
     if limit_specified {
         match limit {
@@ -220,16 +271,21 @@ pub fn apply_effective_limit(
 
                     if limit_changed || burst_changed {
                         existing.update_configuration(target_limit, target_burst);
+                        change = change.combine(LimiterChange::Updated);
                     }
                 }
                 None => {
                     let effective_burst = if burst_specified { burst } else { None };
                     *limiter = Some(BandwidthLimiter::with_burst(limit, effective_burst));
+                    change = change.combine(LimiterChange::Enabled);
                 }
             },
             None => {
-                *limiter = None;
-                return;
+                let previous = limiter.take();
+                if previous.is_some() {
+                    return LimiterChange::Disabled;
+                }
+                return LimiterChange::Unchanged;
             }
         }
     }
@@ -238,9 +294,12 @@ pub fn apply_effective_limit(
         if let Some(existing) = limiter.as_mut() {
             if existing.burst_bytes() != burst {
                 existing.update_configuration(existing.limit_bytes(), burst);
+                change = change.combine(LimiterChange::Updated);
             }
         }
     }
+
+    change
 }
 
 /// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
