@@ -60,6 +60,38 @@ impl RemoteProtocolAdvertisement {
         }
     }
 
+    /// Returns the [`ProtocolVersion`] used after clamping a future advertisement.
+    ///
+    /// When the peer announces a protocol newer than rsync 3.4.1 understands the
+    /// negotiated session is downgraded to [`ProtocolVersion::NEWEST`]. This
+    /// helper surfaces the clamped value only for those future advertisements so
+    /// higher layers can reference it in diagnostics without repeating the enum
+    /// matching boilerplate. Supported advertisements return [`None`], mirroring
+    /// the [`Self::future`] accessor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::RemoteProtocolAdvertisement;
+    ///
+    /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
+    /// assert_eq!(supported.clamped(), None);
+    ///
+    /// let future = RemoteProtocolAdvertisement::Future {
+    ///     advertised: 40,
+    ///     clamped: ProtocolVersion::NEWEST,
+    /// };
+    /// assert_eq!(future.clamped(), Some(ProtocolVersion::NEWEST));
+    /// ```
+    #[must_use]
+    pub const fn clamped(self) -> Option<ProtocolVersion> {
+        match self {
+            Self::Supported(_) => None,
+            Self::Future { clamped, .. } => Some(clamped),
+        }
+    }
+
     pub(crate) const fn from_raw(advertised: u32, clamped: ProtocolVersion) -> Self {
         if remote_advertisement_was_clamped(advertised) {
             Self::Future {
@@ -378,6 +410,7 @@ mod tests {
         assert!(classification.is_supported());
         assert_eq!(classification.supported(), Some(version));
         assert_eq!(classification.future(), None);
+        assert_eq!(classification.clamped(), None);
         assert_eq!(classification.advertised(), advertised);
         assert_eq!(classification.negotiated(), version);
         assert!(!classification.was_clamped());
@@ -392,6 +425,7 @@ mod tests {
         assert!(!classification.is_supported());
         assert_eq!(classification.supported(), None);
         assert_eq!(classification.future(), Some(advertised));
+        assert_eq!(classification.clamped(), Some(ProtocolVersion::NEWEST));
         assert_eq!(classification.advertised(), advertised);
         assert_eq!(classification.negotiated(), ProtocolVersion::NEWEST);
         assert!(classification.was_clamped());
@@ -407,6 +441,7 @@ mod tests {
 
         assert_eq!(supported_version, ProtocolVersion::V31);
         assert_eq!(future_version, ProtocolVersion::NEWEST);
+        assert_eq!(future.clamped(), Some(ProtocolVersion::NEWEST));
     }
 
     #[test]
