@@ -600,6 +600,7 @@ pub struct ClientConfig {
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    copy_unsafe_links: bool,
     keep_dirlinks: bool,
     safe_links: bool,
     relative_paths: bool,
@@ -684,6 +685,7 @@ impl Default for ClientConfig {
             sparse: false,
             copy_links: false,
             copy_dirlinks: false,
+            copy_unsafe_links: false,
             keep_dirlinks: false,
             safe_links: false,
             relative_paths: false,
@@ -796,6 +798,13 @@ impl ClientConfig {
     #[doc(alias = "-k")]
     pub const fn copy_dirlinks(&self) -> bool {
         self.copy_dirlinks
+    }
+
+    /// Returns whether unsafe symlinks should be materialised as their referents.
+    #[must_use]
+    #[doc(alias = "--copy-unsafe-links")]
+    pub const fn copy_unsafe_links(&self) -> bool {
+        self.copy_unsafe_links
     }
 
     /// Returns whether existing destination directory symlinks should be preserved.
@@ -1362,6 +1371,7 @@ pub struct ClientConfigBuilder {
     sparse: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    copy_unsafe_links: bool,
     keep_dirlinks: bool,
     safe_links: bool,
     relative_paths: bool,
@@ -1821,6 +1831,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables copying unsafe symlink referents.
+    #[must_use]
+    #[doc(alias = "--copy-unsafe-links")]
+    pub const fn copy_unsafe_links(mut self, copy_unsafe_links: bool) -> Self {
+        self.copy_unsafe_links = copy_unsafe_links;
+        self
+    }
+
     /// Enables treating symlinks that target directories as directories during traversal.
     #[must_use]
     #[doc(alias = "--copy-dirlinks")]
@@ -2181,6 +2199,7 @@ impl ClientConfigBuilder {
             sparse: self.sparse,
             copy_links: self.copy_links,
             copy_dirlinks: self.copy_dirlinks,
+            copy_unsafe_links: self.copy_unsafe_links,
             keep_dirlinks: self.keep_dirlinks,
             safe_links: self.safe_links,
             relative_paths: self.relative_paths,
@@ -2934,6 +2953,8 @@ pub struct RemoteFallbackArgs {
     pub copy_links: Option<bool>,
     /// Enables `--copy-dirlinks` when `true`.
     pub copy_dirlinks: bool,
+    /// Optional `--copy-unsafe-links`/`--no-copy-unsafe-links` toggle.
+    pub copy_unsafe_links: Option<bool>,
     /// Optional `--keep-dirlinks`/`--no-keep-dirlinks` toggle.
     pub keep_dirlinks: Option<bool>,
     /// Enables `--safe-links` when `true`.
@@ -3161,6 +3182,7 @@ where
         hard_links,
         copy_links,
         copy_dirlinks,
+        copy_unsafe_links,
         keep_dirlinks,
         safe_links,
         sparse,
@@ -3370,6 +3392,12 @@ where
     if copy_dirlinks {
         command_args.push(OsString::from("--copy-dirlinks"));
     }
+    push_toggle(
+        &mut command_args,
+        "--copy-unsafe-links",
+        "--no-copy-unsafe-links",
+        copy_unsafe_links,
+    );
     push_toggle(
         &mut command_args,
         "--keep-dirlinks",
@@ -4615,6 +4643,7 @@ fn build_local_copy_options(
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
+        .copy_unsafe_links(config.copy_unsafe_links())
         .keep_dirlinks(config.keep_dirlinks())
         .safe_links(config.safe_links())
         .devices(config.preserve_devices())
@@ -4877,6 +4906,7 @@ exit 42
             hard_links: None,
             copy_links: None,
             copy_dirlinks: false,
+            copy_unsafe_links: None,
             keep_dirlinks: None,
             safe_links: false,
             sparse: None,
@@ -5839,6 +5869,22 @@ exit 42
     }
 
     #[test]
+    fn builder_sets_copy_unsafe_links() {
+        let enabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .copy_unsafe_links(true)
+            .build();
+
+        assert!(enabled.copy_unsafe_links());
+
+        let disabled = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+
+        assert!(!disabled.copy_unsafe_links());
+    }
+
+    #[test]
     fn builder_sets_keep_dirlinks() {
         let enabled = ClientConfig::builder()
             .transfer_args([OsString::from("src"), OsString::from("dst")])
@@ -6016,6 +6062,60 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--no-copy-links"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_copy_unsafe_links_toggle() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.copy_unsafe_links = Some(true);
+        args.safe_links = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--copy-unsafe-links"));
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.into_os_string());
+        args.copy_unsafe_links = Some(false);
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(
+            captured
+                .lines()
+                .any(|line| line == "--no-copy-unsafe-links")
+        );
     }
 
     #[cfg(unix)]

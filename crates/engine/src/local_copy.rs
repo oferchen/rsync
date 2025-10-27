@@ -1656,6 +1656,7 @@ pub struct LocalCopyOptions {
     whole_file: bool,
     copy_links: bool,
     copy_dirlinks: bool,
+    copy_unsafe_links: bool,
     keep_dirlinks: bool,
     safe_links: bool,
     preserve_owner: bool,
@@ -1728,6 +1729,7 @@ impl LocalCopyOptions {
             whole_file: true,
             copy_links: false,
             copy_dirlinks: false,
+            copy_unsafe_links: false,
             keep_dirlinks: false,
             safe_links: false,
             preserve_owner: false,
@@ -2030,6 +2032,14 @@ impl LocalCopyOptions {
     #[doc(alias = "-L")]
     pub const fn copy_links(mut self, copy: bool) -> Self {
         self.copy_links = copy;
+        self
+    }
+
+    /// Requests that unsafe symlinks be followed and copied as their referents.
+    #[must_use]
+    #[doc(alias = "--copy-unsafe-links")]
+    pub const fn copy_unsafe_links(mut self, copy: bool) -> Self {
+        self.copy_unsafe_links = copy;
         self
     }
 
@@ -2542,6 +2552,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_links_enabled(&self) -> bool {
         self.copy_links
+    }
+
+    /// Returns whether unsafe symlinks should be materialised as their referents.
+    #[must_use]
+    pub const fn copy_unsafe_links_enabled(&self) -> bool {
+        self.copy_unsafe_links
     }
 
     /// Reports whether unsafe symlinks should be ignored.
@@ -3708,6 +3724,10 @@ impl<'a> CopyContext<'a> {
 
     fn copy_links_enabled(&self) -> bool {
         self.options.copy_links_enabled()
+    }
+
+    fn copy_unsafe_links_enabled(&self) -> bool {
+        self.options.copy_unsafe_links_enabled()
     }
 
     fn safe_links_enabled(&self) -> bool {
@@ -6731,6 +6751,62 @@ fn copy_directory_recursive(
             ));
         };
 
+        if matches!(action, EntryAction::CopySymlink)
+            && context.safe_links_enabled()
+            && context.copy_unsafe_links_enabled()
+        {
+            match fs::read_link(entry.path.as_path()) {
+                Ok(target) => {
+                    if !symlink_target_is_safe(&target, relative_path.as_path()) {
+                        match follow_symlink_metadata(entry.path.as_path()) {
+                            Ok(target_metadata) => {
+                                let target_type = target_metadata.file_type();
+                                if target_type.is_dir() {
+                                    action = EntryAction::CopyDirectory;
+                                    metadata_override = Some(target_metadata);
+                                } else if target_type.is_file() {
+                                    action = EntryAction::CopyFile;
+                                    metadata_override = Some(target_metadata);
+                                } else if is_fifo(&target_type) {
+                                    if context.specials_enabled() {
+                                        action = EntryAction::CopyFifo;
+                                        metadata_override = Some(target_metadata);
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else if is_device(&target_type) {
+                                    if context.devices_enabled() {
+                                        action = EntryAction::CopyDevice;
+                                        metadata_override = Some(target_metadata);
+                                    } else {
+                                        keep_name = false;
+                                        action = EntryAction::SkipNonRegular;
+                                        metadata_override = None;
+                                    }
+                                } else {
+                                    return Err(LocalCopyError::invalid_argument(
+                                        LocalCopyArgumentError::UnsupportedFileType,
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                return Err(error);
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "read symbolic link",
+                        entry.path.to_path_buf(),
+                        error,
+                    ));
+                }
+            }
+        }
+
         if matches!(action, EntryAction::CopyDirectory) {
             if context.one_file_system_enabled() {
                 if let Some(root) = root_device {
@@ -8881,7 +8957,70 @@ fn copy_symlink(
         .or_else(|| destination.file_name().map(PathBuf::from))
         .unwrap_or_else(|| destination.to_path_buf());
 
-    if context.safe_links_enabled() && !symlink_target_is_safe(&target, &safety_relative) {
+    let unsafe_target =
+        context.safe_links_enabled() && !symlink_target_is_safe(&target, &safety_relative);
+
+    if unsafe_target {
+        if context.copy_unsafe_links_enabled() {
+            let target_metadata = follow_symlink_metadata(source)?;
+            let target_type = target_metadata.file_type();
+
+            if target_type.is_dir() {
+                let _kept = copy_directory_recursive(
+                    context,
+                    source,
+                    destination,
+                    &target_metadata,
+                    relative,
+                    None,
+                )?;
+                return Ok(());
+            }
+
+            if target_type.is_file() {
+                copy_file(context, source, destination, &target_metadata, relative)?;
+                return Ok(());
+            }
+
+            if is_fifo(&target_type) {
+                if !context.specials_enabled() {
+                    context.record_skipped_non_regular(record_path.as_deref());
+                    context.register_progress();
+                    return Ok(());
+                }
+                copy_fifo(
+                    context,
+                    source,
+                    destination,
+                    &target_metadata,
+                    metadata_options,
+                    relative,
+                )?;
+                return Ok(());
+            }
+
+            if is_device(&target_type) {
+                if !context.devices_enabled() {
+                    context.record_skipped_non_regular(record_path.as_deref());
+                    context.register_progress();
+                    return Ok(());
+                }
+                copy_device(
+                    context,
+                    source,
+                    destination,
+                    &target_metadata,
+                    metadata_options,
+                    relative,
+                )?;
+                return Ok(());
+            }
+
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::UnsupportedFileType,
+            ));
+        }
+
         context.record_skipped_unsafe_symlink(record_path.as_deref(), metadata, target);
         context.register_progress();
         return Ok(());
@@ -11125,6 +11264,99 @@ mod tests {
                 .iter()
                 .any(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_copy_unsafe_links_materialises_file_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src");
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create src dir");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let outside_file = temp.path().join("outside.txt");
+        fs::write(&outside_file, b"payload").expect("write outside file");
+
+        let link_path = source_dir.join("escape");
+        symlink(&outside_file, &link_path).expect("create symlink");
+        let destination_path = dest_dir.join("escape");
+
+        let operands = vec![
+            link_path.into_os_string(),
+            destination_path.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .safe_links(true)
+                    .copy_unsafe_links(true),
+            )
+            .expect("copy succeeds");
+
+        let metadata = fs::symlink_metadata(&destination_path).expect("materialised metadata");
+        assert!(metadata.file_type().is_file());
+        assert!(!metadata.file_type().is_symlink());
+        assert_eq!(
+            fs::read(&destination_path).expect("read materialised file"),
+            b"payload"
+        );
+        assert_eq!(summary.symlinks_total(), 1);
+        assert_eq!(summary.symlinks_copied(), 0);
+        assert_eq!(summary.files_copied(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_with_copy_unsafe_links_materialises_directory_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("src");
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&source_dir).expect("create src dir");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let outside_dir = temp.path().join("outside-dir");
+        fs::create_dir(&outside_dir).expect("create outside dir");
+        let outside_file = outside_dir.join("file.txt");
+        fs::write(&outside_file, b"external").expect("write outside file");
+
+        let link_path = source_dir.join("dirlink");
+        symlink(&outside_dir, &link_path).expect("create dir symlink");
+        let destination_path = dest_dir.join("dirlink");
+
+        let operands = vec![
+            link_path.into_os_string(),
+            destination_path.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .safe_links(true)
+                    .copy_unsafe_links(true),
+            )
+            .expect("copy succeeds");
+
+        let metadata = fs::symlink_metadata(&destination_path).expect("materialised metadata");
+        assert!(metadata.file_type().is_dir());
+        assert!(!metadata.file_type().is_symlink());
+        let copied_file = destination_path.join("file.txt");
+        assert_eq!(
+            fs::read(&copied_file).expect("read copied file"),
+            b"external"
+        );
+        assert_eq!(summary.symlinks_total(), 1);
+        assert_eq!(summary.symlinks_copied(), 0);
+        assert!(summary.directories_created() >= 1);
     }
 
     #[cfg(unix)]
