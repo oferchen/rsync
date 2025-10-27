@@ -372,6 +372,10 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
 
+    if trimmed.len() != text.len() {
+        return Err(BandwidthParseError::Invalid);
+    }
+
     if let Some((rate_text, burst_text)) = trimmed.split_once(':') {
         let rate = parse_bandwidth_argument(rate_text)?;
         if rate.is_none() {

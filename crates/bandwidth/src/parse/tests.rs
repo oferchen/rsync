@@ -152,6 +152,12 @@ fn parse_bandwidth_rejects_surrounding_whitespace() {
 }
 
 #[test]
+fn parse_bandwidth_limit_rejects_surrounding_whitespace() {
+    let error = parse_bandwidth_limit(" 1M ").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn components_into_limiter_respects_rate_and_burst() {
     let components = BandwidthLimitComponents::new(NonZeroU64::new(1024), NonZeroU64::new(4096));
     let limiter = components.into_limiter().expect("limiter");
