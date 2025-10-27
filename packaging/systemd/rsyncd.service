@@ -1,13 +1,13 @@
 [Unit]
-Description=oc-rsync daemon providing rsync protocol services
+Description=rsync daemon providing rsync protocol services
 Documentation=https://github.com/oferchen/rsync
 After=network.target
 
 [Service]
 Type=simple
-Environment="OC_RSYNCD_CONFIG=/etc/oc-rsyncd.conf"
-EnvironmentFile=-/etc/default/oc-rsyncd
-ExecStart=/usr/bin/oc-rsyncd --config ${OC_RSYNCD_CONFIG} $OC_RSYNCD_ARGS
+Environment="RSYNCD_CONFIG=/etc/rsyncd.conf"
+EnvironmentFile=-/etc/default/rsyncd
+ExecStart=/usr/bin/rsyncd --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s

@@ -20,7 +20,7 @@ This document defines the internal actors (“agents”), their responsibilities
 ## Agents Overview
 
 ### 1) Client (CLI Frontend)
-- **Binary**: `bin/oc-rsync`  
+- **Binary**: `bin/rsync`  
 - **Depends on**: `cli`, `core`, `transport`  
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
@@ -40,9 +40,9 @@ pub fn main() -> ExitCode {
 
 ---
 
-### 2) Daemon (oc-rsyncd)
+### 2) Daemon (rsyncd)
 
-* **Binary**: `bin/oc-rsyncd`
+* **Binary**: `bin/rsyncd`
 * **Depends on**: `daemon`, `core`, `transport`, `logging`
 * **Responsibilities**:
 
@@ -275,7 +275,7 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
   cargo deb --no-build
   cargo rpm build
   cargo install cyclonedx-bom || true
-  cyclonedx-bom -o target/sbom/oc-rsync.cdx.json
+  cyclonedx-bom -o target/sbom/rsync.cdx.json
   ```
 
 ---

@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "oc-rsyncd"
+name = "rsyncd"
 path = "src/main.rs"
 
 [features]

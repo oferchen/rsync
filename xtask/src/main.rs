@@ -7,7 +7,7 @@
 //! The `xtask` utility hosts workspace maintenance commands that are not part of
 //! the shipping binaries. The current implementation focuses on producing a
 //! CycloneDX Software Bill of Materials (SBOM) so packaging automation can ship
-//! reproducible metadata alongside the Rust `oc-rsync` binaries.
+//! reproducible metadata alongside the Rust `rsync` binaries.
 //!
 //! Invocations follow the conventional `cargo xtask <command>` pattern. The
 //! `sbom` command executes the installed `cargo-cyclonedx` plugin with the
@@ -38,7 +38,7 @@
 //!         "--",
 //!         "sbom",
 //!         "--output",
-//!         "artifacts/oc-rsync.cdx.json",
+//!         "artifacts/rsync.cdx.json",
 //!     ])
 //!     .status()
 //!     .expect("invoke xtask sbom with custom output");
