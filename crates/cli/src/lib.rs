@@ -5601,13 +5601,9 @@ fn parse_decimal_components_for_size(text: &str) -> Result<(u128, u128, u128), S
 }
 
 fn pow_u128_for_size(base: u32, exponent: u32) -> Result<u128, SizeParseError> {
-    let mut acc = 1u128;
-    for _ in 0..exponent {
-        acc = acc
-            .checked_mul(u128::from(base))
-            .ok_or(SizeParseError::TooLarge)?;
-    }
-    Ok(acc)
+    u128::from(base)
+        .checked_pow(exponent)
+        .ok_or(SizeParseError::TooLarge)
 }
 
 impl Default for ProgressSetting {
@@ -10521,6 +10517,18 @@ mod tests {
             rendered.contains("expected a size with an optional"),
             "missing message: {rendered}"
         );
+    }
+
+    #[test]
+    fn pow_u128_for_size_accepts_zero_exponent() {
+        let result = pow_u128_for_size(1024, 0).expect("pow for zero exponent");
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn pow_u128_for_size_reports_overflow() {
+        let result = pow_u128_for_size(u32::MAX, 5);
+        assert!(matches!(result, Err(SizeParseError::TooLarge)));
     }
 
     #[test]
