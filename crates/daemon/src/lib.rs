@@ -280,6 +280,7 @@ struct ModuleDefinition {
     secrets_file: Option<PathBuf>,
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_burst: Option<NonZeroU64>,
+    bandwidth_burst_specified: bool,
     refuse_options: Vec<String>,
     read_only: bool,
     numeric_ids: bool,
@@ -344,6 +345,10 @@ impl ModuleDefinition {
 
     fn bandwidth_burst(&self) -> Option<NonZeroU64> {
         self.bandwidth_burst
+    }
+
+    fn bandwidth_burst_specified(&self) -> bool {
+        self.bandwidth_burst_specified
     }
 
     #[cfg(test)]
@@ -1421,6 +1426,7 @@ fn parse_config_modules_inner(
                         builder.set_bandwidth_limit(
                             components.rate(),
                             components.burst(),
+                            components.burst_specified(),
                             path,
                             line_number,
                         )?;
@@ -1750,6 +1756,7 @@ struct ModuleDefinitionBuilder {
     declaration_line: usize,
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_burst: Option<NonZeroU64>,
+    bandwidth_burst_specified: bool,
     bandwidth_limit_set: bool,
     refuse_options: Option<Vec<String>>,
     read_only: Option<bool>,
@@ -1775,6 +1782,7 @@ impl ModuleDefinitionBuilder {
             declaration_line: line,
             bandwidth_limit: None,
             bandwidth_burst: None,
+            bandwidth_burst_specified: false,
             bandwidth_limit_set: false,
             refuse_options: None,
             read_only: None,
@@ -1918,6 +1926,7 @@ impl ModuleDefinitionBuilder {
         &mut self,
         limit: Option<NonZeroU64>,
         burst: Option<NonZeroU64>,
+        burst_specified: bool,
         config_path: &Path,
         line: usize,
     ) -> Result<(), DaemonError> {
@@ -1931,6 +1940,7 @@ impl ModuleDefinitionBuilder {
 
         self.bandwidth_limit = limit;
         self.bandwidth_burst = burst;
+        self.bandwidth_burst_specified = burst_specified;
         self.bandwidth_limit_set = true;
         Ok(())
     }
@@ -2164,6 +2174,7 @@ impl ModuleDefinitionBuilder {
             secrets_file: self.secrets_file,
             bandwidth_limit: self.bandwidth_limit,
             bandwidth_burst: self.bandwidth_burst,
+            bandwidth_burst_specified: self.bandwidth_burst_specified,
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.unwrap_or(true),
             numeric_ids: self.numeric_ids.unwrap_or(false),
@@ -3710,23 +3721,40 @@ fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
     module_burst: Option<NonZeroU64>,
+    module_burst_specified: bool,
 ) {
     if let Some(limit) = module_limit {
         match limiter {
             Some(existing) => {
-                let target_burst = module_burst.or(existing.burst_bytes());
                 let target_limit = existing.limit_bytes().min(limit);
-                if target_limit < existing.limit_bytes() || module_burst.is_some() {
+                let target_burst = if module_burst_specified {
+                    module_burst
+                } else {
+                    module_burst.or(existing.burst_bytes())
+                };
+
+                let limit_changed = target_limit != existing.limit_bytes();
+                let burst_changed =
+                    module_burst_specified && target_burst != existing.burst_bytes();
+
+                if limit_changed || burst_changed {
                     existing.update_configuration(target_limit, target_burst);
                 }
             }
             None => {
-                *limiter = BandwidthLimitComponents::new(Some(limit), module_burst).into_limiter();
+                *limiter = BandwidthLimitComponents::new_with_specified(
+                    Some(limit),
+                    module_burst,
+                    module_burst_specified,
+                )
+                .into_limiter();
             }
         }
-    } else if let Some(burst) = module_burst {
+    } else if module_burst_specified {
         if let Some(existing) = limiter {
-            existing.update_configuration(existing.limit_bytes(), Some(burst));
+            if module_burst != existing.burst_bytes() {
+                existing.update_configuration(existing.limit_bytes(), module_burst);
+            }
         }
     }
 }
@@ -3744,7 +3772,12 @@ fn respond_with_module_request(
     reverse_lookup: bool,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
-        apply_module_bandwidth_limit(limiter, module.bandwidth_limit(), module.bandwidth_burst());
+        apply_module_bandwidth_limit(
+            limiter,
+            module.bandwidth_limit(),
+            module.bandwidth_burst(),
+            module.bandwidth_burst_specified(),
+        );
 
         let mut hostname_cache: Option<Option<String>> = None;
         let module_peer_host =
@@ -4225,6 +4258,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         secrets_file: None,
         bandwidth_limit: None,
         bandwidth_burst: None,
+        bandwidth_burst_specified: false,
         refuse_options: Vec::new(),
         read_only: true,
         numeric_ids: false,
@@ -4418,6 +4452,7 @@ fn apply_inline_module_options(
                 let components = parse_runtime_bwlimit(&OsString::from(value))?;
                 module.bandwidth_limit = components.rate();
                 module.bandwidth_burst = components.burst();
+                module.bandwidth_burst_specified = components.burst_specified();
             }
             "refuse options" | "refuse-options" => {
                 let options = parse_refuse_option_list(value).map_err(|error| {
@@ -4813,6 +4848,7 @@ mod tests {
             secrets_file: None,
             bandwidth_limit: None,
             bandwidth_burst: None,
+            bandwidth_burst_specified: false,
             refuse_options: Vec::new(),
             read_only: true,
             numeric_ids: false,
@@ -4976,6 +5012,7 @@ mod tests {
             secrets_file: None,
             bandwidth_limit: None,
             bandwidth_burst: None,
+            bandwidth_burst_specified: false,
             refuse_options: Vec::new(),
             read_only: true,
             numeric_ids: false,
@@ -5609,6 +5646,7 @@ mod tests {
             Some(1_048_576)
         );
         assert!(module.bandwidth_burst().is_none());
+        assert!(!module.bandwidth_burst_specified());
         assert_eq!(module.refused_options(), [String::from("compress")]);
         assert_eq!(module.uid(), Some(1000));
         assert_eq!(module.gid(), Some(2000));
@@ -5635,6 +5673,7 @@ mod tests {
             module.bandwidth_burst().map(NonZeroU64::get),
             Some(8_388_608)
         );
+        assert!(module.bandwidth_burst_specified());
     }
 
     #[test]
@@ -5940,6 +5979,7 @@ mod tests {
             Some(NonZeroU64::new(4 * 1024 * 1024).unwrap())
         );
         assert!(module.bandwidth_burst().is_none());
+        assert!(!module.bandwidth_burst_specified());
     }
 
     #[test]
@@ -5965,6 +6005,7 @@ mod tests {
             module.bandwidth_burst(),
             Some(NonZeroU64::new(16 * 1024 * 1024).unwrap())
         );
+        assert!(module.bandwidth_burst_specified());
     }
 
     #[test]
@@ -7755,7 +7796,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(8 * 1024 * 1024), None);
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(8 * 1024 * 1024), None, false);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(
@@ -7771,7 +7812,7 @@ mod tests {
             NonZeroU64::new(8 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(1024 * 1024), None);
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(1024 * 1024), None, false);
 
         let limiter = limiter.expect("limiter remains configured");
         assert_eq!(limiter.limit_bytes(), NonZeroU64::new(1024 * 1024).unwrap());
@@ -7788,6 +7829,7 @@ mod tests {
             &mut limiter,
             NonZeroU64::new(8 * 1024 * 1024),
             Some(NonZeroU64::new(256 * 1024).unwrap()),
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7805,7 +7847,7 @@ mod tests {
     fn module_bwlimit_configures_unlimited_daemon() {
         let mut limiter = None;
 
-        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(2 * 1024 * 1024), None);
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(2 * 1024 * 1024), None, false);
 
         let limiter = limiter.expect("limiter configured by module");
         assert_eq!(
@@ -7819,6 +7861,7 @@ mod tests {
             &mut limiter,
             None,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
+            true,
         );
         let limiter = limiter.expect("limiter preserved");
         assert_eq!(
@@ -7841,6 +7884,7 @@ mod tests {
             &mut limiter,
             NonZeroU64::new(4 * 1024 * 1024),
             Some(NonZeroU64::new(512 * 1024).unwrap()),
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7852,6 +7896,23 @@ mod tests {
             limiter.burst_bytes(),
             Some(NonZeroU64::new(512 * 1024).unwrap())
         );
+    }
+
+    #[test]
+    fn module_bwlimit_zero_burst_clears_existing_burst() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(
+            NonZeroU64::new(4 * 1024 * 1024).unwrap(),
+            Some(NonZeroU64::new(512 * 1024).unwrap()),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, NonZeroU64::new(4 * 1024 * 1024), None, true);
+
+        let limiter = limiter.expect("limiter remains configured");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(4 * 1024 * 1024).unwrap()
+        );
+        assert!(limiter.burst_bytes().is_none());
     }
 
     #[test]
