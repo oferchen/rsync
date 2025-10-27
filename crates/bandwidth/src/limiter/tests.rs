@@ -35,6 +35,15 @@ fn limiter_respects_custom_burst() {
 }
 
 #[test]
+fn limiter_clamps_small_burst_to_minimum_write_size() {
+    let limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
+    let limiter = BandwidthLimiter::with_burst(limit, NonZeroU64::new(128));
+
+    assert_eq!(limiter.recommended_read_size(16), 16);
+    assert_eq!(limiter.recommended_read_size(8192), 512);
+}
+
+#[test]
 fn limiter_records_sleep_for_large_writes() {
     let mut session = recorded_sleep_session();
     session.clear();
