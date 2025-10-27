@@ -71,6 +71,14 @@ fn parse_bandwidth_accepts_leading_plus_sign() {
 }
 
 #[test]
+fn parse_bandwidth_rejects_missing_digits_after_sign() {
+    for text in ["+", "-", " + "] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
+}
+
+#[test]
 fn parse_bandwidth_accepts_comma_fraction_separator() {
     let limit = parse_bandwidth_argument("0,5M").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(512 * 1024));
@@ -199,6 +207,12 @@ fn parse_bandwidth_rejects_non_unit_adjustment_value() {
 }
 
 #[test]
+fn parse_bandwidth_rejects_multiple_decimal_separators() {
+    let error = parse_bandwidth_argument("1.2.3").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn parse_bandwidth_honours_negative_adjustment_for_small_values() {
     let limit = parse_bandwidth_argument("0.001M-1").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(0x400));
@@ -211,6 +225,12 @@ fn parse_bandwidth_negative_adjustment_can_trigger_too_small() {
 }
 
 #[test]
+fn parse_bandwidth_rejects_trailing_data_after_adjustment() {
+    let error = parse_bandwidth_argument("1K+1extra").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn parse_bandwidth_rejects_negative_values() {
     let error = parse_bandwidth_argument("-1M").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
@@ -220,6 +240,12 @@ fn parse_bandwidth_rejects_negative_values() {
 fn parse_bandwidth_rejects_overflow() {
     let error = parse_bandwidth_argument("999999999999999999999999999999P").unwrap_err();
     assert_eq!(error, BandwidthParseError::TooLarge);
+}
+
+#[test]
+fn parse_bandwidth_limit_rejects_missing_burst_value() {
+    let error = parse_bandwidth_limit("1M:").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 proptest! {
