@@ -3723,6 +3723,13 @@ fn apply_module_bandwidth_limit(
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
 ) {
+    if module_limit.is_none() && !module_burst_specified {
+        if limiter.is_some() {
+            *limiter = None;
+        }
+        return;
+    }
+
     if let Some(limit) = module_limit {
         match limiter {
             Some(existing) => {
@@ -7913,6 +7920,26 @@ mod tests {
             NonZeroU64::new(4 * 1024 * 1024).unwrap()
         );
         assert!(limiter.burst_bytes().is_none());
+    }
+
+    #[test]
+    fn module_bwlimit_unlimited_clears_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, None, None, false);
+
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn module_bwlimit_unlimited_is_noop_when_no_cap() {
+        let mut limiter: Option<BandwidthLimiter> = None;
+
+        apply_module_bandwidth_limit(&mut limiter, None, None, false);
+
+        assert!(limiter.is_none());
     }
 
     #[test]
