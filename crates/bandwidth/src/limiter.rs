@@ -121,6 +121,38 @@ impl<'a> RecordedSleepSession<'a> {
         self.with_recorded_sleeps(|durations| durations.to_vec())
     }
 
+    /// Returns the most recently recorded sleep duration without draining the buffer.
+    ///
+    /// The helper avoids the allocation performed by [`snapshot`](Self::snapshot) when
+    /// callers only need to inspect the last pacing interval. It mirrors upstream
+    /// rsync's debugging hooks, which expose the tail of the limiter history to
+    /// diagnose pacing regressions without discarding prior measurements. When no
+    /// sleeps have been recorded the method returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "test-support")]
+    /// # {
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use std::num::NonZeroU64;
+    ///
+    /// let mut session = recorded_sleep_session();
+    /// session.clear();
+    ///
+    /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+    /// limiter.register(2048);
+    ///
+    /// assert!(session.last_duration().is_some());
+    /// assert_eq!(session.last_duration(), session.snapshot().last().copied());
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn last_duration(&self) -> Option<Duration> {
+        self.with_recorded_sleeps(|durations| durations.last().copied())
+    }
+
     /// Returns the cumulative duration of all recorded sleeps without consuming them.
     ///
     /// The helper allows callers to assert on the pacing budget enforced by the limiter
