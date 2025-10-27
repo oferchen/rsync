@@ -9683,6 +9683,7 @@ mod tests {
         let path = temp.path().join("prealloc.bin");
         let mut file = fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&path)
             .expect("create file");
