@@ -199,6 +199,25 @@ fn parse_bandwidth_rejects_non_unit_adjustment_value() {
 }
 
 #[test]
+fn parse_bandwidth_limit_accepts_whitespace_around_burst_separator() {
+    let components = parse_bandwidth_limit("4M : 256K").expect("parse succeeds");
+    assert_eq!(
+        components,
+        BandwidthLimitComponents::new_with_specified(
+            NonZeroU64::new(4 * 1024 * 1024),
+            NonZeroU64::new(256 * 1024),
+            true,
+        ),
+    );
+}
+
+#[test]
+fn parse_bandwidth_limit_rejects_trailing_garbage() {
+    let error = parse_bandwidth_limit("1M extra").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
 fn parse_bandwidth_honours_negative_adjustment_for_small_values() {
     let limit = parse_bandwidth_argument("0.001M-1").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(0x400));
