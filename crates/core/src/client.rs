@@ -2500,6 +2500,28 @@ impl BandwidthLimit {
         self.burst_bytes
     }
 
+    /// Produces the shared [`BandwidthLimitComponents`] representation for this limit.
+    ///
+    /// The conversion retains both the byte-per-second rate and the optional burst
+    /// component so higher layers can forward the configuration to helpers that
+    /// operate on the shared parsing type. Returning a dedicated value keeps the
+    /// conversion explicit while avoiding the need for callers to reach into the
+    /// `bandwidth` crate directly when they already hold a [`BandwidthLimit`].
+    #[must_use]
+    pub const fn components(&self) -> bandwidth::BandwidthLimitComponents {
+        bandwidth::BandwidthLimitComponents::new(Some(self.bytes_per_second), self.burst_bytes)
+    }
+
+    /// Consumes the limit and returns the [`BandwidthLimitComponents`] representation.
+    ///
+    /// This by-value variant mirrors [`Self::components`] for callers that want
+    /// to forward the components without keeping the original [`BandwidthLimit`]
+    /// instance alive.
+    #[must_use]
+    pub const fn into_components(self) -> bandwidth::BandwidthLimitComponents {
+        self.components()
+    }
+
     /// Constructs a [`BandwidthLimiter`] that enforces this configuration.
     ///
     /// The limiter mirrors upstream rsync's token bucket by combining the
@@ -2519,6 +2541,18 @@ impl BandwidthLimit {
     #[must_use]
     pub fn into_limiter(self) -> BandwidthLimiter {
         self.to_limiter()
+    }
+}
+
+impl From<BandwidthLimit> for bandwidth::BandwidthLimitComponents {
+    fn from(limit: BandwidthLimit) -> Self {
+        limit.into_components()
+    }
+}
+
+impl From<&BandwidthLimit> for bandwidth::BandwidthLimitComponents {
+    fn from(limit: &BandwidthLimit) -> Self {
+        limit.components()
     }
 }
 
@@ -4711,6 +4745,35 @@ mod tests {
 
         assert_eq!(limit.bytes_per_second(), rate);
         assert_eq!(limit.burst_bytes(), Some(burst));
+    }
+
+    #[test]
+    fn bandwidth_limit_components_conversion_preserves_configuration() {
+        let rate = NonZeroU64::new(12 * 1024).expect("non-zero");
+        let burst = NonZeroU64::new(256 * 1024).expect("non-zero");
+        let limit = BandwidthLimit::from_rate_and_burst(rate, Some(burst));
+
+        let components = limit.components();
+        assert_eq!(components.rate(), Some(rate));
+        assert_eq!(components.burst(), Some(burst));
+
+        let round_trip = BandwidthLimit::from_components(components).expect("limit produced");
+        assert_eq!(round_trip, limit);
+    }
+
+    #[test]
+    fn bandwidth_limit_into_components_supports_from_trait() {
+        let rate = NonZeroU64::new(4 * 1024).expect("non-zero");
+        let burst = NonZeroU64::new(32 * 1024).expect("non-zero");
+        let limit = BandwidthLimit::from_rate_and_burst(rate, Some(burst));
+
+        let via_ref: bandwidth::BandwidthLimitComponents = (&limit).into();
+        let via_value: bandwidth::BandwidthLimitComponents = limit.into();
+
+        assert_eq!(via_ref.rate(), Some(rate));
+        assert_eq!(via_ref.burst(), Some(burst));
+        assert_eq!(via_value.rate(), Some(rate));
+        assert_eq!(via_value.burst(), Some(burst));
     }
 
     #[test]
