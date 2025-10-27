@@ -270,7 +270,6 @@ impl LimiterChange {
 /// let limiter = limiter.expect("limiter remains active");
 /// assert_eq!(limiter.limit_bytes().get(), 512);
 /// ```
-#[must_use]
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
