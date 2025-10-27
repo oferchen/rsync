@@ -590,6 +590,7 @@ pub struct ClientConfig {
     checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
+    ignore_missing_args: bool,
     update: bool,
     numeric_ids: bool,
     preallocate: bool,
@@ -673,6 +674,7 @@ impl Default for ClientConfig {
             checksum_seed: None,
             size_only: false,
             ignore_existing: false,
+            ignore_missing_args: false,
             update: false,
             numeric_ids: false,
             preallocate: false,
@@ -1103,6 +1105,13 @@ impl ClientConfig {
         self.ignore_existing
     }
 
+    /// Returns whether missing source arguments should be ignored.
+    #[must_use]
+    #[doc(alias = "--ignore-missing-args")]
+    pub const fn ignore_missing_args(&self) -> bool {
+        self.ignore_missing_args
+    }
+
     /// Reports whether files newer on the destination should be preserved.
     #[must_use]
     #[doc(alias = "--update")]
@@ -1343,6 +1352,7 @@ pub struct ClientConfigBuilder {
     checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
+    ignore_missing_args: bool,
     update: bool,
     numeric_ids: bool,
     preallocate: bool,
@@ -1768,6 +1778,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables ignoring missing source arguments.
+    #[must_use]
+    #[doc(alias = "--ignore-missing-args")]
+    pub const fn ignore_missing_args(mut self, ignore: bool) -> Self {
+        self.ignore_missing_args = ignore;
+        self
+    }
+
     /// Enables or disables preservation of newer destination files.
     #[must_use]
     #[doc(alias = "--update")]
@@ -2153,6 +2171,7 @@ impl ClientConfigBuilder {
             checksum_seed: self.checksum_seed,
             size_only: self.size_only,
             ignore_existing: self.ignore_existing,
+            ignore_missing_args: self.ignore_missing_args,
             update: self.update,
             numeric_ids: self.numeric_ids,
             preallocate: self.preallocate,
@@ -2841,6 +2860,8 @@ pub struct RemoteFallbackArgs {
     pub size_only: bool,
     /// Enables `--ignore-existing`.
     pub ignore_existing: bool,
+    /// Enables `--ignore-missing-args`.
+    pub ignore_missing_args: bool,
     /// Enables `--update`.
     pub update: bool,
     /// Optional `--modify-window` tolerance forwarded to the fallback binary.
@@ -3086,6 +3107,7 @@ where
         checksum_seed,
         size_only,
         ignore_existing,
+        ignore_missing_args,
         update,
         modify_window,
         compress,
@@ -3234,6 +3256,9 @@ where
     }
     if ignore_existing {
         command_args.push(OsString::from("--ignore-existing"));
+    }
+    if ignore_missing_args {
+        command_args.push(OsString::from("--ignore-missing-args"));
     }
     if update {
         command_args.push(OsString::from("--update"));
@@ -4546,6 +4571,7 @@ fn build_local_copy_options(
         .with_checksum_algorithm(config.checksum_signature_algorithm())
         .size_only(config.size_only())
         .ignore_existing(config.ignore_existing())
+        .ignore_missing_args(config.ignore_missing_args())
         .update(config.update())
         .with_modify_window(config.modify_window_duration())
         .with_filter_program(filter_program)
@@ -4768,6 +4794,7 @@ exit 42
             checksum_seed: None,
             size_only: false,
             ignore_existing: false,
+            ignore_missing_args: false,
             update: false,
             modify_window: None,
             compress: false,
@@ -6037,6 +6064,39 @@ exit 42
         assert!(stderr.is_empty());
         let captured = fs::read_to_string(&capture_path).expect("capture contents");
         assert!(captured.lines().any(|line| line == "--copy-dirlinks"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_ignore_missing_args_flag() {
+        let _lock = env_lock().lock().expect("env mutex poisoned");
+        let temp = tempdir().expect("tempdir created");
+        let capture_path = temp.path().join("args.txt");
+        let script_path = temp.path().join("capture.sh");
+        let script_contents = format!(
+            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
+        );
+        fs::write(&script_path, script_contents).expect("script written");
+        let metadata = fs::metadata(&script_path).expect("script metadata");
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+        let mut args = baseline_fallback_args();
+        args.fallback_binary = Some(script_path.clone().into_os_string());
+        args.ignore_missing_args = true;
+        args.remainder = vec![OsString::from(format!(
+            "CAPTURE={}",
+            capture_path.display()
+        ))];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+            .expect("fallback invocation succeeds");
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        let captured = fs::read_to_string(&capture_path).expect("capture contents");
+        assert!(captured.lines().any(|line| line == "--ignore-missing-args"));
     }
 
     #[cfg(unix)]

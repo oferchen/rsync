@@ -165,6 +165,7 @@ const HELP_TEXT: &str = concat!(
     "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
     "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
     "      --ignore-existing  Skip updating files that already exist at the destination.\n",
+    "      --ignore-missing-args  Skip missing source arguments without reporting an error.\n",
     "  -u, --update    Skip files that are newer on the destination.\n",
     "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",
     "      --exclude=PATTERN  Skip files matching PATTERN.\n",
@@ -270,7 +271,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -973,6 +974,7 @@ struct ParsedArgs {
     checksum_seed: Option<u32>,
     size_only: bool,
     ignore_existing: bool,
+    ignore_missing_args: bool,
     update: bool,
     remainder: Vec<OsString>,
     bwlimit: Option<OsString>,
@@ -1672,6 +1674,12 @@ fn clap_command() -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("ignore-missing-args")
+                .long("ignore-missing-args")
+                .help("Skip missing source arguments without reporting an error.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("delete-excluded")
                 .long("delete-excluded")
                 .help("Remove excluded destination files during deletion sweeps.")
@@ -2159,6 +2167,7 @@ where
     let delete_during_flag = matches.get_flag("delete-during");
     let delete_delay_flag = matches.get_flag("delete-delay");
     let delete_after_flag = matches.get_flag("delete-after");
+    let ignore_missing_args = matches.get_flag("ignore-missing-args");
     let delete_excluded = matches.get_flag("delete-excluded");
     let max_delete = matches.remove_one::<OsString>("max-delete");
     let min_size = matches.remove_one::<OsString>("min-size");
@@ -2555,6 +2564,7 @@ where
         checksum_seed,
         size_only,
         ignore_existing,
+        ignore_missing_args,
         update,
         remainder,
         bwlimit,
@@ -2966,6 +2976,7 @@ where
         checksum_seed,
         size_only,
         ignore_existing,
+        ignore_missing_args,
         update,
         remainder: raw_remainder,
         bwlimit,
@@ -3571,6 +3582,7 @@ where
             checksum_seed,
             size_only,
             ignore_existing,
+            ignore_missing_args,
             update,
             modify_window: modify_window_setting,
             compress,
@@ -3845,6 +3857,7 @@ where
         .checksum_seed(checksum_seed)
         .size_only(size_only)
         .ignore_existing(ignore_existing)
+        .ignore_missing_args(ignore_missing_args)
         .update(update)
         .numeric_ids(numeric_ids)
         .hard_links(preserve_hard_links)
@@ -8828,6 +8841,31 @@ mod tests {
         assert_eq!(
             std::fs::read(destination).expect("read destination"),
             b"original"
+        );
+    }
+
+    #[test]
+    fn transfer_request_with_ignore_missing_args_skips_missing_sources() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let missing = tmp.path().join("missing.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&destination, b"existing").expect("write destination");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("oc-rsync"),
+            OsString::from("--ignore-missing-args"),
+            missing.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"existing"
         );
     }
 
