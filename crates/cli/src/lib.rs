@@ -77,7 +77,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -5185,11 +5185,19 @@ fn supported_protocols_list() -> &'static str {
     static SUPPORTED_PROTOCOLS: OnceLock<String> = OnceLock::new();
     SUPPORTED_PROTOCOLS
         .get_or_init(|| {
-            ProtocolVersion::supported_protocol_numbers()
-                .iter()
-                .map(|value| value.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
+            let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
+            let mut formatted = String::with_capacity(iter.len().saturating_mul(4));
+
+            if let Some(first) = iter.next() {
+                let _ = write!(&mut formatted, "{}", first);
+
+                for value in iter {
+                    formatted.push_str(", ");
+                    let _ = write!(&mut formatted, "{}", value);
+                }
+            }
+
+            formatted
         })
         .as_str()
 }
