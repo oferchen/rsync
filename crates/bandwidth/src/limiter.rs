@@ -42,40 +42,42 @@ pub struct RecordedSleepSession<'a> {
 
 #[cfg(any(test, feature = "test-support"))]
 impl<'a> RecordedSleepSession<'a> {
+    #[inline]
+    fn with_recorded_sleeps<R>(&self, op: impl FnOnce(&[Duration]) -> R) -> R {
+        let guard = recorded_sleeps().lock().expect("lock recorded sleeps");
+        op(guard.as_slice())
+    }
+
+    #[inline]
+    fn with_recorded_sleeps_mut<R>(&self, op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
+        let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
+        op(&mut *guard)
+    }
+
     /// Removes any previously recorded durations.
     #[inline]
     pub fn clear(&mut self) {
-        recorded_sleeps()
-            .lock()
-            .expect("lock recorded sleeps")
-            .clear();
+        self.with_recorded_sleeps_mut(|durations| durations.clear());
     }
 
     /// Returns `true` when no sleep durations have been recorded.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        recorded_sleeps()
-            .lock()
-            .expect("lock recorded sleeps")
-            .is_empty()
+        self.with_recorded_sleeps(|durations| durations.is_empty())
     }
 
     /// Returns the number of recorded sleep intervals.
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        recorded_sleeps()
-            .lock()
-            .expect("lock recorded sleeps")
-            .len()
+        self.with_recorded_sleeps(|durations| durations.len())
     }
 
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
-        let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
-        mem::take(&mut *guard)
+        self.with_recorded_sleeps_mut(|durations| mem::take(durations))
     }
 
     /// Consumes the session and returns the recorded durations.
