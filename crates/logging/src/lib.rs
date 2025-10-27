@@ -248,7 +248,7 @@ where
 /// sink methods without additional boilerplate.
 #[must_use = "dropping the guard immediately restores the previous line mode"]
 pub struct LineModeGuard<'a, W> {
-    sink: &'a mut MessageSink<W>,
+    sink: Option<&'a mut MessageSink<W>>,
     previous: LineMode,
 }
 
@@ -258,11 +258,51 @@ impl<'a, W> LineModeGuard<'a, W> {
     pub const fn previous_line_mode(&self) -> LineMode {
         self.previous
     }
+
+    /// Consumes the guard without restoring the previous [`LineMode`].
+    ///
+    /// Dropping a [`LineModeGuard`] normally reinstates the configuration that was in effect
+    /// before [`MessageSink::scoped_line_mode`] was called. This helper intentionally skips that
+    /// restoration so the temporary override becomes the sink's new baseline. It returns the
+    /// underlying [`MessageSink`], allowing callers to continue writing messages or adjust the line
+    /// mode again explicitly.
+    ///
+    /// # Examples
+    ///
+    /// Permanently adopt a newline-free mode after performing some initial writes:
+    ///
+    /// ```
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::{LineMode, MessageSink};
+    ///
+    /// let mut sink = MessageSink::new(Vec::new());
+    /// {
+    ///     let sink = sink
+    ///         .scoped_line_mode(LineMode::WithoutNewline)
+    ///         .into_inner();
+    ///     sink.write(Message::info("phase one"))?;
+    /// }
+    ///
+    /// sink.write(Message::info("phase two"))?;
+    /// assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+    /// assert_eq!(
+    ///     sink.into_inner(),
+    ///     b"rsync info: phase onersync info: phase two".to_vec()
+    /// );
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn into_inner(mut self) -> &'a mut MessageSink<W> {
+        self.sink
+            .take()
+            .expect("line mode guard must own a message sink")
+    }
 }
 
 impl<'a, W> Drop for LineModeGuard<'a, W> {
     fn drop(&mut self) {
-        self.sink.line_mode = self.previous;
+        if let Some(sink) = self.sink.take() {
+            sink.line_mode = self.previous;
+        }
     }
 }
 
@@ -271,12 +311,16 @@ impl<'a, W> std::ops::Deref for LineModeGuard<'a, W> {
 
     fn deref(&self) -> &Self::Target {
         self.sink
+            .as_deref()
+            .expect("line mode guard remains active while borrowed")
     }
 }
 
 impl<'a, W> std::ops::DerefMut for LineModeGuard<'a, W> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.sink
+            .as_deref_mut()
+            .expect("line mode guard remains active while borrowed")
     }
 }
 
@@ -549,7 +593,7 @@ impl<W> MessageSink<W> {
         let previous = self.line_mode;
         self.line_mode = line_mode;
         LineModeGuard {
-            sink: self,
+            sink: Some(self),
             previous,
         }
     }
@@ -1528,6 +1572,26 @@ mod tests {
         assert_eq!(
             output,
             b"rsync info: phase onersync info: phase tworsync info: done\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn scoped_line_mode_into_inner_keeps_override() {
+        let mut sink = MessageSink::new(Vec::new());
+        {
+            let sink = sink.scoped_line_mode(LineMode::WithoutNewline).into_inner();
+            sink.write(Message::info("phase one"))
+                .expect("write succeeds");
+        }
+
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+        sink.write(Message::info("phase two"))
+            .expect("write succeeds");
+
+        let output = sink.into_inner();
+        assert_eq!(
+            output,
+            b"rsync info: phase onersync info: phase two".to_vec()
         );
     }
 
