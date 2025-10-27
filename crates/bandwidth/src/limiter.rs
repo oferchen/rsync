@@ -9,6 +9,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const MICROS_PER_SECOND: u128 = 1_000_000;
 const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
+const MAX_REPRESENTABLE_MICROSECONDS: u128 =
+    (u64::MAX as u128) * MICROS_PER_SECOND + (MICROS_PER_SECOND - 1);
 
 #[cfg(any(test, feature = "test-support"))]
 fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
@@ -102,14 +104,14 @@ fn duration_from_microseconds(us: u128) -> Duration {
         return Duration::ZERO;
     }
 
-    let seconds = us / MICROS_PER_SECOND;
+    if us > MAX_REPRESENTABLE_MICROSECONDS {
+        return Duration::MAX;
+    }
+
+    let seconds = (us / MICROS_PER_SECOND) as u64;
     let micros = (us % MICROS_PER_SECOND) as u32;
 
-    if seconds >= u128::from(u64::MAX) {
-        Duration::MAX
-    } else {
-        Duration::new(seconds as u64, micros.saturating_mul(1_000))
-    }
+    Duration::new(seconds, micros.saturating_mul(1_000))
 }
 
 fn sleep_for(duration: Duration) {
@@ -719,10 +721,18 @@ mod tests {
     }
 
     #[test]
-    fn duration_from_microseconds_saturates_to_duration_max() {
+    fn duration_from_microseconds_handles_u64_max_seconds_with_fraction() {
         let micros = u128::from(u64::MAX)
             .saturating_mul(super::MICROS_PER_SECOND)
             .saturating_add(1);
+        let duration = duration_from_microseconds(micros);
+        assert_eq!(duration.as_secs(), u64::MAX);
+        assert_eq!(duration.subsec_micros(), 1);
+    }
+
+    #[test]
+    fn duration_from_microseconds_saturates_when_exceeding_supported_range() {
+        let micros = super::MAX_REPRESENTABLE_MICROSECONDS.saturating_add(1);
         assert_eq!(duration_from_microseconds(micros), Duration::MAX);
     }
 
