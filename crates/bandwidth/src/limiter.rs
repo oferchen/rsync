@@ -330,10 +330,28 @@ impl FusedIterator for RecordedSleepIter<'_> {}
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Obtains a guard that serialises access to recorded sleep durations.
+///
+/// Callers can invoke this helper directly or rely on the [`Default`]
+/// implementation for [`RecordedSleepSession`] when constructing helper structs.
 #[must_use]
 pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
     RecordedSleepSession {
         _guard: lock_recorded_sleep_session(),
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
+impl Default for RecordedSleepSession<'static> {
+    /// Returns a [`RecordedSleepSession`] guard that serialises access to the
+    /// shared sleep buffer.
+    ///
+    /// The implementation forwards to [`recorded_sleep_session()`], ensuring
+    /// idiomatic construction via [`Default::default`]. Holding the returned
+    /// guard provides exclusive access to the recorded durations until it is
+    /// dropped.
+    fn default() -> Self {
+        recorded_sleep_session()
     }
 }
 
