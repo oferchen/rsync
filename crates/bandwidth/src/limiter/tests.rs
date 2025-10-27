@@ -295,6 +295,19 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
 }
 
 #[test]
+fn apply_effective_limit_removes_existing_burst_when_disabled() {
+    let limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit, NonZeroU64::new(8192)));
+
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, None, true);
+
+    let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(change, LimiterChange::Updated);
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert!(limiter.burst_bytes().is_none());
+}
+
+#[test]
 fn apply_effective_limit_ignores_unspecified_burst_override() {
     let burst = NonZeroU64::new(4096).unwrap();
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
