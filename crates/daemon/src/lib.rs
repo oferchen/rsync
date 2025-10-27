@@ -283,6 +283,7 @@ struct ModuleDefinition {
     bandwidth_limit_specified: bool,
     bandwidth_burst: Option<NonZeroU64>,
     bandwidth_burst_specified: bool,
+    bandwidth_limit_configured: bool,
     refuse_options: Vec<String>,
     read_only: bool,
     numeric_ids: bool,
@@ -355,6 +356,10 @@ impl ModuleDefinition {
 
     fn bandwidth_burst_specified(&self) -> bool {
         self.bandwidth_burst_specified
+    }
+
+    fn bandwidth_limit_configured(&self) -> bool {
+        self.bandwidth_limit_configured
     }
 
     #[cfg(test)]
@@ -2185,6 +2190,7 @@ impl ModuleDefinitionBuilder {
             bandwidth_limit_specified: self.bandwidth_limit_specified,
             bandwidth_burst: self.bandwidth_burst,
             bandwidth_burst_specified: self.bandwidth_burst_specified,
+            bandwidth_limit_configured: self.bandwidth_limit_set,
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.unwrap_or(true),
             numeric_ids: self.numeric_ids.unwrap_or(false),
@@ -3733,6 +3739,7 @@ fn apply_module_bandwidth_limit(
     module_limit_specified: bool,
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
+    module_limit_configured: bool,
 ) {
     apply_effective_limit(
         limiter,
@@ -3762,6 +3769,7 @@ fn respond_with_module_request(
             module.bandwidth_limit_specified(),
             module.bandwidth_burst(),
             module.bandwidth_burst_specified(),
+            module.bandwidth_limit_configured(),
         );
 
         let mut hostname_cache: Option<Option<String>> = None;
@@ -4245,6 +4253,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         bandwidth_limit_specified: false,
         bandwidth_burst: None,
         bandwidth_burst_specified: false,
+        bandwidth_limit_configured: false,
         refuse_options: Vec::new(),
         read_only: true,
         numeric_ids: false,
@@ -4439,6 +4448,7 @@ fn apply_inline_module_options(
                 module.bandwidth_limit = components.rate();
                 module.bandwidth_burst = components.burst();
                 module.bandwidth_burst_specified = components.burst_specified();
+                module.bandwidth_limit_configured = true;
             }
             "refuse options" | "refuse-options" => {
                 let options = parse_refuse_option_list(value).map_err(|error| {
@@ -4836,6 +4846,7 @@ mod tests {
             bandwidth_limit_specified: false,
             bandwidth_burst: None,
             bandwidth_burst_specified: false,
+            bandwidth_limit_configured: false,
             refuse_options: Vec::new(),
             read_only: true,
             numeric_ids: false,
@@ -5001,6 +5012,7 @@ mod tests {
             bandwidth_limit_specified: false,
             bandwidth_burst: None,
             bandwidth_burst_specified: false,
+            bandwidth_limit_configured: false,
             refuse_options: Vec::new(),
             read_only: true,
             numeric_ids: false,
@@ -7831,6 +7843,7 @@ mod tests {
             true,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
+            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7870,6 +7883,7 @@ mod tests {
             false,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
+            true,
         );
         let limiter = limiter.expect("limiter preserved");
         assert_eq!(
@@ -7883,6 +7897,18 @@ mod tests {
     }
 
     #[test]
+    fn module_without_bwlimit_inherits_daemon_cap() {
+        let limit = NonZeroU64::new(3 * 1024 * 1024).unwrap();
+        let mut limiter = Some(BandwidthLimiter::new(limit));
+
+        apply_module_bandwidth_limit(&mut limiter, None, None, false, false);
+
+        let limiter = limiter.expect("limiter remains in effect");
+        assert_eq!(limiter.limit_bytes(), limit);
+        assert!(limiter.burst_bytes().is_none());
+    }
+
+    #[test]
     fn module_bwlimit_updates_burst_without_lowering_limit() {
         let mut limiter = Some(BandwidthLimiter::new(
             NonZeroU64::new(4 * 1024 * 1024).unwrap(),
@@ -7893,6 +7919,7 @@ mod tests {
             NonZeroU64::new(4 * 1024 * 1024),
             true,
             Some(NonZeroU64::new(512 * 1024).unwrap()),
+            true,
             true,
         );
 
