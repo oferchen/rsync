@@ -407,6 +407,34 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
 }
 
 #[test]
+fn apply_effective_limit_clears_burst_with_burst_only_override() {
+    let limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
+    let burst = NonZeroU64::new(4096).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst)));
+
+    let change = apply_effective_limit(&mut limiter, None, false, None, true);
+
+    let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert!(limiter.burst_bytes().is_none());
+    assert_eq!(change, LimiterChange::Updated);
+}
+
+#[test]
+fn apply_effective_limit_ignores_redundant_burst_only_override() {
+    let limit = NonZeroU64::new(3 * 1024 * 1024).unwrap();
+    let burst = NonZeroU64::new(2048).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst)));
+
+    let change = apply_effective_limit(&mut limiter, None, false, Some(burst), true);
+
+    let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert_eq!(limiter.burst_bytes(), Some(burst));
+    assert_eq!(change, LimiterChange::Unchanged);
+}
+
+#[test]
 fn apply_effective_limit_removes_existing_burst_when_disabled() {
     let limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, NonZeroU64::new(8192)));
