@@ -180,6 +180,42 @@ impl<'a> RecordedSleepSession<'a> {
 
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
+/// Converts a [`RecordedSleepSession`] into an iterator over the captured durations.
+///
+/// The iterator owns the collected sleep intervals, allowing tests to consume the
+/// samples using idiomatic iterator combinators while releasing the underlying
+/// mutex as soon as the guard is moved. The helper mirrors [`into_vec`](RecordedSleepSession::into_vec)
+/// but avoids an intermediate allocation when callers immediately iterate over the
+/// returned durations.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "test-support")]
+/// # {
+/// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+/// use std::num::NonZeroU64;
+///
+/// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+/// let mut session = recorded_sleep_session();
+/// session.clear();
+/// limiter.register(1024);
+///
+/// let durations: Vec<_> = session.into_iter().collect();
+/// assert_eq!(durations.len(), 1);
+/// # }
+/// ```
+impl<'a> IntoIterator for RecordedSleepSession<'a> {
+    type Item = Duration;
+    type IntoIter = std::vec::IntoIter<Duration>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        self.take().into_iter()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Obtains a guard that serialises access to recorded sleep durations.
 #[must_use]
 pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
