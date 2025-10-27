@@ -188,16 +188,34 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
     let mut digits_seen = false;
     let mut decimal_seen = false;
+    let mut exponent_seen = false;
+    let mut exponent_digits_seen = false;
+    let mut exponent_sign_allowed = false;
     let mut numeric_end = unsigned.len();
 
     for (index, ch) in unsigned.char_indices() {
         if ch.is_ascii_digit() {
             digits_seen = true;
+            if exponent_seen {
+                exponent_digits_seen = true;
+                exponent_sign_allowed = false;
+            }
             continue;
         }
 
-        if (ch == '.' || ch == ',') && !decimal_seen {
+        if (ch == '.' || ch == ',') && !decimal_seen && !exponent_seen {
             decimal_seen = true;
+            continue;
+        }
+
+        if matches!(ch, 'e' | 'E') && digits_seen && !exponent_seen {
+            exponent_seen = true;
+            exponent_sign_allowed = true;
+            continue;
+        }
+
+        if (ch == '+' || ch == '-') && exponent_sign_allowed {
+            exponent_sign_allowed = false;
             continue;
         }
 
@@ -213,7 +231,16 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::Invalid);
     }
 
-    let (integer_part, fractional_part, denominator) = parse_decimal_components(numeric_part)?;
+    if exponent_seen && !exponent_digits_seen {
+        return Err(BandwidthParseError::Invalid);
+    }
+
+    if exponent_sign_allowed {
+        return Err(BandwidthParseError::Invalid);
+    }
+
+    let (integer_part, fractional_part, denominator, decimal_exponent) =
+        parse_decimal_with_exponent(numeric_part)?;
 
     let (suffix, mut remainder_after_suffix) =
         if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
@@ -305,10 +332,24 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
     let scale = pow_u128(base, repetitions)?;
 
-    let numerator = integer_part
+    let mut numerator = integer_part
         .checked_mul(denominator)
         .and_then(|value| value.checked_add(fractional_part))
         .ok_or(BandwidthParseError::TooLarge)?;
+    let mut denominator = denominator;
+
+    if decimal_exponent > 0 {
+        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
+        numerator = numerator
+            .checked_mul(factor)
+            .ok_or(BandwidthParseError::TooLarge)?;
+    } else if decimal_exponent < 0 {
+        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
+        denominator = denominator
+            .checked_mul(factor)
+            .ok_or(BandwidthParseError::TooLarge)?;
+    }
+
     let product = numerator
         .checked_mul(scale)
         .ok_or(BandwidthParseError::TooLarge)?;
@@ -371,7 +412,35 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
     }
 }
 
-fn parse_decimal_components(text: &str) -> Result<(u128, u128, u128), BandwidthParseError> {
+fn parse_decimal_with_exponent(text: &str) -> Result<(u128, u128, u128, i32), BandwidthParseError> {
+    let (mantissa_text, exponent_text) =
+        if let Some(position) = text.find(|ch: char| matches!(ch, 'e' | 'E')) {
+            let (mantissa, exponent) = text.split_at(position);
+            let exponent = &exponent[1..];
+            (mantissa, Some(exponent))
+        } else {
+            (text, None)
+        };
+
+    let (integer, fraction, denominator) = parse_decimal_mantissa(mantissa_text)?;
+
+    let exponent = match exponent_text {
+        Some(component) => {
+            if component.is_empty() {
+                return Err(BandwidthParseError::Invalid);
+            }
+
+            component
+                .parse::<i32>()
+                .map_err(|_| BandwidthParseError::Invalid)?
+        }
+        None => 0,
+    };
+
+    Ok((integer, fraction, denominator, exponent))
+}
+
+fn parse_decimal_mantissa(text: &str) -> Result<(u128, u128, u128), BandwidthParseError> {
     let mut integer = 0u128;
     let mut fraction = 0u128;
     let mut denominator = 1u128;
