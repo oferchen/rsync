@@ -4688,9 +4688,13 @@ fn build_local_copy_options(
                 .map(|seconds| Duration::from_secs(seconds.get())),
         );
     #[cfg(feature = "acl")]
-    let options = options.acls(config.preserve_acls());
+    {
+        options = options.acls(config.preserve_acls());
+    }
     #[cfg(feature = "xattr")]
-    let options = options.xattrs(config.preserve_xattrs());
+    {
+        options = options.xattrs(config.preserve_xattrs());
+    }
 
     if !config.reference_directories().is_empty() {
         let references = config.reference_directories().iter().map(|reference| {
