@@ -259,12 +259,14 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     };
 
     let mut base: u32 = 1024;
+    let mut alignment: u128 = 1024;
 
     if !remainder_after_suffix.is_empty() {
         let bytes = remainder_after_suffix.as_bytes();
         match bytes[0] {
             b'b' | b'B' => {
                 base = 1000;
+                alignment = 1000;
                 remainder_after_suffix = &remainder_after_suffix[1..];
             }
             b'i' | b'I' => {
@@ -354,11 +356,11 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     }
 
     let rounded = bytes
-        .checked_add(512)
+        .checked_add(alignment / 2)
         .ok_or(BandwidthParseError::TooLarge)?
-        / 1024;
+        / alignment;
     let rounded_bytes = rounded
-        .checked_mul(1024)
+        .checked_mul(alignment)
         .ok_or(BandwidthParseError::TooLarge)?;
 
     let bytes_u64 = u64::try_from(rounded_bytes).map_err(|_| BandwidthParseError::TooLarge)?;

@@ -14,7 +14,7 @@ fn parse_bandwidth_accepts_binary_units() {
 #[test]
 fn parse_bandwidth_accepts_decimal_units() {
     let limit = parse_bandwidth_argument("12MB").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(12_000_256));
+    assert_eq!(limit, NonZeroU64::new(12_000_000));
 }
 
 #[test]
