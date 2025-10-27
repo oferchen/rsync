@@ -127,7 +127,7 @@ use std::cell::RefCell;
 use tempfile::NamedTempFile;
 
 use crate::{
-    bandwidth::{self, BandwidthParseError},
+    bandwidth::{self, BandwidthLimiter, BandwidthParseError},
     fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
@@ -2479,6 +2479,27 @@ impl BandwidthLimit {
     #[must_use]
     pub const fn burst_bytes(self) -> Option<NonZeroU64> {
         self.burst_bytes
+    }
+
+    /// Constructs a [`BandwidthLimiter`] that enforces this configuration.
+    ///
+    /// The limiter mirrors upstream rsync's token bucket by combining the
+    /// configured rate with the optional burst component. Returning a concrete
+    /// limiter keeps higher layers from re-encoding the rate/burst tuple when
+    /// they need to apply throttling to local copies or daemon transfers.
+    #[must_use]
+    pub fn to_limiter(&self) -> BandwidthLimiter {
+        BandwidthLimiter::with_burst(self.bytes_per_second, self.burst_bytes)
+    }
+
+    /// Consumes the limit and produces a [`BandwidthLimiter`].
+    ///
+    /// This by-value variant mirrors [`Self::to_limiter`] while avoiding the
+    /// additional copy of the [`BandwidthLimit`] structure when the caller no
+    /// longer needs it.
+    #[must_use]
+    pub fn into_limiter(self) -> BandwidthLimiter {
+        self.to_limiter()
     }
 }
 
@@ -5158,6 +5179,29 @@ exit 42
             .build();
 
         assert_eq!(config.bandwidth_limit(), Some(limit));
+    }
+
+    #[test]
+    fn bandwidth_limit_to_limiter_preserves_rate_and_burst() {
+        let rate = NonZeroU64::new(8 * 1024 * 1024).expect("non-zero rate");
+        let burst = NonZeroU64::new(256 * 1024).expect("non-zero burst");
+        let limit = BandwidthLimit::from_rate_and_burst(rate, Some(burst));
+
+        let limiter = limit.to_limiter();
+
+        assert_eq!(limiter.limit_bytes(), rate);
+        assert_eq!(limiter.burst_bytes(), Some(burst));
+    }
+
+    #[test]
+    fn bandwidth_limit_into_limiter_transfers_configuration() {
+        let rate = NonZeroU64::new(4 * 1024 * 1024).expect("non-zero rate");
+        let limit = BandwidthLimit::from_rate_and_burst(rate, None);
+
+        let limiter = limit.into_limiter();
+
+        assert_eq!(limiter.limit_bytes(), rate);
+        assert_eq!(limiter.burst_bytes(), None);
     }
 
     #[test]
