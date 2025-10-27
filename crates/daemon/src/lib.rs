@@ -3747,7 +3747,6 @@ fn apply_module_bandwidth_limit(
     module_limit_configured: bool,
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
-    module_limit_configured: bool,
 ) {
     let limit_specified =
         module_limit_specified || (module_limit_configured && module_limit.is_some());
@@ -3783,7 +3782,6 @@ fn respond_with_module_request(
             module.bandwidth_limit_configured(),
             module.bandwidth_burst(),
             module.bandwidth_burst_specified(),
-            module.bandwidth_limit_configured(),
         );
 
         let mut hostname_cache: Option<Option<String>> = None;
@@ -7861,7 +7859,6 @@ mod tests {
             true,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
-            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7903,7 +7900,6 @@ mod tests {
             true,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
-            true,
         );
         let limiter = limiter.expect("limiter preserved");
         assert_eq!(
@@ -7921,7 +7917,7 @@ mod tests {
         let limit = NonZeroU64::new(3 * 1024 * 1024).unwrap();
         let mut limiter = Some(BandwidthLimiter::new(limit));
 
-        apply_module_bandwidth_limit(&mut limiter, None, false, None, false, false);
+        apply_module_bandwidth_limit(&mut limiter, None, false, false, None, false);
 
         let limiter = limiter.expect("limiter remains in effect");
         assert_eq!(limiter.limit_bytes(), limit);
@@ -7940,7 +7936,6 @@ mod tests {
             true,
             true,
             Some(NonZeroU64::new(512 * 1024).unwrap()),
-            true,
             true,
         );
 
