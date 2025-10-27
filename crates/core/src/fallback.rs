@@ -133,68 +133,126 @@ pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
 }
 
 #[cfg(test)]
-#[allow(unsafe_code)]
 mod tests {
     use super::*;
+    use std::ffi::{OsStr, OsString};
 
-    fn clear_var(key: &str) {
-        unsafe {
-            env::remove_var(key);
+    struct EnvVarGuard {
+        key: OsString,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        #[allow(unsafe_code)]
+        fn remove<K>(key: K) -> Self
+        where
+            K: Into<OsString>,
+        {
+            let key = key.into();
+            let original = env::var_os(&key);
+            unsafe {
+                env::remove_var(&key);
+            }
+            Self { key, original }
+        }
+
+        #[allow(unsafe_code)]
+        fn set<K, V>(key: K, value: V) -> Self
+        where
+            K: Into<OsString>,
+            V: Into<OsString>,
+        {
+            let key = key.into();
+            let original = env::var_os(&key);
+            unsafe {
+                env::set_var(&key, value.into());
+            }
+            Self { key, original }
         }
     }
 
-    fn set_var(key: &str, value: &str) {
-        unsafe {
-            env::set_var(key, value);
+    impl Drop for EnvVarGuard {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_ref() {
+                unsafe {
+                    env::set_var(&self.key, value);
+                }
+            } else {
+                unsafe {
+                    env::remove_var(&self.key);
+                }
+            }
         }
     }
 
     #[test]
     fn unset_variable_returns_none() {
         let key = "RSYNC_FALLBACK_TEST_UNSET";
-        clear_var(key);
+        let _guard = EnvVarGuard::remove(key);
         assert!(fallback_override(key).is_none());
     }
 
     #[test]
     fn empty_value_disables_override() {
         let key = "RSYNC_FALLBACK_TEST_EMPTY";
-        set_var(key, "");
+        let _guard = EnvVarGuard::set(key, "");
         assert_eq!(fallback_override(key), Some(FallbackOverride::Disabled));
-        clear_var(key);
     }
 
     #[test]
     fn boolean_false_values_disable_override() {
+        let key = "RSYNC_FALLBACK_TEST_BOOL";
+        let _reset = EnvVarGuard::remove(key);
         for value in ["0", "false", "No", "OFF"] {
-            let key = "RSYNC_FALLBACK_TEST_BOOL";
-            set_var(key, value);
+            let _guard = EnvVarGuard::set(key, value);
             assert_eq!(fallback_override(key), Some(FallbackOverride::Disabled));
-            clear_var(key);
         }
     }
 
     #[test]
     fn auto_value_uses_default() {
         let key = "RSYNC_FALLBACK_TEST_AUTO";
-        set_var(key, "auto");
+        let _guard = EnvVarGuard::set(key, "auto");
         let override_value = fallback_override(key).expect("override present");
         assert_eq!(
             override_value.resolve_or_default(OsStr::new("rsync")),
             Some(OsString::from("rsync"))
         );
-        clear_var(key);
     }
 
     #[test]
     fn explicit_value_preserved() {
         let key = "RSYNC_FALLBACK_TEST_EXPLICIT";
-        set_var(key, "/usr/bin/rsync");
+        let _guard = EnvVarGuard::set(key, "/usr/bin/rsync");
         let override_value = fallback_override(key).expect("override present");
         assert_eq!(
             override_value.resolve_or_default(OsStr::new("rsync")),
             Some(OsString::from("/usr/bin/rsync"))
         );
-        clear_var(key);
+    }
+
+    #[test]
+    fn auto_value_is_case_insensitive_and_trims_whitespace() {
+        let key = "RSYNC_FALLBACK_TEST_AUTO_CASE";
+        let _reset = EnvVarGuard::remove(key);
+        for value in ["AUTO", " Auto", "auto  ", "  aUtO  "] {
+            let _guard = EnvVarGuard::set(key, value);
+            let override_value = fallback_override(key).expect("override present");
+            assert_eq!(
+                override_value.resolve_or_default(OsStr::new("rsync")),
+                Some(OsString::from("rsync"))
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_values_trim_whitespace() {
+        let key = "RSYNC_FALLBACK_TEST_DISABLED_TRIM";
+        let _reset = EnvVarGuard::remove(key);
+        for value in ["  no  ", " Off\t", "\n0\r", " false "] {
+            let _guard = EnvVarGuard::set(key, value);
+            assert_eq!(fallback_override(key), Some(FallbackOverride::Disabled));
+        }
     }
 }
