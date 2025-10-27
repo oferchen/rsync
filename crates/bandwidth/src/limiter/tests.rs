@@ -248,6 +248,20 @@ fn apply_effective_limit_reports_unchanged_when_already_disabled() {
 }
 
 #[test]
+fn apply_effective_limit_ignores_unspecified_limit_argument() {
+    let initial = NonZeroU64::new(2048).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(initial));
+
+    let new_limit = NonZeroU64::new(1024).unwrap();
+    let change = apply_effective_limit(&mut limiter, Some(new_limit), false, None, false);
+
+    let limiter = limiter.expect("limiter remains active when limit is ignored");
+    assert_eq!(limiter.limit_bytes(), initial);
+    assert_eq!(limiter.burst_bytes(), None);
+    assert_eq!(change, LimiterChange::Unchanged);
+}
+
+#[test]
 fn apply_effective_limit_caps_existing_limit() {
     let mut limiter = Some(BandwidthLimiter::new(
         NonZeroU64::new(8 * 1024 * 1024).unwrap(),
