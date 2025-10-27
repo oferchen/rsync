@@ -192,6 +192,9 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 /// The return value allows higher layers to react to configuration changes
 /// without re-reading the limiter state. For instance, callers can detect when a
 /// module disabled throttling entirely and skip further limiter-dependent work.
+/// The enum carries a `#[must_use]` marker so dropped results surface as
+/// warnings during compilation, preventing silently ignored configuration
+/// updates.
 ///
 /// # Variants
 ///
@@ -202,6 +205,7 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 ///   configuration.
 /// * [`LimiterChange::Disabled`] — throttling was removed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
 pub enum LimiterChange {
     /// No adjustments were performed.
     Unchanged,
@@ -241,7 +245,8 @@ impl LimiterChange {
 /// behaviour stays in sync.
 ///
 /// The helper reports how the limiter changed so callers can react without
-/// inspecting internal state.
+/// inspecting internal state. Ignoring the return value now triggers a
+/// compiler warning, catching mistakes where updates would otherwise be lost.
 ///
 /// # Examples
 ///
@@ -265,6 +270,7 @@ impl LimiterChange {
 /// let limiter = limiter.expect("limiter remains active");
 /// assert_eq!(limiter.limit_bytes().get(), 512);
 /// ```
+#[must_use]
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
