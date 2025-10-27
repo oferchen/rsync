@@ -385,6 +385,44 @@ fn log_code_conversion_error_exposes_context() {
 }
 
 #[test]
+fn message_code_logging_variants_round_trip_with_log_codes() {
+    for &code in MessageCode::all().iter() {
+        match code.log_code() {
+            Some(log) => {
+                let from_log = MessageCode::from_log_code(log)
+                    .expect("log code should map back to a message code");
+                assert_eq!(from_log, code, "log round-trip must match original code");
+            }
+            None => {
+                assert!(MessageCode::from_log_code(LogCode::None).is_none());
+            }
+        }
+    }
+
+    for &log in LogCode::all().iter() {
+        match MessageCode::from_log_code(log) {
+            Some(code) => {
+                assert_eq!(code.log_code(), Some(log));
+            }
+            None => {
+                assert_eq!(log, LogCode::None, "only FNONE lacks a multiplexed variant");
+            }
+        }
+    }
+}
+
+#[test]
+fn message_code_flush_alias_matches_info_variant() {
+    assert_eq!(MessageCode::FLUSH, MessageCode::Info);
+    assert_eq!(MessageCode::FLUSH.as_u8(), MessageCode::Info.as_u8());
+    assert_eq!(MessageCode::FLUSH.name(), MessageCode::Info.name());
+    assert_eq!(
+        "MSG_FLUSH".parse::<MessageCode>().expect("alias should parse"),
+        MessageCode::Info
+    );
+}
+
+#[test]
 fn negotiation_prologue_sniffer_reports_buffered_length() {
     let mut sniffer = NegotiationPrologueSniffer::new();
 
