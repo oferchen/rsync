@@ -370,6 +370,13 @@ fn duration_from_microseconds(us: u128) -> Duration {
     Duration::new(seconds, micros.saturating_mul(1_000))
 }
 
+/// Sleeps for the requested duration while optionally recording the intervals for tests.
+///
+/// Builds that enable the `test-support` feature from dependent crates still run the limiter
+/// in production mode. To preserve accurate pacing we continue to block the thread in those
+/// configurations while recording the requested sleep chunks for later inspection. Only the
+/// crate's own tests (compiled with `cfg(test)`) bypass the real sleep so the unit test suite
+/// remains fast.
 fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 
@@ -386,9 +393,14 @@ fn sleep_for(duration: Duration) {
         #[cfg(any(test, feature = "test-support"))]
         {
             recorded_chunks.get_or_insert_with(Vec::new).push(chunk);
+
+            #[cfg(not(test))]
+            {
+                std::thread::sleep(chunk);
+            }
         }
 
-        #[cfg(not(any(test, feature = "test-support")))]
+        #[cfg(all(not(test), not(feature = "test-support")))]
         {
             std::thread::sleep(chunk);
         }
