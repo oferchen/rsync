@@ -220,6 +220,21 @@ impl BandwidthLimiter {
         self.simulated_elapsed_us = 0;
     }
 
+    /// Resets the limiter while keeping the current configuration.
+    ///
+    /// Upstream rsync calls `bwlimit_reset()` when a transfer needs to discard
+    /// previously accumulated debt without changing the negotiated
+    /// `--bwlimit` values (for example when a daemon session switches from the
+    /// greeting phase to file transfers). Clearing the tracked debt and
+    /// timestamps mirrors that behaviour so subsequent writes observe the same
+    /// pacing shape as a freshly constructed limiter with the existing
+    /// parameters.
+    pub fn reset(&mut self) {
+        self.total_written = 0;
+        self.last_instant = None;
+        self.simulated_elapsed_us = 0;
+    }
+
     #[inline]
     fn clamp_debt_to_burst(&mut self) {
         if let Some(burst) = self.burst_bytes {
@@ -453,5 +468,33 @@ mod tests {
                     .iter()
                     .all(|duration| duration.as_micros() <= MINIMUM_SLEEP_MICROS)
         );
+    }
+
+    #[test]
+    fn limiter_reset_clears_state_and_preserves_configuration() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let limit = NonZeroU64::new(1024).unwrap();
+        let mut baseline = BandwidthLimiter::new(limit);
+        baseline.register(4096);
+        let baseline_sleeps = session.take();
+
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(limit);
+        limiter.register(4096);
+        assert!(limiter.accumulated_debt_for_testing() > 0);
+
+        session.clear();
+
+        limiter.reset();
+        assert_eq!(limiter.limit_bytes(), limit);
+        assert_eq!(limiter.burst_bytes(), None);
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+        limiter.register(4096);
+        let reset_sleeps = session.take();
+        assert_eq!(reset_sleeps, baseline_sleeps);
     }
 }
