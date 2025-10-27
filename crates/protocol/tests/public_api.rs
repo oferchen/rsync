@@ -417,7 +417,9 @@ fn message_code_flush_alias_matches_info_variant() {
     assert_eq!(MessageCode::FLUSH.as_u8(), MessageCode::Info.as_u8());
     assert_eq!(MessageCode::FLUSH.name(), MessageCode::Info.name());
     assert_eq!(
-        "MSG_FLUSH".parse::<MessageCode>().expect("alias should parse"),
+        "MSG_FLUSH"
+            .parse::<MessageCode>()
+            .expect("alias should parse"),
         MessageCode::Info
     );
 }

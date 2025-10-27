@@ -328,6 +328,34 @@ impl NegotiationPrologueSniffer {
         self.buffered
     }
 
+    /// Consumes the sniffer and returns a tuple containing the cached
+    /// negotiation decision, the length of the sniffed prefix, and the buffered
+    /// bytes that were observed while determining the handshake style.
+    ///
+    /// The helper mirrors [`rehydrate_from_parts`](Self::rehydrate_from_parts)
+    /// by packaging the three inputs required to restore a sniffer after the
+    /// buffered transcript has been persisted elsewhere (for example inside the
+    /// transport layer's `NegotiatedStreamParts`). The buffered allocation is
+    /// trimmed to the canonical legacy prefix length so callers never inherit a
+    /// pathological capacity if the sniffer previously encountered a malformed
+    /// banner. When the negotiation has not yet been decided the returned
+    /// decision defaults to [`NegotiationPrologue::NeedMoreData`], matching the
+    /// snapshot expected by [`rehydrate_from_parts`](Self::rehydrate_from_parts).
+    #[must_use = "persist or replay the negotiation transcript captured by the sniffer"]
+    pub fn into_parts(mut self) -> (NegotiationPrologue, usize, Vec<u8>) {
+        let decision = self
+            .detector
+            .decision()
+            .unwrap_or(NegotiationPrologue::NeedMoreData);
+        let prefix_len = self.sniffed_prefix_len();
+
+        if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
+            self.buffered.shrink_to(LEGACY_DAEMON_PREFIX_LEN);
+        }
+
+        (decision, prefix_len, self.buffered)
+    }
+
     /// Drains the buffered bytes while keeping the sniffer available for reuse.
     ///
     /// Callers that need to replay the captured prefix into the legacy greeting
