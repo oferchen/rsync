@@ -244,11 +244,18 @@ macro_rules! declare_supported_protocols {
         const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion; SUPPORTED_PROTOCOL_COUNT] = [
             $(ProtocolVersion::new_const($ver)),+
         ];
+        #[doc = "Comma-separated list of supported protocol versions ordered from newest to oldest."]
+        #[doc(alias = "--protocol")]
+        pub const SUPPORTED_PROTOCOLS_DISPLAY: &str =
+            declare_supported_protocols!(@stringify $($ver),+);
     };
     (@len $($ver:literal),+) => {
         <[()]>::len(&[$(declare_supported_protocols!(@unit $ver)),+])
     };
     (@unit $ver:literal) => { () };
+    (@stringify $first:literal $(,$rest:literal)*) => {
+        concat!(stringify!($first) $(, ", ", stringify!($rest))* )
+    };
 }
 
 declare_supported_protocols!(32, 31, 30, 29, 28);
@@ -734,6 +741,19 @@ impl ProtocolVersion {
     #[must_use = "consume the iterator to inspect the supported protocol numbers"]
     pub const fn supported_protocol_numbers_iter() -> SupportedProtocolNumbersIter {
         SupportedProtocolNumbersIter::new(Self::supported_protocol_numbers())
+    }
+
+    /// Returns the comma-separated list of supported protocol versions.
+    ///
+    /// The format matches the diagnostics emitted by upstream rsync when an
+    /// unsupported protocol is requested via [`--protocol`](crate::ParseProtocolVersionErrorKind).
+    /// Deriving the text from the canonical [`SUPPORTED_PROTOCOLS`] list at
+    /// compile time keeps the string in sync with the advertised capabilities
+    /// while avoiding runtime allocation or locking overhead.
+    #[doc(alias = "--protocol")]
+    #[must_use]
+    pub const fn supported_protocol_numbers_display() -> &'static str {
+        SUPPORTED_PROTOCOLS_DISPLAY
     }
 
     /// Returns the inclusive range of protocol versions supported by this implementation.
