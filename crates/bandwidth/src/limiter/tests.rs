@@ -136,6 +136,24 @@ fn recorded_sleep_session_into_vec_consumes_guard() {
 }
 
 #[test]
+fn recorded_sleep_session_into_iter_collects_durations() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
+
+    let durations: Vec<_> = session.into_iter().collect();
+    assert_eq!(
+        durations,
+        [Duration::from_micros(MINIMUM_SLEEP_MICROS as u64)]
+    );
+
+    let mut follow_up = recorded_sleep_session();
+    assert!(follow_up.is_empty());
+    let _ = follow_up.take();
+}
+
+#[test]
 fn recorded_sleep_session_snapshot_preserves_buffer() {
     let mut session = recorded_sleep_session();
     session.clear();
