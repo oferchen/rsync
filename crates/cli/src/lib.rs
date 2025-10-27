@@ -14677,7 +14677,7 @@ exit 0
         while let Some(line) = lines.next() {
             if line == "--bwlimit" {
                 let value = lines.next().expect("bwlimit value recorded");
-                assert_eq!(value, "1048576");
+                assert_eq!(value, "1048576:65536");
                 return;
             }
         }
