@@ -219,7 +219,11 @@ impl<'a> RecordedSleepSession<'a> {
     /// traversal, guaranteeing exclusive access while avoiding additional
     /// allocations. Unlike [`take`](Self::take), `iter` keeps the recorded
     /// samples intact so callers can perform multiple passes or follow-up
-    /// assertions after collecting the yielded durations.
+    /// assertions after collecting the yielded durations. The iterator
+    /// implements [`DoubleEndedIterator`](std::iter::DoubleEndedIterator),
+    /// allowing callers to inspect the most recent sleeps first by calling
+    /// [`rev`](std::iter::Iterator::rev) without draining the underlying
+    /// storage.
     ///
     /// # Examples
     ///
@@ -241,9 +245,13 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     #[inline]
     pub fn iter(&self) -> RecordedSleepIter<'_> {
+        let guard = lock_recorded_sleeps();
+        let end = guard.len();
+
         RecordedSleepIter {
-            guard: lock_recorded_sleeps(),
+            guard,
             index: 0,
+            end,
             _session: PhantomData,
         }
     }
@@ -292,10 +300,13 @@ impl<'a> IntoIterator for RecordedSleepSession<'a> {
 /// The iterator keeps the underlying buffer intact, allowing tests to inspect
 /// the pacing schedule multiple times while retaining exclusive access to the
 /// shared storage guarded by [`recorded_sleep_session`]. Instances are created
-/// via [`RecordedSleepSession::iter`].
+/// via [`RecordedSleepSession::iter`]. It also implements
+/// [`DoubleEndedIterator`](std::iter::DoubleEndedIterator) so callers can walk
+/// the recorded sleeps in reverse order without draining them.
 pub struct RecordedSleepIter<'a> {
     guard: MutexGuard<'static, Vec<Duration>>,
     index: usize,
+    end: usize,
     _session: PhantomData<&'a RecordedSleepSession<'a>>,
 }
 
@@ -304,6 +315,10 @@ impl Iterator for RecordedSleepIter<'_> {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+
         let item = self.guard.get(self.index).copied();
         if item.is_some() {
             self.index += 1;
@@ -312,15 +327,27 @@ impl Iterator for RecordedSleepIter<'_> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.guard.len().saturating_sub(self.index);
+        let remaining = self.end.saturating_sub(self.index);
         (remaining, Some(remaining))
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DoubleEndedIterator for RecordedSleepIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+
+        self.end = self.end.saturating_sub(1);
+        self.guard.get(self.end).copied()
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl ExactSizeIterator for RecordedSleepIter<'_> {
     fn len(&self) -> usize {
-        self.guard.len().saturating_sub(self.index)
+        self.end.saturating_sub(self.index)
     }
 }
 
