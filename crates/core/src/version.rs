@@ -4,7 +4,7 @@
 //!
 //! `rsync_core::version` centralises the workspace version constants and
 //! feature-detection helpers that drive the `--version` output of the Rust
-//! `oc-rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
+//! `rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
 //! canonical base version while appending the `-rust` suffix that brands this
 //! implementation.
 //!
@@ -23,7 +23,7 @@
 //!   [`CompiledFeature::from_label`] for parsing user-provided strings.
 //! - [`VersionInfoReport`] renders the full `--version` text, including
 //!   capability sections and checksum/compressor listings, so the CLI can
-//!   display upstream-identical banners branded for `oc-rsync`.
+//!   display upstream-identical banners branded for `rsync`.
 //!
 //! This structure keeps other crates free of conditional compilation logic
 //! while avoiding string duplication across the workspace.
@@ -119,11 +119,11 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
     bitmap
 };
 
-/// Program name rendered by the `oc-rsync` client when displaying version banners.
-pub const PROGRAM_NAME: &str = "oc-rsync";
+/// Program name rendered by the `rsync` client when displaying version banners.
+pub const PROGRAM_NAME: &str = "rsync";
 
-/// Program name rendered by the `oc-rsyncd` daemon when displaying version banners.
-pub const DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
+/// Program name rendered by the `rsyncd` daemon when displaying version banners.
+pub const DAEMON_PROGRAM_NAME: &str = "rsyncd";
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";
@@ -131,10 +131,10 @@ pub const COPYRIGHT_START_YEAR: &str = "2025";
 /// Latest copyright year recorded by the Rust implementation.
 pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 
-/// Copyright notice rendered by `oc-rsync`.
+/// Copyright notice rendered by `rsync`.
 pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 
-/// Web site advertised by `oc-rsync` in `--version` output.
+/// Web site advertised by `rsync` in `--version` output.
 pub const WEB_SITE: &str = "https://github.com/oferchen/rsync";
 
 /// Repository URL advertised by version banners and documentation.
@@ -178,7 +178,7 @@ pub const RUST_VERSION: &str = "3.4.1-rust";
 /// Highest protocol version supported by this build.
 pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
 
-/// Static metadata describing the standard version banner rendered by `oc-rsync`.
+/// Static metadata describing the standard version banner rendered by `rsync`.
 ///
 /// The structure mirrors upstream `print_rsync_version()` so higher layers can
 /// render byte-identical banners without hard-coding strings at the call site
@@ -194,7 +194,7 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();
 ///
-/// assert!(banner.starts_with("oc-rsync  version 3.4.1-rust"));
+/// assert!(banner.starts_with("rsync  version 3.4.1-rust"));
 /// assert!(banner.contains("protocol version 32"));
 /// assert!(banner.contains("revision/build #"));
 /// assert!(banner.contains("https://github.com/oferchen/rsync"));
@@ -271,7 +271,7 @@ impl VersionMetadata {
     ///     .write_standard_banner(&mut rendered)
     ///     .expect("writing to a String never fails");
     ///
-    /// assert!(rendered.starts_with("oc-rsync  version"));
+    /// assert!(rendered.starts_with("rsync  version"));
     /// assert!(rendered.ends_with("\n"));
     /// ```
     pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
@@ -1526,7 +1526,7 @@ impl Default for VersionInfoConfigBuilder {
 /// Instances of this type use [`VersionMetadata`] together with [`VersionInfoConfig`] to reproduce
 /// upstream rsync's capability report. Callers may override the checksum, compression, and daemon
 /// authentication lists to match the negotiated feature set of the final binary. When rendering
-/// banners for a different binary (for example, `oc-rsyncd`), construct the report with
+/// banners for a different binary (for example, `rsyncd`), construct the report with
 /// [`with_program_name`](Self::with_program_name) so the prologue reflects the appropriate binary
 /// name while retaining all other metadata.
 #[derive(Clone, Debug)]
@@ -1864,7 +1864,7 @@ mod tests {
 
         let expected = format!(
             concat!(
-                "oc-rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
+                "rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
                 "Copyright (C) 2025 by Ofer Chen.\n",
                 "Web site: https://github.com/oferchen/rsync\n"
             ),
@@ -1951,7 +1951,7 @@ mod tests {
         };
 
         let build_info = build_info_line();
-        assert!(actual.starts_with("oc-rsync  version 3.4.1-rust"));
+        assert!(actual.starts_with("rsync  version 3.4.1-rust"));
         assert!(actual.contains(&format!(
             "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
         )));
@@ -1998,7 +1998,7 @@ mod tests {
             .with_program_name(DAEMON_PROGRAM_NAME);
         let banner = report.metadata().standard_banner();
 
-        assert!(banner.starts_with("oc-rsyncd  version"));
+        assert!(banner.starts_with("rsyncd  version"));
     }
 
     #[test]

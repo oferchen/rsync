@@ -3,7 +3,7 @@
 //! # Overview
 //!
 //! The `client` module exposes the orchestration entry points consumed by the
-//! `oc-rsync` CLI binary. The current implementation focuses on providing a
+//! `rsync` CLI binary. The current implementation focuses on providing a
 //! deterministic, synchronous local copy engine that mirrors the high-level
 //! behaviour of `rsync SOURCE DEST` when no remote shells or daemons are
 //! involved. The API models the configuration and error structures that higher

@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_daemon` provides the thin command-line front-end for the Rust `oc-rsyncd`
+//! `rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
 //! binary. The crate now exposes a deterministic daemon loop capable of
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
@@ -73,7 +73,7 @@
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
-//! let status = run(["oc-rsyncd", "--version"], &mut stdout, &mut stderr);
+//! let status = run(["rsyncd", "--version"], &mut stdout, &mut stderr);
 //!
 //! assert_eq!(status, 0);
 //! assert!(stderr.is_empty());
@@ -241,10 +241,10 @@ const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
-    "oc-rsyncd 3.4.1-rust\n",
+    "rsyncd 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsyncd [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
+    "Usage: rsyncd [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
     "\n",
     "Daemon mode is under active development. This build recognises:\n",
     "  --help        Show this help message and exit.\n",
@@ -2714,7 +2714,7 @@ struct ParsedArgs {
 }
 
 fn clap_command() -> Command {
-    Command::new("oc-rsyncd")
+    Command::new("rsyncd")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -2755,7 +2755,7 @@ where
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
     if args.is_empty() {
-        args.push(OsString::from("oc-rsyncd"));
+        args.push(OsString::from("rsyncd"));
     }
 
     let mut matches = clap_command().try_get_matches_from(args)?;
@@ -5123,7 +5123,7 @@ mod tests {
         let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
+            OsStr::new("rsyncd"),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--config"),
             OsStr::new("/etc/rsyncd.conf"),
@@ -5146,10 +5146,8 @@ mod tests {
         write_executable_script(&script_path, "#!/bin/sh\nexit 7\n");
         let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
-        let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
-            OsStr::new("--delegate-system-rsync"),
-        ]);
+        let (code, _stdout, stderr) =
+            run_with_args([OsStr::new("rsyncd"), OsStr::new("--delegate-system-rsync")]);
 
         assert_eq!(code, 7);
         let stderr_str = String::from_utf8_lossy(&stderr);
@@ -5168,7 +5166,7 @@ mod tests {
         let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
+            OsStr::new("rsyncd"),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--port"),
             OsStr::new("1234"),
@@ -5193,7 +5191,7 @@ mod tests {
         let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("1"));
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
+            OsStr::new("rsyncd"),
             OsStr::new("--config"),
             OsStr::new("/etc/rsyncd.conf"),
         ]);
@@ -5404,7 +5402,7 @@ mod tests {
         let _fallback = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
+            OsStr::new("rsyncd"),
             OsStr::new("--config"),
             OsStr::new("/etc/rsyncd.conf"),
         ]);
@@ -5428,7 +5426,7 @@ mod tests {
         let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsyncd"),
+            OsStr::new("rsyncd"),
             OsStr::new("--config"),
             OsStr::new("/etc/rsyncd.conf"),
         ]);
@@ -5452,8 +5450,7 @@ mod tests {
         let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
         let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("0"));
 
-        let (code, stdout, _stderr) =
-            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, _stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(!stdout.is_empty());
@@ -5741,14 +5738,11 @@ mod tests {
     fn runtime_options_parse_pid_file_argument() {
         let options = RuntimeOptions::parse(&[
             OsString::from("--pid-file"),
-            OsString::from("/var/run/oc-rsyncd.pid"),
+            OsString::from("/var/run/rsyncd.pid"),
         ])
         .expect("parse pid file argument");
 
-        assert_eq!(
-            options.pid_file(),
-            Some(Path::new("/var/run/oc-rsyncd.pid"))
-        );
+        assert_eq!(options.pid_file(), Some(Path::new("/var/run/rsyncd.pid")));
     }
 
     #[test]
@@ -6593,13 +6587,13 @@ mod tests {
     fn runtime_options_parse_log_file_argument() {
         let options = RuntimeOptions::parse(&[
             OsString::from("--log-file"),
-            OsString::from("/var/log/oc-rsyncd.log"),
+            OsString::from("/var/log/rsyncd.log"),
         ])
         .expect("parse log file argument");
 
         assert_eq!(
             options.log_file(),
-            Some(&PathBuf::from("/var/log/oc-rsyncd.log"))
+            Some(&PathBuf::from("/var/log/rsyncd.log"))
         );
     }
 
@@ -6625,14 +6619,11 @@ mod tests {
     fn runtime_options_parse_lock_file_argument() {
         let options = RuntimeOptions::parse(&[
             OsString::from("--lock-file"),
-            OsString::from("/var/run/oc-rsyncd.lock"),
+            OsString::from("/var/run/rsyncd.lock"),
         ])
         .expect("parse lock file argument");
 
-        assert_eq!(
-            options.lock_file(),
-            Some(Path::new("/var/run/oc-rsyncd.lock"))
-        );
+        assert_eq!(options.lock_file(), Some(Path::new("/var/run/rsyncd.lock")));
     }
 
     #[test]
@@ -6657,7 +6648,7 @@ mod tests {
     fn runtime_options_parse_motd_sources() {
         let dir = tempdir().expect("motd dir");
         let motd_path = dir.path().join("motd.txt");
-        fs::write(&motd_path, "Welcome to oc-rsyncd\nSecond line\n").expect("write motd");
+        fs::write(&motd_path, "Welcome to rsyncd\nSecond line\n").expect("write motd");
 
         let options = RuntimeOptions::parse(&[
             OsString::from("--motd-file"),
@@ -6668,7 +6659,7 @@ mod tests {
         .expect("parse motd options");
 
         let expected = vec![
-            String::from("Welcome to oc-rsyncd"),
+            String::from("Welcome to rsyncd"),
             String::from("Second line"),
             String::from("Trailing notice"),
         ];
@@ -7603,7 +7594,7 @@ mod tests {
         drop(listener);
 
         let temp = tempdir().expect("pid dir");
-        let pid_path = temp.path().join("oc-rsyncd.pid");
+        let pid_path = temp.path().join("rsyncd.pid");
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -8227,7 +8218,7 @@ mod tests {
         let motd_path = dir.path().join("motd.txt");
         fs::write(
             &motd_path,
-            "Welcome to oc-rsyncd\nRemember to sync responsibly\n",
+            "Welcome to rsyncd\nRemember to sync responsibly\n",
         )
         .expect("write motd");
 
@@ -8264,7 +8255,7 @@ mod tests {
 
         line.clear();
         reader.read_line(&mut line).expect("motd line 1");
-        assert_eq!(line.trim_end(), "@RSYNCD: MOTD Welcome to oc-rsyncd");
+        assert_eq!(line.trim_end(), "@RSYNCD: MOTD Welcome to rsyncd");
 
         line.clear();
         reader.read_line(&mut line).expect("motd line 2");
@@ -8305,7 +8296,7 @@ mod tests {
         drop(listener);
 
         let temp = tempdir().expect("log dir");
-        let log_path = temp.path().join("oc-rsyncd.log");
+        let log_path = temp.path().join("rsyncd.log");
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -8384,8 +8375,7 @@ mod tests {
 
     #[test]
     fn version_flag_renders_report() {
-        let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--version")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -8398,7 +8388,7 @@ mod tests {
 
     #[test]
     fn help_flag_renders_static_help_snapshot() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -8479,16 +8469,13 @@ mod tests {
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
-            .try_get_matches_from(vec!["oc-rsyncd", "--version=extra"])
+            .try_get_matches_from(vec!["rsyncd", "--version=extra"])
             .unwrap_err();
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [
-                OsString::from("oc-rsyncd"),
-                OsString::from("--version=extra"),
-            ],
+            [OsString::from("rsyncd"), OsString::from("--version=extra")],
             &mut stdout,
             &mut stderr,
         );

@@ -1,7 +1,7 @@
 //! # Overview
 //!
 //! Implements deterministic local filesystem copies used by the current
-//! `oc-rsync` development snapshot. The module constructs
+//! `rsync` development snapshot. The module constructs
 //! [`LocalCopyPlan`] values from CLI-style operands and executes them while
 //! preserving permissions, timestamps, and optional ownership metadata via
 //! [`rsync_meta`].
@@ -7910,7 +7910,7 @@ fn partial_destination_path(destination: &Path) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "partial".to_string());
-    let partial_name = format!(".oc-rsync-partial-{}", file_name);
+    let partial_name = format!(".rsync-partial-{}", file_name);
     destination.with_file_name(partial_name)
 }
 
@@ -8031,7 +8031,7 @@ fn temporary_destination_path(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "temp".to_string());
-    let temp_name = format!(".oc-rsync-tmp-{file_name}-{}-{}", process::id(), unique);
+    let temp_name = format!(".rsync-tmp-{file_name}-{}-{}", process::id(), unique);
     match temp_dir {
         Some(dir) => dir.join(temp_name),
         None => destination.with_file_name(temp_name),
@@ -12537,7 +12537,7 @@ mod tests {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             assert!(
-                !name.starts_with(".oc-rsync-tmp-") && !name.starts_with(".oc-rsync-partial-"),
+                !name.starts_with(".rsync-tmp-") && !name.starts_with(".rsync-partial-"),
                 "unexpected temporary file left behind: {}",
                 name
             );
@@ -12674,7 +12674,7 @@ mod tests {
         let mut entries = fs::read_dir(&dest_dir).expect("list dest dir");
         assert!(entries.all(|entry| {
             let name = entry.expect("dir entry").file_name();
-            !name.to_string_lossy().starts_with(".oc-rsync-tmp-")
+            !name.to_string_lossy().starts_with(".rsync-tmp-")
         }));
     }
 
