@@ -89,6 +89,38 @@ impl<'a> RecordedSleepSession<'a> {
         self.with_recorded_sleeps(|durations| durations.len())
     }
 
+    /// Returns a snapshot of the recorded sleep durations without clearing them.
+    ///
+    /// Unlike [`take`](Self::take), this helper clones the currently buffered
+    /// durations so tests can assert on the pacing schedule multiple times while
+    /// allowing additional sleeps to accumulate. The method honours the
+    /// `test-support` feature gate just like the rest of the guard API and keeps
+    /// the shared buffer intact for subsequent assertions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "test-support")]
+    /// # {
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use std::num::NonZeroU64;
+    ///
+    /// let mut session = recorded_sleep_session();
+    /// session.clear();
+    ///
+    /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+    /// limiter.register(2048);
+    ///
+    /// let snapshot = session.snapshot();
+    /// assert!(!snapshot.is_empty());
+    /// assert_eq!(snapshot, session.take());
+    /// # }
+    /// ```
+    #[inline]
+    pub fn snapshot(&self) -> Vec<Duration> {
+        self.with_recorded_sleeps(|durations| durations.to_vec())
+    }
+
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
