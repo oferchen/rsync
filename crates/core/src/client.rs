@@ -4779,7 +4779,7 @@ mod tests {
 
     #[test]
     fn bandwidth_limit_from_components_returns_none_for_unlimited() {
-        let components = bandwidth::BandwidthLimitComponents::new(None, None);
+        let components = bandwidth::BandwidthLimitComponents::unlimited();
         assert!(BandwidthLimit::from_components(components).is_none());
     }
 
