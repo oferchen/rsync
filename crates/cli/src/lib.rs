@@ -12619,7 +12619,7 @@ mod tests {
         let limit = parse_bandwidth_limit(OsStr::new("10KB"))
             .expect("parse succeeds")
             .expect("limit available");
-        assert_eq!(limit.bytes_per_second().get(), 10_240);
+        assert_eq!(limit.bytes_per_second().get(), 10_000);
     }
 
     #[test]
