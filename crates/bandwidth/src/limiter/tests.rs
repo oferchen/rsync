@@ -119,6 +119,30 @@ fn recorded_sleep_session_snapshot_preserves_buffer() {
 }
 
 #[test]
+fn recorded_sleep_session_total_duration_reports_sum_without_draining() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64 / 2));
+
+    let total = session.total_duration();
+    assert_eq!(
+        total,
+        Duration::from_micros((MINIMUM_SLEEP_MICROS + MINIMUM_SLEEP_MICROS / 2) as u64)
+    );
+    assert_eq!(session.len(), 2);
+    assert_eq!(session.total_duration(), total);
+    assert_eq!(
+        session.take(),
+        [
+            Duration::from_micros(MINIMUM_SLEEP_MICROS as u64),
+            Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64),
+        ]
+    );
+}
+
+#[test]
 fn recorded_sleep_session_recovers_from_mutex_poisoning() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let _session = recorded_sleep_session();
