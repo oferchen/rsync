@@ -18,9 +18,9 @@ fn parse_bandwidth_accepts_decimal_units() {
 }
 
 #[test]
-fn parse_bandwidth_accepts_space_between_value_and_suffix() {
-    let limit = parse_bandwidth_argument("1 M").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1_048_576));
+fn parse_bandwidth_rejects_space_between_value_and_suffix() {
+    let error = parse_bandwidth_argument("1 M").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -146,9 +146,9 @@ fn parse_bandwidth_limit_accepts_zero_burst() {
 }
 
 #[test]
-fn parse_bandwidth_trims_surrounding_whitespace() {
-    let limit = parse_bandwidth_argument("\t 2M \n").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(2_097_152));
+fn parse_bandwidth_rejects_surrounding_whitespace() {
+    let error = parse_bandwidth_argument("\t 2M \n").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -183,21 +183,17 @@ fn parse_bandwidth_accepts_positive_adjustment() {
 }
 
 #[test]
-fn parse_bandwidth_accepts_whitespace_before_adjustment() {
-    let limit = parse_bandwidth_argument("1K +1").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1024));
+fn parse_bandwidth_rejects_whitespace_before_adjustment() {
+    let error = parse_bandwidth_argument("1K +1").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
-fn parse_bandwidth_accepts_whitespace_within_adjustment() {
-    let limit = parse_bandwidth_argument("1K+ 1").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1024));
-
-    let limit = parse_bandwidth_argument("1K + 1").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1024));
-
-    let limit = parse_bandwidth_argument("1K- 1").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1024));
+fn parse_bandwidth_rejects_whitespace_within_adjustment() {
+    for text in ["1K+ 1", "1K + 1", "1K- 1"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
 }
 
 #[test]
@@ -228,16 +224,9 @@ fn parse_bandwidth_rejects_non_unit_adjustment_value() {
 }
 
 #[test]
-fn parse_bandwidth_limit_accepts_whitespace_around_burst_separator() {
-    let components = parse_bandwidth_limit("4M : 256K").expect("parse succeeds");
-    assert_eq!(
-        components,
-        BandwidthLimitComponents::new_with_specified(
-            NonZeroU64::new(4 * 1024 * 1024),
-            NonZeroU64::new(256 * 1024),
-            true,
-        ),
-    );
+fn parse_bandwidth_limit_rejects_whitespace_around_burst_separator() {
+    let error = parse_bandwidth_limit("4M : 256K").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
