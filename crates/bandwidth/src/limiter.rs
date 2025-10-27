@@ -139,11 +139,8 @@ fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64
         .and_then(NonZeroU64::new)
         .expect("bandwidth limit must be at least 1024 bytes per second");
 
-    let mut write_max = u128::from(kib.get()).saturating_mul(128);
-    if write_max < 512 {
-        write_max = 512;
-    }
-    let mut write_max = write_max.min(usize::MAX as u128) as usize;
+    let base_write_max = u128::from(kib.get()).saturating_mul(128).max(512);
+    let mut write_max = base_write_max.min(usize::MAX as u128) as usize;
 
     if let Some(burst) = burst {
         let burst = burst.get().min(usize::MAX as u64);
@@ -194,9 +191,7 @@ pub fn apply_effective_limit(
                 }
             },
             None => {
-                if limiter.is_some() {
-                    *limiter = None;
-                }
+                *limiter = None;
                 return;
             }
         }
@@ -297,9 +292,7 @@ impl BandwidthLimiter {
     fn clamp_debt_to_burst(&mut self) {
         if let Some(burst) = self.burst_bytes {
             let limit = u128::from(burst.get());
-            if self.total_written > limit {
-                self.total_written = limit;
-            }
+            self.total_written = self.total_written.min(limit);
         }
     }
 
@@ -332,6 +325,7 @@ impl BandwidthLimiter {
         self.clamp_debt_to_burst();
 
         let start = Instant::now();
+        let kib_per_second = u128::from(self.kib_per_second.get());
 
         let mut elapsed_us = self.simulated_elapsed_us;
         if let Some(previous) = self.last_instant {
@@ -341,8 +335,7 @@ impl BandwidthLimiter {
         }
         self.simulated_elapsed_us = 0;
         if elapsed_us > 0 {
-            let allowed = elapsed_us.saturating_mul(u128::from(self.kib_per_second.get()))
-                / MICROS_PER_SECOND_DIV_1024;
+            let allowed = elapsed_us.saturating_mul(kib_per_second) / MICROS_PER_SECOND_DIV_1024;
             if allowed >= self.total_written {
                 self.total_written = 0;
             } else {
@@ -355,7 +348,7 @@ impl BandwidthLimiter {
         let sleep_us = self
             .total_written
             .saturating_mul(MICROS_PER_SECOND_DIV_1024)
-            / u128::from(self.kib_per_second.get());
+            / kib_per_second;
 
         if sleep_us < MINIMUM_SLEEP_MICROS {
             self.last_instant = Some(start);
@@ -376,8 +369,7 @@ impl BandwidthLimiter {
             self.simulated_elapsed_us = sleep_us - elapsed_us;
         }
         let remaining_us = sleep_us.saturating_sub(elapsed_us);
-        let leftover = remaining_us.saturating_mul(u128::from(self.kib_per_second.get()))
-            / MICROS_PER_SECOND_DIV_1024;
+        let leftover = remaining_us.saturating_mul(kib_per_second) / MICROS_PER_SECOND_DIV_1024;
 
         self.total_written = leftover;
         self.clamp_debt_to_burst();
