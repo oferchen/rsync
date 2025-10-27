@@ -1062,6 +1062,14 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
+        if let Some((components, _origin)) = parsed.global_bandwidth_limit {
+            if !self.bandwidth_limit_configured {
+                self.bandwidth_limit = components.rate();
+                self.bandwidth_burst = components.burst();
+                self.bandwidth_limit_configured = true;
+            }
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -1292,6 +1300,7 @@ struct ParsedConfigModules {
     pid_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -1327,6 +1336,7 @@ fn parse_config_modules_inner(
     let mut pid_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
     let mut reverse_lookup: Option<(bool, ConfigDirectiveOrigin)> = None;
     let mut lock_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
+    let mut global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1593,6 +1603,23 @@ fn parse_config_modules_inner(
                     if !included.global_refuse_options.is_empty() {
                         global_refuse_directives.extend(included.global_refuse_options);
                     }
+
+                    if let Some((components, origin)) = included.global_bandwidth_limit {
+                        if let Some((existing, existing_origin)) = &global_bwlimit {
+                            if existing != &components {
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'bwlimit' directive in global section (previously defined on line {})",
+                                        existing_origin.line
+                                    ),
+                                ));
+                            }
+                        } else {
+                            global_bwlimit = Some((components, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -1685,6 +1712,36 @@ fn parse_config_modules_inner(
                         reverse_lookup = Some((parsed, origin));
                     }
                 }
+                "bwlimit" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'bwlimit' directive must not be empty",
+                        ));
+                    }
+
+                    let components = parse_config_bwlimit(value, path, line_number)?;
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &global_bwlimit {
+                        if existing != &components {
+                            return Err(config_parse_error(
+                                &origin.path,
+                                origin.line,
+                                format!(
+                                    "duplicate 'bwlimit' directive in global section (previously defined on line {})",
+                                    existing_origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        global_bwlimit = Some((components, origin));
+                    }
+                }
                 "lock file" => {
                     let trimmed = value.trim();
                     if trimmed.is_empty() {
@@ -1737,6 +1794,7 @@ fn parse_config_modules_inner(
             pid_file,
             reverse_lookup,
             lock_file,
+            global_bandwidth_limit: global_bwlimit,
         })
     })();
 
@@ -6030,6 +6088,71 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_loads_global_bwlimit_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "bwlimit = 3M:12M\n[docs]\npath = /srv/docs\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        assert_eq!(
+            options.bandwidth_limit(),
+            Some(NonZeroU64::new(3 * 1024 * 1024).unwrap())
+        );
+        assert_eq!(
+            options.bandwidth_burst(),
+            Some(NonZeroU64::new(12 * 1024 * 1024).unwrap())
+        );
+        assert!(options.bandwidth_limit_configured());
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        assert!(modules[0].bandwidth_limit().is_none());
+    }
+
+    #[test]
+    fn runtime_options_global_bwlimit_respects_cli_override() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "bwlimit = 3M\n[docs]\npath = /srv/docs\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--bwlimit"),
+            OsString::from("8M:32M"),
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config with cli override");
+
+        assert_eq!(
+            options.bandwidth_limit(),
+            Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
+        );
+        assert_eq!(
+            options.bandwidth_burst(),
+            Some(NonZeroU64::new(32 * 1024 * 1024).unwrap())
+        );
+    }
+
+    #[test]
+    fn runtime_options_loads_unlimited_global_bwlimit_from_config() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "bwlimit = 0\n[docs]\npath = /srv/docs\n").expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect("parse config modules");
+
+        assert!(options.bandwidth_limit().is_none());
+        assert!(options.bandwidth_burst().is_none());
+        assert!(options.bandwidth_limit_configured());
+    }
+
+    #[test]
     fn runtime_options_loads_refuse_options_from_config() {
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
@@ -6333,6 +6456,29 @@ mod tests {
                 .message()
                 .to_string()
                 .contains("duplicate 'refuse options' directive")
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_duplicate_global_bwlimit() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "bwlimit = 1M\nbwlimit = 2M\n[docs]\npath = /srv/docs\n"
+        )
+        .expect("write config");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ])
+        .expect_err("duplicate global bwlimit should fail");
+
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("duplicate 'bwlimit' directive in global section")
         );
     }
 
