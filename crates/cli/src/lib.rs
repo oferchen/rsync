@@ -3461,11 +3461,11 @@ where
     let owner_override_value = parsed_chown
         .as_ref()
         .and_then(|value| value.owner)
-        .map(|uid| uid as u32);
+        .map(u32::from);
     let group_override_value = parsed_chown
         .as_ref()
         .and_then(|value| value.group)
-        .map(|gid| gid as u32);
+        .map(u32::from);
     let chown_spec = parsed_chown.as_ref().map(|value| value.spec.clone());
 
     #[cfg(not(feature = "xattr"))]
