@@ -184,6 +184,52 @@ fn recorded_sleep_session_iter_preserves_buffer_and_reports_length() {
 }
 
 #[test]
+fn recorded_sleep_session_reference_into_iter_preserves_buffer() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let expected = vec![
+        Duration::from_micros(MINIMUM_SLEEP_MICROS as u64),
+        Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64),
+    ];
+
+    for duration in &expected {
+        sleep_for(*duration);
+    }
+
+    let collected: Vec<_> = (&session).into_iter().collect();
+    assert_eq!(collected, expected);
+    assert_eq!(session.len(), expected.len());
+    assert_eq!(session.take(), expected);
+}
+
+#[test]
+fn recorded_sleep_session_mut_reference_into_iter_preserves_buffer() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let expected = vec![
+        Duration::from_micros(MINIMUM_SLEEP_MICROS as u64),
+        Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64),
+    ];
+
+    for duration in &expected {
+        sleep_for(*duration);
+    }
+
+    let mut observed = Vec::new();
+    {
+        for chunk in &mut session {
+            observed.push(chunk);
+        }
+    }
+
+    assert_eq!(observed, expected);
+    assert_eq!(session.len(), expected.len());
+    assert_eq!(session.take(), expected);
+}
+
+#[test]
 fn recorded_sleep_session_snapshot_preserves_buffer() {
     let mut session = recorded_sleep_session();
     session.clear();
