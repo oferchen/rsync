@@ -65,28 +65,31 @@ use std::path::Path;
 
 use crate::MetadataError;
 
-mod ffi {
+mod sys {
+    #![allow(unsafe_code)]
+    #![allow(non_camel_case_types)]
+
     #[cfg(test)]
-    use libc::size_t;
+    use libc::ssize_t;
     use libc::{c_char, c_int, c_void, mode_t};
 
-    pub(super) type RawAcl = *mut c_void;
-    pub(super) type AclType = c_int;
+    pub type acl_t = *mut c_void;
+    pub type acl_type_t = c_int;
 
-    pub(super) const ACL_TYPE_ACCESS: AclType = 0x8000;
-    pub(super) const ACL_TYPE_DEFAULT: AclType = 0x4000;
+    pub const ACL_TYPE_ACCESS: acl_type_t = 0x8000;
+    pub const ACL_TYPE_DEFAULT: acl_type_t = 0x4000;
 
     unsafe extern "C" {
-        pub(super) fn acl_dup(acl: RawAcl) -> RawAcl;
-        pub(super) fn acl_free(ptr: *mut c_void) -> c_int;
-        pub(super) fn acl_get_file(path: *const c_char, ty: AclType) -> RawAcl;
-        pub(super) fn acl_set_file(path: *const c_char, ty: AclType, acl: RawAcl) -> c_int;
-        pub(super) fn acl_from_mode(mode: mode_t) -> RawAcl;
-        pub(super) fn acl_delete_def_file(path: *const c_char) -> c_int;
+        pub fn acl_get_file(path_p: *const c_char, ty: acl_type_t) -> acl_t;
+        pub fn acl_set_file(path_p: *const c_char, ty: acl_type_t, acl: acl_t) -> c_int;
+        pub fn acl_dup(acl: acl_t) -> acl_t;
+        pub fn acl_free(obj_p: *mut c_void) -> c_int;
+        pub fn acl_from_mode(mode: mode_t) -> acl_t;
+        pub fn acl_delete_def_file(path_p: *const c_char) -> c_int;
         #[cfg(test)]
-        pub(super) fn acl_to_text(acl: RawAcl, len: *mut size_t) -> *mut c_char;
+        pub fn acl_to_text(acl: acl_t, len_p: *mut ssize_t) -> *mut c_char;
         #[cfg(test)]
-        pub(super) fn acl_from_text(buf: *const c_char) -> RawAcl;
+        pub fn acl_from_text(buf_p: *const c_char) -> acl_t;
     }
 }
 
@@ -132,12 +135,12 @@ pub fn sync_acls(
         return Ok(());
     }
 
-    let access = match fetch_acl(source, ffi::ACL_TYPE_ACCESS) {
+    let access = match fetch_acl(source, sys::ACL_TYPE_ACCESS) {
         Ok(value) => value,
         Err(error) => return Err(MetadataError::new("read ACL", source, error)),
     };
 
-    let default = match fetch_acl(source, ffi::ACL_TYPE_DEFAULT) {
+    let default = match fetch_acl(source, sys::ACL_TYPE_DEFAULT) {
         Ok(value) => value,
         Err(error) => return Err(MetadataError::new("read default ACL", source, error)),
     };
@@ -153,20 +156,20 @@ pub fn sync_acls(
     Ok(())
 }
 
-struct PosixAcl(ffi::RawAcl);
+struct PosixAcl(sys::acl_t);
 
 impl PosixAcl {
-    fn as_ptr(&self) -> ffi::RawAcl {
+    fn as_ptr(&self) -> sys::acl_t {
         self.0
     }
 
-    fn from_raw(raw: ffi::RawAcl) -> Self {
+    fn from_raw(raw: sys::acl_t) -> Self {
         Self(raw)
     }
 
     fn clone(&self) -> io::Result<Self> {
         // Safety: `acl_dup` returns a new reference when provided with a valid ACL pointer.
-        let duplicated = unsafe { ffi::acl_dup(self.0) };
+        let duplicated = unsafe { sys::acl_dup(self.0) };
         if duplicated.is_null() {
             Err(io::Error::last_os_error())
         } else {
@@ -180,16 +183,16 @@ impl Drop for PosixAcl {
         if !self.0.is_null() {
             // Safety: the ACL pointer originates from libacl allocation APIs.
             unsafe {
-                ffi::acl_free(self.0);
+                sys::acl_free(self.0);
             }
         }
     }
 }
 
-fn fetch_acl(path: &Path, ty: ffi::AclType) -> io::Result<Option<PosixAcl>> {
+fn fetch_acl(path: &Path, ty: sys::acl_type_t) -> io::Result<Option<PosixAcl>> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: the pointer remains valid for the duration of the call.
-    let acl = unsafe { ffi::acl_get_file(c_path.as_ptr(), ty) };
+    let acl = unsafe { sys::acl_get_file(c_path.as_ptr(), ty) };
     if acl.is_null() {
         let error = io::Error::last_os_error();
         match error.raw_os_error() {
@@ -205,15 +208,15 @@ fn fetch_acl(path: &Path, ty: ffi::AclType) -> io::Result<Option<PosixAcl>> {
 
 fn apply_access_acl(path: &Path, acl: Option<&PosixAcl>) -> io::Result<()> {
     match acl {
-        Some(value) => set_acl(path, ffi::ACL_TYPE_ACCESS, value.clone()?),
+        Some(value) => set_acl(path, sys::ACL_TYPE_ACCESS, value.clone()?),
         None => reset_access_acl(path),
     }
 }
 
-fn set_acl(path: &Path, ty: ffi::AclType, acl: PosixAcl) -> io::Result<()> {
+fn set_acl(path: &Path, ty: sys::acl_type_t, acl: PosixAcl) -> io::Result<()> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: arguments are valid pointers and libacl owns the ACL data.
-    let result = unsafe { ffi::acl_set_file(c_path.as_ptr(), ty, acl.as_ptr()) };
+    let result = unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl.as_ptr()) };
     if result == 0 {
         Ok(())
     } else {
@@ -225,18 +228,18 @@ fn reset_access_acl(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     let mode = metadata.mode() & 0o777;
     // Safety: acl_from_mode allocates a new ACL from the provided bitmask.
-    let acl = unsafe { ffi::acl_from_mode(mode as libc::mode_t) };
+    let acl = unsafe { sys::acl_from_mode(mode as libc::mode_t) };
     if acl.is_null() {
         return Err(io::Error::last_os_error());
     }
 
     let acl = PosixAcl::from_raw(acl);
-    set_acl(path, ffi::ACL_TYPE_ACCESS, acl)
+    set_acl(path, sys::ACL_TYPE_ACCESS, acl)
 }
 
 fn apply_default_acl(path: &Path, acl: Option<&PosixAcl>) -> io::Result<()> {
     match acl {
-        Some(value) => set_acl(path, ffi::ACL_TYPE_DEFAULT, value.clone()?),
+        Some(value) => set_acl(path, sys::ACL_TYPE_DEFAULT, value.clone()?),
         None => clear_default_acl(path),
     }
 }
@@ -244,7 +247,7 @@ fn apply_default_acl(path: &Path, acl: Option<&PosixAcl>) -> io::Result<()> {
 fn clear_default_acl(path: &Path) -> io::Result<()> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: the call removes the default ACL when present.
-    let result = unsafe { ffi::acl_delete_def_file(c_path.as_ptr()) };
+    let result = unsafe { sys::acl_delete_def_file(c_path.as_ptr()) };
     if result == 0 {
         Ok(())
     } else {
@@ -258,39 +261,40 @@ fn clear_default_acl(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::sys;
     use super::*;
     use std::os::unix::ffi::OsStrExt;
     use tempfile::tempdir;
 
-    fn acl_to_text(path: &Path, ty: ffi::AclType) -> Option<String> {
+    fn acl_to_text(path: &Path, ty: sys::acl_type_t) -> Option<String> {
         let c_path = CString::new(path.as_os_str().as_bytes()).expect("cstring");
-        let acl = unsafe { ffi::acl_get_file(c_path.as_ptr(), ty) };
+        let acl = unsafe { sys::acl_get_file(c_path.as_ptr(), ty) };
         if acl.is_null() {
             return None;
         }
         let mut len = 0;
-        let text_ptr = unsafe { ffi::acl_to_text(acl, &mut len) };
+        let text_ptr = unsafe { sys::acl_to_text(acl, &mut len) };
         if text_ptr.is_null() {
-            unsafe { ffi::acl_free(acl) };
+            unsafe { sys::acl_free(acl) };
             return None;
         }
         let slice = unsafe { std::slice::from_raw_parts(text_ptr.cast::<u8>(), len as usize) };
         let text = String::from_utf8_lossy(slice).trim().to_string();
         unsafe {
-            ffi::acl_free(text_ptr.cast());
-            ffi::acl_free(acl);
+            sys::acl_free(text_ptr.cast());
+            sys::acl_free(acl);
         }
         Some(text)
     }
 
-    fn set_acl_from_text(path: &Path, text: &str, ty: ffi::AclType) {
+    fn set_acl_from_text(path: &Path, text: &str, ty: sys::acl_type_t) {
         let c_path = CString::new(path.as_os_str().as_bytes()).expect("cstring");
         let c_text = CString::new(text).expect("text");
-        let acl = unsafe { ffi::acl_from_text(c_text.as_ptr()) };
+        let acl = unsafe { sys::acl_from_text(c_text.as_ptr()) };
         assert!(!acl.is_null(), "acl_from_text");
-        let result = unsafe { ffi::acl_set_file(c_path.as_ptr(), ty, acl) };
+        let result = unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl) };
         unsafe {
-            ffi::acl_free(acl);
+            sys::acl_free(acl);
         }
         assert_eq!(result, 0, "acl_set_file failed");
     }
@@ -306,20 +310,20 @@ mod tests {
         set_acl_from_text(
             &source,
             "user::rwx\ngroup::r-x\nother::r-x\n",
-            ffi::ACL_TYPE_ACCESS,
+            sys::ACL_TYPE_ACCESS,
         );
         set_acl_from_text(
             &source,
             "user::rwx\ngroup::r-x\nother::r-x\n",
-            ffi::ACL_TYPE_DEFAULT,
+            sys::ACL_TYPE_DEFAULT,
         );
 
         sync_acls(&source, &destination, true).expect("sync acls");
 
-        let access = acl_to_text(&destination, ffi::ACL_TYPE_ACCESS).expect("access acl");
+        let access = acl_to_text(&destination, sys::ACL_TYPE_ACCESS).expect("access acl");
         assert!(access.contains("user::rwx"));
 
-        let default = acl_to_text(&destination, ffi::ACL_TYPE_DEFAULT).expect("default acl");
+        let default = acl_to_text(&destination, sys::ACL_TYPE_DEFAULT).expect("default acl");
         assert!(default.contains("default:user::rwx") || default.contains("user::rwx"));
     }
 
@@ -334,12 +338,12 @@ mod tests {
         set_acl_from_text(
             &destination,
             "user::rwx\ngroup::r-x\nother::r-x\n",
-            ffi::ACL_TYPE_DEFAULT,
+            sys::ACL_TYPE_DEFAULT,
         );
-        assert!(acl_to_text(&destination, ffi::ACL_TYPE_DEFAULT).is_some());
+        assert!(acl_to_text(&destination, sys::ACL_TYPE_DEFAULT).is_some());
 
         sync_acls(&source, &destination, true).expect("sync acls");
 
-        assert!(acl_to_text(&destination, ffi::ACL_TYPE_DEFAULT).is_none());
+        assert!(acl_to_text(&destination, sys::ACL_TYPE_DEFAULT).is_none());
     }
 }

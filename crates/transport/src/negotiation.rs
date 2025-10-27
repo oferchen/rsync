@@ -414,6 +414,12 @@ impl fmt::Display for CopyToSliceError {
 
 impl std::error::Error for CopyToSliceError {}
 
+impl From<CopyToSliceError> for io::Error {
+    fn from(err: CopyToSliceError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidInput, err)
+    }
+}
+
 trait NegotiationBufferAccess {
     fn buffer_ref(&self) -> &NegotiationBuffer;
 
@@ -3024,6 +3030,23 @@ mod tests {
             .expect("conversion retains source error");
         let recovered = inner
             .downcast::<BufferedCopyTooSmall>()
+            .expect("inner error matches original type");
+        assert_eq!(*recovered, err);
+    }
+
+    #[test]
+    fn copy_to_slice_error_converts_into_io_error() {
+        let err = CopyToSliceError::new(LEGACY_DAEMON_PREFIX_LEN + 8, 8);
+        let io_err: io::Error = err.into();
+
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(io_err.to_string(), err.to_string());
+
+        let inner = io_err
+            .into_inner()
+            .expect("conversion retains source error");
+        let recovered = inner
+            .downcast::<CopyToSliceError>()
             .expect("inner error matches original type");
         assert_eq!(*recovered, err);
     }
