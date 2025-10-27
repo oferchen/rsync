@@ -167,7 +167,10 @@ fn finish_token(args: &mut Vec<OsString>, current: &mut Vec<u8>, token_started: 
 }
 
 fn is_ascii_whitespace(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+    matches!(
+        byte,
+        b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c' // space, tab, newline, carriage return, vertical tab, form feed
+    )
 }
 
 fn specification_bytes(spec: &OsStr) -> Result<Cow<'_, [u8]>, RemoteShellParseError> {
@@ -254,5 +257,20 @@ mod tests {
     fn parser_rejects_empty_specification() {
         let error = parse_remote_shell(OsStr::new("   ")).unwrap_err();
         assert_eq!(error, RemoteShellParseError::Empty);
+    }
+
+    #[test]
+    fn parser_treats_extended_ascii_whitespace_as_delimiters() {
+        let spec = OsString::from("ssh\u{0B}-p\u{0C}2222");
+        let parsed = parse_remote_shell(spec.as_os_str()).expect("parse succeeds");
+
+        assert_eq!(
+            parsed,
+            vec![
+                OsString::from("ssh"),
+                OsString::from("-p"),
+                OsString::from("2222"),
+            ]
+        );
     }
 }
