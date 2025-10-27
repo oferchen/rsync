@@ -135,6 +135,9 @@ fn duration_from_microseconds(us: u128) -> Duration {
 fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 
+    #[cfg(any(test, feature = "test-support"))]
+    let mut recorded_chunks = Vec::new();
+
     while !remaining.is_zero() {
         let chunk = remaining.min(MAX_SLEEP_DURATION);
 
@@ -144,7 +147,7 @@ fn sleep_for(duration: Duration) {
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            lock_recorded_sleeps().push(chunk);
+            recorded_chunks.push(chunk);
         }
 
         #[cfg(not(any(test, feature = "test-support")))]
@@ -153,6 +156,11 @@ fn sleep_for(duration: Duration) {
         }
 
         remaining = remaining.saturating_sub(chunk);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    if !recorded_chunks.is_empty() {
+        lock_recorded_sleeps().extend(recorded_chunks);
     }
 }
 
