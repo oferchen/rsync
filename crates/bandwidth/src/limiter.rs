@@ -121,6 +121,45 @@ impl<'a> RecordedSleepSession<'a> {
         self.with_recorded_sleeps(|durations| durations.to_vec())
     }
 
+    /// Returns the cumulative duration of all recorded sleeps without consuming them.
+    ///
+    /// The helper allows callers to assert on the pacing budget enforced by the limiter
+    /// while keeping the underlying samples available for further inspection. Durations
+    /// are summed using saturation to mirror the behaviour of [`Duration::saturating_add`]
+    /// and avoid panicking when large totals are accumulated. Calling the method multiple
+    /// times returns the same value until the buffer is cleared or drained.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "test-support")]
+    /// # {
+    /// # use std::time::Duration;
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use std::num::NonZeroU64;
+    ///
+    /// let mut session = recorded_sleep_session();
+    /// session.clear();
+    ///
+    /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+    /// limiter.register(2048);
+    ///
+    /// assert_eq!(session.total_duration(), Duration::from_secs(2));
+    /// assert_eq!(session.total_duration(), Duration::from_secs(2));
+    /// assert_eq!(session.take(), [Duration::from_secs(2)]);
+    /// # }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn total_duration(&self) -> Duration {
+        self.with_recorded_sleeps(|durations| {
+            durations
+                .iter()
+                .copied()
+                .fold(Duration::ZERO, |acc, chunk| acc.saturating_add(chunk))
+        })
+    }
+
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
