@@ -248,6 +248,31 @@ fn apply_effective_limit_updates_burst_when_specified() {
 }
 
 #[test]
+fn apply_effective_limit_does_not_raise_existing_limit() {
+    let initial = NonZeroU64::new(1024).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(initial));
+    let higher = NonZeroU64::new(8 * 1024).unwrap();
+
+    let change = apply_effective_limit(&mut limiter, Some(higher), true, None, false);
+
+    let limiter_ref = limiter
+        .as_ref()
+        .expect("limiter should remain active when limit increases");
+    assert_eq!(limiter_ref.limit_bytes(), initial);
+    assert_eq!(change, LimiterChange::Unchanged);
+
+    let burst = NonZeroU64::new(4096).unwrap();
+    let change = apply_effective_limit(&mut limiter, Some(higher), true, Some(burst), true);
+
+    let limiter_ref = limiter
+        .as_ref()
+        .expect("limiter should remain active after burst update");
+    assert_eq!(limiter_ref.limit_bytes(), initial);
+    assert_eq!(limiter_ref.burst_bytes(), Some(burst));
+    assert_eq!(change, LimiterChange::Updated);
+}
+
+#[test]
 fn apply_effective_limit_updates_burst_only_when_explicit() {
     let burst = NonZeroU64::new(1024).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(
