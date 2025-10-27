@@ -5,7 +5,7 @@
 //! # Overview
 //!
 //! `rsync_filters` provides ordered include/exclude/protect pattern evaluation for the
-//! Rust `oc-rsync` workspace. The implementation focuses on reproducing the
+//! Rust `rsync` workspace. The implementation focuses on reproducing the
 //! subset of rsync's filter grammar that governs `--include`/`--exclude`
 //! handling for local filesystem transfers. Patterns honour anchored matches
 //! (leading `/`), directory-only rules (trailing `/`), and recursive wildcards

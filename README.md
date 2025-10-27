@@ -1,7 +1,7 @@
-# oc-rsync (Rust rsync implementation, protocol 32)
+# rsync (Rust rsync implementation, protocol 32)
 
 This workspace hosts a Rust rsync implementation supporting protocol version 32
-under the **oc-rsync** and **oc-rsyncd** binaries. The long-term goal is
+under the **rsync** and **rsyncd** binaries. The long-term goal is
 byte-for-byte parity with upstream behaviour while modernising the
 implementation in Rust. The project follows the requirements outlined in the
 repository's Codex Mission Brief and implements modules as cohesive crates so
@@ -36,18 +36,18 @@ The workspace currently contains the following published crates:
 
 ## Binaries
 
-- `bin/oc-rsync` — thin wrapper that locks standard streams and invokes
+- `bin/rsync` — thin wrapper that locks standard streams and invokes
   [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the resulting exit
   status into `std::process::ExitCode`. Supplying `--daemon` delegates argument
-  parsing to the daemon front-end so `oc-rsync --daemon ...` behaves like
-  invoking the dedicated `oc-rsyncd` binary.
-- `bin/oc-rsyncd` — daemon wrapper that binds the requested TCP socket,
+  parsing to the daemon front-end so `rsync --daemon ...` behaves like
+  invoking the dedicated `rsyncd` binary.
+- `bin/rsyncd` — daemon wrapper that binds the requested TCP socket,
   performs the legacy `@RSYNCD:` handshake, lists configured in-memory modules
   for `#list` requests, and reports that full module transfers are still under
   development.
 
 Higher-level crates such as `daemon` remain under development. The new engine
-module powers the local copy mode shipped by `oc-rsync`, but delta transfer,
+module powers the local copy mode shipped by `rsync`, but delta transfer,
 remote transports, ACL handling, advanced filter grammar, and compression
 are still pending. Current gaps and parity status are tracked in
 `docs/differences.md` and `docs/gaps.md`.

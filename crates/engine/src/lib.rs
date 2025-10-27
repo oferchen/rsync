@@ -64,7 +64,7 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::client`] integrates the plan builder to power the `oc-rsync`
+//! - [`rsync_core::client`] integrates the plan builder to power the `rsync`
 //!   binary's local copy mode.
 //! - [`delta`] exposes block-size and checksum heuristics that will be wired into
 //!   the delta-transfer engine.

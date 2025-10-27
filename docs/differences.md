@@ -8,7 +8,7 @@ referenced functionality ships and parity is verified by tests or goldens.
 ## Blocking Differences
 
 - **Client binary uses native local copies and a fallback for remote transfers**
-  - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
+  - *Impact*: `rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. It can proactively create parent directories via
     `--mkpath` even when implied directories are disabled. Append-only updates via
@@ -37,7 +37,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     comprehensive metadata handling, remove the fallback dependency, and
     validate the resulting behaviour via the parity harness.
 - **Daemon functionality incomplete**
-  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
+  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config`. When the upstream
     `rsync` binary is available, the daemon now delegates authenticated module

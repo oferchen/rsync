@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_cli` implements the thin command-line front-end for the Rust `oc-rsync`
+//! `rsync_cli` implements the thin command-line front-end for the Rust `rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
@@ -19,7 +19,7 @@
 //! server implementation is completed. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
-//! downstream tooling to depend on a stable binary path (`oc-rsync`) while
+//! downstream tooling to depend on a stable binary path (`rsync`) while
 //! development continues.
 //!
 //! # Design
@@ -62,7 +62,7 @@
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
-//! let exit_code = run(["oc-rsync", "--version"], &mut stdout, &mut stderr);
+//! let exit_code = run(["rsync", "--version"], &mut stdout, &mut stderr);
 //!
 //! assert_eq!(exit_code, 0);
 //! assert!(!stdout.is_empty());
@@ -72,7 +72,7 @@
 //! # See also
 //!
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
-//! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
+//! - `bin/rsync` for the binary crate that wires [`run`] into `main`.
 
 use std::collections::{HashSet, VecDeque};
 use std::env;
@@ -123,10 +123,10 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 /// Deterministic help text describing the CLI surface supported by this build.
 const HELP_TEXT: &str = concat!(
-    "oc-rsync 3.4.1-rust\n",
+    "rsync 3.4.1-rust\n",
     "https://github.com/oferchen/rsync\n",
     "\n",
-    "Usage: oc-rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+    "Usage: rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
     "\n",
     "This development snapshot implements deterministic local filesystem\n",
     "copies for regular files, directories, and symbolic links. The\n",
@@ -144,7 +144,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-secluded-args  Alias of --no-protect-args.\n",
     "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
     "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
-    "      --daemon    Run as an rsync daemon (delegates to oc-rsyncd).\n",
+    "      --daemon    Run as an rsync daemon (delegates to rsyncd).\n",
     "  -n, --dry-run    Validate transfers without modifying the destination.\n",
     "      --list-only  List files without performing a transfer.\n",
     "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
@@ -1079,7 +1079,7 @@ fn env_protect_args_default() -> Option<bool> {
 
 /// Builds the `clap` command used for parsing.
 fn clap_command() -> ClapCommand {
-    ClapCommand::new("oc-rsync")
+    ClapCommand::new("rsync")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -2112,7 +2112,7 @@ where
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
     if args.is_empty() {
-        args.push(OsString::from("oc-rsync"));
+        args.push(OsString::from("rsync"));
     }
 
     let raw_args = args.clone();
@@ -2695,7 +2695,7 @@ where
 {
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
     if args.is_empty() {
-        args.push(OsString::from("oc-rsync"));
+        args.push(OsString::from("rsync"));
     }
 
     if server_mode_requested(&args) {
@@ -2727,7 +2727,7 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
     }
 
     let mut daemon_args = Vec::with_capacity(args.len());
-    daemon_args.push(OsString::from("oc-rsyncd"));
+    daemon_args.push(OsString::from("rsyncd"));
 
     let mut found = false;
     let mut reached_double_dash = false;
@@ -7636,8 +7636,7 @@ mod tests {
 
     #[test]
     fn version_flag_renders_report() {
-        let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--version")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -7648,7 +7647,7 @@ mod tests {
 
     #[test]
     fn short_version_flag_renders_report() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-V")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("-V")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -7660,7 +7659,7 @@ mod tests {
     #[test]
     fn version_flag_ignores_additional_operands() {
         let (code, stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsync"),
+            OsStr::new("rsync"),
             OsStr::new("--version"),
             OsStr::new("source"),
         ]);
@@ -7675,7 +7674,7 @@ mod tests {
     #[test]
     fn short_version_flag_ignores_additional_operands() {
         let (code, stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsync"),
+            OsStr::new("rsync"),
             OsStr::new("-V"),
             OsStr::new("source"),
             OsStr::new("dest"),
@@ -7693,7 +7692,7 @@ mod tests {
         let mut expected_stdout = Vec::new();
         let mut expected_stderr = Vec::new();
         let expected_code = daemon_cli::run(
-            [OsStr::new("oc-rsyncd"), OsStr::new("--help")],
+            [OsStr::new("rsyncd"), OsStr::new("--help")],
             &mut expected_stdout,
             &mut expected_stderr,
         );
@@ -7702,7 +7701,7 @@ mod tests {
         assert!(expected_stderr.is_empty());
 
         let (code, stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsync"),
+            OsStr::new("rsync"),
             OsStr::new("--daemon"),
             OsStr::new("--help"),
         ]);
@@ -7717,7 +7716,7 @@ mod tests {
         let mut expected_stdout = Vec::new();
         let mut expected_stderr = Vec::new();
         let expected_code = daemon_cli::run(
-            [OsStr::new("oc-rsyncd"), OsStr::new("--version")],
+            [OsStr::new("rsyncd"), OsStr::new("--version")],
             &mut expected_stdout,
             &mut expected_stderr,
         );
@@ -7726,7 +7725,7 @@ mod tests {
         assert!(expected_stderr.is_empty());
 
         let (code, stdout, stderr) = run_with_args([
-            OsStr::new("oc-rsync"),
+            OsStr::new("rsync"),
             OsStr::new("--daemon"),
             OsStr::new("--version"),
         ]);
@@ -7739,7 +7738,7 @@ mod tests {
     #[test]
     fn daemon_mode_arguments_ignore_operands_after_double_dash() {
         let args = vec![
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--"),
             OsString::from("--daemon"),
             OsString::from("dest"),
@@ -7750,7 +7749,7 @@ mod tests {
 
     #[test]
     fn help_flag_renders_static_help_snapshot() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -7762,7 +7761,7 @@ mod tests {
     #[test]
     fn short_h_flag_enables_human_readable_mode() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-h"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -7774,7 +7773,7 @@ mod tests {
 
     #[test]
     fn transfer_request_reports_missing_operands() {
-        let (code, stdout, stderr) = run_with_args([OsString::from("oc-rsync")]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -7794,7 +7793,7 @@ mod tests {
         std::fs::write(&source, b"data").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--chmod=a+q"),
             source.into_os_string(),
             destination.into_os_string(),
@@ -7816,7 +7815,7 @@ mod tests {
         std::fs::write(&source, b"cli copy").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
         ]);
@@ -7848,7 +7847,7 @@ mod tests {
         std::fs::write(dest_root.join("file.txt"), b"old data").expect("seed dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--backup"),
             source_dir.clone().into_os_string(),
             dest_dir.clone().into_os_string(),
@@ -7884,7 +7883,7 @@ mod tests {
         std::fs::write(dest_dir.join("source/nested/file.txt"), b"previous").expect("seed dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--backup-dir"),
             OsString::from("backups"),
             source_dir.clone().into_os_string(),
@@ -7923,7 +7922,7 @@ mod tests {
         std::fs::write(dest_root.join("file.txt"), b"stale").expect("seed dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--suffix"),
             OsString::from(".bak"),
             source_dir.clone().into_os_string(),
@@ -7952,7 +7951,7 @@ mod tests {
         std::fs::write(&source, b"verbose").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-v"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -7982,7 +7981,7 @@ mod tests {
 
         let dest_default = tmp.path().join("default");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--stats"),
             source.clone().into_os_string(),
             dest_default.into_os_string(),
@@ -7996,7 +7995,7 @@ mod tests {
 
         let dest_human = tmp.path().join("human");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--stats"),
             OsString::from("--human-readable"),
             source.into_os_string(),
@@ -8020,7 +8019,7 @@ mod tests {
 
         let dest_combined = tmp.path().join("combined");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--stats"),
             OsString::from("--human-readable=2"),
             source.into_os_string(),
@@ -8053,7 +8052,7 @@ mod tests {
 
         let destination = tmp.path().join("dest.pipe");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-v"),
             source_fifo.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8077,7 +8076,7 @@ mod tests {
 
         let dest_default = tmp.path().join("default.bin");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-vv"),
             source.clone().into_os_string(),
             dest_default.into_os_string(),
@@ -8090,7 +8089,7 @@ mod tests {
 
         let dest_human = tmp.path().join("human.bin");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-vv"),
             OsString::from("--human-readable"),
             source.into_os_string(),
@@ -8113,7 +8112,7 @@ mod tests {
 
         let destination = tmp.path().join("combined.bin");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-vv"),
             OsString::from("--human-readable=2"),
             source.into_os_string(),
@@ -8136,7 +8135,7 @@ mod tests {
         std::fs::write(&source, b"progress").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8165,7 +8164,7 @@ mod tests {
 
         let destination_default = tmp.path().join("default-progress.bin");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             source.clone().into_os_string(),
             destination_default.into_os_string(),
@@ -8179,7 +8178,7 @@ mod tests {
 
         let destination_human = tmp.path().join("human-progress.out");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("--human-readable"),
             source.into_os_string(),
@@ -8203,7 +8202,7 @@ mod tests {
 
         let destination = tmp.path().join("combined-progress.out");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("--human-readable=2"),
             source.into_os_string(),
@@ -8227,7 +8226,7 @@ mod tests {
         std::fs::write(&source, b"stderr-progress").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("--msgs2stderr"),
             source.clone().into_os_string(),
@@ -8266,7 +8265,7 @@ mod tests {
         std::fs::write(&source, &payload).expect("write large source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8307,7 +8306,7 @@ mod tests {
 
         let destination = tmp.path().join("fifo.out");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("--specials"),
             source.clone().into_os_string(),
@@ -8345,7 +8344,7 @@ mod tests {
 
         let destination = tmp.path().join("info-fifo.out");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--info=progress2"),
             OsString::from("--specials"),
             source.clone().into_os_string(),
@@ -8373,7 +8372,7 @@ mod tests {
         std::fs::write(&source, b"progress").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("-v"),
             source.clone().into_os_string(),
@@ -8401,7 +8400,7 @@ mod tests {
         std::fs::write(&source, payload).expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--stats"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8444,7 +8443,7 @@ mod tests {
         std::fs::write(&source, payload).expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--info=stats"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8476,7 +8475,7 @@ mod tests {
         std::fs::write(&source, b"payload").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--progress"),
             OsString::from("--info=none"),
             source.clone().into_os_string(),
@@ -8493,7 +8492,7 @@ mod tests {
     #[test]
     fn info_help_lists_supported_flags() {
         let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=help")]);
+            run_with_args([OsStr::new("rsync"), OsStr::new("--info=help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -8503,7 +8502,7 @@ mod tests {
     #[test]
     fn debug_help_lists_supported_flags() {
         let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--debug=help")]);
+            run_with_args([OsStr::new("rsync"), OsStr::new("--debug=help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -8513,7 +8512,7 @@ mod tests {
     #[test]
     fn info_rejects_unknown_flag() {
         let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--info=unknown")]);
+            run_with_args([OsStr::new("rsync"), OsStr::new("--info=unknown")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -8565,7 +8564,7 @@ mod tests {
         std::fs::write(&source, b"name-info").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--info=name"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8592,7 +8591,7 @@ mod tests {
         std::fs::write(&source, b"quiet").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-v"),
             OsString::from("--info=name0"),
             source.clone().into_os_string(),
@@ -8616,7 +8615,7 @@ mod tests {
         std::fs::write(&source, b"unchanged").expect("write source");
 
         let initial = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
         ]);
@@ -8625,7 +8624,7 @@ mod tests {
         assert!(initial.2.is_empty());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--info=name2"),
             source.into_os_string(),
             destination.into_os_string(),
@@ -8647,7 +8646,7 @@ mod tests {
         std::fs::write(&source, b"archive").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8672,7 +8671,7 @@ mod tests {
         std::fs::write(&source, b"move me").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--remove-source-files"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8698,7 +8697,7 @@ mod tests {
         std::fs::write(&source, b"alias move").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--remove-sent-files"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8724,7 +8723,7 @@ mod tests {
         std::fs::write(&source, b"limited").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--bwlimit=2048"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8750,7 +8749,7 @@ mod tests {
         std::fs::write(&source, b"format").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--out-format=%f %b"),
             source.clone().into_os_string(),
             dest_dir.clone().into_os_string(),
@@ -8778,7 +8777,7 @@ mod tests {
         std::fs::write(&source, b"itemized").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--itemize-changes"),
             source.clone().into_os_string(),
             dest_dir.clone().into_os_string(),
@@ -8809,7 +8808,7 @@ mod tests {
         std::fs::write(&destination, b"original").expect("write destination");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ignore-existing"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8834,7 +8833,7 @@ mod tests {
         std::fs::write(&destination, b"existing").expect("write destination");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ignore-missing-args"),
             missing.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -8868,7 +8867,7 @@ mod tests {
             .join("relative.txt");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--relative"),
             operand.into_os_string(),
             destination_root.clone().into_os_string(),
@@ -8907,7 +8906,7 @@ mod tests {
         let sparse_dest = tmp.path().join("sparse.bin");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             source.clone().into_os_string(),
             dense_dest.clone().into_os_string(),
         ]);
@@ -8916,7 +8915,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--sparse"),
             source.into_os_string(),
             sparse_dest.clone().into_os_string(),
@@ -8950,7 +8949,7 @@ mod tests {
         std::fs::create_dir(&dest_dir).expect("create dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--files-from={}", list_path.display())),
             dest_dir.clone().into_os_string(),
         ]);
@@ -8993,7 +8992,7 @@ mod tests {
         std::fs::create_dir(&dest_dir).expect("create dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--files-from={}", list_path.display())),
             dest_dir.clone().into_os_string(),
         ]);
@@ -9030,7 +9029,7 @@ mod tests {
         std::fs::create_dir(&dest_dir).expect("create dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--from0"),
             OsString::from(format!("--files-from={}", list_path.display())),
             dest_dir.clone().into_os_string(),
@@ -9064,7 +9063,7 @@ mod tests {
         std::fs::create_dir(&dest_dir).expect("create dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--from0"),
             OsString::from(format!("--files-from={}", list_path.display())),
             dest_dir.clone().into_os_string(),
@@ -9091,7 +9090,7 @@ mod tests {
         std::fs::create_dir(&dest_dir).expect("create dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--files-from={}", missing.display())),
             dest_dir.into_os_string(),
         ]);
@@ -9147,7 +9146,7 @@ mod tests {
         std::fs::write(&source, b"metadata").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--owner"),
             OsString::from("--group"),
             source.clone().into_os_string(),
@@ -9180,7 +9179,7 @@ mod tests {
         std::fs::set_permissions(&source, PermissionsExt::from_mode(0o640)).expect("set perms");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--perms"),
             OsString::from("--times"),
             source.clone().into_os_string(),
@@ -9210,7 +9209,7 @@ mod tests {
         std::fs::set_permissions(&source, PermissionsExt::from_mode(0o600)).expect("set perms");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--no-perms"),
             source.clone().into_os_string(),
@@ -9228,7 +9227,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_perms_and_times_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--perms"),
             OsString::from("--times"),
             OsString::from("--omit-dir-times"),
@@ -9244,7 +9243,7 @@ mod tests {
         assert_eq!(parsed.omit_link_times, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--no-perms"),
             OsString::from("--no-times"),
@@ -9264,7 +9263,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_super_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--super"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9277,7 +9276,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_no_super_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-super"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9290,7 +9289,7 @@ mod tests {
     #[test]
     fn parse_args_collects_chmod_values() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--chmod=Du+rwx"),
             OsString::from("--chmod"),
             OsString::from("Fgo-w"),
@@ -9308,7 +9307,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_update_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--update"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9321,7 +9320,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_modify_window() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--modify-window=5"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9334,7 +9333,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_checksum_choice() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--checksum-choice=XXH128"),
         ])
         .expect("parse");
@@ -9347,7 +9346,7 @@ mod tests {
     #[test]
     fn parse_args_rejects_invalid_checksum_choice() {
         let error = match parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--checksum-choice=invalid"),
         ]) {
             Ok(_) => panic!("parse should fail"),
@@ -9365,7 +9364,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_owner_overrides() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--owner"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9376,7 +9375,7 @@ mod tests {
         assert_eq!(parsed.group, None);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--no-owner"),
             OsString::from("source"),
@@ -9391,7 +9390,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_chown_option() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--chown=user:group"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9403,30 +9402,24 @@ mod tests {
 
     #[test]
     fn parse_args_sets_protect_args_flag() {
-        let parsed = parse_args([OsString::from("oc-rsync"), OsString::from("--protect-args")])
-            .expect("parse");
+        let parsed =
+            parse_args([OsString::from("rsync"), OsString::from("--protect-args")]).expect("parse");
 
         assert_eq!(parsed.protect_args, Some(true));
     }
 
     #[test]
     fn parse_args_sets_protect_args_alias() {
-        let parsed = parse_args([
-            OsString::from("oc-rsync"),
-            OsString::from("--secluded-args"),
-        ])
-        .expect("parse");
+        let parsed = parse_args([OsString::from("rsync"), OsString::from("--secluded-args")])
+            .expect("parse");
 
         assert_eq!(parsed.protect_args, Some(true));
     }
 
     #[test]
     fn parse_args_sets_no_protect_args_flag() {
-        let parsed = parse_args([
-            OsString::from("oc-rsync"),
-            OsString::from("--no-protect-args"),
-        ])
-        .expect("parse");
+        let parsed = parse_args([OsString::from("rsync"), OsString::from("--no-protect-args")])
+            .expect("parse");
 
         assert_eq!(parsed.protect_args, Some(false));
     }
@@ -9434,7 +9427,7 @@ mod tests {
     #[test]
     fn parse_args_sets_no_protect_args_alias() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-secluded-args"),
         ])
         .expect("parse");
@@ -9445,7 +9438,7 @@ mod tests {
     #[test]
     fn parse_args_sets_ipv4_address_mode() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ipv4"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9458,7 +9451,7 @@ mod tests {
     #[test]
     fn parse_args_sets_ipv6_address_mode() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ipv6"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9471,7 +9464,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_group_overrides() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--group"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9482,7 +9475,7 @@ mod tests {
         assert_eq!(parsed.owner, None);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--no-group"),
             OsString::from("source"),
@@ -9499,7 +9492,7 @@ mod tests {
         let _env_lock = ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("1"));
 
-        let parsed = parse_args([OsString::from("oc-rsync")]).expect("parse");
+        let parsed = parse_args([OsString::from("rsync")]).expect("parse");
 
         assert_eq!(parsed.protect_args, Some(true));
     }
@@ -9509,7 +9502,7 @@ mod tests {
         let _env_lock = ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("0"));
 
-        let parsed = parse_args([OsString::from("oc-rsync")]).expect("parse");
+        let parsed = parse_args([OsString::from("rsync")]).expect("parse");
 
         assert_eq!(parsed.protect_args, Some(false));
     }
@@ -9517,7 +9510,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_numeric_ids_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--numeric-ids"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9527,7 +9520,7 @@ mod tests {
         assert_eq!(parsed.numeric_ids, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-numeric-ids"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9540,7 +9533,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_sparse_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--sparse"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9550,7 +9543,7 @@ mod tests {
         assert_eq!(parsed.sparse, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-sparse"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9563,7 +9556,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_copy_links_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--copy-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9573,7 +9566,7 @@ mod tests {
         assert_eq!(parsed.copy_links, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-copy-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9583,7 +9576,7 @@ mod tests {
         assert_eq!(parsed.copy_links, Some(false));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-L"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9596,7 +9589,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_copy_unsafe_links_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--copy-unsafe-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9607,7 +9600,7 @@ mod tests {
         assert!(parsed.safe_links);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-copy-unsafe-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9620,7 +9613,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_hard_links_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--hard-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9630,7 +9623,7 @@ mod tests {
         assert_eq!(parsed.hard_links, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-hard-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9640,7 +9633,7 @@ mod tests {
         assert_eq!(parsed.hard_links, Some(false));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-H"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9653,7 +9646,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_copy_dirlinks_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--copy-dirlinks"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9663,7 +9656,7 @@ mod tests {
         assert!(parsed.copy_dirlinks);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-k"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9676,7 +9669,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_keep_dirlinks_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--keep-dirlinks"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9686,7 +9679,7 @@ mod tests {
         assert_eq!(parsed.keep_dirlinks, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-keep-dirlinks"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9696,7 +9689,7 @@ mod tests {
         assert_eq!(parsed.keep_dirlinks, Some(false));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-K"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9709,7 +9702,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_safe_links_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--safe-links"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9722,7 +9715,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_cvs_exclude_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--cvs-exclude"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9732,7 +9725,7 @@ mod tests {
         assert!(parsed.cvs_exclude);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-C"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9745,7 +9738,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_partial_dir_and_enables_partial() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--partial-dir=.rsync-partial"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9762,7 +9755,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_temp_dir_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--temp-dir=.rsync-tmp"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9775,7 +9768,7 @@ mod tests {
     #[test]
     fn parse_args_resets_delay_updates_with_no_delay_updates() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delay-updates"),
             OsString::from("--no-delay-updates"),
             OsString::from("source"),
@@ -9789,7 +9782,7 @@ mod tests {
     #[test]
     fn parse_args_allows_no_partial_to_clear_partial_dir() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--partial-dir=.rsync-partial"),
             OsString::from("--no-partial"),
             OsString::from("source"),
@@ -9804,7 +9797,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_delay_updates_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delay-updates"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9817,7 +9810,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_no_delay_updates_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delay-updates"),
             OsString::from("--no-delay-updates"),
             OsString::from("source"),
@@ -9831,7 +9824,7 @@ mod tests {
     #[test]
     fn parse_args_collects_link_dest_paths() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--link-dest=baseline"),
             OsString::from("--link-dest=/var/cache"),
             OsString::from("source"),
@@ -9848,7 +9841,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_devices_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--devices"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9858,7 +9851,7 @@ mod tests {
         assert_eq!(parsed.devices, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-devices"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9871,7 +9864,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_remove_sent_files_alias() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--remove-sent-files"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9884,7 +9877,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_specials_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--specials"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9894,7 +9887,7 @@ mod tests {
         assert_eq!(parsed.specials, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-specials"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9907,7 +9900,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_archive_devices_combo() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-D"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9921,7 +9914,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_relative_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--relative"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9931,7 +9924,7 @@ mod tests {
         assert_eq!(parsed.relative, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-relative"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9944,7 +9937,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_one_file_system_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--one-file-system"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9954,7 +9947,7 @@ mod tests {
         assert_eq!(parsed.one_file_system, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-one-file-system"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9964,7 +9957,7 @@ mod tests {
         assert_eq!(parsed.one_file_system, Some(false));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-x"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9977,7 +9970,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_implied_dirs_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--implied-dirs"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -9987,7 +9980,7 @@ mod tests {
         assert_eq!(parsed.implied_dirs, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-implied-dirs"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10000,7 +9993,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_prune_empty_dirs_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--prune-empty-dirs"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10010,7 +10003,7 @@ mod tests {
         assert_eq!(parsed.prune_empty_dirs, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-prune-empty-dirs"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10023,7 +10016,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_inplace_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--inplace"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10033,7 +10026,7 @@ mod tests {
         assert_eq!(parsed.inplace, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-inplace"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10046,7 +10039,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_append_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--append"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10057,7 +10050,7 @@ mod tests {
         assert!(!parsed.append_verify);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-append"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10071,7 +10064,7 @@ mod tests {
     #[test]
     fn parse_args_captures_skip_compress_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--skip-compress=gz/mp3"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10084,7 +10077,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_append_verify_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--append-verify"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10098,7 +10091,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_preallocate_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--preallocate"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10108,7 +10101,7 @@ mod tests {
         assert!(parsed.preallocate);
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("source"),
             OsString::from("dest"),
         ])
@@ -10120,7 +10113,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_whole_file_flags() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-W"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10130,7 +10123,7 @@ mod tests {
         assert_eq!(parsed.whole_file, Some(true));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-whole-file"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10143,7 +10136,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_stats_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--stats"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10156,7 +10149,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_human_readable_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--human-readable"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10169,7 +10162,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_no_human_readable_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-human-readable"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10182,7 +10175,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_human_readable_level_two() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--human-readable=2"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10195,7 +10188,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_msgs2stderr_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--msgs2stderr"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10208,7 +10201,7 @@ mod tests {
     #[test]
     fn parse_args_collects_out_format_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--out-format=%f %b"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10221,7 +10214,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_itemize_changes_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--itemize-changes"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10234,7 +10227,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_port_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--port=10873"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10247,7 +10240,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_list_only_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10261,7 +10254,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_mkpath_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--mkpath"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10274,7 +10267,7 @@ mod tests {
     #[test]
     fn parse_args_collects_filter_patterns() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude"),
             OsString::from("*.tmp"),
             OsString::from("--include"),
@@ -10294,7 +10287,7 @@ mod tests {
     #[test]
     fn parse_args_collects_filter_files() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude-from"),
             OsString::from("excludes.txt"),
             OsString::from("--include-from"),
@@ -10311,7 +10304,7 @@ mod tests {
     #[test]
     fn parse_args_collects_reference_destinations() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compare-dest"),
             OsString::from("compare"),
             OsString::from("--copy-dest"),
@@ -10331,7 +10324,7 @@ mod tests {
     #[test]
     fn parse_args_collects_files_from_paths() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--files-from"),
             OsString::from("list-a"),
             OsString::from("--files-from"),
@@ -10350,7 +10343,7 @@ mod tests {
     #[test]
     fn parse_args_sets_from0_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--from0"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10363,7 +10356,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_password_file() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--password-file"),
             OsString::from("secret.txt"),
             OsString::from("source"),
@@ -10374,7 +10367,7 @@ mod tests {
         assert_eq!(parsed.password_file, Some(OsString::from("secret.txt")));
 
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--password-file=secrets.d"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10406,7 +10399,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_no_motd_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-motd"),
             OsString::from("rsync://example/"),
         ])
@@ -10418,7 +10411,7 @@ mod tests {
     #[test]
     fn parse_args_collects_protocol_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protocol=30"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10431,7 +10424,7 @@ mod tests {
     #[test]
     fn parse_args_collects_timeout_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--timeout=90"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10444,7 +10437,7 @@ mod tests {
     #[test]
     fn parse_args_collects_contimeout_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--contimeout=45"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10457,7 +10450,7 @@ mod tests {
     #[test]
     fn parse_args_collects_max_delete_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--max-delete=12"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10470,7 +10463,7 @@ mod tests {
     #[test]
     fn parse_args_collects_checksum_seed_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--checksum-seed=42"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -10483,7 +10476,7 @@ mod tests {
     #[test]
     fn parse_args_collects_min_max_size_values() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--min-size=1.5K"),
             OsString::from("--max-size=2M"),
             OsString::from("source"),
@@ -11141,7 +11134,7 @@ mod tests {
     #[test]
     fn parse_args_sets_compress_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-z"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -11154,7 +11147,7 @@ mod tests {
     #[test]
     fn parse_args_no_compress_overrides_compress_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-z"),
             OsString::from("--no-compress"),
             OsString::from("source"),
@@ -11169,7 +11162,7 @@ mod tests {
     #[test]
     fn parse_args_records_compress_level_value() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=5"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -11182,7 +11175,7 @@ mod tests {
     #[test]
     fn parse_args_compress_level_zero_records_disable() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=0"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -11195,7 +11188,7 @@ mod tests {
     #[test]
     fn parse_args_recognises_compress_level_flag() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=5"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -11209,7 +11202,7 @@ mod tests {
     #[test]
     fn parse_args_compress_level_zero_disables_compress() {
         let parsed = parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=0"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -11749,7 +11742,7 @@ mod tests {
         set_file_times(&source, mtime, mtime).expect("set times");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--times"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -11777,7 +11770,7 @@ mod tests {
         std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--filter"),
             OsString::from("- *.tmp"),
             source_root.clone().into_os_string(),
@@ -11806,7 +11799,7 @@ mod tests {
         std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--filter"),
             OsString::from("- *.tmp"),
             OsString::from("--filter"),
@@ -11842,7 +11835,7 @@ mod tests {
         let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--filter"),
             filter_arg,
             source_root.clone().into_os_string(),
@@ -11877,7 +11870,7 @@ mod tests {
         let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--filter"),
             filter_arg,
             source_root.clone().into_os_string(),
@@ -11909,7 +11902,7 @@ mod tests {
         std::fs::write(dest_subdir.join("keep.txt"), b"keep").expect("write dest keep");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete"),
             OsString::from("--filter"),
             OsString::from("protect keep.txt"),
@@ -11941,7 +11934,7 @@ mod tests {
         std::fs::write(dest_subdir.join("skip.log"), b"skip").expect("write excluded file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-excluded"),
             OsString::from("--exclude=*.log"),
             source_root.clone().into_os_string(),
@@ -11974,7 +11967,7 @@ mod tests {
         let filter_arg = OsString::from(format!("merge {}", filter_file.display()));
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--filter"),
             filter_arg,
             source_root.into_os_string(),
@@ -12003,7 +11996,7 @@ mod tests {
         std::fs::write(&exclude_file, "# comment\n\n*.tmp\n").expect("write filters");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude-from"),
             exclude_file.as_os_str().to_os_string(),
             source_root.clone().into_os_string(),
@@ -12039,7 +12032,7 @@ mod tests {
         std::fs::write(git_dir.join("config"), b"git").expect("write git config");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--cvs-exclude"),
             source_root.clone().into_os_string(),
             dest_root.clone().into_os_string(),
@@ -12073,7 +12066,7 @@ mod tests {
         std::fs::write(source_root.join(".cvsignore"), b"skip.log\n").expect("write cvsignore");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--cvs-exclude"),
             source_root.clone().into_os_string(),
             dest_root.clone().into_os_string(),
@@ -12105,7 +12098,7 @@ mod tests {
         std::fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--cvs-exclude"),
             source_root.clone().into_os_string(),
             dest_root.clone().into_os_string(),
@@ -12163,7 +12156,7 @@ mod tests {
         source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude"),
             OsString::from("*"),
             OsString::from("--include-from"),
@@ -12183,7 +12176,7 @@ mod tests {
     #[test]
     fn transfer_request_reports_filter_file_errors() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude-from"),
             OsString::from("missing.txt"),
             OsString::from("src"),
@@ -12403,7 +12396,7 @@ mod tests {
         set_file_times(&source, mtime, mtime).expect("set times");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--no-times"),
             source.clone().into_os_string(),
@@ -12438,7 +12431,7 @@ mod tests {
         set_file_times(&source_file, dir_mtime, dir_mtime).expect("set file times");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--omit-dir-times"),
             source_root.clone().into_os_string(),
@@ -12484,7 +12477,7 @@ mod tests {
         set_symlink_file_times(&source_link, timestamp, timestamp).expect("set symlink times");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("--omit-link-times"),
             source_root.clone().into_os_string(),
@@ -12518,7 +12511,7 @@ mod tests {
         std::fs::write(&source, b"payload").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-times"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -12532,7 +12525,7 @@ mod tests {
         set_file_mtime(&destination, preserved).expect("set destination mtime");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--checksum"),
             OsString::from("--no-times"),
             source.into_os_string(),
@@ -12566,7 +12559,7 @@ mod tests {
 
         super::set_filter_stdin_input(b"*.tmp\n".to_vec());
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--exclude-from"),
             OsString::from("-"),
             source_root.clone().into_os_string(),
@@ -12585,7 +12578,7 @@ mod tests {
     #[test]
     fn bwlimit_invalid_value_reports_error() {
         let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=oops")]);
+            run_with_args([OsString::from("rsync"), OsString::from("--bwlimit=oops")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -12597,7 +12590,7 @@ mod tests {
     #[test]
     fn bwlimit_rejects_small_fractional_values() {
         let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=0.4")]);
+            run_with_args([OsString::from("rsync"), OsString::from("--bwlimit=0.4")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -12658,7 +12651,7 @@ mod tests {
     #[test]
     fn bwlimit_rejects_negative_values() {
         let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from("--bwlimit=-1")]);
+            run_with_args([OsString::from("rsync"), OsString::from("--bwlimit=-1")]);
 
         assert_eq!(code, 1);
         assert!(stdout.is_empty());
@@ -12669,7 +12662,7 @@ mod tests {
     #[test]
     fn compress_level_invalid_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=fast"),
         ]);
 
@@ -12682,7 +12675,7 @@ mod tests {
     #[test]
     fn compress_level_out_of_range_reports_error() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=12"),
         ]);
 
@@ -12695,7 +12688,7 @@ mod tests {
     #[test]
     fn skip_compress_invalid_reports_error() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--skip-compress=mp[]"),
         ]);
 
@@ -12714,7 +12707,7 @@ mod tests {
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", missing.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             OsString::from("dest"),
         ]);
@@ -12738,8 +12731,7 @@ mod tests {
         ]);
 
         let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
-        let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -12763,7 +12755,7 @@ mod tests {
 
         let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-motd"),
             OsString::from(url),
         ]);
@@ -12802,7 +12794,7 @@ exit 99
         let _marker_guard = EnvGuard::set("MARKER_FILE", marker_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--rsync-path=/opt/custom/rsync"),
             OsString::from(url.clone()),
         ]);
@@ -12825,7 +12817,7 @@ exit 99
 
         let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protocol=29"),
             OsString::from(url),
         ]);
@@ -12849,8 +12841,7 @@ exit 99
         ]);
 
         let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
-        let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
         assert!(
@@ -12870,8 +12861,7 @@ exit 99
         let (addr, handle) = spawn_stub_daemon(vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"]);
 
         let url = format!("rsync://{}:{}/", addr.ip(), addr.port());
-        let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync"), OsString::from(url)]);
 
         assert_eq!(code, 23);
         assert!(stdout.is_empty());
@@ -12891,8 +12881,7 @@ exit 99
         ]);
 
         let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
-        let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -12920,7 +12909,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         write_executable_script(&script_path, script);
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--connect-program={}", script_path.display())),
             OsString::from("rsync://example/"),
         ]);
@@ -12937,8 +12926,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
             spawn_stub_daemon(vec!["@RSYNCD: OK\n", "module\n", "@RSYNCD: EXIT\n"]);
 
         let url = format!("user@[{}]:{}::", addr.ip(), addr.port());
-        let (code, stdout, stderr) =
-            run_with_args([OsString::from("oc-rsync"), OsString::from(url)]);
+        let (code, stdout, stderr) = run_with_args([OsString::from("rsync"), OsString::from(url)]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -12989,7 +12977,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
 
         let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--password-file={}", password_path.display())),
             OsString::from(url),
         ]);
@@ -13029,7 +13017,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
 
         let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--password-file=-"),
             OsString::from(url),
         ]);
@@ -13062,7 +13050,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
 
         let url = String::from("rsync://user@127.0.0.1:873/");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--password-file={}", password_path.display())),
             OsString::from(url),
         ]);
@@ -13099,7 +13087,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"data").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--password-file={}", password_path.display())),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -13116,7 +13104,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn password_file_dash_conflicts_with_files_from_dash() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--files-from=-"),
             OsString::from("--password-file=-"),
             OsString::from("/tmp/dest"),
@@ -13138,7 +13126,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"data").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protocol=30"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -13155,7 +13143,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn invalid_protocol_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protocol=27"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13171,7 +13159,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn non_numeric_protocol_value_reports_error() {
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protocol=abc"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13213,16 +13201,13 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     fn clap_parse_error_is_reported_via_message() {
         let command = clap_command();
         let error = command
-            .try_get_matches_from(vec!["oc-rsync", "--version=extra"])
+            .try_get_matches_from(vec!["rsync", "--version=extra"])
             .unwrap_err();
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [
-                OsString::from("oc-rsync"),
-                OsString::from("--version=extra"),
-            ],
+            [OsString::from("rsync"), OsString::from("--version=extra")],
             &mut stdout,
             &mut stderr,
         );
@@ -13237,7 +13222,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13251,7 +13236,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_alias_del_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--del"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13265,7 +13250,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_after_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-after"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13279,7 +13264,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_before_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-before"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13293,7 +13278,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_during_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-during"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13307,7 +13292,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_delay_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-delay"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13321,7 +13306,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn delete_excluded_flag_implies_delete() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-excluded"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13335,7 +13320,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn archive_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-a"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13350,7 +13335,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn long_archive_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--archive"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13363,7 +13348,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn checksum_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--checksum"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13376,7 +13361,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
     #[test]
     fn size_only_flag_is_parsed() {
         let parsed = super::parse_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--size-only"),
             OsString::from("source"),
             OsString::from("dest"),
@@ -13396,7 +13381,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"combo").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-av"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -13423,7 +13408,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"compressed").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-z"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -13448,7 +13433,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"payload").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=6"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -13473,7 +13458,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
         std::fs::write(&source, b"payload").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=0"),
             OsString::from("-z"),
             source.clone().into_os_string(),
@@ -13527,7 +13512,7 @@ exit 37
         let mut stderr = io::sink();
         let exit_code = run(
             [
-                OsString::from("oc-rsync"),
+                OsString::from("rsync"),
                 OsString::from("--server"),
                 OsString::from("--sender"),
                 OsString::from("."),
@@ -13565,7 +13550,7 @@ exit 0
         let mut stderr = Vec::new();
         let exit_code = run(
             [
-                OsString::from("oc-rsync"),
+                OsString::from("rsync"),
                 OsString::from("--server"),
                 OsString::from("--sender"),
                 OsString::from("."),
@@ -13592,7 +13577,7 @@ exit 0
         let mut stderr = Vec::new();
         let exit_code = run(
             [
-                OsString::from("oc-rsync"),
+                OsString::from("rsync"),
                 OsString::from("--server"),
                 OsString::from("--sender"),
                 OsString::from("."),
@@ -13635,7 +13620,7 @@ exit 7
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--dry-run"),
             OsString::from("remote::module/path"),
             OsString::from("dest"),
@@ -13679,7 +13664,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ipv4"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -13716,7 +13701,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--ipv6"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -13753,7 +13738,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-F"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -13790,7 +13775,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-FF"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -13827,7 +13812,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             OsString::from("rsync://example.com/module"),
         ]);
@@ -13879,7 +13864,7 @@ exit 0
         let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--files-from={}", list_path.display())),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -13923,7 +13908,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--partial-dir={}", partial_dir.display())),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -13974,7 +13959,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--temp-dir={}", temp_dir.display())),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14021,7 +14006,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--backup"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14040,7 +14025,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--backup-dir"),
             OsString::from("backups"),
             OsString::from("remote::module"),
@@ -14060,7 +14045,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--suffix"),
             OsString::from(".bak"),
             OsString::from("remote::module"),
@@ -14101,7 +14086,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--link-dest"),
             OsString::from("baseline"),
             OsString::from("--link-dest"),
@@ -14158,7 +14143,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--link-dest=baseline"),
             OsString::from("--link-dest=/var/cache"),
             OsString::from("--compare-dest=compare"),
@@ -14208,7 +14193,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=7"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -14245,7 +14230,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--skip-compress=gz/mp3"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -14263,7 +14248,7 @@ exit 0
         );
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--skip-compress="),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -14298,7 +14283,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=0"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -14334,7 +14319,7 @@ exit 0
         let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             OsString::from("dest"),
         ]);
@@ -14382,7 +14367,7 @@ exit 0
         let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--from0"),
             OsString::from(format!("--files-from={}", list_path.display())),
             OsString::from("remote::module"),
@@ -14426,7 +14411,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-W"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14448,7 +14433,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-whole-file"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
@@ -14487,7 +14472,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--hard-links"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14505,7 +14490,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-hard-links"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
@@ -14544,7 +14529,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--append"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14563,7 +14548,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-append"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14582,7 +14567,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--append-verify"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
@@ -14622,7 +14607,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--preallocate"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14639,7 +14624,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
         ]);
@@ -14674,7 +14659,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--bwlimit=1M:64K"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -14723,7 +14708,7 @@ exit 0
         let dest_path = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--safe-links"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -14740,7 +14725,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
         ]);
@@ -14775,7 +14760,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-implied-dirs"),
             OsString::from("remote::module"),
             destination.clone().into_os_string(),
@@ -14793,7 +14778,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--implied-dirs"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -14832,7 +14817,7 @@ exit 0
         let destination = temp.path().join("dest");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--prune-empty-dirs"),
             OsString::from("remote::module"),
             destination.clone().into_os_string(),
@@ -14850,7 +14835,7 @@ exit 0
         std::fs::write(&args_path, b"").expect("truncate args file");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-prune-empty-dirs"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -14888,7 +14873,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-after"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -14927,7 +14912,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-before"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -14966,7 +14951,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-during"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15007,7 +14992,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--delete-delay"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15048,7 +15033,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--max-delete=5"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15086,7 +15071,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--modify-window=5"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15123,7 +15108,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--min-size=1.5K"),
             OsString::from("--max-size=2M"),
             OsString::from("remote::module"),
@@ -15162,7 +15147,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--update"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15199,7 +15184,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--debug=io,events"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15237,7 +15222,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--protect-args"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15275,7 +15260,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--human-readable"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15314,7 +15299,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-human-readable"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15353,7 +15338,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--human-readable=2"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15392,7 +15377,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--super"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15429,7 +15414,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-super"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15467,7 +15452,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--info=progress2"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15504,7 +15489,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-secluded-args"),
             OsString::from("remote::module"),
             destination.into_os_string(),
@@ -15543,7 +15528,7 @@ exit 0
 
         let destination = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             destination.into_os_string(),
         ]);
@@ -15579,7 +15564,7 @@ exit 0
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--compress-level=0"),
             OsString::from("remote::module"),
             OsString::from("dest"),
@@ -15625,7 +15610,7 @@ exit 0
         std::fs::write(&source, b"contents").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-whole-file"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -15672,7 +15657,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from(format!("--password-file={}", password_path.display())),
             OsString::from("--protocol=30"),
             OsString::from("--timeout=120"),
@@ -15721,7 +15706,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-e"),
             OsString::from("ssh -p 2222"),
             OsString::from("remote::module"),
@@ -15758,7 +15743,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--rsync-path=/opt/custom/rsync"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -15794,7 +15779,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--connect-program=nc %H %P"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -15830,7 +15815,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--port=10873"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -15865,7 +15850,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--remote-option=--log-file=/tmp/rsync.log"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -15905,7 +15890,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-M"),
             OsString::from("--log-format=%n"),
             OsString::from("remote::module"),
@@ -15943,7 +15928,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
         ]);
@@ -15979,7 +15964,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-e"),
             OsString::from("ssh -p 2222"),
             OsString::from("remote::module"),
@@ -16005,7 +15990,7 @@ exit 0
         std::fs::write(&source, b"content").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--rsync-path=/opt/custom/rsync"),
             source.clone().into_os_string(),
             dest.clone().into_os_string(),
@@ -16030,7 +16015,7 @@ exit 0
         std::fs::write(&source, b"content").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--connect-program=/usr/bin/nc %H %P"),
             source.clone().into_os_string(),
             dest.clone().into_os_string(),
@@ -16055,7 +16040,7 @@ exit 0
         std::fs::write(&source, b"content").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--remote-option=--log-file=/tmp/rsync.log"),
             source.clone().into_os_string(),
             dest.clone().into_os_string(),
@@ -16092,7 +16077,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--acls"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16128,7 +16113,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--omit-dir-times"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16164,7 +16149,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--omit-link-times"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16201,7 +16186,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-acls"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16236,7 +16221,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-omit-dir-times"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16271,7 +16256,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-omit-link-times"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16306,7 +16291,7 @@ exit 0
 
         let dest_path = temp.path().join("dest");
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--one-file-system"),
             OsString::from("remote::module"),
             dest_path.clone().into_os_string(),
@@ -16320,7 +16305,7 @@ exit 0
         assert!(recorded.contains("--one-file-system"));
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--no-one-file-system"),
             OsString::from("remote::module"),
             dest_path.into_os_string(),
@@ -16345,7 +16330,7 @@ exit 0
         let destination = tmp.path().join("dest.txt");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--dry-run"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -16378,7 +16363,7 @@ exit 0
         fs::create_dir(&destination_dir).expect("create dest dir");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             source_dir.clone().into_os_string(),
             destination_dir.clone().into_os_string(),
@@ -16407,7 +16392,7 @@ exit 0
         fs::create_dir(&dest_dir).expect("create dest dir");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             source_dir.clone().into_os_string(),
             dest_dir.into_os_string(),
@@ -16455,7 +16440,7 @@ exit 0
         source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             source_arg,
             dest_dir.clone().into_os_string(),
@@ -16487,7 +16472,7 @@ exit 0
         source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             OsString::from("--human-readable"),
             source_arg,
@@ -16540,7 +16525,7 @@ exit 0
         source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--list-only"),
             source_arg,
             dest_dir.clone().into_os_string(),
@@ -16591,7 +16576,7 @@ exit 0
         let destination = tmp.path().join("dest.txt");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-n"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -16622,7 +16607,7 @@ exit 0
         fs::create_dir(&destination_dir).expect("create dest dir");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("-av"),
             source_dir.clone().into_os_string(),
             destination_dir.clone().into_os_string(),
@@ -16739,7 +16724,7 @@ exit 0
         fs::write(&source, b"dash source").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
@@ -16903,7 +16888,7 @@ exit 0
         std::fs::write(&source, b"data").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--acls"),
             source.into_os_string(),
             destination.into_os_string(),
@@ -16927,7 +16912,7 @@ exit 0
         std::fs::write(&source, b"data").expect("write source");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--xattrs"),
             source.into_os_string(),
             destination.into_os_string(),
@@ -16952,7 +16937,7 @@ exit 0
         xattr::set(&source, "user.test", b"value").expect("set xattr");
 
         let (code, stdout, stderr) = run_with_args([
-            OsString::from("oc-rsync"),
+            OsString::from("rsync"),
             OsString::from("--xattrs"),
             source.clone().into_os_string(),
             destination.clone().into_os_string(),
