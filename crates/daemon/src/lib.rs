@@ -280,6 +280,7 @@ struct ModuleDefinition {
     auth_users: Vec<String>,
     secrets_file: Option<PathBuf>,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_limit_specified: bool,
     bandwidth_burst: Option<NonZeroU64>,
     bandwidth_burst_specified: bool,
     bandwidth_limit_configured: bool,
@@ -343,6 +344,10 @@ impl ModuleDefinition {
 
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
+    }
+
+    fn bandwidth_limit_specified(&self) -> bool {
+        self.bandwidth_limit_specified
     }
 
     fn bandwidth_burst(&self) -> Option<NonZeroU64> {
@@ -1761,6 +1766,7 @@ struct ModuleDefinitionBuilder {
     secrets_file: Option<PathBuf>,
     declaration_line: usize,
     bandwidth_limit: Option<NonZeroU64>,
+    bandwidth_limit_specified: bool,
     bandwidth_burst: Option<NonZeroU64>,
     bandwidth_burst_specified: bool,
     bandwidth_limit_set: bool,
@@ -1787,6 +1793,7 @@ impl ModuleDefinitionBuilder {
             secrets_file: None,
             declaration_line: line,
             bandwidth_limit: None,
+            bandwidth_limit_specified: false,
             bandwidth_burst: None,
             bandwidth_burst_specified: false,
             bandwidth_limit_set: false,
@@ -1947,6 +1954,7 @@ impl ModuleDefinitionBuilder {
         self.bandwidth_limit = limit;
         self.bandwidth_burst = burst;
         self.bandwidth_burst_specified = burst_specified;
+        self.bandwidth_limit_specified = true;
         self.bandwidth_limit_set = true;
         Ok(())
     }
@@ -2179,6 +2187,7 @@ impl ModuleDefinitionBuilder {
             auth_users: self.auth_users.unwrap_or_default(),
             secrets_file: self.secrets_file,
             bandwidth_limit: self.bandwidth_limit,
+            bandwidth_limit_specified: self.bandwidth_limit_specified,
             bandwidth_burst: self.bandwidth_burst,
             bandwidth_burst_specified: self.bandwidth_burst_specified,
             bandwidth_limit_configured: self.bandwidth_limit_set,
@@ -3727,15 +3736,18 @@ fn send_daemon_ok(
 fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
+    module_limit_specified: bool,
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
     module_limit_configured: bool,
 ) {
-    if !module_limit_configured {
-        return;
-    }
-
-    apply_effective_limit(limiter, module_limit, module_burst, module_burst_specified);
+    apply_effective_limit(
+        limiter,
+        module_limit,
+        module_limit_specified,
+        module_burst,
+        module_burst_specified,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3754,6 +3766,7 @@ fn respond_with_module_request(
         apply_module_bandwidth_limit(
             limiter,
             module.bandwidth_limit(),
+            module.bandwidth_limit_specified(),
             module.bandwidth_burst(),
             module.bandwidth_burst_specified(),
             module.bandwidth_limit_configured(),
@@ -4237,6 +4250,7 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
         auth_users: Vec::new(),
         secrets_file: None,
         bandwidth_limit: None,
+        bandwidth_limit_specified: false,
         bandwidth_burst: None,
         bandwidth_burst_specified: false,
         bandwidth_limit_configured: false,
@@ -4829,6 +4843,7 @@ mod tests {
             auth_users: Vec::new(),
             secrets_file: None,
             bandwidth_limit: None,
+            bandwidth_limit_specified: false,
             bandwidth_burst: None,
             bandwidth_burst_specified: false,
             bandwidth_limit_configured: false,
@@ -4994,6 +5009,7 @@ mod tests {
             auth_users: Vec::new(),
             secrets_file: None,
             bandwidth_limit: None,
+            bandwidth_limit_specified: false,
             bandwidth_burst: None,
             bandwidth_burst_specified: false,
             bandwidth_limit_configured: false,
@@ -7783,9 +7799,9 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(8 * 1024 * 1024),
+            true,
             None,
             false,
-            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7805,9 +7821,9 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(1024 * 1024),
+            true,
             None,
             false,
-            true,
         );
 
         let limiter = limiter.expect("limiter remains configured");
@@ -7824,6 +7840,7 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(8 * 1024 * 1024),
+            true,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
             true,
@@ -7847,9 +7864,9 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(2 * 1024 * 1024),
+            true,
             None,
             false,
-            true,
         );
 
         let limiter = limiter.expect("limiter configured by module");
@@ -7863,6 +7880,7 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             None,
+            false,
             Some(NonZeroU64::new(256 * 1024).unwrap()),
             true,
             true,
@@ -7899,6 +7917,7 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(4 * 1024 * 1024),
+            true,
             Some(NonZeroU64::new(512 * 1024).unwrap()),
             true,
             true,
@@ -7925,8 +7944,8 @@ mod tests {
         apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(4 * 1024 * 1024),
-            None,
             true,
+            None,
             true,
         );
 
@@ -7944,7 +7963,7 @@ mod tests {
             NonZeroU64::new(2 * 1024 * 1024).unwrap(),
         ));
 
-        apply_module_bandwidth_limit(&mut limiter, None, None, false, true);
+        apply_module_bandwidth_limit(&mut limiter, None, true, None, false);
 
         assert!(limiter.is_none());
     }
@@ -7953,9 +7972,25 @@ mod tests {
     fn module_bwlimit_unlimited_is_noop_when_no_cap() {
         let mut limiter: Option<BandwidthLimiter> = None;
 
-        apply_module_bandwidth_limit(&mut limiter, None, None, false, true);
+        apply_module_bandwidth_limit(&mut limiter, None, true, None, false);
 
         assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn module_without_bwlimit_preserves_daemon_cap() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+        ));
+
+        apply_module_bandwidth_limit(&mut limiter, None, false, None, false);
+
+        let limiter = limiter.expect("daemon cap should remain active");
+        assert_eq!(
+            limiter.limit_bytes(),
+            NonZeroU64::new(2 * 1024 * 1024).unwrap()
+        );
+        assert!(limiter.burst_bytes().is_none());
     }
 
     #[test]
