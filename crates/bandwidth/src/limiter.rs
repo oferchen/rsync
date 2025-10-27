@@ -121,23 +121,29 @@ fn duration_from_microseconds(us: u128) -> Duration {
 }
 
 fn sleep_for(duration: Duration) {
-    if duration.is_zero() {
-        return;
-    }
+    let mut remaining = duration;
 
-    let effective = duration.min(MAX_SLEEP_DURATION);
+    while !remaining.is_zero() {
+        let chunk = remaining.min(MAX_SLEEP_DURATION);
 
-    #[cfg(any(test, feature = "test-support"))]
-    {
-        recorded_sleeps()
-            .lock()
-            .expect("lock recorded sleeps")
-            .push(effective);
-    }
+        if chunk.is_zero() {
+            break;
+        }
 
-    #[cfg(not(any(test, feature = "test-support")))]
-    {
-        std::thread::sleep(effective);
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            recorded_sleeps()
+                .lock()
+                .expect("lock recorded sleeps")
+                .push(chunk);
+        }
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            std::thread::sleep(chunk);
+        }
+
+        remaining = remaining.saturating_sub(chunk);
     }
 }
 

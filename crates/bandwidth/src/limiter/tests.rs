@@ -432,8 +432,39 @@ fn sleep_for_clamps_to_maximum_duration() {
     session.clear();
 
     // Request a duration that exceeds what std::thread::sleep supports without panicking.
-    sleep_for(Duration::from_secs(u64::MAX));
+    let requested = Duration::from_secs(u64::MAX);
+    sleep_for(requested);
 
     let recorded = session.take();
-    assert_eq!(recorded, [MAX_SLEEP_DURATION]);
+    let remainder = requested.saturating_sub(MAX_SLEEP_DURATION);
+
+    if remainder.is_zero() {
+        assert_eq!(recorded, [MAX_SLEEP_DURATION]);
+    } else {
+        assert_eq!(recorded, [MAX_SLEEP_DURATION, remainder]);
+    }
+}
+
+#[test]
+fn sleep_for_splits_large_durations_into_chunks() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let requested = Duration::MAX;
+    sleep_for(requested);
+
+    let recorded = session.take();
+    assert!(!recorded.is_empty());
+
+    let total = recorded
+        .iter()
+        .copied()
+        .try_fold(Duration::ZERO, |acc, chunk| acc.checked_add(chunk))
+        .expect("sum fits within Duration::MAX");
+    assert_eq!(total, requested);
+    assert!(
+        recorded
+            .iter()
+            .all(|chunk| !chunk.is_zero() && *chunk <= MAX_SLEEP_DURATION)
+    );
 }
