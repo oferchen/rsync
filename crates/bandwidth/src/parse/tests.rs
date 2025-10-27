@@ -53,6 +53,12 @@ fn parse_bandwidth_handles_fractional_values() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_leading_decimal_without_integer_part() {
+    let limit = parse_bandwidth_argument(".5M").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(512 * 1024));
+}
+
+#[test]
 fn parse_bandwidth_accepts_leading_plus_sign() {
     let limit = parse_bandwidth_argument("+1M").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1_048_576));
