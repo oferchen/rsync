@@ -206,7 +206,8 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     }
 
     let numeric_part = &unsigned[..numeric_end];
-    let remainder = &unsigned[numeric_end..];
+    let mut remainder = &unsigned[numeric_end..];
+    remainder = remainder.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
 
     if !digits_seen || numeric_part == "." || numeric_part == "," {
         return Err(BandwidthParseError::Invalid);
@@ -222,6 +223,9 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
             let ch = chars.next().unwrap();
             (ch, chars.as_str())
         };
+
+    remainder_after_suffix =
+        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
 
     let repetitions = match suffix.to_ascii_lowercase() {
         'b' => 0,
@@ -258,6 +262,9 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         }
     }
 
+    remainder_after_suffix =
+        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+
     let mut adjust = 0i8;
     if !remainder_after_suffix.is_empty() {
         if remainder_after_suffix == "+1" && numeric_end > 0 {
@@ -268,6 +275,9 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
             remainder_after_suffix = "";
         }
     }
+
+    remainder_after_suffix =
+        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
 
     if !remainder_after_suffix.is_empty() {
         return Err(BandwidthParseError::Invalid);
