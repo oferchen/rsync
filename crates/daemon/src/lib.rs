@@ -6685,17 +6685,16 @@ mod tests {
     }
 
     #[test]
-    fn runtime_options_trim_bwlimit_argument() {
-        let options =
-            RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from(" 8M \n")])
-                .expect("parse bwlimit");
+    fn runtime_options_reject_whitespace_wrapped_bwlimit_argument() {
+        let error = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from(" 8M \n")])
+            .expect_err("whitespace-wrapped bwlimit should fail");
 
-        assert_eq!(
-            options.bandwidth_limit(),
-            Some(NonZeroU64::new(8 * 1024 * 1024).unwrap())
+        assert!(
+            error
+                .message()
+                .to_string()
+                .contains("--bwlimit= 8M \n is invalid")
         );
-        assert!(options.bandwidth_burst().is_none());
-        assert!(options.bandwidth_limit_configured());
     }
 
     #[test]
