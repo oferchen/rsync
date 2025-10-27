@@ -664,19 +664,13 @@ mod tests {
             .build()
             .expect("build walker");
 
-        let root = walker
-            .next()
-            .expect("root entry")
-            .expect("root ok");
+        let root = walker.next().expect("root entry").expect("root ok");
         assert!(root.is_root());
         assert!(root.metadata().file_type().is_symlink());
         assert_eq!(root.full_path(), link.as_path());
         assert!(root.relative_path().as_os_str().is_empty());
 
-        let child = walker
-            .next()
-            .expect("child entry")
-            .expect("child ok");
+        let child = walker.next().expect("child entry").expect("child ok");
         assert_eq!(child.relative_path(), std::path::Path::new("file.txt"));
         assert_eq!(child.full_path(), link.join("file.txt"));
         assert!(child.metadata().is_file());

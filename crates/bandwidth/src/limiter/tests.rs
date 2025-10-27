@@ -1,6 +1,6 @@
 use super::{
-    BandwidthLimiter, MAX_SLEEP_DURATION, MINIMUM_SLEEP_MICROS, apply_effective_limit,
-    duration_from_microseconds, recorded_sleep_session, sleep_for,
+    BandwidthLimiter, LimiterChange, MAX_SLEEP_DURATION, MINIMUM_SLEEP_MICROS,
+    apply_effective_limit, duration_from_microseconds, recorded_sleep_session, sleep_for,
 };
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -182,9 +182,20 @@ fn limiter_reset_clears_state_and_preserves_configuration() {
 fn apply_effective_limit_disables_limiter_when_unrestricted() {
     let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
-    apply_effective_limit(&mut limiter, None, true, None, false);
+    let change = apply_effective_limit(&mut limiter, None, true, None, false);
+
+    assert_eq!(change, LimiterChange::Disabled);
+    assert!(limiter.is_none());
+}
+
+#[test]
+fn apply_effective_limit_reports_unchanged_when_already_disabled() {
+    let mut limiter: Option<BandwidthLimiter> = None;
+
+    let change = apply_effective_limit(&mut limiter, None, true, None, false);
 
     assert!(limiter.is_none());
+    assert_eq!(change, LimiterChange::Unchanged);
 }
 
 #[test]
@@ -194,9 +205,10 @@ fn apply_effective_limit_caps_existing_limit() {
     ));
     let cap = NonZeroU64::new(1024 * 1024).unwrap();
 
-    apply_effective_limit(&mut limiter, Some(cap), true, None, false);
+    let change = apply_effective_limit(&mut limiter, Some(cap), true, None, false);
 
     let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(change, LimiterChange::Updated);
     assert_eq!(limiter.limit_bytes(), cap);
 }
 
@@ -205,9 +217,10 @@ fn apply_effective_limit_initialises_limiter_when_absent() {
     let mut limiter = None;
     let cap = NonZeroU64::new(4 * 1024 * 1024).unwrap();
 
-    apply_effective_limit(&mut limiter, Some(cap), true, None, false);
+    let change = apply_effective_limit(&mut limiter, Some(cap), true, None, false);
 
     let limiter = limiter.expect("limiter should be created");
+    assert_eq!(change, LimiterChange::Enabled);
     assert_eq!(limiter.limit_bytes(), cap);
 }
 
@@ -217,9 +230,10 @@ fn apply_effective_limit_updates_burst_when_specified() {
     let mut limiter = Some(BandwidthLimiter::new(limit));
     let burst = NonZeroU64::new(2048).unwrap();
 
-    apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), true);
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), true);
 
     let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(change, LimiterChange::Updated);
     assert_eq!(limiter.limit_bytes(), limit);
     assert_eq!(limiter.burst_bytes(), Some(burst));
 }
@@ -235,7 +249,7 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
     let current_limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
 
     // Reaffirming the existing limit without marking a burst override keeps the original burst.
-    apply_effective_limit(&mut limiter, Some(current_limit), true, None, false);
+    let change = apply_effective_limit(&mut limiter, Some(current_limit), true, None, false);
     assert_eq!(
         limiter
             .as_ref()
@@ -243,10 +257,11 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
             .burst_bytes(),
         Some(burst)
     );
+    assert_eq!(change, LimiterChange::Unchanged);
 
     // Explicit overrides update the burst even when the rate remains unchanged.
     let new_burst = NonZeroU64::new(4096).unwrap();
-    apply_effective_limit(
+    let change = apply_effective_limit(
         &mut limiter,
         Some(current_limit),
         true,
@@ -260,9 +275,10 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
             .burst_bytes(),
         Some(new_burst)
     );
+    assert_eq!(change, LimiterChange::Updated);
 
     // Burst-only overrides honour the existing limiter but leave absent limiters untouched.
-    apply_effective_limit(&mut limiter, None, false, Some(burst), true);
+    let change = apply_effective_limit(&mut limiter, None, false, Some(burst), true);
     assert_eq!(
         limiter
             .as_ref()
@@ -270,10 +286,12 @@ fn apply_effective_limit_updates_burst_only_when_explicit() {
             .burst_bytes(),
         Some(burst)
     );
+    assert_eq!(change, LimiterChange::Updated);
 
     let mut absent: Option<BandwidthLimiter> = None;
-    apply_effective_limit(&mut absent, None, false, Some(new_burst), true);
+    let change = apply_effective_limit(&mut absent, None, false, Some(new_burst), true);
     assert!(absent.is_none());
+    assert_eq!(change, LimiterChange::Unchanged);
 }
 
 #[test]
@@ -283,7 +301,7 @@ fn apply_effective_limit_ignores_unspecified_burst_override() {
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst)));
 
     let replacement_burst = NonZeroU64::new(1024).unwrap();
-    apply_effective_limit(
+    let change = apply_effective_limit(
         &mut limiter,
         Some(limit),
         true,
@@ -298,6 +316,7 @@ fn apply_effective_limit_ignores_unspecified_burst_override() {
             .burst_bytes(),
         Some(burst)
     );
+    assert_eq!(change, LimiterChange::Unchanged);
 }
 
 #[test]
@@ -306,7 +325,7 @@ fn apply_effective_limit_ignores_unspecified_burst_when_creating_limiter() {
     let mut limiter = None;
     let replacement_burst = NonZeroU64::new(2048).unwrap();
 
-    apply_effective_limit(
+    let change = apply_effective_limit(
         &mut limiter,
         Some(limit),
         true,
@@ -317,6 +336,7 @@ fn apply_effective_limit_ignores_unspecified_burst_when_creating_limiter() {
     let limiter = limiter.expect("limiter should be created");
     assert_eq!(limiter.limit_bytes(), limit);
     assert!(limiter.burst_bytes().is_none());
+    assert_eq!(change, LimiterChange::Enabled);
 }
 
 #[test]

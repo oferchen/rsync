@@ -413,14 +413,13 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
 }
 
 fn parse_decimal_with_exponent(text: &str) -> Result<(u128, u128, u128, i32), BandwidthParseError> {
-    let (mantissa_text, exponent_text) =
-        if let Some(position) = text.find(['e', 'E']) {
-            let (mantissa, exponent) = text.split_at(position);
-            let exponent = &exponent[1..];
-            (mantissa, Some(exponent))
-        } else {
-            (text, None)
-        };
+    let (mantissa_text, exponent_text) = if let Some(position) = text.find(['e', 'E']) {
+        let (mantissa, exponent) = text.split_at(position);
+        let exponent = &exponent[1..];
+        (mantissa, Some(exponent))
+    } else {
+        (text, None)
+    };
 
     let (integer, fraction, denominator) = parse_decimal_mantissa(mantissa_text)?;
 

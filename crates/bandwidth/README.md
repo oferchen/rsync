@@ -43,7 +43,8 @@ size, mirroring upstream behaviour.
 `apply_effective_limit` merges daemon-imposed caps with pre-existing limiter
 configuration. The helper ensures precedence rules match upstream rsync by
 keeping the strictest rate while allowing burst overrides when explicitly
-requested.
+requested, and returns a [`LimiterChange`](crate::LimiterChange) describing
+whether throttling was enabled, updated, disabled, or left untouched.
 
 ### Test support
 
