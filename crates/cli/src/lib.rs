@@ -12641,11 +12641,11 @@ mod tests {
     }
 
     #[test]
-    fn bwlimit_argument_trims_whitespace() {
-        let limit = parse_bandwidth_limit(OsStr::new(" 1M \t"))
-            .expect("parse succeeds")
-            .expect("limit available");
-        assert_eq!(limit.bytes_per_second().get(), 1_048_576);
+    fn bwlimit_rejects_whitespace_wrapped_argument() {
+        let error = parse_bandwidth_limit(OsStr::new(" 1M \t"))
+            .expect_err("whitespace-wrapped bwlimit should fail");
+        let rendered = format!("{error}");
+        assert!(rendered.contains("--bwlimit= 1M \t is invalid"));
     }
 
     #[test]
