@@ -57,7 +57,7 @@
 mod limiter;
 mod parse;
 
-pub use crate::limiter::BandwidthLimiter;
+pub use crate::limiter::{BandwidthLimiter, apply_effective_limit};
 #[cfg(any(test, feature = "test-support"))]
 pub use crate::limiter::{RecordedSleepSession, recorded_sleep_session};
 pub use crate::parse::{

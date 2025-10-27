@@ -153,6 +153,56 @@ fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64
     (kib, write_max)
 }
 
+/// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream rsync's
+/// precedence rules.
+///
+/// When a daemon module defines `bwlimit`, rsync enforces the strictest byte-per-second rate while
+/// allowing the module to override the configured burst size. Centralising the precedence logic
+/// keeps higher layers from duplicating the combination rules and ensures daemon and client
+/// behaviour stays in sync.
+pub fn apply_effective_limit(
+    limiter: &mut Option<BandwidthLimiter>,
+    limit: Option<NonZeroU64>,
+    burst: Option<NonZeroU64>,
+    burst_specified: bool,
+) {
+    if limit.is_none() && !burst_specified {
+        if limiter.is_some() {
+            *limiter = None;
+        }
+        return;
+    }
+
+    if let Some(limit) = limit {
+        match limiter {
+            Some(existing) => {
+                let target_limit = existing.limit_bytes().min(limit);
+                let target_burst = if burst_specified {
+                    burst
+                } else {
+                    burst.or(existing.burst_bytes())
+                };
+
+                let limit_changed = target_limit != existing.limit_bytes();
+                let burst_changed = burst_specified && target_burst != existing.burst_bytes();
+
+                if limit_changed || burst_changed {
+                    existing.update_configuration(target_limit, target_burst);
+                }
+            }
+            None => {
+                *limiter = Some(BandwidthLimiter::with_burst(limit, burst));
+            }
+        }
+    } else if burst_specified {
+        if let Some(existing) = limiter.as_mut() {
+            if existing.burst_bytes() != burst {
+                existing.update_configuration(existing.limit_bytes(), burst);
+            }
+        }
+    }
+}
+
 /// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
 #[doc(alias = "--bwlimit")]
 #[derive(Clone, Debug)]
@@ -340,7 +390,9 @@ impl BandwidthLimiter {
 
 #[cfg(test)]
 mod tests {
-    use super::{BandwidthLimiter, MINIMUM_SLEEP_MICROS, recorded_sleep_session};
+    use super::{
+        BandwidthLimiter, MINIMUM_SLEEP_MICROS, apply_effective_limit, recorded_sleep_session,
+    };
     use std::num::NonZeroU64;
     use std::time::Duration;
 
@@ -496,5 +548,94 @@ mod tests {
         limiter.register(4096);
         let reset_sleeps = session.take();
         assert_eq!(reset_sleeps, baseline_sleeps);
+    }
+
+    #[test]
+    fn apply_effective_limit_disables_limiter_when_unrestricted() {
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
+
+        apply_effective_limit(&mut limiter, None, None, false);
+
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_caps_existing_limit() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+        ));
+        let cap = NonZeroU64::new(1024 * 1024).unwrap();
+
+        apply_effective_limit(&mut limiter, Some(cap), None, false);
+
+        let limiter = limiter.expect("limiter should remain active");
+        assert_eq!(limiter.limit_bytes(), cap);
+    }
+
+    #[test]
+    fn apply_effective_limit_initialises_limiter_when_absent() {
+        let mut limiter = None;
+        let cap = NonZeroU64::new(4 * 1024 * 1024).unwrap();
+
+        apply_effective_limit(&mut limiter, Some(cap), None, false);
+
+        let limiter = limiter.expect("limiter should be created");
+        assert_eq!(limiter.limit_bytes(), cap);
+    }
+
+    #[test]
+    fn apply_effective_limit_updates_burst_when_specified() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(4 * 1024 * 1024).unwrap(),
+        ));
+        let burst = NonZeroU64::new(2048).unwrap();
+
+        apply_effective_limit(&mut limiter, Some(burst), Some(burst), true);
+
+        let limiter = limiter.expect("limiter should remain active");
+        assert_eq!(limiter.burst_bytes(), Some(burst));
+    }
+
+    #[test]
+    fn apply_effective_limit_updates_burst_only_when_explicit() {
+        let burst = NonZeroU64::new(1024).unwrap();
+        let mut limiter = Some(BandwidthLimiter::with_burst(
+            NonZeroU64::new(2 * 1024 * 1024).unwrap(),
+            Some(burst),
+        ));
+
+        let current_limit = NonZeroU64::new(2 * 1024 * 1024).unwrap();
+        let new_burst = NonZeroU64::new(4096).unwrap();
+
+        // Without an explicit override, supplying a new burst while keeping the same limit should
+        // leave the existing configuration untouched.
+        apply_effective_limit(&mut limiter, Some(current_limit), Some(new_burst), false);
+        assert_eq!(
+            limiter
+                .as_ref()
+                .expect("limiter should remain active")
+                .burst_bytes(),
+            Some(burst)
+        );
+
+        // When the limit changes, the implicit burst value propagates just as in upstream rsync.
+        apply_effective_limit(&mut limiter, Some(burst), Some(new_burst), false);
+        assert_eq!(
+            limiter
+                .as_ref()
+                .expect("limiter should remain active")
+                .burst_bytes(),
+            Some(new_burst)
+        );
+
+        // Explicit overrides update the burst even when no new rate is provided.
+        apply_effective_limit(&mut limiter, None, Some(new_burst), true);
+        assert_eq!(
+            limiter
+                .as_ref()
+                .expect("limiter should remain active")
+                .burst_bytes(),
+            Some(new_burst)
+        );
     }
 }

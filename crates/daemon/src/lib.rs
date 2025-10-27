@@ -191,7 +191,8 @@ use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{
-        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
+        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, apply_effective_limit,
+        parse_bandwidth_limit,
     },
     fallback::fallback_override,
     message::{Message, Role},
@@ -3723,47 +3724,7 @@ fn apply_module_bandwidth_limit(
     module_burst: Option<NonZeroU64>,
     module_burst_specified: bool,
 ) {
-    if module_limit.is_none() && !module_burst_specified {
-        if limiter.is_some() {
-            *limiter = None;
-        }
-        return;
-    }
-
-    if let Some(limit) = module_limit {
-        match limiter {
-            Some(existing) => {
-                let target_limit = existing.limit_bytes().min(limit);
-                let target_burst = if module_burst_specified {
-                    module_burst
-                } else {
-                    module_burst.or(existing.burst_bytes())
-                };
-
-                let limit_changed = target_limit != existing.limit_bytes();
-                let burst_changed =
-                    module_burst_specified && target_burst != existing.burst_bytes();
-
-                if limit_changed || burst_changed {
-                    existing.update_configuration(target_limit, target_burst);
-                }
-            }
-            None => {
-                *limiter = BandwidthLimitComponents::new_with_specified(
-                    Some(limit),
-                    module_burst,
-                    module_burst_specified,
-                )
-                .into_limiter();
-            }
-        }
-    } else if module_burst_specified {
-        if let Some(existing) = limiter {
-            if module_burst != existing.burst_bytes() {
-                existing.update_configuration(existing.limit_bytes(), module_burst);
-            }
-        }
-    }
+    apply_effective_limit(limiter, module_limit, module_burst, module_burst_specified);
 }
 
 #[allow(clippy::too_many_arguments)]
