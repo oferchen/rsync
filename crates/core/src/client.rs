@@ -2561,6 +2561,24 @@ impl BandwidthLimit {
     pub fn into_limiter(self) -> BandwidthLimiter {
         self.to_limiter()
     }
+
+    /// Returns the sanitised `--bwlimit` argument expected by legacy fallbacks.
+    ///
+    /// When delegating remote transfers to the system `rsync` binary we must
+    /// forward the throttling setting using the byte-per-second form accepted by
+    /// upstream releases. This helper mirrors the formatting performed by
+    /// upstream `rsync` when normalising parsed limits, ensuring fallback
+    /// invocations receive identical values.
+    #[must_use]
+    pub fn fallback_argument(&self) -> OsString {
+        OsString::from(self.bytes_per_second.get().to_string())
+    }
+
+    /// Returns the argument that disables bandwidth limiting for fallbacks.
+    #[must_use]
+    pub fn fallback_unlimited_argument() -> OsString {
+        OsString::from("0")
+    }
 }
 
 impl From<BandwidthLimit> for bandwidth::BandwidthLimitComponents {
@@ -5322,6 +5340,20 @@ exit 42
 
         assert_eq!(limiter.limit_bytes(), rate);
         assert_eq!(limiter.burst_bytes(), None);
+    }
+
+    #[test]
+    fn bandwidth_limit_fallback_argument_returns_bytes_per_second() {
+        let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(2048).unwrap());
+        assert_eq!(limit.fallback_argument(), OsString::from("2048"));
+    }
+
+    #[test]
+    fn bandwidth_limit_fallback_unlimited_argument_returns_zero() {
+        assert_eq!(
+            BandwidthLimit::fallback_unlimited_argument(),
+            OsString::from("0"),
+        );
     }
 
     #[test]
