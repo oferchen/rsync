@@ -406,6 +406,20 @@ fn apply_effective_limit_initialises_limiter_when_absent() {
 }
 
 #[test]
+fn apply_effective_limit_initialises_limiter_with_burst() {
+    let mut limiter = None;
+    let limit = NonZeroU64::new(6 * 1024 * 1024).unwrap();
+    let burst = NonZeroU64::new(512 * 1024).unwrap();
+
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), true);
+
+    let limiter = limiter.expect("limiter should be created with burst");
+    assert_eq!(change, LimiterChange::Enabled);
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert_eq!(limiter.burst_bytes(), Some(burst));
+}
+
+#[test]
 fn apply_effective_limit_updates_burst_when_specified() {
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let mut limiter = Some(BandwidthLimiter::new(limit));
