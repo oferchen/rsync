@@ -3808,8 +3808,12 @@ fn apply_module_bandwidth_limit(
     module_burst_specified: bool,
 ) {
     if module_limit_configured && module_limit.is_none() {
-        *limiter = None;
-        return;
+        let burst_only_override =
+            module_burst_specified && module_burst.is_some() && limiter.is_some();
+        if !burst_only_override {
+            *limiter = None;
+            return;
+        }
     }
 
     let limit_specified =
