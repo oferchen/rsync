@@ -27,6 +27,20 @@ fn recorded_sleep_session_lock() -> &'static Mutex<()> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+fn lock_recorded_sleeps() -> MutexGuard<'static, Vec<Duration>> {
+    recorded_sleeps()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn lock_recorded_sleep_session() -> MutexGuard<'static, ()> {
+    recorded_sleep_session_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 /// Guard that provides exclusive access to the recorded sleep durations.
 ///
@@ -45,14 +59,14 @@ pub struct RecordedSleepSession<'a> {
 impl<'a> RecordedSleepSession<'a> {
     #[inline]
     fn with_recorded_sleeps<R>(&self, op: impl FnOnce(&[Duration]) -> R) -> R {
-        let guard = recorded_sleeps().lock().expect("lock recorded sleeps");
+        let guard = lock_recorded_sleeps();
         op(guard.as_slice())
     }
 
     #[inline]
     fn with_recorded_sleeps_mut<R>(&self, op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
-        let mut guard = recorded_sleeps().lock().expect("lock recorded sleeps");
-        op(&mut guard)
+        let mut guard = lock_recorded_sleeps();
+        op(&mut *guard)
     }
 
     /// Removes any previously recorded durations.
@@ -99,9 +113,7 @@ impl<'a> RecordedSleepSession<'a> {
 #[must_use]
 pub fn recorded_sleep_session() -> RecordedSleepSession<'static> {
     RecordedSleepSession {
-        _guard: recorded_sleep_session_lock()
-            .lock()
-            .expect("lock recorded sleep session"),
+        _guard: lock_recorded_sleep_session(),
     }
 }
 
@@ -132,10 +144,7 @@ fn sleep_for(duration: Duration) {
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            recorded_sleeps()
-                .lock()
-                .expect("lock recorded sleeps")
-                .push(chunk);
+            lock_recorded_sleeps().push(chunk);
         }
 
         #[cfg(not(any(test, feature = "test-support")))]

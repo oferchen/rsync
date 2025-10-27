@@ -3,6 +3,7 @@ use super::{
     apply_effective_limit, duration_from_microseconds, recorded_sleep_session, sleep_for,
 };
 use std::num::NonZeroU64;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
 #[test]
@@ -102,6 +103,32 @@ fn recorded_sleep_session_into_vec_consumes_guard() {
     let mut follow_up = recorded_sleep_session();
     assert!(follow_up.is_empty());
     let _ = follow_up.take();
+}
+
+#[test]
+fn recorded_sleep_session_recovers_from_mutex_poisoning() {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _session = recorded_sleep_session();
+        panic!("poison session mutex");
+    }));
+
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _guard = super::recorded_sleeps()
+            .lock()
+            .expect("lock recorded sleeps to poison");
+        panic!("poison recorded sleeps mutex");
+    }));
+
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
+
+    let recorded = session.take();
+    assert_eq!(
+        recorded,
+        [Duration::from_micros(MINIMUM_SLEEP_MICROS as u64)]
+    );
 }
 
 #[test]
