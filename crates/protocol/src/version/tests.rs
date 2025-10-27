@@ -410,6 +410,16 @@ fn supported_protocol_helpers_remain_consistent() {
     let range = ProtocolVersion::supported_range();
     assert_eq!(*range.start(), ProtocolVersion::OLDEST.as_u8());
     assert_eq!(*range.end(), ProtocolVersion::NEWEST.as_u8());
+
+    let expected_display = SUPPORTED_PROTOCOLS
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(
+        ProtocolVersion::supported_protocol_numbers_display(),
+        expected_display
+    );
 }
 
 #[test]

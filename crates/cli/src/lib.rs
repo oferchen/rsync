@@ -77,7 +77,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -86,7 +86,7 @@ use std::num::{IntErrorKind, NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
-use std::sync::{OnceLock, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -5182,24 +5182,7 @@ fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersion, Message>
 }
 
 fn supported_protocols_list() -> &'static str {
-    static SUPPORTED_PROTOCOLS: OnceLock<String> = OnceLock::new();
-    SUPPORTED_PROTOCOLS
-        .get_or_init(|| {
-            let mut iter = ProtocolVersion::supported_protocol_numbers_iter();
-            let mut formatted = String::with_capacity(iter.len().saturating_mul(4));
-
-            if let Some(first) = iter.next() {
-                let _ = write!(&mut formatted, "{}", first);
-
-                for value in iter {
-                    formatted.push_str(", ");
-                    let _ = write!(&mut formatted, "{}", value);
-                }
-            }
-
-            formatted
-        })
-        .as_str()
+    ProtocolVersion::supported_protocol_numbers_display()
 }
 
 fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, Message> {

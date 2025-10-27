@@ -164,5 +164,6 @@ pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
     ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
     SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOL_RANGE, SUPPORTED_PROTOCOLS,
-    SupportedProtocolNumbersIter, SupportedVersionsIter, select_highest_mutual,
+    SUPPORTED_PROTOCOLS_DISPLAY, SupportedProtocolNumbersIter, SupportedVersionsIter,
+    select_highest_mutual,
 };
