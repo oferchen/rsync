@@ -21,13 +21,13 @@ impl BandwidthLimitComponents {
 
     /// Returns the configured byte-per-second rate, if any.
     #[must_use]
-    pub const fn rate(self) -> Option<NonZeroU64> {
+    pub const fn rate(&self) -> Option<NonZeroU64> {
         self.rate
     }
 
     /// Returns the configured burst size in bytes, if any.
     #[must_use]
-    pub const fn burst(self) -> Option<NonZeroU64> {
+    pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
     }
 
@@ -44,8 +44,8 @@ impl BandwidthLimitComponents {
     /// upstream rsync's token bucket by honouring the optional burst size.
     #[must_use]
     pub fn to_limiter(&self) -> Option<BandwidthLimiter> {
-        self.rate
-            .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))
+        self.rate()
+            .map(|rate| BandwidthLimiter::with_burst(rate, self.burst()))
     }
 
     /// Consumes the components and constructs a [`BandwidthLimiter`].
@@ -55,7 +55,8 @@ impl BandwidthLimitComponents {
     /// components.
     #[must_use]
     pub fn into_limiter(self) -> Option<BandwidthLimiter> {
-        self.to_limiter()
+        self.rate
+            .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))
     }
 }
 
@@ -346,8 +347,8 @@ fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BandwidthLimitComponents, BandwidthParseError, pow_u128, parse_bandwidth_argument,
-        parse_bandwidth_limit,
+        BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument,
+        parse_bandwidth_limit, pow_u128,
     };
     use proptest::prelude::*;
     use std::num::NonZeroU64;
@@ -532,7 +533,10 @@ mod tests {
         let base = 1024u32;
         for exponent in 0..=5u32 {
             let expected = u128::from(base).checked_pow(exponent).expect("no overflow");
-            assert_eq!(pow_u128(base, exponent).expect("computation succeeds"), expected);
+            assert_eq!(
+                pow_u128(base, exponent).expect("computation succeeds"),
+                expected
+            );
         }
     }
 
