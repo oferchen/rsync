@@ -2466,13 +2466,26 @@ impl FilterRuleSpec {
 pub struct BandwidthLimit {
     bytes_per_second: NonZeroU64,
     burst_bytes: Option<NonZeroU64>,
+    burst_specified: bool,
 }
 
 impl BandwidthLimit {
+    const fn new_internal(
+        bytes_per_second: NonZeroU64,
+        burst: Option<NonZeroU64>,
+        burst_specified: bool,
+    ) -> Self {
+        Self {
+            bytes_per_second,
+            burst_bytes: burst,
+            burst_specified,
+        }
+    }
+
     /// Creates a new [`BandwidthLimit`] from the supplied byte-per-second value.
     #[must_use]
     pub const fn from_bytes_per_second(bytes_per_second: NonZeroU64) -> Self {
-        Self::from_rate_and_burst(bytes_per_second, None)
+        Self::new_internal(bytes_per_second, None, false)
     }
 
     /// Creates a new [`BandwidthLimit`] from a rate and optional burst size.
@@ -2481,10 +2494,7 @@ impl BandwidthLimit {
         bytes_per_second: NonZeroU64,
         burst: Option<NonZeroU64>,
     ) -> Self {
-        Self {
-            bytes_per_second,
-            burst_bytes: burst,
-        }
+        Self::new_internal(bytes_per_second, burst, burst.is_some())
     }
 
     /// Converts parsed [`BandwidthLimitComponents`] into a [`BandwidthLimit`].
@@ -2496,7 +2506,11 @@ impl BandwidthLimit {
     #[must_use]
     pub const fn from_components(components: bandwidth::BandwidthLimitComponents) -> Option<Self> {
         match components.rate() {
-            Some(rate) => Some(Self::from_rate_and_burst(rate, components.burst())),
+            Some(rate) => Some(Self::new_internal(
+                rate,
+                components.burst(),
+                components.burst_specified(),
+            )),
             None => None,
         }
     }
@@ -2519,6 +2533,12 @@ impl BandwidthLimit {
         self.burst_bytes
     }
 
+    /// Indicates whether a burst component was explicitly specified.
+    #[must_use]
+    pub const fn burst_specified(self) -> bool {
+        self.burst_specified
+    }
+
     /// Produces the shared [`BandwidthLimitComponents`] representation for this limit.
     ///
     /// The conversion retains both the byte-per-second rate and the optional burst
@@ -2528,7 +2548,11 @@ impl BandwidthLimit {
     /// `bandwidth` crate directly when they already hold a [`BandwidthLimit`].
     #[must_use]
     pub const fn components(&self) -> bandwidth::BandwidthLimitComponents {
-        bandwidth::BandwidthLimitComponents::new(Some(self.bytes_per_second), self.burst_bytes)
+        bandwidth::BandwidthLimitComponents::new_with_specified(
+            Some(self.bytes_per_second),
+            self.burst_bytes,
+            self.burst_specified,
+        )
     }
 
     /// Consumes the limit and returns the [`BandwidthLimitComponents`] representation.
@@ -2571,7 +2595,18 @@ impl BandwidthLimit {
     /// invocations receive identical values.
     #[must_use]
     pub fn fallback_argument(&self) -> OsString {
-        OsString::from(self.bytes_per_second.get().to_string())
+        let mut value = self.bytes_per_second.get().to_string();
+        if self.burst_specified {
+            value.push(':');
+            value.push_str(
+                &self
+                    .burst_bytes
+                    .map(|burst| burst.get().to_string())
+                    .unwrap_or_else(|| "0".to_string()),
+            );
+        }
+
+        OsString::from(value)
     }
 
     /// Returns the argument that disables bandwidth limiting for fallbacks.
@@ -4796,6 +4831,7 @@ mod tests {
 
         assert_eq!(limit.bytes_per_second(), rate);
         assert_eq!(limit.burst_bytes(), Some(burst));
+        assert!(limit.burst_specified());
     }
 
     #[test]
@@ -4807,6 +4843,7 @@ mod tests {
         let components = limit.components();
         assert_eq!(components.rate(), Some(rate));
         assert_eq!(components.burst(), Some(burst));
+        assert!(components.burst_specified());
 
         let round_trip = BandwidthLimit::from_components(components).expect("limit produced");
         assert_eq!(round_trip, limit);
@@ -5350,6 +5387,32 @@ exit 42
     fn bandwidth_limit_fallback_argument_returns_bytes_per_second() {
         let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(2048).unwrap());
         assert_eq!(limit.fallback_argument(), OsString::from("2048"));
+    }
+
+    #[test]
+    fn bandwidth_limit_fallback_argument_includes_burst_when_specified() {
+        let rate = NonZeroU64::new(8 * 1024).unwrap();
+        let burst = NonZeroU64::new(32 * 1024).unwrap();
+        let limit = BandwidthLimit::from_rate_and_burst(rate, Some(burst));
+
+        assert_eq!(limit.fallback_argument(), OsString::from("8192:32768"));
+    }
+
+    #[test]
+    fn bandwidth_limit_fallback_argument_preserves_explicit_zero_burst() {
+        let rate = NonZeroU64::new(4 * 1024).unwrap();
+        let components =
+            bandwidth::BandwidthLimitComponents::new_with_specified(Some(rate), None, true);
+
+        let limit = BandwidthLimit::from_components(components).expect("limit produced");
+
+        assert!(limit.burst_specified());
+        assert_eq!(limit.burst_bytes(), None);
+        assert_eq!(limit.fallback_argument(), OsString::from("4096:0"));
+
+        let round_trip = limit.components();
+        assert!(round_trip.burst_specified());
+        assert_eq!(round_trip.burst(), None);
     }
 
     #[test]
