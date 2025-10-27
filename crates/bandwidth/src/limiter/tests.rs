@@ -106,6 +106,19 @@ fn recorded_sleep_session_into_vec_consumes_guard() {
 }
 
 #[test]
+fn recorded_sleep_session_snapshot_preserves_buffer() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    sleep_for(Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
+
+    let snapshot = session.snapshot();
+    assert_eq!(snapshot, session.snapshot());
+    assert_eq!(session.len(), snapshot.len());
+    assert_eq!(session.take(), snapshot);
+}
+
+#[test]
 fn recorded_sleep_session_recovers_from_mutex_poisoning() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let _session = recorded_sleep_session();
