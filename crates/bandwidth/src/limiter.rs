@@ -145,6 +145,8 @@ fn sleep_for(duration: Duration) {
 /// byte-per-second limit (128 KiB per KiB/s) while respecting the optional
 /// burst override supplied by daemon modules. The helper mirrors that logic so
 /// all limiter constructors share a single source of truth.
+const MIN_WRITE_MAX: usize = 512;
+
 fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
     let kib = if limit.get() < 1024 {
         1
@@ -152,15 +154,20 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
         limit.get() / 1024
     };
 
-    let base_write_max = u128::from(kib).saturating_mul(128).max(512);
+    let base_write_max = u128::from(kib)
+        .saturating_mul(128)
+        .max(MIN_WRITE_MAX as u128);
     let mut write_max = base_write_max.min(usize::MAX as u128) as usize;
 
     if let Some(burst) = burst {
         let burst = burst.get().min(usize::MAX as u64);
-        write_max = usize::try_from(burst).unwrap_or(usize::MAX).max(1);
+        write_max = usize::try_from(burst)
+            .unwrap_or(usize::MAX)
+            .max(MIN_WRITE_MAX)
+            .max(1);
     }
 
-    write_max
+    write_max.max(MIN_WRITE_MAX)
 }
 
 /// Describes how [`apply_effective_limit`] modified a limiter.
