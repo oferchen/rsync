@@ -3299,8 +3299,8 @@ where
     };
 
     let fallback_bwlimit = match (bandwidth_limit.as_ref(), bwlimit.as_ref()) {
-        (Some(limit), _) => Some(OsString::from(limit.bytes_per_second().get().to_string())),
-        (None, Some(_)) => Some(OsString::from("0")),
+        (Some(limit), _) => Some(limit.fallback_argument()),
+        (None, Some(_)) => Some(BandwidthLimit::fallback_unlimited_argument()),
         (None, None) => None,
     };
 
