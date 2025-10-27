@@ -238,6 +238,29 @@ fn recorded_sleep_session_total_duration_reports_sum_without_draining() {
 }
 
 #[test]
+fn recorded_sleep_iter_supports_double_ended_iteration() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let first = Duration::from_micros(MINIMUM_SLEEP_MICROS as u64);
+    let second = Duration::from_micros((MINIMUM_SLEEP_MICROS / 2) as u64);
+    sleep_for(first);
+    sleep_for(second);
+
+    {
+        let mut iter = session.iter();
+        assert_eq!(iter.next(), Some(first));
+        assert_eq!(iter.next_back(), Some(second));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    let collected: Vec<_> = session.iter().rev().collect();
+    assert_eq!(collected, [second, first]);
+    assert_eq!(session.len(), 2);
+}
+
+#[test]
 fn recorded_sleep_session_default_acquires_guard() {
     let mut session = RecordedSleepSession::default();
     session.clear();
