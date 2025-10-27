@@ -3401,3 +3401,59 @@ fn sniffer_rehydrate_from_parts_partial_legacy_preserves_pending_state() {
     assert_eq!(restored.legacy_prefix_remaining(), remaining);
     assert!(restored.requires_more_data());
 }
+
+#[test]
+fn sniffer_into_parts_produces_rehydratable_snapshot() {
+    let mut sniffer = NegotiationPrologueSniffer::new();
+    let (decision, consumed) = sniffer
+        .observe(LEGACY_DAEMON_PREFIX_BYTES)
+        .expect("observation succeeds");
+    assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    assert_eq!(consumed, LEGACY_DAEMON_PREFIX_LEN);
+    assert!(sniffer.legacy_prefix_complete());
+
+    let remainder = b" 31.0\n";
+    sniffer.buffered_storage_mut().extend_from_slice(remainder);
+
+    let expected_prefix_len = sniffer.sniffed_prefix_len();
+    let expected_buffer = {
+        let mut transcript = LEGACY_DAEMON_PREFIX_BYTES.to_vec();
+        transcript.extend_from_slice(remainder);
+        transcript
+    };
+
+    let (snapshot_decision, prefix_len, transcript) = sniffer.into_parts();
+    assert_eq!(snapshot_decision, decision);
+    assert_eq!(prefix_len, expected_prefix_len);
+    assert_eq!(transcript, expected_buffer);
+
+    let mut restored = NegotiationPrologueSniffer::new();
+    restored
+        .rehydrate_from_parts(snapshot_decision, prefix_len, &transcript)
+        .expect("rehydration succeeds");
+
+    assert_eq!(restored.buffered(), transcript.as_slice());
+    assert_eq!(restored.sniffed_prefix_len(), prefix_len);
+    assert_eq!(restored.decision(), Some(snapshot_decision));
+    assert!(!restored.requires_more_data());
+}
+
+#[test]
+fn sniffer_into_parts_preserves_pending_state() {
+    let sniffer = NegotiationPrologueSniffer::new();
+    let (decision, prefix_len, transcript) = sniffer.into_parts();
+
+    assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    assert_eq!(prefix_len, 0);
+    assert!(transcript.is_empty());
+
+    let mut restored = NegotiationPrologueSniffer::new();
+    restored
+        .rehydrate_from_parts(decision, prefix_len, &transcript)
+        .expect("rehydration succeeds");
+
+    assert!(restored.decision().is_none());
+    assert_eq!(restored.sniffed_prefix_len(), 0);
+    assert!(restored.requires_more_data());
+    assert!(restored.buffered().is_empty());
+}
