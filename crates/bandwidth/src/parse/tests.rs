@@ -210,8 +210,10 @@ fn parse_bandwidth_rejects_whitespace_within_adjustment() {
 
 #[test]
 fn parse_bandwidth_rejects_incomplete_iec_suffix() {
-    let error = parse_bandwidth_argument("1Ki").unwrap_err();
-    assert_eq!(error, BandwidthParseError::Invalid);
+    for text in ["1Ki", "1Mi", "1Mi+", "1Mi-", "1Mi:"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
 }
 
 #[test]
@@ -269,6 +271,14 @@ fn parse_bandwidth_negative_adjustment_can_trigger_too_small() {
 fn parse_bandwidth_rejects_trailing_data_after_adjustment() {
     let error = parse_bandwidth_argument("1K+1extra").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_adjustments_other_than_one() {
+    for text in ["1K+2", "1K-2", "1M+3"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
 }
 
 #[test]
