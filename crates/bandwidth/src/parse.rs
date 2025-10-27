@@ -10,6 +10,7 @@ use crate::limiter::BandwidthLimiter;
 pub struct BandwidthLimitComponents {
     rate: Option<NonZeroU64>,
     burst: Option<NonZeroU64>,
+    burst_specified: bool,
 }
 
 impl BandwidthLimitComponents {
@@ -20,10 +21,33 @@ impl BandwidthLimitComponents {
     /// so the helper mirrors that behaviour by discarding the supplied burst.
     #[must_use]
     pub const fn new(rate: Option<NonZeroU64>, burst: Option<NonZeroU64>) -> Self {
-        let effective_burst = if rate.is_some() { burst } else { None };
+        Self::new_with_specified(rate, burst, burst.is_some())
+    }
+
+    /// Constructs a new component set and records whether the burst component
+    /// was explicitly supplied.
+    #[must_use]
+    pub const fn new_with_specified(
+        rate: Option<NonZeroU64>,
+        burst: Option<NonZeroU64>,
+        burst_specified: bool,
+    ) -> Self {
+        let effective_rate = rate;
+        let effective_burst = if effective_rate.is_some() {
+            burst
+        } else {
+            None
+        };
+        let effective_specified = if effective_rate.is_some() {
+            burst_specified
+        } else {
+            false
+        };
+
         Self {
-            rate,
+            rate: effective_rate,
             burst: effective_burst,
+            burst_specified: effective_specified,
         }
     }
 
@@ -37,6 +61,12 @@ impl BandwidthLimitComponents {
     #[must_use]
     pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
+    }
+
+    /// Indicates whether a burst component was explicitly specified.
+    #[must_use]
+    pub const fn burst_specified(&self) -> bool {
+        self.burst_specified
     }
 
     /// Indicates whether the limit disables throttling.
@@ -285,7 +315,9 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
         }
 
         let burst = parse_bandwidth_argument(burst_text)?;
-        Ok(BandwidthLimitComponents::new(rate, burst))
+        Ok(BandwidthLimitComponents::new_with_specified(
+            rate, burst, true,
+        ))
     } else {
         parse_bandwidth_argument(trimmed).map(|rate| BandwidthLimitComponents::new(rate, None))
     }
@@ -479,8 +511,9 @@ mod tests {
         let components = parse_bandwidth_limit("1M:0").expect("parse succeeds");
         assert_eq!(
             components,
-            BandwidthLimitComponents::new(NonZeroU64::new(1_048_576), None)
+            BandwidthLimitComponents::new_with_specified(NonZeroU64::new(1_048_576), None, true,)
         );
+        assert!(components.burst_specified());
     }
 
     #[test]
@@ -502,6 +535,17 @@ mod tests {
     fn components_into_limiter_returns_none_when_unlimited() {
         let components = BandwidthLimitComponents::new(None, NonZeroU64::new(4096));
         assert!(components.into_limiter().is_none());
+    }
+
+    #[test]
+    fn parse_bandwidth_limit_records_explicit_burst_presence() {
+        let specified = parse_bandwidth_limit("2M:128K").expect("parse succeeds");
+        assert!(specified.burst_specified());
+        assert_eq!(specified.burst(), NonZeroU64::new(128 * 1024));
+
+        let unspecified = parse_bandwidth_limit("2M").expect("parse succeeds");
+        assert!(!unspecified.burst_specified());
+        assert!(unspecified.burst().is_none());
     }
 
     #[test]
