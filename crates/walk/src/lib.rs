@@ -408,6 +408,30 @@ impl WalkError {
     pub fn kind(&self) -> &WalkErrorKind {
         &self.kind
     }
+
+    /// Returns the filesystem path associated with the error.
+    ///
+    /// The helper mirrors upstream diagnostics, which always include the
+    /// offending path in walker failures. Callers can forward the returned path
+    /// directly into higher-level error messages without having to pattern match
+    /// on [`WalkErrorKind`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_walk::WalkBuilder;
+    ///
+    /// let result = WalkBuilder::new("./definitely_missing_root").build();
+    /// let error = match result {
+    ///     Ok(_) => panic!("missing root yields error"),
+    ///     Err(error) => error,
+    /// };
+    /// assert!(error.path().ends_with("definitely_missing_root"));
+    /// ```
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        self.kind.path()
+    }
 }
 
 impl fmt::Display for WalkError {
@@ -504,6 +528,20 @@ pub enum WalkErrorKind {
     },
 }
 
+impl WalkErrorKind {
+    /// Returns the filesystem path tied to the failure.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        match self {
+            WalkErrorKind::RootMetadata { path, .. }
+            | WalkErrorKind::ReadDir { path, .. }
+            | WalkErrorKind::ReadDirEntry { path, .. }
+            | WalkErrorKind::Metadata { path, .. }
+            | WalkErrorKind::Canonicalize { path, .. } => path,
+        }
+    }
+}
+
 fn absolutize(path: PathBuf) -> Result<PathBuf, WalkError> {
     if path.is_absolute() {
         Ok(path)
@@ -518,6 +556,7 @@ fn absolutize(path: PathBuf) -> Result<PathBuf, WalkError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
 
     fn collect_relative_paths(mut walker: Walker) -> Vec<PathBuf> {
         let mut paths = Vec::new();
@@ -539,6 +578,14 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error.kind(), WalkErrorKind::RootMetadata { .. }));
+        assert_eq!(
+            error.path(),
+            Path::new("/nonexistent/path/for/walker")
+        );
+        assert_eq!(
+            error.kind().path(),
+            Path::new("/nonexistent/path/for/walker")
+        );
     }
 
     #[test]
