@@ -8,7 +8,6 @@ use std::mem;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const MICROS_PER_SECOND: u128 = 1_000_000;
-const BYTES_PER_KIB: u128 = 1024;
 const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -132,7 +131,13 @@ fn sleep_for(duration: Duration) {
     }
 }
 
-fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64, usize) {
+/// Returns the maximum chunk size used when throttling a stream.
+///
+/// Upstream rsync sizes write batches proportionally to the configured
+/// byte-per-second limit (128 KiB per KiB/s) while respecting the optional
+/// burst override supplied by daemon modules. The helper mirrors that logic so
+/// all limiter constructors share a single source of truth.
+fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
     let kib = limit
         .get()
         .checked_div(1024)
@@ -147,7 +152,7 @@ fn limit_parameters(limit: NonZeroU64, burst: Option<NonZeroU64>) -> (NonZeroU64
         write_max = usize::try_from(burst).unwrap_or(usize::MAX).max(1);
     }
 
-    (kib, write_max)
+    write_max
 }
 
 /// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream rsync's
@@ -213,7 +218,6 @@ pub fn apply_effective_limit(
 #[derive(Clone, Debug)]
 pub struct BandwidthLimiter {
     limit_bytes: NonZeroU64,
-    kib_per_second: NonZeroU64,
     write_max: usize,
     burst_bytes: Option<NonZeroU64>,
     total_written: u128,
@@ -231,11 +235,10 @@ impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied rate and optional burst size.
     #[must_use]
     pub fn with_burst(limit: NonZeroU64, burst: Option<NonZeroU64>) -> Self {
-        let (kib, write_max) = limit_parameters(limit, burst);
+        let write_max = calculate_write_max(limit, burst);
 
         Self {
             limit_bytes: limit,
-            kib_per_second: kib,
             write_max,
             burst_bytes: burst,
             total_written: 0,
@@ -264,10 +267,9 @@ impl BandwidthLimiter {
     /// constructed via [`BandwidthLimiter::with_burst`].
     #[doc(alias = "--bwlimit")]
     pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
-        let (kib, write_max) = limit_parameters(limit, burst);
+        let write_max = calculate_write_max(limit, burst);
 
         self.limit_bytes = limit;
-        self.kib_per_second = kib;
         self.write_max = write_max;
         self.burst_bytes = burst;
         self.total_written = 0;
@@ -327,8 +329,7 @@ impl BandwidthLimiter {
         self.clamp_debt_to_burst();
 
         let start = Instant::now();
-        let kib_per_second = u128::from(self.kib_per_second.get());
-        let bytes_per_second = kib_per_second.saturating_mul(BYTES_PER_KIB);
+        let bytes_per_second = u128::from(self.limit_bytes.get());
 
         let mut elapsed_us = self.simulated_elapsed_us;
         if let Some(previous) = self.last_instant {
