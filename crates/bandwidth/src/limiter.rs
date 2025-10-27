@@ -478,6 +478,13 @@ impl BandwidthLimiter {
     }
 
     /// Records a completed write and sleeps if the limiter accumulated debt.
+    ///
+    /// Each call adds the supplied byte count to the outstanding debt. When the
+    /// debt implies a sleep shorter than [`MINIMUM_SLEEP_MICROS`], the limiter
+    /// defers the pause and tracks the deficit so subsequent writes aggregate the
+    /// debt until the threshold is crossed. This mirrors upstream rsync, where
+    /// bursts of small writes eventually trigger a sleep that covers the accrued
+    /// cost instead of waking the scheduler for every sub-interval chunk.
     pub fn register(&mut self, bytes: usize) {
         if bytes == 0 {
             return;
