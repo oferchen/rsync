@@ -160,65 +160,70 @@ impl Error for BandwidthParseError {}
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
-    if text.chars().all(|ch| ch.is_ascii_whitespace()) {
+    if text
+        .as_bytes()
+        .iter()
+        .all(|byte| byte.is_ascii_whitespace())
+    {
         return Err(BandwidthParseError::Invalid);
     }
 
-    let mut unsigned = text;
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
     let mut negative = false;
 
-    if let Some(first) = unsigned.chars().next() {
+    if let Some(&first) = bytes.first() {
         match first {
-            '+' => {
-                unsigned = &unsigned[first.len_utf8()..];
-            }
-            '-' => {
+            b'+' => start = 1,
+            b'-' => {
                 negative = true;
-                unsigned = &unsigned[first.len_utf8()..];
+                start = 1;
             }
             _ => {}
         }
     }
 
-    if unsigned.is_empty() {
+    if start == bytes.len() {
         return Err(BandwidthParseError::Invalid);
     }
 
+    let unsigned = &text[start..];
+    let unsigned_bytes = unsigned.as_bytes();
     let mut digits_seen = false;
     let mut decimal_seen = false;
     let mut exponent_seen = false;
     let mut exponent_digits_seen = false;
     let mut exponent_sign_allowed = false;
-    let mut numeric_end = unsigned.len();
+    let mut numeric_end = unsigned_bytes.len();
 
-    for (index, ch) in unsigned.char_indices() {
-        if ch.is_ascii_digit() {
-            digits_seen = true;
-            if exponent_seen {
-                exponent_digits_seen = true;
-                exponent_sign_allowed = false;
+    for (index, &byte) in unsigned_bytes.iter().enumerate() {
+        match byte {
+            b'0'..=b'9' => {
+                digits_seen = true;
+                if exponent_seen {
+                    exponent_digits_seen = true;
+                    exponent_sign_allowed = false;
+                }
+                continue;
             }
-            continue;
+            b'.' | b',' if !decimal_seen && !exponent_seen => {
+                decimal_seen = true;
+                continue;
+            }
+            b'e' | b'E' if digits_seen && !exponent_seen => {
+                exponent_seen = true;
+                exponent_sign_allowed = true;
+                continue;
+            }
+            b'+' | b'-' if exponent_sign_allowed => {
+                exponent_sign_allowed = false;
+                continue;
+            }
+            _ => {
+                numeric_end = index;
+                break;
+            }
         }
-
-        if (ch == '.' || ch == ',') && !decimal_seen && !exponent_seen {
-            decimal_seen = true;
-            continue;
-        }
-
-        if matches!(ch, 'e' | 'E') && digits_seen && !exponent_seen {
-            exponent_seen = true;
-            exponent_sign_allowed = true;
-            continue;
-        }
-
-        if (ch == '+' || ch == '-') && exponent_sign_allowed {
-            exponent_sign_allowed = false;
-            continue;
-        }
-
-        numeric_end = index;
-        break;
     }
 
     let numeric_part = &unsigned[..numeric_end];
@@ -241,20 +246,22 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
     let (suffix, mut remainder_after_suffix) =
         if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
-            ('K', remainder)
+            (b'K', remainder)
         } else {
-            let mut chars = remainder.chars();
-            let ch = chars.next().unwrap();
-            (ch, chars.as_str())
+            let first = remainder.as_bytes()[0];
+            if !first.is_ascii() || !remainder.is_char_boundary(1) {
+                return Err(BandwidthParseError::Invalid);
+            }
+            (first, &remainder[1..])
         };
 
     let repetitions = match suffix.to_ascii_lowercase() {
-        'b' => 0,
-        'k' => 1,
-        'm' => 2,
-        'g' => 3,
-        't' => 4,
-        'p' => 5,
+        b'b' => 0,
+        b'k' => 1,
+        b'm' => 2,
+        b'g' => 3,
+        b't' => 4,
+        b'p' => 5,
         _ => return Err(BandwidthParseError::Invalid),
     };
 
