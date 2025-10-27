@@ -6232,64 +6232,16 @@ fn parse_merge_modifiers(
                 }
             }
             'w' => {
-                if allow_extended {
-                    options = options.use_whitespace().allow_comments(false);
-                } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
-                }
+                options = options.use_whitespace().allow_comments(false);
             }
             's' => {
-                if allow_extended {
-                    options = options.sender_modifier();
-                } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
-                }
+                options = options.sender_modifier();
             }
             'r' => {
-                if allow_extended {
-                    options = options.receiver_modifier();
-                } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
-                }
+                options = options.receiver_modifier();
             }
             '/' => {
-                if allow_extended {
-                    options = options.anchor_root(true);
-                } else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter merge directive '{directive}' uses unsupported modifier '{}'",
-                            modifier
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
-                }
+                options = options.anchor_root(true);
             }
             _ => {
                 let message = rsync_error!(
@@ -11519,6 +11471,32 @@ mod tests {
         let expected =
             MergeDirective::new(OsString::from(".cvsignore"), Some(FilterRuleKind::Exclude))
                 .with_options(options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_sender_modifier() {
+        let directive = parse_filter_directive(OsStr::new("merge,s rules"))
+            .expect("merge directive with 's' parses");
+        let expected_options = DirMergeOptions::default()
+            .allow_list_clearing(true)
+            .sender_modifier();
+        let expected =
+            MergeDirective::new(OsString::from("rules"), None).with_options(expected_options);
+        assert_eq!(directive, FilterDirective::Merge(expected));
+    }
+
+    #[test]
+    fn parse_filter_directive_accepts_merge_anchor_and_whitespace_modifiers() {
+        let directive = parse_filter_directive(OsStr::new("merge,/w patterns"))
+            .expect("merge directive with '/' and 'w' parses");
+        let expected_options = DirMergeOptions::default()
+            .allow_list_clearing(true)
+            .anchor_root(true)
+            .use_whitespace()
+            .allow_comments(false);
+        let expected =
+            MergeDirective::new(OsString::from("patterns"), None).with_options(expected_options);
         assert_eq!(directive, FilterDirective::Merge(expected));
     }
 
