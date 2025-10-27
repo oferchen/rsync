@@ -53,6 +53,14 @@ fn parse_bandwidth_rejects_invalid_suffix() {
 }
 
 #[test]
+fn parse_bandwidth_rejects_non_ascii_characters() {
+    for text in ["10µ", "\u{FF11}\u{FF12}M"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
+}
+
+#[test]
 fn parse_bandwidth_handles_fractional_values() {
     let limit = parse_bandwidth_argument("0.5M").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(512 * 1024));
