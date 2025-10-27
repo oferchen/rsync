@@ -133,6 +133,11 @@ impl<'a> BorrowedMessageFrames<'a> {
     }
 
     /// Returns the bytes that have not yet been consumed by the iterator.
+    ///
+    /// When decoding fails (for example because the slice ends midway through a frame) the
+    /// iterator stops yielding new items but retains the truncated bytes. This mirrors upstream
+    /// rsync's behaviour where the receiver reports the partial payload without discarding it,
+    /// allowing higher layers to surface precise diagnostics or retry once more data arrives.
     #[must_use]
     #[inline]
     pub const fn remainder(&self) -> &'a [u8] {
@@ -155,7 +160,6 @@ impl<'a> Iterator for BorrowedMessageFrames<'a> {
                 Some(Ok(frame))
             }
             Err(err) => {
-                self.remaining = &[];
                 self.finished = true;
                 Some(Err(err))
             }
@@ -1193,6 +1197,7 @@ mod tests {
             .expect_err("decode should fail due to truncation");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         assert!(iter.next().is_none());
+        assert_eq!(iter.remainder(), truncated.as_slice());
     }
 
     #[test]
@@ -1214,6 +1219,7 @@ mod tests {
             .expect_err("trailing byte should be reported");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         assert!(iter.next().is_none());
+        assert_eq!(iter.remainder(), &[0xAA][..]);
     }
 
     #[test]
