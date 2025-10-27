@@ -140,13 +140,10 @@ fn sleep_for(duration: Duration) {
 /// burst override supplied by daemon modules. The helper mirrors that logic so
 /// all limiter constructors share a single source of truth.
 fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
-    let kib = limit
-        .get()
-        .checked_div(1024)
-        .and_then(NonZeroU64::new)
-        .expect("bandwidth limit must be at least 1024 bytes per second");
+    let bytes_per_second = limit.get();
+    let kib = (bytes_per_second.saturating_add(1023) / 1024).max(1);
 
-    let base_write_max = u128::from(kib.get()).saturating_mul(128).max(512);
+    let base_write_max = u128::from(kib).saturating_mul(128).max(512);
     let mut write_max = base_write_max.min(usize::MAX as u128) as usize;
 
     if let Some(burst) = burst {
@@ -405,6 +402,15 @@ mod tests {
         let limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
         assert_eq!(limiter.recommended_read_size(8192), 512);
         assert_eq!(limiter.recommended_read_size(256), 256);
+    }
+
+    #[test]
+    fn limiter_supports_minimum_rate_without_panicking() {
+        let limit = NonZeroU64::new(512).unwrap();
+        let limiter = BandwidthLimiter::new(limit);
+
+        assert_eq!(limiter.limit_bytes(), limit);
+        assert_eq!(limiter.recommended_read_size(4096), 512);
     }
 
     #[test]
