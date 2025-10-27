@@ -154,19 +154,17 @@ impl Error for BandwidthParseError {}
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
 #[doc(alias = "--bwlimit")]
 ///
-/// The function mirrors upstream rsync's behaviour. Leading and trailing ASCII
-/// whitespace is ignored to match `strtod`'s parsing rules. `Ok(None)` denotes
-/// an unlimited transfer rate (users may specify `0` for this effect).
-/// Successful parses return the rounded byte-per-second limit as
-/// [`NonZeroU64`].
+/// The function mirrors upstream rsync's behaviour. Inputs must match the
+/// syntax accepted by `parse_size_arg()` which rejects embedded or surrounding
+/// whitespace. `Ok(None)` denotes an unlimited transfer rate (users may specify
+/// `0` for this effect). Successful parses return the rounded byte-per-second
+/// limit as [`NonZeroU64`].
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
-    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
-
-    if trimmed.is_empty() {
+    if text.chars().all(|ch| ch.is_ascii_whitespace()) {
         return Err(BandwidthParseError::Invalid);
     }
 
-    let mut unsigned = trimmed;
+    let mut unsigned = text;
     let mut negative = false;
 
     if let Some(first) = unsigned.chars().next() {
@@ -224,8 +222,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     }
 
     let numeric_part = &unsigned[..numeric_end];
-    let mut remainder = &unsigned[numeric_end..];
-    remainder = remainder.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+    let remainder = &unsigned[numeric_end..];
 
     if !digits_seen || numeric_part == "." || numeric_part == "," {
         return Err(BandwidthParseError::Invalid);
@@ -250,9 +247,6 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
             let ch = chars.next().unwrap();
             (ch, chars.as_str())
         };
-
-    remainder_after_suffix =
-        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
 
     let repetitions = match suffix.to_ascii_lowercase() {
         'b' => 0,
@@ -289,28 +283,12 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         }
     }
 
-    remainder_after_suffix =
-        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
-
     let mut adjust = 0i8;
     if !remainder_after_suffix.is_empty() {
-        // Upstream accepts optional ASCII whitespace between the adjustment sign and
-        // the literal `1` suffix (e.g. `--bwlimit=1K+ 1`). Parsing byte-wise keeps
-        // the logic close to the original `char*` implementation while remaining
-        // allocation free.
         let parse_adjust = |text: &[u8]| -> Option<i8> {
-            let (sign, remainder) = text.split_first()?;
-            if *sign != b'+' && *sign != b'-' {
-                return None;
-            }
-
-            let mut digits = remainder
-                .iter()
-                .copied()
-                .skip_while(|byte| char::from(*byte).is_ascii_whitespace());
-
-            match (digits.next(), digits.next()) {
-                (Some(b'1'), None) => Some(if *sign == b'+' { 1 } else { -1 }),
+            match text {
+                [b'+', b'1'] => Some(1),
+                [b'-', b'1'] => Some(-1),
                 _ => None,
             }
         };
@@ -322,9 +300,6 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
             remainder_after_suffix = "";
         }
     }
-
-    remainder_after_suffix =
-        remainder_after_suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
 
     if !remainder_after_suffix.is_empty() {
         return Err(BandwidthParseError::Invalid);
