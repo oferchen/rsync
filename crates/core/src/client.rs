@@ -2449,12 +2449,24 @@ impl BandwidthLimit {
         }
     }
 
+    /// Converts parsed [`BandwidthLimitComponents`] into a [`BandwidthLimit`].
+    ///
+    /// Returning `None` mirrors upstream rsync's interpretation of `0` as an
+    /// unlimited rate. Callers that parse `--bwlimit` arguments can therefore
+    /// reuse the shared decoding logic and only materialise a [`BandwidthLimit`]
+    /// when throttling is active.
+    #[must_use]
+    pub const fn from_components(components: bandwidth::BandwidthLimitComponents) -> Option<Self> {
+        match components.rate() {
+            Some(rate) => Some(Self::from_rate_and_burst(rate, components.burst())),
+            None => None,
+        }
+    }
+
     /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
     pub fn parse(text: &str) -> Result<Option<Self>, BandwidthParseError> {
         let components = bandwidth::parse_bandwidth_limit(text)?;
-        Ok(components
-            .rate()
-            .map(|rate| Self::from_rate_and_burst(rate, components.burst())))
+        Ok(Self::from_components(components))
     }
 
     /// Returns the configured rate in bytes per second.
@@ -4635,6 +4647,23 @@ mod tests {
         let resolved = ClientEvent::resolve_destination_path(root.as_path(), relative);
 
         assert_eq!(resolved, root);
+    }
+
+    #[test]
+    fn bandwidth_limit_from_components_returns_none_for_unlimited() {
+        let components = bandwidth::BandwidthLimitComponents::new(None, None);
+        assert!(BandwidthLimit::from_components(components).is_none());
+    }
+
+    #[test]
+    fn bandwidth_limit_from_components_preserves_rate_and_burst() {
+        let rate = NonZeroU64::new(8 * 1024).expect("non-zero");
+        let burst = NonZeroU64::new(64 * 1024).expect("non-zero");
+        let components = bandwidth::BandwidthLimitComponents::new(Some(rate), Some(burst));
+        let limit = BandwidthLimit::from_components(components).expect("limit produced");
+
+        assert_eq!(limit.bytes_per_second(), rate);
+        assert_eq!(limit.burst_bytes(), Some(burst));
     }
 
     #[test]
