@@ -151,21 +151,26 @@ fn with_thread_local_scratch<F, R>(f: F) -> R
 where
     F: FnOnce(&mut MessageScratch) -> R,
 {
-    let closure = RefCell::new(Some(f));
+    let mut func = Some(f);
 
     if let Ok(Some(output)) = THREAD_LOCAL_SCRATCH.try_with(|scratch| {
-        let mut guard = scratch.try_borrow_mut().ok()?;
-        let func = closure.borrow_mut().take()?;
+        let mut guard = match scratch.try_borrow_mut() {
+            Ok(guard) => guard,
+            Err(_) => return None,
+        };
+        let func = func
+            .take()
+            .expect("message scratch closure invoked multiple times");
         Some(func(&mut guard))
     }) {
         return output;
     }
 
     let mut scratch = MessageScratch::new();
-    match closure.into_inner() {
-        Some(func) => func(&mut scratch),
-        None => panic!("message scratch closure invoked multiple times"),
-    }
+    let func = func
+        .take()
+        .expect("message scratch closure invoked multiple times");
+    func(&mut scratch)
 }
 
 /// Collection of slices that jointly render an [`Message`].
