@@ -26,10 +26,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           cache: true
+
       - name: Audit repository for tracked binary artifacts
         uses: actions-rs/cargo@v1
         with:
@@ -40,19 +42,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           components: clippy,rustfmt
           cache: true
-          
-      - name: Update apt cache
-        run: sudo apt-get update
-        
-      - name: Install system dependencies
-        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
-        
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+          version: 1
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -63,31 +64,48 @@ jobs:
           key: ${{ runner.os }}-lint-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-lint-
-            
+
       - name: Check formatting
-        run: cargo fmt --all -- --check
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
       - name: Lint with clippy
-        run: cargo clippy --workspace --all-targets -- -Dwarnings
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --workspace --all-targets -- -Dwarnings
+
       - name: Enforce line count limits
-        run: cargo run -p xtask -- enforce-limits
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- enforce-limits
+
       - name: Build documentation
-        run: cargo doc --workspace --no-deps
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --workspace --no-deps
+
       - name: Run doctests
-        run: cargo test --doc --workspace
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --doc --workspace
+
       - name: Ensure no placeholders remain
-        run: cargo run -p xtask -- no-placeholders
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- no-placeholders
 
   test-linux:
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Rust (1.87 + llvm-tools)
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -96,14 +114,16 @@ jobs:
           components: llvm-tools-preview,clippy,rustfmt
           cache: true
 
-      - name: Update apt cache
-        run: sudo apt-get update
-        
-      - name: Install system dependencies
-        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
+          version: 1
 
       - name: Pre-flight check
-        run: cargo run -p xtask -- preflight
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- preflight
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -116,43 +136,53 @@ jobs:
           tool: cargo-nextest
 
       - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast
-        
-      - name: Run tests (extended features)
-        run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
-        
-      - name: Run CLI version tests without ACL/iconv support
-        run: cargo test -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
-        
-      - name: Test with coverage (95% lines & functions)
-        run: cargo llvm-cov nextest --workspace --features "cli nightly" --fail-under-lines 95 --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --workspace --no-fail-fast
 
-      - name: Verify coverage file exists
-        run: ls -l coverage.lcov
+      - name: Run tests (extended features)
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --workspace --no-fail-fast --features "cli nightly"
+
+      - name: Run CLI version tests without ACL/iconv support
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
+
+      - name: Test with coverage (95% lines & functions)
+        uses: actions-rs/cargo@v1
+        with:
+          command: llvm-cov
+          args: nextest --workspace --features "cli nightly" --fail-under-lines 95 --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
           path: coverage.lcov
-          
+          if-no-files-found: error
+
   interop:
     needs: test-linux
     runs-on: ubuntu-latest
-    
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           components: llvm-tools-preview
           cache: true
-      - name: Update apt cache
-        run: sudo apt-get update
-        
-      - name: Install system dependencies
-        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
-        
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+          version: 1
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -163,9 +193,12 @@ jobs:
           key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-test-
-            
+
       - name: Run tests (all features)
-        run: cargo test --workspace --all-features
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --workspace --all-features
 
   build-matrix:
     needs: test-linux
@@ -178,69 +211,65 @@ jobs:
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-            
           - name: linux-aarch64
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-            
           - name: darwin-x86_64
             target: x86_64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-            
           - name: darwin-aarch64
             target: aarch64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-            
           - name: windows-x86_64
             target: x86_64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-            
           - name: windows-x86
             target: i686-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-            
           - name: windows-aarch64
             target: aarch64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
+    env:
+      CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
-          
-      - name: Update apt cache
-        run: sudo apt-get update
-        
-      - name: Install system dependencies
-        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
-        
-      - name: Install aarch64 cross toolchain
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+          version: 1
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get install -y gcc-aarch64-linux-gnu
-        
-      - name: Configure aarch64 environment
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: printf 'CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc\nCARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n' >> "$GITHUB_ENV"
+        with:
+          packages: gcc-aarch64-linux-gnu
+          version: 1
 
       - name: Install Zig toolchain
         if: matrix.build_command == 'zigbuild'
         uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
-          
+
       - name: Install cargo-zigbuild
         if: matrix.build_command == 'zigbuild'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
+
       - name: Install cyclonedx-rust-cargo
         if: ${{ !contains(matrix.target, 'windows') }}
         uses: taiki-e/install-action@v2
@@ -248,28 +277,39 @@ jobs:
           tool: cyclonedx-rust-cargo
 
       - name: Build oc-rsync
-        run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsync
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: ${{ matrix.build_command }}
+          args: --release --target ${{ matrix.target }} --bin oc-rsync
+
       - name: Build oc-rsyncd
         if: matrix.build_daemon
-        run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsyncd
+        uses: actions-rs/cargo@v1
+        with:
+          command: ${{ matrix.build_command }}
+          args: --release --target ${{ matrix.target }} --bin oc-rsyncd
 
       - name: Generate target SBOM
         if: ${{ !contains(matrix.target, 'windows') }}
-        run: cyclonedx-rust-cargo --output "target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json"
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- sbom --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json
 
       - name: Upload oc-rsync artifact
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/oc-rsync*
-          
+          if-no-files-found: error
+
       - name: Upload oc-rsyncd artifact
         if: matrix.build_daemon
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsyncd-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/oc-rsyncd*
+          if-no-files-found: error
 
   package-linux:
     needs: [test-linux, build-matrix]
@@ -283,38 +323,49 @@ jobs:
           toolchain: 1.87
           cache: true
 
-      - name: Update apt cache
-        run: sudo apt-get update
-        
-      - name: Install system dependencies
-        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev
+          version: 1
 
       - name: Install cargo-deb
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb
-          
+
       - name: Install cargo-rpm
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-rpm
-          
+
       - name: Install cyclonedx-rust-cargo
         uses: taiki-e/install-action@v2
         with:
           tool: cyclonedx-rust-cargo
 
       - name: Display workspace metadata
-        run: cargo run -p xtask -- branding
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- branding
 
       - name: Build Debian package
-        run: cargo deb -p oc-rsync-bin
-        
+        uses: actions-rs/cargo@v1
+        with:
+          command: deb
+          args: -p oc-rsync-bin
+
       - name: Build RPM package
-        run: cargo rpm build --release
+        uses: actions-rs/cargo@v1
+        with:
+          command: rpm
+          args: build --release
 
       - name: Generate SBOM
-        run: mkdir -p target/sbom && cyclonedx-rust-cargo --output target/sbom/oc-rsync.cdx.json
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- sbom
 
       - uses: actions/upload-artifact@v4
         with:
@@ -324,3 +375,5 @@ jobs:
             target/release/oc-rsyncd*
             target/debian/*.deb
             target/release/rpmbuild/RPMS/**/*.rpm
+            target/sbom/oc-rsync.cdx.json
+          if-no-files-found: error
