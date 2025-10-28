@@ -740,6 +740,11 @@ thread_local! {
 }
 
 #[cfg(test)]
+thread_local! {
+    static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> = RefCell::new(None);
+}
+
+#[cfg(test)]
 fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
     TEST_HOSTNAME_OVERRIDES.with(|map| {
         map.borrow_mut()
@@ -864,6 +869,18 @@ impl RuntimeOptions {
                 options.load_config_modules(&path, &mut seen_modules)?;
             }
         }
+
+        if options.global_secrets_file.is_none() {
+            if let Some(path) = default_secrets_path_if_present(brand) {
+                options.global_secrets_file = Some(PathBuf::from(&path));
+                options.global_secrets_from_config = false;
+                options
+                    .delegate_arguments
+                    .push(OsString::from("--secrets-file"));
+                options.delegate_arguments.push(path);
+            }
+        }
+
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
@@ -1384,17 +1401,26 @@ fn config_argument_present(arguments: &[OsString]) -> bool {
     false
 }
 
-fn first_existing_config_path<'a, I>(paths: I) -> Option<OsString>
+fn first_existing_path<I, P>(paths: I) -> Option<OsString>
 where
-    I: IntoIterator<Item = &'a str>,
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
 {
     for candidate in paths {
-        if Path::new(candidate).is_file() {
-            return Some(OsString::from(candidate));
+        let candidate = candidate.as_ref();
+        if candidate.is_file() {
+            return Some(candidate.as_os_str().to_os_string());
         }
     }
 
     None
+}
+
+fn first_existing_config_path<'a, I>(paths: I) -> Option<OsString>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    first_existing_path(paths)
 }
 
 fn environment_config_override() -> Option<OsString> {
@@ -1404,6 +1430,15 @@ fn environment_config_override() -> Option<OsString> {
 
 fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
     first_existing_config_path(brand.config_path_candidate_strs())
+}
+
+fn default_secrets_path_if_present(brand: Brand) -> Option<OsString> {
+    #[cfg(test)]
+    if let Some(paths) = TEST_SECRETS_CANDIDATES.with(|cell| cell.borrow().clone()) {
+        return first_existing_path(paths.iter());
+    }
+
+    first_existing_path(brand.secrets_path_candidate_strs())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5294,6 +5329,18 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     static NEXT_TEST_PORT: AtomicU32 = AtomicU32::new(0);
 
+    fn with_test_secrets_candidates<F, R>(candidates: Vec<PathBuf>, func: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        TEST_SECRETS_CANDIDATES.with(|cell| {
+            let previous = cell.replace(Some(candidates));
+            let result = func();
+            cell.replace(previous);
+            result
+        })
+    }
+
     fn allocate_test_port() -> u16 {
         const START: u16 = 40_000;
         const RANGE: u16 = 20_000;
@@ -5434,6 +5481,48 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn default_secrets_path_prefers_primary_candidate() {
+        let dir = tempdir().expect("tempdir");
+        let primary = dir.path().join("primary.secrets");
+        let fallback = dir.path().join("fallback.secrets");
+        fs::write(&primary, "alice:password\n").expect("write primary");
+        fs::write(&fallback, "bob:password\n").expect("write fallback");
+
+        let result = with_test_secrets_candidates(vec![primary.clone(), fallback.clone()], || {
+            default_secrets_path_if_present(Brand::Oc)
+        });
+
+        assert_eq!(result, Some(primary.into_os_string()));
+    }
+
+    #[test]
+    fn default_secrets_path_falls_back_to_secondary_candidate() {
+        let dir = tempdir().expect("tempdir");
+        let fallback = dir.path().join("fallback.secrets");
+        fs::write(&fallback, "bob:password\n").expect("write fallback");
+
+        let missing = dir.path().join("missing.secrets");
+        let result = with_test_secrets_candidates(vec![missing, fallback.clone()], || {
+            default_secrets_path_if_present(Brand::Oc)
+        });
+
+        assert_eq!(result, Some(fallback.into_os_string()));
+    }
+
+    #[test]
+    fn default_secrets_path_returns_none_when_absent() {
+        let dir = tempdir().expect("tempdir");
+        let primary = dir.path().join("missing-primary.secrets");
+        let secondary = dir.path().join("missing-secondary.secrets");
+
+        let result = with_test_secrets_candidates(vec![primary, secondary], || {
+            default_secrets_path_if_present(Brand::Oc)
+        });
 
         assert!(result.is_none());
     }
@@ -7363,6 +7452,32 @@ mod tests {
     }
 
     #[test]
+    fn runtime_options_default_secrets_path_updates_delegate_arguments() {
+        let dir = tempdir().expect("config dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let options =
+            with_test_secrets_candidates(vec![secrets_path.clone()], || RuntimeOptions::parse(&[]))
+                .expect("parse defaults with secrets override");
+
+        assert_eq!(
+            options.delegate_arguments,
+            [
+                OsString::from("--secrets-file"),
+                secrets_path.into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn runtime_options_cli_config_overrides_environment_variable() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let dir = tempdir().expect("config dir");
@@ -7615,6 +7730,42 @@ mod tests {
         ];
 
         let options = RuntimeOptions::parse(&args).expect("parse inline module");
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name, "secure");
+        assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_inline_module_uses_default_secrets_file() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let args = [
+            OsString::from("--module"),
+            OsString::from(format!(
+                "secure={}{}auth users=alice",
+                module_dir.display(),
+                ';'
+            )),
+        ];
+
+        let options = with_test_secrets_candidates(vec![secrets_path.clone()], || {
+            RuntimeOptions::parse(&args)
+        })
+        .expect("parse inline module with default secrets");
+
         let modules = options.modules();
         assert_eq!(modules.len(), 1);
         let module = &modules[0];
