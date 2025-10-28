@@ -66,9 +66,7 @@
 //!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
 //!   while advertising the Rust-branded binary name.
 
-use crate::branding::{
-    client_program_name, daemon_program_name, oc_client_program_name, oc_daemon_program_name,
-};
+use crate::branding;
 use core::{
     fmt::{self, Write as FmtWrite},
     iter::{FromIterator, FusedIterator},
@@ -123,16 +121,16 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
 };
 
 /// Program name rendered by the `rsync` client when displaying version banners.
-pub use crate::branding::CLIENT_PROGRAM_NAME as PROGRAM_NAME;
+pub const PROGRAM_NAME: &str = branding::UPSTREAM_CLIENT_PROGRAM_NAME;
 
 /// Program name rendered by the `rsyncd` daemon when displaying version banners.
-pub use crate::branding::DAEMON_PROGRAM_NAME;
+pub const DAEMON_PROGRAM_NAME: &str = branding::UPSTREAM_DAEMON_PROGRAM_NAME;
 
 /// Program name used by the standalone `oc-rsync` client wrapper.
-pub use crate::branding::OC_CLIENT_PROGRAM_NAME as OC_PROGRAM_NAME;
+pub const OC_PROGRAM_NAME: &str = branding::OC_CLIENT_PROGRAM_NAME;
 
 /// Program name used by the standalone `oc-rsyncd` daemon wrapper.
-pub use crate::branding::OC_DAEMON_PROGRAM_NAME;
+pub const OC_DAEMON_PROGRAM_NAME: &str = branding::OC_DAEMON_PROGRAM_NAME;
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";

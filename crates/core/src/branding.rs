@@ -30,15 +30,15 @@
 
 use std::path::Path;
 
-/// Canonical binary name exposed by the upstream-compatible client wrapper.
+/// Canonical program name used by upstream `rsync` releases.
 #[doc(alias = "rsync")]
-pub const CLIENT_PROGRAM_NAME: &str = "rsync";
+pub const UPSTREAM_CLIENT_PROGRAM_NAME: &str = "rsync";
 
-/// Canonical binary name exposed by the upstream-compatible daemon wrapper.
+/// Canonical program name used by upstream `rsyncd` daemon releases.
 #[doc(alias = "rsyncd")]
-pub const DAEMON_PROGRAM_NAME: &str = "rsyncd";
+pub const UPSTREAM_DAEMON_PROGRAM_NAME: &str = "rsyncd";
 
-/// Canonical binary name exposed by the branded client wrapper packaged as `oc-rsync`.
+/// Canonical binary name exposed by the client wrapper packaged as `oc-rsync`.
 #[doc(alias = "oc-rsync")]
 pub const OC_CLIENT_PROGRAM_NAME: &str = "oc-rsync";
 
@@ -65,6 +65,30 @@ pub const LEGACY_DAEMON_CONFIG_PATH: &str = "/etc/rsyncd.conf";
 /// Legacy secrets file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.secrets")]
 pub const LEGACY_DAEMON_SECRETS_PATH: &str = "/etc/rsyncd.secrets";
+
+/// Returns the canonical upstream client program name (`rsync`).
+#[must_use]
+pub const fn upstream_client_program_name() -> &'static str {
+    UPSTREAM_CLIENT_PROGRAM_NAME
+}
+
+/// Returns the canonical upstream daemon program name (`rsyncd`).
+#[must_use]
+pub const fn upstream_daemon_program_name() -> &'static str {
+    UPSTREAM_DAEMON_PROGRAM_NAME
+}
+
+/// Returns the branded client program name (`oc-rsync`).
+#[must_use]
+pub const fn oc_client_program_name() -> &'static str {
+    OC_CLIENT_PROGRAM_NAME
+}
+
+/// Returns the branded daemon program name (`oc-rsyncd`).
+#[must_use]
+pub const fn oc_daemon_program_name() -> &'static str {
+    OC_DAEMON_PROGRAM_NAME
+}
 
 /// Returns the canonical configuration path used by `oc-rsyncd`.
 #[must_use]
