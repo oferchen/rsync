@@ -12,34 +12,43 @@
 //!
 //! The module publishes lightweight enums and helper functions:
 //!
-//! - [`RUST_VERSION`] holds the `3.4.1-rust` identifier rendered by
+//! - [`RUST_VERSION`](crate::version::RUST_VERSION) holds the `3.4.1-rust`
+//!   identifier rendered by
 //!   user-visible banners.
-//! - [`compiled_features`] inspects Cargo feature flags and returns the set of
-//!   optional capabilities enabled at build time.
-//! - [`compiled_features_static`] exposes a zero-allocation view for repeated
+//! - [`compiled_features`](crate::version::compiled_features) inspects Cargo
+//!   feature flags and returns the set of optional capabilities enabled at build
+//!   time.
+//! - [`compiled_features_static`](crate::version::compiled_features_static)
+//!   exposes a zero-allocation view for repeated
 //!   inspections of the compiled feature set.
-//! - [`CompiledFeature`] enumerates optional capabilities and provides label
-//!   helpers such as [`CompiledFeature::label`] and
-//!   [`CompiledFeature::from_label`] for parsing user-provided strings.
-//! - [`VersionInfoReport`] renders the full `--version` text, including
-//!   capability sections and checksum/compressor listings, so the CLI can
-//!   display upstream-identical banners branded for `rsync`.
+//! - [`CompiledFeature`](crate::version::CompiledFeature) enumerates optional
+//!   capabilities and provides label helpers such as
+//!   [`crate::version::CompiledFeature::label`] and
+//!   [`crate::version::CompiledFeature::from_label`] for parsing user-provided
+//!   strings.
+//! - [`VersionInfoReport`](crate::version::VersionInfoReport) renders the full
+//!   `--version` text, including capability sections and checksum/compressor
+//!   listings, so the CLI can display upstream-identical banners branded for
+//!   `rsync`.
 //!
 //! This structure keeps other crates free of conditional compilation logic
 //! while avoiding string duplication across the workspace.
 //!
 //! # Invariants
 //!
-//! - [`RUST_VERSION`] always embeds the upstream base release so diagnostics and
+//! - [`RUST_VERSION`](crate::version::RUST_VERSION) always embeds the upstream
+//!   base release so diagnostics and
 //!   CLI output remain aligned with rsync 3.4.1.
-//! - [`compiled_features`] never invents capabilities: it only reports flags
-//!   that were explicitly enabled when compiling `rsync-core`.
+//! - [`compiled_features`](crate::version::compiled_features) never invents
+//!   capabilities: it only reports flags that were explicitly enabled when
+//!   compiling `rsync-core`.
 //!
 //! # Errors
 //!
-//! The module exposes [`ParseCompiledFeatureError`] when parsing a
-//! [`CompiledFeature`] from a string fails. All other helpers return constants
-//! or eagerly evaluate into owned collections.
+//! The module exposes
+//! [`ParseCompiledFeatureError`](crate::version::ParseCompiledFeatureError)
+//! when parsing a [`crate::version::CompiledFeature`] from a string fails. All
+//! other helpers return constants or eagerly evaluate into owned collections.
 //!
 //! # Examples
 //!
@@ -60,11 +69,11 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::message`] uses [`RUST_VERSION`] when rendering error
-//!   trailers.
-//! - Future CLI modules rely on [`compiled_features`] and
-//!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
-//!   while advertising the Rust-branded binary name.
+//! - [`crate::message`] uses [`crate::version::RUST_VERSION`] when rendering
+//!   error trailers.
+//! - Future CLI modules rely on [`crate::version::compiled_features`] and
+//!   [`crate::version::VersionInfoReport`] to mirror upstream `--version`
+//!   capability listings while advertising the Rust-branded binary name.
 
 use crate::{
     branding::{self, Brand},

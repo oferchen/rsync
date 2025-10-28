@@ -9,18 +9,18 @@ multiplexed frames without depending on the original C sources.
 
 The crate is decomposed into small modules that map onto the upstream architecture:
 
-- [`version`](crate::version) exposes [`ProtocolVersion`](crate::ProtocolVersion) and
+- `version` exposes [`ProtocolVersion`] and
   helpers for selecting the highest mutually supported protocol between peers.
-- [`legacy`](crate::legacy) provides parsers for ASCII daemon handshakes such as
+- `legacy` provides parsers for ASCII daemon handshakes such as
   `@RSYNCD: 31.0` and the follow-up control messages emitted by rsync daemons prior to
   protocol 30.
-- [`negotiation`](crate::negotiation) contains incremental sniffers that classify the
+- `negotiation` contains incremental sniffers that classify the
   handshake style (binary vs. legacy ASCII) without losing buffered bytes.
-- [`multiplex`](crate::multiplex) and [`envelope`](crate::envelope) re-create the
+- `multiplex` and `envelope` re-create the
   control/data framing used once a session has been negotiated.
-- [`compatibility`](crate::compatibility) models the post-negotiation compatibility flags
+- `compatibility` models the post-negotiation compatibility flags
   shared by peers and exposes typed helpers for working with individual bits.
-- [`varint`](crate::varint) reproduces rsync's variable-length integer codec so other
+- `varint` reproduces rsync's variable-length integer codec so other
   modules can serialise the compatibility flags and future protocol values.
 
 Each module satisfies the workspace style guide, while the crate root re-exports the
@@ -28,7 +28,7 @@ stable APIs consumed by the higher-level transport, core, and daemon layers.
 
 ## Invariants
 
-- [`SUPPORTED_PROTOCOLS`](crate::SUPPORTED_PROTOCOLS) always lists protocol numbers in
+- [`SUPPORTED_PROTOCOLS`] always lists protocol numbers in
   descending order (`32` through `28`).
 - Legacy negotiation helpers never drop or duplicate bytes: sniffed prefixes can be
   replayed verbatim into the parsing routines.
@@ -39,7 +39,7 @@ stable APIs consumed by the higher-level transport, core, and daemon layers.
 
 Parsing helpers surface rich error types that carry enough context to reproduce upstream
 diagnostics. For example,
-[`NegotiationError`](crate::NegotiationError) distinguishes between malformed greetings,
+[`NegotiationError`] distinguishes between malformed greetings,
 unsupported protocol ranges, and truncated payloads. All error types implement
 [`std::error::Error`] and convert into [`std::io::Error`] where appropriate so they
 integrate naturally with transport code.
@@ -75,7 +75,7 @@ assert_eq!(negotiated, ProtocolVersion::NEWEST);
 
 When a peer selects the legacy ASCII negotiation, the bytes that triggered the decision
 must be replayed into the greeting parser so the full `@RSYNCD:` line can be
-reconstructed. [`NegotiationPrologueSniffer`](crate::NegotiationPrologueSniffer) owns the
+reconstructed. [`NegotiationPrologueSniffer`] owns the
 buffered prefix, allowing callers to reuse it without copying more data than upstream
 rsync would have consumed.
 

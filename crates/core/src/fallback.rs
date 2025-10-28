@@ -13,13 +13,16 @@
 //!
 //! # Design
 //!
-//! The module exposes [`fallback_override`] to decode a single environment
-//! variable into a [`FallbackOverride`]. Callers can chain multiple invocations
-//! to honour primary and secondary environment names before deciding whether a
-//! delegation binary is available. The [`FallbackOverride::resolve_or_default`]
-//! helper converts the parsed override into an [`OsString`] when delegation is
-//! enabled, falling back to the supplied default executable (`rsync`) when the
-//! override is `auto` or unspecified.
+//! The module exposes [`fallback_override`](crate::fallback::fallback_override)
+//! to decode a single environment variable into a
+//! [`FallbackOverride`](crate::fallback::FallbackOverride). Callers can chain
+//! multiple invocations to honour primary and secondary environment names
+//! before deciding whether a delegation binary is available. The
+//! [`crate::fallback::FallbackOverride::resolve_or_default`] helper converts the
+//! parsed override into an [`std::ffi::OsString`] when delegation is enabled,
+//! falling back to the
+//! supplied default executable (`rsync`) when the override is `auto` or
+//! unspecified.
 //!
 //! # Invariants
 //!
@@ -32,16 +35,19 @@
 //!
 //! # Errors
 //!
-//! The helpers do not construct [`Message`](crate::message::Message) instances
+//! The helpers do not construct [`crate::message::Message`] instances
 //! because callers must decide how to report disabled delegation. Instead, the
 //! parsing functions return [`None`] when an override is not present or
-//! [`FallbackOverride::Disabled`] when delegation is explicitly turned off.
+//! [`crate::fallback::FallbackOverride::Disabled`] when delegation is explicitly
+//! turned off.
 //!
 //! # Examples
 //!
 //! Construct overrides directly and resolve them to executable paths. In real
-//! usage call [`fallback_override`] to parse environment variables into the
-//! [`FallbackOverride`] enum before invoking [`FallbackOverride::resolve_or_default`].
+//! usage call [`fallback_override`](crate::fallback::fallback_override) to parse
+//! environment variables into the [`FallbackOverride`](crate::fallback::FallbackOverride)
+//! enum before invoking
+//! [`crate::fallback::FallbackOverride::resolve_or_default`].
 //!
 //! ```
 //! use rsync_core::fallback::FallbackOverride;
@@ -62,9 +68,9 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::client::run_remote_transfer_fallback`] for the primary
-//!   consumer of these helpers on the client side.
-//! - [`rsync_daemon::run`] for daemon-side delegation.
+//! - [`crate::client::run_remote_transfer_fallback`] for the primary consumer of
+//!   these helpers on the client side.
+//! - `rsync_daemon::run` for daemon-side delegation.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
