@@ -957,6 +957,8 @@ fn validate_packaging_assets(
         branding.daemon_bin.as_str(),
         branding.daemon_config.as_str(),
         branding.daemon_secrets.as_str(),
+        "Description=oc-rsyncd",
+        "Alias=rsyncd.service",
         "OC_RSYNC_CONFIG",
         "OC_RSYNC_SECRETS",
         "RSYNCD_CONFIG",
@@ -1109,6 +1111,15 @@ fn validate_documentation(workspace: &Path, branding: &WorkspaceBranding) -> Res
                 branding.client_bin.as_str(),
                 branding.daemon_bin.as_str(),
                 branding.rust_version.as_str(),
+            ],
+        },
+        DocumentationCheck {
+            relative_path: "docs/COMPARE.md",
+            required_snippets: vec![
+                branding.client_bin.as_str(),
+                branding.daemon_bin.as_str(),
+                branding.rust_version.as_str(),
+                branding.daemon_config.as_str(),
             ],
         },
     ];
