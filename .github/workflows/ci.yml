@@ -56,6 +56,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -Dwarnings
+      - name: Enforce line count limits
+        run: MAX_RUST_LINES=600 bash tools/enforce_limits.sh
       - name: Build documentation
         run: cargo doc --workspace --no-deps
       - name: Run doctests
