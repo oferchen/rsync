@@ -185,6 +185,7 @@ const HELP_TEXT: &str = concat!(
     "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
     "      --from0      Treat file list entries as NUL-terminated records.\n",
     "      --bwlimit=RATE  Limit I/O bandwidth (supports decimal, binary, and IEC units; 0 disables the limit).\n",
+    "      --no-bwlimit    Remove any configured bandwidth limit.\n",
     "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
     "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
     "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",
@@ -273,7 +274,7 @@ const HELP_TEXT: &str = concat!(
     "covers permissions, timestamps, and optional ownership metadata.\n",
 );
 
-const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-unsafe-links, --no-copy-unsafe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
+const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-unsafe-links, --no-copy-unsafe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
 const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 /// Default patterns excluded by `--cvs-exclude`.
@@ -981,6 +982,12 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
         .unwrap_or(ProgramName::Rsync)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BandwidthArgument {
+    Limit(OsString),
+    Disabled,
+}
+
 struct ParsedArgs {
     program_name: ProgramName,
     show_help: bool,
@@ -1010,7 +1017,7 @@ struct ParsedArgs {
     ignore_missing_args: bool,
     update: bool,
     remainder: Vec<OsString>,
-    bwlimit: Option<OsString>,
+    bwlimit: Option<BandwidthArgument>,
     max_delete: Option<OsString>,
     min_size: Option<OsString>,
     max_size: Option<OsString>,
@@ -2045,7 +2052,15 @@ fn clap_command(program_name: &'static str) -> ClapCommand {
                 .help("Limit I/O bandwidth in KiB/s (0 disables the limit).")
                 .num_args(1)
                 .action(ArgAction::Set)
+                .overrides_with("no-bwlimit")
                 .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("no-bwlimit")
+                .long("no-bwlimit")
+                .help("Disable any configured bandwidth limit.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("bwlimit"),
         )
         .arg(
             Arg::new("timeout")
@@ -2543,7 +2558,14 @@ where
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
-    let bwlimit = matches.remove_one::<OsString>("bwlimit");
+    let no_bwlimit = matches.get_flag("no-bwlimit");
+    let bwlimit = if no_bwlimit {
+        Some(BandwidthArgument::Disabled)
+    } else {
+        matches
+            .remove_one::<OsString>("bwlimit")
+            .map(BandwidthArgument::Limit)
+    };
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(|values| values.collect())
@@ -3320,8 +3342,8 @@ where
 
     let progress_mode = progress_setting.resolved();
 
-    let bandwidth_limit = match bwlimit {
-        Some(ref value) => match parse_bandwidth_limit(value.as_os_str()) {
+    let bandwidth_limit = match bwlimit.as_ref() {
+        Some(BandwidthArgument::Limit(value)) => match parse_bandwidth_limit(value.as_os_str()) {
             Ok(limit) => limit,
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -3330,12 +3352,17 @@ where
                 return 1;
             }
         },
-        None => None,
+        Some(BandwidthArgument::Disabled) | None => None,
     };
 
     let fallback_bwlimit = match (bandwidth_limit.as_ref(), bwlimit.as_ref()) {
         (Some(limit), _) => Some(limit.fallback_argument()),
-        (None, Some(_)) => Some(BandwidthLimit::fallback_unlimited_argument()),
+        (None, Some(BandwidthArgument::Limit(_))) => {
+            Some(BandwidthLimit::fallback_unlimited_argument())
+        }
+        (None, Some(BandwidthArgument::Disabled)) => {
+            Some(BandwidthLimit::fallback_unlimited_argument())
+        }
         (None, None) => None,
     };
 
@@ -8797,6 +8824,31 @@ mod tests {
     }
 
     #[test]
+    fn transfer_request_with_no_bwlimit_copies_file() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("source.txt");
+        let destination = tmp.path().join("destination.txt");
+        std::fs::write(&source, b"unlimited").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("rsync"),
+            OsString::from("--no-bwlimit"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+        assert_eq!(
+            std::fs::read(destination).expect("read destination"),
+            b"unlimited"
+        );
+    }
+
+    #[test]
     fn transfer_request_with_out_format_renders_entries() {
         use tempfile::tempdir;
 
@@ -10320,6 +10372,33 @@ mod tests {
         .expect("parse");
 
         assert!(parsed.mkpath);
+    }
+
+    #[test]
+    fn parse_args_recognises_no_bwlimit_flag() {
+        let parsed = parse_args([
+            OsString::from("rsync"),
+            OsString::from("--no-bwlimit"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(matches!(parsed.bwlimit, Some(BandwidthArgument::Disabled)));
+    }
+
+    #[test]
+    fn parse_args_no_bwlimit_overrides_bwlimit_value() {
+        let parsed = parse_args([
+            OsString::from("rsync"),
+            OsString::from("--bwlimit=2M"),
+            OsString::from("--no-bwlimit"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert!(matches!(parsed.bwlimit, Some(BandwidthArgument::Disabled)));
     }
 
     #[test]
@@ -14748,6 +14827,51 @@ exit 0
             if line == "--bwlimit" {
                 let value = lines.next().expect("bwlimit value recorded");
                 assert_eq!(value, "1048576:65536");
+                return;
+            }
+        }
+
+        panic!("--bwlimit argument not forwarded to fallback");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_fallback_forwards_no_bwlimit_argument() {
+        use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _rsh_guard = clear_rsync_rsh();
+        let temp = tempdir().expect("tempdir");
+        let script_path = temp.path().join("fallback.sh");
+        let args_path = temp.path().join("args.txt");
+        std::fs::File::create(&args_path).expect("create args file");
+
+        let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+        write_executable_script(&script_path, script);
+
+        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("rsync"),
+            OsString::from("--no-bwlimit"),
+            OsString::from("remote::module"),
+            OsString::from("dest"),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+
+        let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+        let mut lines = recorded.lines();
+        while let Some(line) = lines.next() {
+            if line == "--bwlimit" {
+                let value = lines.next().expect("bwlimit value recorded");
+                assert_eq!(value, "0");
                 return;
             }
         }
