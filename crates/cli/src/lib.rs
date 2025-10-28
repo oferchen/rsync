@@ -2791,8 +2791,14 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
         return None;
     }
 
+    let program_name = detect_program_name(args.first().map(OsString::as_os_str));
+    let daemon_program = match program_name {
+        ProgramName::Rsync => rsync_core::version::DAEMON_PROGRAM_NAME,
+        ProgramName::OcRsync => rsync_core::version::OC_DAEMON_PROGRAM_NAME,
+    };
+
     let mut daemon_args = Vec::with_capacity(args.len());
-    daemon_args.push(OsString::from("rsyncd"));
+    daemon_args.push(OsString::from(daemon_program));
 
     let mut found = false;
     let mut reached_double_dash = false;
@@ -7880,6 +7886,30 @@ mod tests {
 
         let (code, stdout, stderr) = run_with_args([
             OsStr::new("rsync"),
+            OsStr::new("--daemon"),
+            OsStr::new("--version"),
+        ]);
+
+        assert_eq!(code, expected_code);
+        assert_eq!(stdout, expected_stdout);
+        assert_eq!(stderr, expected_stderr);
+    }
+
+    #[test]
+    fn oc_daemon_flag_delegates_to_oc_daemon_version() {
+        let mut expected_stdout = Vec::new();
+        let mut expected_stderr = Vec::new();
+        let expected_code = daemon_cli::run(
+            [OsStr::new("oc-rsyncd"), OsStr::new("--version")],
+            &mut expected_stdout,
+            &mut expected_stderr,
+        );
+
+        assert_eq!(expected_code, 0);
+        assert!(expected_stderr.is_empty());
+
+        let (code, stdout, stderr) = run_with_args([
+            OsStr::new("oc-rsync"),
             OsStr::new("--daemon"),
             OsStr::new("--version"),
         ]);
