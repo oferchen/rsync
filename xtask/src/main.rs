@@ -285,33 +285,20 @@ fn is_help_flag(value: &OsString) -> bool {
 }
 
 /// Output format supported by the `branding` command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum BrandingOutputFormat {
     /// Human-readable text report.
+    #[default]
     Text,
     /// Structured JSON report suitable for automation.
     Json,
 }
 
-impl Default for BrandingOutputFormat {
-    fn default() -> Self {
-        BrandingOutputFormat::Text
-    }
-}
-
 /// Options accepted by the `branding` command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct BrandingOptions {
     /// Desired output format.
     format: BrandingOutputFormat,
-}
-
-impl Default for BrandingOptions {
-    fn default() -> Self {
-        BrandingOptions {
-            format: BrandingOutputFormat::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
