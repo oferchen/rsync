@@ -9,6 +9,7 @@ python3 <<'PY'
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -116,5 +117,30 @@ for crate_name in ("oc-rsync-bin", "oc-rsyncd-bin"):
             f"crate {crate_name} version {version} does not match {rust_version}"
         )
 
-print("Preflight checks passed: branding, version, and packaging metadata validated.")
+manifest_path = root / "Cargo.toml"
+manifest_text = manifest_path.read_text(encoding="utf-8")
+in_workspace_package = False
+declared_rust_version = None
+
+for raw_line in manifest_text.splitlines():
+    line = raw_line.strip()
+    if line.startswith("[") and line.endswith("]"):
+        in_workspace_package = line == "[workspace.package]"
+        continue
+
+    if in_workspace_package and line.startswith("rust-version"):
+        match = re.match(r"rust-version\s*=\s*\"([^\"]+)\"", line)
+        if match:
+            declared_rust_version = match.group(1)
+            break
+
+if declared_rust_version != "1.87":
+    raise SystemExit(
+        "workspace.package.rust-version must match CI toolchain 1.87; "
+        f"found {declared_rust_version!r}"
+    )
+
+print(
+    "Preflight checks passed: branding, version, packaging metadata, and toolchain requirements validated."
+)
 PY
