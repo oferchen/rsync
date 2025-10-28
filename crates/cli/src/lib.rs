@@ -7408,6 +7408,19 @@ fn operand_is_remote(path: &OsStr) -> bool {
             return true;
         }
 
+        #[cfg(windows)]
+        {
+            use std::path::{Component, Path};
+
+            if Path::new(path)
+                .components()
+                .next()
+                .is_some_and(|component| matches!(component, Component::Prefix(_)))
+            {
+                return false;
+            }
+        }
+
         let before = &text[..colon_index];
         if before.contains('/') || before.contains('\\') {
             return false;
@@ -13020,6 +13033,16 @@ mod tests {
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains("invalid --skip-compress specification"));
         assert!(rendered.contains("empty character class"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn operand_detection_ignores_windows_drive_and_device_prefixes() {
+        use std::ffi::OsStr;
+
+        assert!(!operand_is_remote(OsStr::new("C:\\temp\\file.txt")));
+        assert!(!operand_is_remote(OsStr::new("\\\\?\\C:\\temp\\file.txt")));
+        assert!(!operand_is_remote(OsStr::new("\\\\.\\C:\\pipe\\name")));
     }
 
     #[test]
