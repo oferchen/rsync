@@ -8343,6 +8343,9 @@ mod tests {
     fn stats_human_readable_formats_totals() {
         use tempfile::tempdir;
 
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _skip_guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new(""));
+
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("file.bin");
         std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
@@ -8380,6 +8383,9 @@ mod tests {
     #[test]
     fn stats_human_readable_combined_formats_totals() {
         use tempfile::tempdir;
+
+        let _env_lock = ENV_LOCK.lock().expect("env lock");
+        let _skip_guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new(""));
 
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("file.bin");
