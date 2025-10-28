@@ -204,8 +204,8 @@ impl KnownCompatibilityFlag {
     /// The parser accepts the exact `CF_*` names emitted by upstream rsync and returned by
     /// [`Self::name`]. Any other input is rejected, ensuring higher layers avoid silently mapping
     /// unknown identifiers to a default value. When parsing fails, the returned
-    /// [`ParseKnownCompatibilityFlagError`] exposes the offending identifier via
-    /// [`ParseKnownCompatibilityFlagError::identifier`], making it trivial for
+    /// `ParseKnownCompatibilityFlagError` exposes the offending identifier via
+    /// `ParseKnownCompatibilityFlagError::identifier`, making it trivial for
     /// callers to surface actionable diagnostics or log messages that mirror
     /// upstream wording.
     ///
@@ -359,7 +359,7 @@ impl DoubleEndedIterator for KnownCompatibilityFlagsIter {
 /// Upstream rsync uses the compatibility flag exchange to signal optional
 /// behaviours that depend on both peers supporting protocol features introduced
 /// after version 30. The flags are transmitted using the variable-length
-/// integer codec implemented in [`crate::varint`], making the bitfield compact
+/// integer codec implemented in the `varint` module, making the bitfield compact
 /// while retaining forward compatibility when new bits are defined.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct CompatibilityFlags {

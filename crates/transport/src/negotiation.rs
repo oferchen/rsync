@@ -364,7 +364,7 @@ impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
     }
 }
 
-/// Error returned when [`NegotiationBufferedSlices::copy_to_slice`] receives an undersized buffer.
+/// Error returned when `NegotiationBufferedSlices::copy_to_slice` receives an undersized buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CopyToSliceError {
     required: usize,
@@ -394,7 +394,7 @@ impl CopyToSliceError {
     /// method remains robust even if the error is constructed with inconsistent inputs. Callers
     /// that surface diagnostics to users can therefore embed the `missing` count directly in their
     /// messages without worrying about underflow. When produced by
-    /// [`NegotiationBufferedSlices::copy_to_slice`], the return value matches `required - provided`,
+    /// `NegotiationBufferedSlices::copy_to_slice`, the return value matches `required - provided`,
     /// mirroring the conventions used by upstream rsync when reporting undersized scratch buffers.
     #[must_use]
     pub const fn missing(self) -> usize {
@@ -1663,7 +1663,7 @@ pub struct NegotiatedStreamParts<R> {
 /// negotiation bytes are not lost when a transformation cannot be completed. The type implements
 /// [`Clone`] when both captured components support it and provides [`From`] conversions for
 /// `(error, original)` tuples, making it straightforward to shuttle the preserved pieces of state
-/// between APIs without spelling out [`TryMapInnerError::new`].
+/// between APIs without spelling out `TryMapInnerError::new`.
 ///
 /// # Examples
 ///

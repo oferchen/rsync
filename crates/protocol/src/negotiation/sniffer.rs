@@ -257,17 +257,16 @@ impl NegotiationPrologueSniffer {
     /// decision recorded during an earlier call to [`read_from`](Self::read_from)
     /// without performing additional I/O. It mirrors the state that would have
     /// been produced by sniffing the same bytes and calling
-    /// [`take_buffered`](Self::take_buffered), making it possible for higher
-    /// layers to store the negotiation replay data separately (for example
-    /// inside [`NegotiatedStreamParts`](crate::negotiation::NegotiatedStreamParts))
+    /// [`Self::take_buffered`], making it possible for higher layers to store
+    /// the negotiation replay data separately (for example inside a
+    /// transport-layer `NegotiatedStreamParts` value)
     /// and later rebuild a sniffer for further parsing.
     ///
     /// `decision` must reflect the negotiated style (`Binary`, `LegacyAscii`, or
     /// `NeedMoreData`). `sniffed_prefix_len` indicates how many of the buffered
     /// bytes were required to classify the negotiation. Any additional payload
     /// in `buffered` is preserved so helpers like
-    /// [`read_legacy_daemon_line`](Self::read_legacy_daemon_line) can replay it
-    /// verbatim.
+    /// [`crate::negotiation::read_legacy_daemon_line`] can replay it verbatim.
     ///
     /// # Errors
     ///
@@ -317,7 +316,7 @@ impl NegotiationPrologueSniffer {
     /// The returned allocation is trimmed to the canonical legacy prefix
     /// length so callers never inherit oversized buffers that may have been
     /// required while parsing malformed greetings. This mirrors the
-    /// shrink-to-fit behavior provided by [`take_buffered`](Self::take_buffered)
+    /// shrink-to-fit behavior provided by [`Self::take_buffered`]
     /// and keeps the helper suitable for long-lived connection pools.
     #[must_use = "the drained negotiation prefix must be replayed"]
     pub fn into_buffered(mut self) -> Vec<u8> {
@@ -546,7 +545,7 @@ impl NegotiationPrologueSniffer {
     /// Drains the buffered bytes (including any remainder beyond the detection prefix) into an
     /// existing vector supplied by the caller.
     ///
-    /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
+    /// The helper mirrors [`Self::take_buffered`] but avoids allocating a new vector when the
     /// caller already owns a reusable buffer. When the destination lacks sufficient capacity the
     /// helper transfers ownership of the sniffer's allocation to `target`, avoiding a redundant
     /// copy before the destination inevitably reallocates. Otherwise the buffered bytes (prefix
@@ -595,7 +594,7 @@ impl NegotiationPrologueSniffer {
     /// Drains the buffered bytes (prefix and any captured remainder) into the caller-provided
     /// slice without allocating.
     ///
-    /// The helper mirrors [`take_buffered_into`] but writes the buffered bytes directly into
+    /// The helper mirrors [`Self::take_buffered_into`] but writes the buffered bytes directly into
     /// `target`, allowing callers with stack-allocated storage to replay the negotiation prologue
     /// and forward any remainder captured in the same read without constructing a temporary
     /// [`Vec`]. When `target` is too small to hold the buffered contents a

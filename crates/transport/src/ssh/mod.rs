@@ -51,7 +51,7 @@
 //!
 //! # See also
 //!
-//! - [`crate::session`] for the negotiation façade that consumes
+//! - [`crate::negotiate_session`] for the negotiation façade that consumes
 //!   [`SshConnection`] streams.
 
 use std::ffi::{OsStr, OsString};
