@@ -13,3 +13,31 @@ path = "src/main.rs"
 
 [dependencies]
 rsync-cli = { path = "../../crates/cli" }
+
+[package.metadata.deb]
+name = "oc-rsync"
+section = "utils"
+priority = "optional"
+maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
+depends = "libc6 (>= 2.34), libgcc-s1"
+extended-description = "Pure-Rust implementation of oc-rsync-compatible client and daemon binaries."
+assets = [
+    ["../../target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
+    ["../../target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
+    ["../../packaging/systemd/rsyncd.service", "/lib/systemd/system/rsyncd.service", "644"],
+    ["../../packaging/etc/rsyncd.conf", "/etc/rsyncd.conf", "644"],
+    ["../../packaging/default/rsyncd", "/etc/default/rsyncd", "644"],
+]
+conf-files = ["etc/rsyncd.conf", "etc/default/rsyncd"]
+
+[package.metadata.rpm]
+package = "oc-rsync"
+summary = "Rust implementation of oc-rsync-compatible client and daemon"
+requires = ["glibc", "libgcc"]
+assets = [
+    { path = "../../target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
+    { path = "../../target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
+    { path = "../../packaging/systemd/rsyncd.service", dest = "/usr/lib/systemd/system/rsyncd.service", mode = "0644" },
+    { path = "../../packaging/etc/rsyncd.conf", dest = "/etc/rsyncd.conf", mode = "0644", config = true },
+    { path = "../../packaging/default/rsyncd", dest = "/etc/default/rsyncd", mode = "0644", config = true },
+]
