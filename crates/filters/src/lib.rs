@@ -25,7 +25,7 @@
 //!   deduplicating equivalent glob expressions. Protect rules are tracked in a
 //!   dedicated list so deletion checks can honour them without affecting copy
 //!   decisions.
-//! - Matching occurs against relative paths using native [`Path`] semantics so
+//! - Matching occurs against relative paths using native [`std::path::Path`] semantics so
 //!   callers can operate directly on `std::path::PathBuf` instances without
 //!   additional conversions.
 //!

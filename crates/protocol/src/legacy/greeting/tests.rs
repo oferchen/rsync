@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Tests for legacy daemon greeting parsing and formatting.
 
 use super::*;
