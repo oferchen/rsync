@@ -1,8 +1,8 @@
-# Additional environment customisations for rsyncd.
+# Additional environment customisations for oc-rsyncd.
 #
 # Uncomment and adjust the variables below to pass extra arguments to the
 # daemon or to point at an alternate configuration file. Values are consumed
-# by the systemd unit installed with the rsync packages.
+# by the systemd unit installed with the oc-rsync packages.
 #
 # RSYNCD_CONFIG=/etc/rsyncd.conf
 # RSYNCD_ARGS="--max-sessions 16"

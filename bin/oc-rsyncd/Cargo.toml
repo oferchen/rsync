@@ -11,5 +11,9 @@ description = "Rust implementation of the oc-rsyncd daemon binary"
 name = "oc-rsyncd"
 path = "src/main.rs"
 
+[features]
+default = []
+sd-notify = ["rsync-daemon/sd-notify"]
+
 [dependencies]
 rsync-daemon = { path = "../../crates/daemon" }
