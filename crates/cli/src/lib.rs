@@ -111,7 +111,7 @@ use rsync_core::{
     fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
-    version::VersionInfoReport,
+    version::{RUST_VERSION, VersionInfoReport},
 };
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
@@ -123,157 +123,162 @@ use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_u
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 /// Deterministic help text describing the CLI surface supported by this build.
-const HELP_TEXT: &str = concat!(
-    "rsync 3.4.1-rust\n",
-    "https://github.com/oferchen/rsync\n",
-    "\n",
-    "Usage: rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
-    "\n",
-    "This development snapshot implements deterministic local filesystem\n",
-    "copies for regular files, directories, and symbolic links. The\n",
-    "following options are recognised:\n",
-    "      --help       Show this help message and exit.\n",
-    "  -V, --version    Output version information and exit.\n",
-    "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
-    "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
-    "      --connect-program=COMMAND  Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).\n",
-    "      --port=PORT  Connect to rsync:// daemons on TCP PORT when not specified by the source.\n",
-    "  -M, --remote-option=OPTION  Forward OPTION to the remote rsync command.\n",
-    "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
-    "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
-    "      --secluded-args  Alias of --protect-args.\n",
-    "      --no-secluded-args  Alias of --no-protect-args.\n",
-    "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
-    "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
-    "      --daemon    Run as an rsync daemon (delegates to rsyncd).\n",
-    "  -n, --dry-run    Validate transfers without modifying the destination.\n",
-    "      --list-only  List files without performing a transfer.\n",
-    "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
-    "      --delete, --del  Remove destination files that are absent from the source.\n",
-    "      --delete-before  Remove destination files that are absent from the source before transfers start.\n",
-    "      --delete-during  Remove destination files while processing directories.\n",
-    "      --delete-delay  Defer deletions until after transfers while computing them during the run.\n",
-    "      --delete-after  Remove destination files after transfers complete.\n",
-    "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
-    "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
-    "      --min-size=SIZE  Skip files smaller than SIZE.\n",
-    "      --max-size=SIZE  Skip files larger than SIZE.\n",
-    "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
-    "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
-    "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
-    "  -c, --checksum   Skip updates for files that already match by checksum.\n",
-    "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).\n",
-    "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
-    "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
-    "      --ignore-existing  Skip updating files that already exist at the destination.\n",
-    "      --ignore-missing-args  Skip missing source arguments without reporting an error.\n",
-    "  -u, --update    Skip files that are newer on the destination.\n",
-    "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",
-    "      --exclude=PATTERN  Skip files matching PATTERN.\n",
-    "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
-    "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
-    "      --include-from=FILE  Read include patterns from FILE.\n",
-    "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
-    "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
-    "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
-    "  -H, --hard-links  Preserve hard links between files.\n",
-    "      --no-hard-links  Disable hard link preservation.\n",
-    "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
-    "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
-    "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
-    "      --files-from=FILE  Read additional source operands from FILE.\n",
-    "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
-    "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
-    "      --from0      Treat file list entries as NUL-terminated records.\n",
-    "      --bwlimit=RATE  Limit I/O bandwidth (supports decimal, binary, and IEC units; 0 disables the limit).\n",
-    "      --no-bwlimit    Remove any configured bandwidth limit.\n",
-    "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
-    "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
-    "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",
-    "  -z, --compress  Compress file data during transfers.\n",
-    "      --no-compress  Disable compression.\n",
-    "      --compress-level=NUM  Override the compression level (0 disables compression).\n",
-    "      --skip-compress=LIST  Skip compressing files with suffixes in LIST.\n",
-    "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
-    "      --debug=FLAGS  Adjust diagnostic output; use --debug=help for details.\n",
-    "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
-    "  -R, --relative   Preserve source path components relative to the current directory.\n",
-    "      --no-relative  Disable preservation of source path components.\n",
-    "  -x, --one-file-system  Don't cross filesystem boundaries during traversal.\n",
-    "      --no-one-file-system  Allow traversal across filesystem boundaries.\n",
-    "      --implied-dirs  Create parent directories implied by source paths.\n",
-    "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
-    "      --mkpath     Create destination's missing path components.\n",
-    "  -m, --prune-empty-dirs  Skip creating directories that remain empty after filters.\n",
-    "      --no-prune-empty-dirs  Disable pruning of empty directories.\n",
-    "      --progress   Show progress information during transfers.\n",
-    "      --no-progress  Disable progress reporting.\n",
-    "      --msgs2stderr  Route informational messages to standard error.\n",
-    "  -i, --itemize-changes  Output a change summary for each updated entry.\n",
-    "      --out-format=FORMAT  Customise transfer output using FORMAT.\n",
-    "      --stats      Output transfer statistics after completion.\n",
-    "      --partial    Keep partially transferred files on errors.\n",
-    "      --no-partial Discard partially transferred files on errors.\n",
-    "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
-    "      --temp-dir=DIR  Store temporary files in DIR while transferring.\n",
-    "      --delay-updates  Put completed updates in place after transfers finish.\n",
-    "      --no-delay-updates  Disable delayed updates.\n",
-    "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
-    "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
-    "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
-    "      --remove-source-files  Remove source files after a successful transfer.\n",
-    "      --remove-sent-files   Alias of --remove-source-files.\n",
-    "      --append    Append data to existing destination files without rewriting preserved bytes.\n",
-    "      --no-append  Disable append mode for destination updates.\n",
-    "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
-    "      --preallocate  Preallocate destination files before writing.\n",
-    "      --inplace    Write updated data directly to destination files.\n",
-    "      --no-inplace Use temporary files when updating regular files.\n",
-    "  -h, --human-readable  Output numbers in a human-readable format.\n",
-    "      --no-human-readable  Disable human-readable number formatting.\n",
-    "  -P              Equivalent to --partial --progress.\n",
-    "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
-    "      --no-sparse Disable sparse file handling.\n",
-    "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
-    "      --no-copy-links  Preserve symlinks instead of following them.\n",
-    "      --copy-unsafe-links  Transform unsafe symlinks into referent files/directories.\n",
-    "      --no-copy-unsafe-links  Preserve unsafe symlinks instead of following them.\n",
-    "      --safe-links     Skip symlinks that point outside the transfer root.\n",
-    "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
-    "  -K, --keep-dirlinks  Treat destination symlinks to directories as directories.\n",
-    "      --no-keep-dirlinks  Disable --keep-dirlinks semantics.\n",
-    "  -D              Equivalent to --devices --specials.\n",
-    "      --devices   Preserve device files.\n",
-    "      --no-devices  Disable device file preservation.\n",
-    "      --specials  Preserve special files such as FIFOs.\n",
-    "      --no-specials  Disable preservation of special files.\n",
-    "      --super      Receiver attempts super-user activities (implies --owner, --group, and --perms).\n",
-    "      --no-super   Disable super-user handling even when running as root.\n",
-    "      --owner      Preserve file ownership (requires super-user).\n",
-    "      --no-owner   Disable ownership preservation.\n",
-    "      --group      Preserve file group (requires suitable privileges).\n",
-    "      --no-group   Disable group preservation.\n",
-    "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
-    "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
-    "  -p, --perms      Preserve file permissions.\n",
-    "      --no-perms   Disable permission preservation.\n",
-    "  -t, --times      Preserve modification times.\n",
-    "      --no-times   Disable modification time preservation.\n",
-    "      --omit-dir-times  Skip preserving directory modification times.\n",
-    "      --no-omit-dir-times  Preserve directory modification times.\n",
-    "      --omit-link-times  Skip preserving symlink modification times.\n",
-    "      --no-omit-link-times  Preserve symlink modification times.\n",
-    "  -A, --acls      Preserve POSIX ACLs when supported.\n",
-    "      --no-acls   Disable POSIX ACL preservation.\n",
-    "  -X, --xattrs     Preserve extended attributes when supported.\n",
-    "      --no-xattrs  Disable extended attribute preservation.\n",
-    "      --numeric-ids      Preserve numeric UID/GID values.\n",
-    "      --no-numeric-ids   Map UID/GID values to names when possible.\n",
-    "\n",
-    "All SOURCE operands must reside on the local filesystem. When multiple\n",
-    "sources are supplied, DEST must name a directory. Metadata preservation\n",
-    "covers permissions, timestamps, and optional ownership metadata.\n",
-);
+fn help_text() -> String {
+    format!(
+        concat!(
+            "rsync {version}\n",
+            "https://github.com/oferchen/rsync\n",
+            "\n",
+            "Usage: rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+            "\n",
+            "This development snapshot implements deterministic local filesystem\n",
+            "copies for regular files, directories, and symbolic links. The\n",
+            "following options are recognised:\n",
+            "      --help       Show this help message and exit.\n",
+            "  -V, --version    Output version information and exit.\n",
+            "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
+            "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
+            "      --connect-program=COMMAND  Execute COMMAND to reach rsync:// daemons (supports %H and %P placeholders).\n",
+            "      --port=PORT  Connect to rsync:// daemons on TCP PORT when not specified by the source.\n",
+            "  -M, --remote-option=OPTION  Forward OPTION to the remote rsync command.\n",
+            "  -s, --protect-args  Protect remote shell arguments from expansion.\n",
+            "      --no-protect-args  Allow the remote shell to expand wildcard arguments.\n",
+            "      --secluded-args  Alias of --protect-args.\n",
+            "      --no-secluded-args  Alias of --no-protect-args.\n",
+            "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
+            "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
+            "      --daemon    Run as an rsync daemon (delegates to rsyncd).\n",
+            "  -n, --dry-run    Validate transfers without modifying the destination.\n",
+            "      --list-only  List files without performing a transfer.\n",
+            "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
+            "      --delete, --del  Remove destination files that are absent from the source.\n",
+            "      --delete-before  Remove destination files that are absent from the source before transfers start.\n",
+            "      --delete-during  Remove destination files while processing directories.\n",
+            "      --delete-delay  Defer deletions until after transfers while computing them during the run.\n",
+            "      --delete-after  Remove destination files after transfers complete.\n",
+            "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
+            "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
+            "      --min-size=SIZE  Skip files smaller than SIZE.\n",
+            "      --max-size=SIZE  Skip files larger than SIZE.\n",
+            "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
+            "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
+            "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
+            "  -c, --checksum   Skip updates for files that already match by checksum.\n",
+            "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).\n",
+            "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
+            "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
+            "      --ignore-existing  Skip updating files that already exist at the destination.\n",
+            "      --ignore-missing-args  Skip missing source arguments without reporting an error.\n",
+            "  -u, --update    Skip files that are newer on the destination.\n",
+            "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",
+            "      --exclude=PATTERN  Skip files matching PATTERN.\n",
+            "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
+            "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
+            "      --include-from=FILE  Read include patterns from FILE.\n",
+            "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
+            "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
+            "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
+            "  -H, --hard-links  Preserve hard links between files.\n",
+            "      --no-hard-links  Disable hard link preservation.\n",
+            "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
+            "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', '/', and 'C').\n",
+            "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
+            "      --files-from=FILE  Read additional source operands from FILE.\n",
+            "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
+            "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
+            "      --from0      Treat file list entries as NUL-terminated records.\n",
+            "      --bwlimit=RATE  Limit I/O bandwidth (supports decimal, binary, and IEC units; 0 disables the limit).\n",
+            "      --no-bwlimit    Remove any configured bandwidth limit.\n",
+            "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
+            "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
+            "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",
+            "  -z, --compress  Compress file data during transfers.\n",
+            "      --no-compress  Disable compression.\n",
+            "      --compress-level=NUM  Override the compression level (0 disables compression).\n",
+            "      --skip-compress=LIST  Skip compressing files with suffixes in LIST.\n",
+            "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
+            "      --debug=FLAGS  Adjust diagnostic output; use --debug=help for details.\n",
+            "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
+            "  -R, --relative   Preserve source path components relative to the current directory.\n",
+            "      --no-relative  Disable preservation of source path components.\n",
+            "  -x, --one-file-system  Don't cross filesystem boundaries during traversal.\n",
+            "      --no-one-file-system  Allow traversal across filesystem boundaries.\n",
+            "      --implied-dirs  Create parent directories implied by source paths.\n",
+            "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
+            "      --mkpath     Create destination's missing path components.\n",
+            "  -m, --prune-empty-dirs  Skip creating directories that remain empty after filters.\n",
+            "      --no-prune-empty-dirs  Disable pruning of empty directories.\n",
+            "      --progress   Show progress information during transfers.\n",
+            "      --no-progress  Disable progress reporting.\n",
+            "      --msgs2stderr  Route informational messages to standard error.\n",
+            "  -i, --itemize-changes  Output a change summary for each updated entry.\n",
+            "      --out-format=FORMAT  Customise transfer output using FORMAT.\n",
+            "      --stats      Output transfer statistics after completion.\n",
+            "      --partial    Keep partially transferred files on errors.\n",
+            "      --no-partial Discard partially transferred files on errors.\n",
+            "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
+            "      --temp-dir=DIR  Store temporary files in DIR while transferring.\n",
+            "      --delay-updates  Put completed updates in place after transfers finish.\n",
+            "      --no-delay-updates  Disable delayed updates.\n",
+            "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
+            "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
+            "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
+            "      --remove-source-files  Remove source files after a successful transfer.\n",
+            "      --remove-sent-files   Alias of --remove-source-files.\n",
+            "      --append    Append data to existing destination files without rewriting preserved bytes.\n",
+            "      --no-append  Disable append mode for destination updates.\n",
+            "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
+            "      --preallocate  Preallocate destination files before writing.\n",
+            "      --inplace    Write updated data directly to destination files.\n",
+            "      --no-inplace Use temporary files when updating regular files.\n",
+            "  -h, --human-readable  Output numbers in a human-readable format.\n",
+            "      --no-human-readable  Disable human-readable number formatting.\n",
+            "  -P              Equivalent to --partial --progress.\n",
+            "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
+            "      --no-sparse Disable sparse file handling.\n",
+            "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
+            "      --no-copy-links  Preserve symlinks instead of following them.\n",
+            "      --copy-unsafe-links  Transform unsafe symlinks into referent files/directories.\n",
+            "      --no-copy-unsafe-links  Preserve unsafe symlinks instead of following them.\n",
+            "      --safe-links     Skip symlinks that point outside the transfer root.\n",
+            "  -k, --copy-dirlinks  Transform symlinked directories into referent directories.\n",
+            "  -K, --keep-dirlinks  Treat destination symlinks to directories as directories.\n",
+            "      --no-keep-dirlinks  Disable --keep-dirlinks semantics.\n",
+            "  -D              Equivalent to --devices --specials.\n",
+            "      --devices   Preserve device files.\n",
+            "      --no-devices  Disable device file preservation.\n",
+            "      --specials  Preserve special files such as FIFOs.\n",
+            "      --no-specials  Disable preservation of special files.\n",
+            "      --super      Receiver attempts super-user activities (implies --owner, --group, and --perms).\n",
+            "      --no-super   Disable super-user handling even when running as root.\n",
+            "      --owner      Preserve file ownership (requires super-user).\n",
+            "      --no-owner   Disable ownership preservation.\n",
+            "      --group      Preserve file group (requires suitable privileges).\n",
+            "      --no-group   Disable group preservation.\n",
+            "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
+            "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
+            "  -p, --perms      Preserve file permissions.\n",
+            "      --no-perms   Disable permission preservation.\n",
+            "  -t, --times      Preserve modification times.\n",
+            "      --no-times   Disable modification time preservation.\n",
+            "      --omit-dir-times  Skip preserving directory modification times.\n",
+            "      --no-omit-dir-times  Preserve directory modification times.\n",
+            "      --omit-link-times  Skip preserving symlink modification times.\n",
+            "      --no-omit-link-times  Preserve symlink modification times.\n",
+            "  -A, --acls      Preserve POSIX ACLs when supported.\n",
+            "      --no-acls   Disable POSIX ACL preservation.\n",
+            "  -X, --xattrs     Preserve extended attributes when supported.\n",
+            "      --no-xattrs  Disable extended attribute preservation.\n",
+            "      --numeric-ids      Preserve numeric UID/GID values.\n",
+            "      --no-numeric-ids   Map UID/GID values to names when possible.\n",
+            "\n",
+            "All SOURCE operands must reside on the local filesystem. When multiple\n",
+            "sources are supplied, DEST must name a directory. Metadata preservation\n",
+            "covers permissions, timestamps, and optional ownership metadata.\n",
+        ),
+        version = RUST_VERSION,
+    )
+}
 
 const SUPPORTED_OPTIONS_LIST: &str = "--help, --human-readable/-h, --no-human-readable, --version/-V, --daemon, --dry-run/-n, --list-only, --archive/-a, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, --max-delete, --min-size, --max-size, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --ignore-missing-args, --modify-window, --delay-updates, --exclude, --exclude-from, --include, --include-from, --compare-dest, --copy-dest, --link-dest, --filter (including exclude-if-present=FILE) and -F, --files-from, --password-file, --no-motd, --from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --protocol, --rsync-path, --port, --connect-program, --remote-option/-M, --ipv4, --ipv6, --compress/-z, --no-compress, --compress-level, --skip-compress, --info, --debug, --verbose/-v, --progress, --no-progress, --msgs2stderr, --itemize-changes/-i, --out-format, --stats, --partial, --partial-dir, --temp-dir, --no-partial, --remove-source-files, --remove-sent-files, --inplace, --no-inplace, --whole-file/-W, --no-whole-file, -P, --sparse/-S, --no-sparse, --copy-links/-L, --no-copy-links, --copy-unsafe-links, --no-copy-unsafe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, -D, --devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, --chown, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, --numeric-ids, --one-file-system/-x, --no-one-file-system, --mkpath, and --no-numeric-ids";
 
@@ -2730,13 +2735,15 @@ where
 /// Renders the help text describing the currently supported options.
 fn render_help(program_name: ProgramName) -> String {
     if program_name == ProgramName::Rsync {
-        return HELP_TEXT.to_string();
+        return help_text();
     }
 
     let program = program_name.as_str();
-    let header = format!("{program} 3.4.1-rust");
+    let header = format!("{program} {}", RUST_VERSION);
     let usage = format!("Usage: {program}");
-    let mut help = HELP_TEXT.replacen("rsync 3.4.1-rust", &header, 1);
+    let baseline_header = format!("{} {}", ProgramName::Rsync.as_str(), RUST_VERSION);
+    let mut help = help_text();
+    help = help.replacen(&baseline_header, &header, 1);
     help = help.replacen("Usage: rsync", &usage, 1);
 
     if program_name == ProgramName::OcRsync {
@@ -7646,7 +7653,7 @@ fn render_module_list<W: Write, E: Write>(
 mod tests {
     use super::*;
     use rsync_checksums::strong::Md5;
-    use rsync_core::client::FilterRuleKind;
+    use rsync_core::{client::FilterRuleKind, version::RUST_VERSION};
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::collections::HashSet;
@@ -7665,6 +7672,14 @@ mod tests {
     use xattr;
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+
+    fn assert_contains_client_trailer(rendered: &str) {
+        let expected = format!("[client={}]", RUST_VERSION);
+        assert!(
+            rendered.contains(&expected),
+            "expected message to contain {expected:?}, got {rendered:?}"
+        );
+    }
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
@@ -7993,7 +8008,7 @@ mod tests {
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains("missing source operands"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[test]
@@ -12464,7 +12479,7 @@ mod tests {
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
         assert!(rendered.contains("failed to read filter file 'missing.txt'"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[test]
@@ -12861,7 +12876,7 @@ mod tests {
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains("--bwlimit=oops is invalid"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[test]
@@ -12994,7 +13009,7 @@ mod tests {
 
         let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
         assert!(rendered.contains("failed to launch fallback rsync binary"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[test]
@@ -17220,7 +17235,7 @@ exit 0
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("UTF-8 error");
         assert!(rendered.contains("POSIX ACLs are not supported on this client"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[cfg(not(feature = "xattr"))]
@@ -17244,7 +17259,7 @@ exit 0
         assert!(stdout.is_empty());
         let rendered = String::from_utf8(stderr).expect("UTF-8 error");
         assert!(rendered.contains("extended attributes are not supported on this client"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert_contains_client_trailer(&rendered);
     }
 
     #[cfg(feature = "xattr")]

@@ -4787,6 +4787,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::version::RUST_VERSION;
     use rsync_compress::zlib::CompressionLevel;
     use std::ffi::{OsStr, OsString};
     use std::fs;
@@ -7039,7 +7040,10 @@ exit 42
         assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
         let rendered = error.message().to_string();
         assert!(rendered.contains("missing source operands"));
-        assert!(rendered.contains("[client=3.4.1-rust]"));
+        assert!(
+            rendered.contains(&format!("[client={}]", RUST_VERSION)),
+            "expected missing operands error to include client trailer"
+        );
     }
 
     #[test]
