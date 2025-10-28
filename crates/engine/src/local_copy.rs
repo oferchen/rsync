@@ -100,8 +100,14 @@ const COPY_BUFFER_SIZE: usize = 128 * 1024;
 static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
+type HardLinkOverrideFn = dyn Fn(&Path, &Path) -> io::Result<()> + 'static;
+
+#[cfg(test)]
+type DeviceIdOverrideFn = dyn Fn(&Path, &fs::Metadata) -> Option<u64> + 'static;
+
+#[cfg(test)]
 thread_local! {
-    static HARD_LINK_OVERRIDE: RefCell<Option<Box<dyn Fn(&Path, &Path) -> io::Result<()> + 'static>>> =
+    static HARD_LINK_OVERRIDE: RefCell<Option<Box<HardLinkOverrideFn>>> =
         const { RefCell::new(None) };
 }
 
@@ -144,7 +150,7 @@ fn create_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 thread_local! {
-    static DEVICE_ID_OVERRIDE: RefCell<Option<Box<dyn Fn(&Path, &fs::Metadata) -> Option<u64> + 'static>>> =
+    static DEVICE_ID_OVERRIDE: RefCell<Option<Box<DeviceIdOverrideFn>>> =
         const { RefCell::new(None) };
 }
 
@@ -188,13 +194,13 @@ fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return Some(metadata.dev());
+        Some(metadata.dev())
     }
 
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        return Some(metadata.volume_serial_number() as u64);
+        Some(metadata.volume_serial_number() as u64)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -3303,6 +3309,20 @@ struct CopyContext<'a> {
     destination_root: PathBuf,
 }
 
+struct FinalizeMetadataParams<'a> {
+    metadata: &'a fs::Metadata,
+    metadata_options: MetadataOptions,
+    mode: LocalCopyExecution,
+    source: &'a Path,
+    relative: Option<&'a Path>,
+    file_type: fs::FileType,
+    destination_previously_existed: bool,
+    #[cfg(feature = "xattr")]
+    preserve_xattrs: bool,
+    #[cfg(feature = "acl")]
+    preserve_acls: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct FileCopyOutcome {
     literal_bytes: u64,
@@ -3492,16 +3512,21 @@ impl<'a> CopyContext<'a> {
     fn apply_metadata_and_finalize(
         &mut self,
         destination: &Path,
-        metadata: &fs::Metadata,
-        metadata_options: MetadataOptions,
-        mode: LocalCopyExecution,
-        source: &Path,
-        relative: Option<&Path>,
-        file_type: fs::FileType,
-        destination_previously_existed: bool,
-        #[cfg(feature = "xattr")] preserve_xattrs: bool,
-        #[cfg(feature = "acl")] preserve_acls: bool,
+        params: FinalizeMetadataParams<'_>,
     ) -> Result<(), LocalCopyError> {
+        let FinalizeMetadataParams {
+            metadata,
+            metadata_options,
+            mode,
+            source,
+            relative,
+            file_type,
+            destination_previously_existed,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs,
+            #[cfg(feature = "acl")]
+            preserve_acls,
+        } = params;
         self.register_created_path(
             destination,
             CreatedEntryKind::File,
@@ -3555,17 +3580,17 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            if should_skip_copy(
-                source,
-                metadata,
-                candidate.as_path(),
-                &candidate_metadata,
-                metadata_options,
+            if should_skip_copy(CopyComparison {
+                source_path: source,
+                source: metadata,
+                destination_path: candidate.as_path(),
+                destination: &candidate_metadata,
+                options: metadata_options,
                 size_only,
                 checksum,
-                self.options.checksum_algorithm(),
-                self.options.modify_window(),
-            ) {
+                checksum_algorithm: self.options.checksum_algorithm(),
+                modify_window: self.options.modify_window(),
+            }) {
                 return Ok(Some(candidate));
             }
         }
@@ -3694,17 +3719,19 @@ impl<'a> CopyContext<'a> {
 
         self.apply_metadata_and_finalize(
             destination.as_path(),
-            &metadata,
-            metadata_options,
-            mode,
-            source.as_path(),
-            relative.as_deref(),
-            file_type,
-            destination_previously_existed,
-            #[cfg(feature = "xattr")]
-            preserve_xattrs,
-            #[cfg(feature = "acl")]
-            preserve_acls,
+            FinalizeMetadataParams {
+                metadata: &metadata,
+                metadata_options,
+                mode,
+                source: source.as_path(),
+                relative: relative.as_deref(),
+                file_type,
+                destination_previously_existed,
+                #[cfg(feature = "xattr")]
+                preserve_xattrs,
+                #[cfg(feature = "acl")]
+                preserve_acls,
+            },
         )
     }
 
@@ -4029,11 +4056,14 @@ impl<'a> CopyContext<'a> {
 
     fn enter_directory(&self, source: &Path) -> Result<DirectoryFilterGuard, LocalCopyError> {
         let Some(program) = &self.filter_program else {
+            let handles = DirectoryFilterHandles {
+                layers: Rc::clone(&self.dir_merge_layers),
+                marker_layers: Rc::clone(&self.dir_merge_marker_layers),
+                ephemeral: Rc::clone(&self.dir_merge_ephemeral),
+                marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
+            };
             return Ok(DirectoryFilterGuard::new(
-                Rc::clone(&self.dir_merge_layers),
-                Rc::clone(&self.dir_merge_marker_layers),
-                Rc::clone(&self.dir_merge_ephemeral),
-                Rc::clone(&self.dir_merge_marker_ephemeral),
+                handles,
                 Vec::new(),
                 Vec::new(),
                 false,
@@ -4140,11 +4170,14 @@ impl<'a> CopyContext<'a> {
 
         let excluded = self.directory_excluded(source, program)?;
 
+        let handles = DirectoryFilterHandles {
+            layers: Rc::clone(&self.dir_merge_layers),
+            marker_layers: Rc::clone(&self.dir_merge_marker_layers),
+            ephemeral: Rc::clone(&self.dir_merge_ephemeral),
+            marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
+        };
         Ok(DirectoryFilterGuard::new(
-            Rc::clone(&self.dir_merge_layers),
-            Rc::clone(&self.dir_merge_marker_layers),
-            Rc::clone(&self.dir_merge_ephemeral),
-            Rc::clone(&self.dir_merge_marker_ephemeral),
+            handles,
             added_indices,
             marker_counts,
             true,
@@ -4740,11 +4773,16 @@ impl<'a> CopyContext<'a> {
     }
 }
 
-struct DirectoryFilterGuard {
+#[derive(Clone)]
+struct DirectoryFilterHandles {
     layers: Rc<RefCell<FilterSegmentLayers>>,
     marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
     ephemeral: Rc<RefCell<FilterSegmentStack>>,
     marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
+}
+
+struct DirectoryFilterGuard {
+    handles: DirectoryFilterHandles,
     indices: Vec<usize>,
     marker_counts: Vec<(usize, usize)>,
     ephemeral_active: bool,
@@ -4753,20 +4791,14 @@ struct DirectoryFilterGuard {
 
 impl DirectoryFilterGuard {
     fn new(
-        layers: Rc<RefCell<FilterSegmentLayers>>,
-        marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
-        ephemeral: Rc<RefCell<FilterSegmentStack>>,
-        marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
+        handles: DirectoryFilterHandles,
         indices: Vec<usize>,
         marker_counts: Vec<(usize, usize)>,
         ephemeral_active: bool,
         excluded: bool,
     ) -> Self {
         Self {
-            layers,
-            marker_layers,
-            ephemeral,
-            marker_ephemeral,
+            handles,
             indices,
             marker_counts,
             ephemeral_active,
@@ -4782,14 +4814,14 @@ impl DirectoryFilterGuard {
 impl Drop for DirectoryFilterGuard {
     fn drop(&mut self) {
         if self.ephemeral_active {
-            let mut stack = self.ephemeral.borrow_mut();
+            let mut stack = self.handles.ephemeral.borrow_mut();
             stack.pop();
-            let mut marker_stack = self.marker_ephemeral.borrow_mut();
+            let mut marker_stack = self.handles.marker_ephemeral.borrow_mut();
             marker_stack.pop();
         }
 
         if !self.marker_counts.is_empty() {
-            let mut marker_layers = self.marker_layers.borrow_mut();
+            let mut marker_layers = self.handles.marker_layers.borrow_mut();
             for (index, count) in self.marker_counts.drain(..).rev() {
                 if let Some(layer) = marker_layers.get_mut(index) {
                     for _ in 0..count {
@@ -4800,7 +4832,7 @@ impl Drop for DirectoryFilterGuard {
         }
 
         if !self.indices.is_empty() {
-            let mut layers = self.layers.borrow_mut();
+            let mut layers = self.handles.layers.borrow_mut();
             for index in self.indices.drain(..).rev() {
                 if let Some(layer) = layers.get_mut(index) {
                     layer.pop();
@@ -4860,9 +4892,9 @@ impl DirMergeEntries {
     }
 
     fn extend(&mut self, mut other: DirMergeEntries) {
-        self.rules.extend(other.rules.drain(..));
+        self.rules.append(&mut other.rules);
         self.exclude_if_present
-            .extend(other.exclude_if_present.drain(..));
+            .append(&mut other.exclude_if_present);
     }
 }
 
@@ -6817,16 +6849,14 @@ fn copy_directory_recursive(
             }
         }
 
-        if matches!(action, EntryAction::CopyDirectory) {
-            if context.one_file_system_enabled() {
-                if let Some(root) = root_device {
-                    if let Some(entry_device) = device_identifier(
-                        entry.path.as_path(),
-                        metadata_override.as_ref().unwrap_or(entry_metadata),
-                    ) {
-                        if entry_device != root {
-                            action = EntryAction::SkipMountPoint;
-                        }
+        if matches!(action, EntryAction::CopyDirectory) && context.one_file_system_enabled() {
+            if let Some(root) = root_device {
+                if let Some(entry_device) = device_identifier(
+                    entry.path.as_path(),
+                    metadata_override.as_ref().unwrap_or(entry_metadata),
+                ) {
+                    if entry_device != root {
+                        action = EntryAction::SkipMountPoint;
                     }
                 }
             }
@@ -7015,16 +7045,29 @@ fn resolve_reference_candidate(base: &Path, relative: &Path, destination: &Path)
     }
 }
 
-fn find_reference_action(
-    context: &CopyContext<'_>,
-    destination: &Path,
-    relative: &Path,
-    source: &Path,
-    metadata: &fs::Metadata,
-    metadata_options: &MetadataOptions,
+struct ReferenceQuery<'a> {
+    destination: &'a Path,
+    relative: &'a Path,
+    source: &'a Path,
+    metadata: &'a fs::Metadata,
+    metadata_options: &'a MetadataOptions,
     size_only: bool,
     checksum: bool,
+}
+
+fn find_reference_action(
+    context: &CopyContext<'_>,
+    query: ReferenceQuery<'_>,
 ) -> Result<Option<ReferenceDecision>, LocalCopyError> {
+    let ReferenceQuery {
+        destination,
+        relative,
+        source,
+        metadata,
+        metadata_options,
+        size_only,
+        checksum,
+    } = query;
     for reference in context.reference_directories() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
         let candidate_metadata = match fs::symlink_metadata(&candidate) {
@@ -7043,17 +7086,17 @@ fn find_reference_action(
             continue;
         }
 
-        if should_skip_copy(
-            source,
-            metadata,
-            &candidate,
-            &candidate_metadata,
-            metadata_options,
+        if should_skip_copy(CopyComparison {
+            source_path: source,
+            source: metadata,
+            destination_path: &candidate,
+            destination: &candidate_metadata,
+            options: metadata_options,
             size_only,
             checksum,
-            context.options.checksum_algorithm(),
-            context.options.modify_window(),
-        ) {
+            checksum_algorithm: context.options.checksum_algorithm(),
+            modify_window: context.options.modify_window(),
+        }) {
             return Ok(Some(match reference.kind() {
                 ReferenceDirectoryKind::Compare => ReferenceDecision::Skip,
                 ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(candidate),
@@ -7102,9 +7145,9 @@ fn preallocate_destination_file(
         }
 
         let fd = file.as_fd();
-        match fallocate(&fd, FallocateFlags::empty(), 0, total_len) {
+        match fallocate(fd, FallocateFlags::empty(), 0, total_len) {
             Ok(()) => Ok(()),
-            Err(errno) if matches!(errno, Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
+            Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
                 file.set_len(total_len).map_err(|error| {
                     LocalCopyError::io("preallocate destination file", path.to_path_buf(), error)
                 })
@@ -7441,13 +7484,15 @@ fn copy_file(
     if !context.reference_directories().is_empty() && !record_path.as_os_str().is_empty() {
         if let Some(decision) = find_reference_action(
             context,
-            destination,
-            record_path.as_path(),
-            source,
-            metadata,
-            &metadata_options,
-            size_only_enabled,
-            checksum_enabled,
+            ReferenceQuery {
+                destination,
+                relative: record_path.as_path(),
+                source,
+                metadata,
+                metadata_options: &metadata_options,
+                size_only: size_only_enabled,
+                checksum: checksum_enabled,
+            },
         )? {
             match decision {
                 ReferenceDecision::Skip => {
@@ -7555,17 +7600,17 @@ fn copy_file(
     }
 
     if let Some(existing) = existing_metadata.as_ref() {
-        if should_skip_copy(
-            source,
-            metadata,
-            destination,
-            existing,
-            &metadata_options,
-            size_only_enabled,
-            checksum_enabled,
-            context.options.checksum_algorithm(),
-            context.options.modify_window(),
-        ) {
+        if should_skip_copy(CopyComparison {
+            source_path: source,
+            source: metadata,
+            destination_path: destination,
+            destination: existing,
+            options: &metadata_options,
+            size_only: size_only_enabled,
+            checksum: checksum_enabled,
+            checksum_algorithm: context.options.checksum_algorithm(),
+            modify_window: context.options.modify_window(),
+        }) {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
@@ -7785,33 +7830,37 @@ fn copy_file(
             guard.commit()?;
             context.apply_metadata_and_finalize(
                 destination_path.as_path(),
+                FinalizeMetadataParams {
+                    metadata,
+                    metadata_options,
+                    mode,
+                    source,
+                    relative: relative_for_removal.as_deref(),
+                    file_type,
+                    destination_previously_existed,
+                    #[cfg(feature = "xattr")]
+                    preserve_xattrs,
+                    #[cfg(feature = "acl")]
+                    preserve_acls,
+                },
+            )?;
+        }
+    } else {
+        context.apply_metadata_and_finalize(
+            destination,
+            FinalizeMetadataParams {
                 metadata,
                 metadata_options,
                 mode,
                 source,
-                relative_for_removal.as_deref(),
+                relative: relative_for_removal.as_deref(),
                 file_type,
                 destination_previously_existed,
                 #[cfg(feature = "xattr")]
                 preserve_xattrs,
                 #[cfg(feature = "acl")]
                 preserve_acls,
-            )?;
-        }
-    } else {
-        context.apply_metadata_and_finalize(
-            destination,
-            metadata,
-            metadata_options,
-            mode,
-            source,
-            relative_for_removal.as_deref(),
-            file_type,
-            destination_previously_existed,
-            #[cfg(feature = "xattr")]
-            preserve_xattrs,
-            #[cfg(feature = "acl")]
-            preserve_acls,
+            },
         )?;
     }
 
@@ -8292,17 +8341,30 @@ fn build_delta_signature(
     }
 }
 
-fn should_skip_copy(
-    source_path: &Path,
-    source: &fs::Metadata,
-    destination_path: &Path,
-    destination: &fs::Metadata,
-    options: &MetadataOptions,
+struct CopyComparison<'a> {
+    source_path: &'a Path,
+    source: &'a fs::Metadata,
+    destination_path: &'a Path,
+    destination: &'a fs::Metadata,
+    options: &'a MetadataOptions,
     size_only: bool,
     checksum: bool,
     checksum_algorithm: SignatureAlgorithm,
     modify_window: Duration,
-) -> bool {
+}
+
+fn should_skip_copy(params: CopyComparison<'_>) -> bool {
+    let CopyComparison {
+        source_path,
+        source,
+        destination_path,
+        destination,
+        options,
+        size_only,
+        checksum,
+        checksum_algorithm,
+        modify_window,
+    } = params;
     if destination.len() != source.len() {
         return false;
     }
@@ -9531,17 +9593,17 @@ mod tests {
         let dest_meta = fs::metadata(&destination).expect("dest metadata");
         let metadata_options = MetadataOptions::new().preserve_times(true);
 
-        assert!(!should_skip_copy(
-            &source,
-            &source_meta,
-            &destination,
-            &dest_meta,
-            &metadata_options,
-            false,
-            false,
-            SignatureAlgorithm::Md5,
-            Duration::ZERO,
-        ));
+        assert!(!should_skip_copy(CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            options: &metadata_options,
+            size_only: false,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::ZERO,
+        }));
     }
 
     #[test]
@@ -9563,32 +9625,32 @@ mod tests {
         let source_meta = fs::metadata(&source).expect("source metadata");
         let mut dest_meta = fs::metadata(&destination).expect("dest metadata");
 
-        assert!(should_skip_copy(
-            &source,
-            &source_meta,
-            &destination,
-            &dest_meta,
-            &metadata_options,
-            false,
-            false,
-            SignatureAlgorithm::Md5,
-            Duration::from_secs(5),
-        ));
+        assert!(should_skip_copy(CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            options: &metadata_options,
+            size_only: false,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::from_secs(5),
+        }));
 
         set_file_mtime(&destination, outside).expect("set dest outside window");
         dest_meta = fs::metadata(&destination).expect("dest metadata outside");
 
-        assert!(!should_skip_copy(
-            &source,
-            &source_meta,
-            &destination,
-            &dest_meta,
-            &metadata_options,
-            false,
-            false,
-            SignatureAlgorithm::Md5,
-            Duration::from_secs(5),
-        ));
+        assert!(!should_skip_copy(CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            options: &metadata_options,
+            size_only: false,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::from_secs(5),
+        }));
     }
 
     #[test]
