@@ -37,10 +37,7 @@ jobs:
           shared-key: no-binaries
 
       - name: Audit repository for tracked binary artifacts
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- no-binaries
+        run: cargo run -p xtask -- no-binaries
 
   lint:
     runs-on: ubuntu-latest
@@ -63,40 +60,22 @@ jobs:
           version: 1
 
       - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check
 
       - name: Lint with clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --workspace --all-targets -- -Dwarnings
+        run: cargo clippy --workspace --all-targets -- -Dwarnings
 
       - name: Enforce line count limits
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- enforce-limits
+        run: cargo run -p xtask -- enforce-limits
 
       - name: Build documentation
-        uses: actions-rs/cargo@v1
-        with:
-          command: doc
-          args: --workspace --no-deps
+        run: cargo doc --workspace --no-deps
 
       - name: Run doctests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --doc --workspace
+        run: cargo test --doc --workspace
 
       - name: Ensure no placeholders remain
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- no-placeholders
+        run: cargo run -p xtask -- no-placeholders
 
   test-linux:
     needs: lint
@@ -121,10 +100,7 @@ jobs:
           version: 1
 
       - name: Pre-flight check
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- preflight
+        run: cargo run -p xtask -- preflight
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -137,28 +113,19 @@ jobs:
           tool: cargo-nextest
 
       - name: Run tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast
 
       - name: Run tests (extended features)
-        uses: actions-rs/cargo@v1
-        with:
-          command: nextest
-          args: run --workspace --no-fail-fast --features "cli nightly"
+        run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
 
       - name: Run CLI version tests without ACL/iconv support
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
+        run: >-
+          cargo test -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
 
       - name: Test with coverage (95% lines & functions)
-        uses: actions-rs/cargo@v1
-        with:
-          command: llvm-cov
-          args: nextest --workspace --features "cli nightly" --fail-under-lines 95 --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
+        run: >-
+          cargo llvm-cov nextest --workspace --features "cli nightly" --fail-under-lines 95
+          --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -189,10 +156,7 @@ jobs:
           version: 1
 
       - name: Run tests (all features)
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --workspace --all-features
+        run: cargo test --workspace --all-features
 
   build-matrix:
     needs: test-linux
@@ -276,24 +240,17 @@ jobs:
           tool: cyclonedx-rust-cargo
 
       - name: Build oc-rsync
-        uses: actions-rs/cargo@v1
-        with:
-          command: ${{ matrix.build_command }}
-          args: --release --target ${{ matrix.target }} --bin oc-rsync
+        run: cargo ${{ matrix.build_command }} --release --target ${{ matrix.target }} --bin oc-rsync
 
       - name: Build oc-rsyncd
         if: matrix.build_daemon
-        uses: actions-rs/cargo@v1
-        with:
-          command: ${{ matrix.build_command }}
-          args: --release --target ${{ matrix.target }} --bin oc-rsyncd
+        run: cargo ${{ matrix.build_command }} --release --target ${{ matrix.target }} --bin oc-rsyncd
 
       - name: Generate target SBOM
         if: ${{ !contains(matrix.target, 'windows') }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- sbom --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json
+        run: >-
+          cargo run -p xtask -- sbom --output
+          target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json
 
       - name: Upload oc-rsync artifact
         uses: actions/upload-artifact@v4
@@ -347,28 +304,16 @@ jobs:
           tool: cyclonedx-rust-cargo
 
       - name: Display workspace metadata
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- branding
+        run: cargo run -p xtask -- branding
 
       - name: Build Debian package
-        uses: actions-rs/cargo@v1
-        with:
-          command: deb
-          args: -p oc-rsync-bin
+        run: cargo deb -p oc-rsync-bin
 
       - name: Build RPM package
-        uses: actions-rs/cargo@v1
-        with:
-          command: rpm
-          args: build --release
+        run: cargo rpm build --release
 
       - name: Generate SBOM
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: -p xtask -- sbom
+        run: cargo run -p xtask -- sbom
 
       - uses: actions/upload-artifact@v4
         with:
