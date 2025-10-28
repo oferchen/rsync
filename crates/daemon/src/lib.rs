@@ -5326,6 +5326,7 @@ mod tests {
     }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     fn with_test_secrets_candidates<F, R>(candidates: Vec<PathBuf>, func: F) -> R
     where
         F: FnOnce() -> R,
@@ -5339,11 +5340,54 @@ mod tests {
     }
 
     fn allocate_test_port() -> u16 {
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .expect("bind ephemeral port")
-            .local_addr()
-            .expect("local address")
-            .port()
+        const START: u16 = 40_000;
+        const RANGE: u32 = 20_000;
+        const STATE_SIZE: u64 = 4;
+
+        let mut path = std::env::temp_dir();
+        path.push("rsync-daemon-test-port.lock");
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+            .expect("open port allocator state");
+
+        file.lock_exclusive().expect("lock port allocator state");
+        file.seek(SeekFrom::Start(0))
+            .expect("rewind port allocator state");
+
+        let mut counter_bytes = [0u8; STATE_SIZE as usize];
+        let read = file
+            .read(&mut counter_bytes)
+            .expect("read port allocator state");
+        let mut counter = if read == counter_bytes.len() {
+            u32::from_le_bytes(counter_bytes)
+        } else {
+            0
+        };
+
+        for _ in 0..RANGE {
+            let offset = (counter % RANGE) as u16;
+            counter = counter.wrapping_add(1);
+
+            file.seek(SeekFrom::Start(0))
+                .expect("rewind port allocator state");
+            file.write_all(&counter.to_le_bytes())
+                .expect("persist port allocator state");
+            file.set_len(STATE_SIZE)
+                .expect("truncate port allocator state");
+            file.flush().expect("flush port allocator state");
+
+            let candidate = START + offset;
+            if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, candidate)) {
+                drop(listener);
+                return candidate;
+            }
+        }
+
+        panic!("failed to allocate a free test port");
     }
 
     struct EnvGuard {
