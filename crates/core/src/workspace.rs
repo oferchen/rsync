@@ -7,7 +7,8 @@
 //! `cargo:rustc-env` pairs. Centralising the brand and packaging details here
 //! keeps the binary front-ends and supporting crates free from duplicated string
 //! literals. Callers should prefer these helpers instead of hard-coding program
-//! names or configuration paths.
+//! names or configuration paths. Consumers that need the entire metadata set can
+//! use [`metadata`] to obtain a snapshot that mirrors the manifest entries.
 
 use std::path::Path;
 
@@ -69,6 +70,142 @@ pub const LEGACY_DAEMON_SECRETS_PATH: &str = env!("OC_RSYNC_WORKSPACE_LEGACY_DAE
 /// Source repository URL advertised by `--version` output.
 pub const SOURCE_URL: &str = env!("OC_RSYNC_WORKSPACE_SOURCE");
 
+/// Immutable snapshot of workspace metadata loaded from `Cargo.toml`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Metadata {
+    brand: &'static str,
+    upstream_version: &'static str,
+    rust_version: &'static str,
+    protocol_version: u32,
+    client_program_name: &'static str,
+    daemon_program_name: &'static str,
+    legacy_client_program_name: &'static str,
+    legacy_daemon_program_name: &'static str,
+    daemon_config_dir: &'static str,
+    daemon_config_path: &'static str,
+    daemon_secrets_path: &'static str,
+    legacy_daemon_config_dir: &'static str,
+    legacy_daemon_config_path: &'static str,
+    legacy_daemon_secrets_path: &'static str,
+    source_url: &'static str,
+}
+
+impl Metadata {
+    /// Returns the canonical brand identifier configured for the workspace.
+    #[must_use]
+    pub const fn brand(self) -> &'static str {
+        self.brand
+    }
+
+    /// Returns the upstream base version the implementation targets.
+    #[must_use]
+    pub const fn upstream_version(self) -> &'static str {
+        self.upstream_version
+    }
+
+    /// Returns the Rust-branded version string advertised by binaries.
+    #[must_use]
+    pub const fn rust_version(self) -> &'static str {
+        self.rust_version
+    }
+
+    /// Returns the highest rsync protocol version supported by this build.
+    #[must_use]
+    pub const fn protocol_version(self) -> u32 {
+        self.protocol_version
+    }
+
+    /// Returns the canonical client program name shipped with the distribution.
+    #[must_use]
+    pub const fn client_program_name(self) -> &'static str {
+        self.client_program_name
+    }
+
+    /// Returns the canonical daemon program name shipped with the distribution.
+    #[must_use]
+    pub const fn daemon_program_name(self) -> &'static str {
+        self.daemon_program_name
+    }
+
+    /// Returns the upstream-compatible client program name used for symlinks.
+    #[must_use]
+    pub const fn legacy_client_program_name(self) -> &'static str {
+        self.legacy_client_program_name
+    }
+
+    /// Returns the upstream-compatible daemon program name used for symlinks.
+    #[must_use]
+    pub const fn legacy_daemon_program_name(self) -> &'static str {
+        self.legacy_daemon_program_name
+    }
+
+    /// Returns the configuration directory installed alongside the daemon.
+    #[must_use]
+    pub const fn daemon_config_dir(self) -> &'static str {
+        self.daemon_config_dir
+    }
+
+    /// Returns the daemon configuration file path.
+    #[must_use]
+    pub const fn daemon_config_path(self) -> &'static str {
+        self.daemon_config_path
+    }
+
+    /// Returns the daemon secrets file path.
+    #[must_use]
+    pub const fn daemon_secrets_path(self) -> &'static str {
+        self.daemon_secrets_path
+    }
+
+    /// Returns the legacy configuration directory supported for compatibility.
+    #[must_use]
+    pub const fn legacy_daemon_config_dir(self) -> &'static str {
+        self.legacy_daemon_config_dir
+    }
+
+    /// Returns the legacy daemon configuration path supported for compatibility.
+    #[must_use]
+    pub const fn legacy_daemon_config_path(self) -> &'static str {
+        self.legacy_daemon_config_path
+    }
+
+    /// Returns the legacy daemon secrets path supported for compatibility.
+    #[must_use]
+    pub const fn legacy_daemon_secrets_path(self) -> &'static str {
+        self.legacy_daemon_secrets_path
+    }
+
+    /// Returns the source repository URL used by version banners.
+    #[must_use]
+    pub const fn source_url(self) -> &'static str {
+        self.source_url
+    }
+}
+
+const WORKSPACE_METADATA: Metadata = Metadata {
+    brand: BRAND,
+    upstream_version: UPSTREAM_VERSION,
+    rust_version: RUST_VERSION,
+    protocol_version: PROTOCOL_VERSION,
+    client_program_name: CLIENT_PROGRAM_NAME,
+    daemon_program_name: DAEMON_PROGRAM_NAME,
+    legacy_client_program_name: LEGACY_CLIENT_PROGRAM_NAME,
+    legacy_daemon_program_name: LEGACY_DAEMON_PROGRAM_NAME,
+    daemon_config_dir: DAEMON_CONFIG_DIR,
+    daemon_config_path: DAEMON_CONFIG_PATH,
+    daemon_secrets_path: DAEMON_SECRETS_PATH,
+    legacy_daemon_config_dir: LEGACY_DAEMON_CONFIG_DIR,
+    legacy_daemon_config_path: LEGACY_DAEMON_CONFIG_PATH,
+    legacy_daemon_secrets_path: LEGACY_DAEMON_SECRETS_PATH,
+    source_url: SOURCE_URL,
+};
+
+/// Returns an immutable snapshot of the workspace branding and packaging metadata.
+#[must_use]
+pub const fn metadata() -> Metadata {
+    WORKSPACE_METADATA
+}
+
 /// Returns the configured daemon configuration directory as a [`Path`].
 #[must_use]
 pub fn daemon_config_dir() -> &'static Path {
@@ -112,9 +249,93 @@ mod tests {
 
     #[test]
     fn parse_protocol_matches_env() {
-        assert_eq!(PROTOCOL_VERSION, 32);
+        assert_eq!(metadata().protocol_version(), 32);
         assert_eq!(daemon_config_dir(), Path::new(DAEMON_CONFIG_DIR));
         assert_eq!(daemon_config_path(), Path::new(DAEMON_CONFIG_PATH));
         assert_eq!(daemon_secrets_path(), Path::new(DAEMON_SECRETS_PATH));
+    }
+
+    #[test]
+    fn metadata_matches_manifest() {
+        let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"));
+        let value: toml::Table = manifest.parse().expect("parse manifest");
+        let workspace = value
+            .get("workspace")
+            .and_then(toml::Value::as_table)
+            .expect("workspace table");
+        let metadata_table = workspace
+            .get("metadata")
+            .and_then(toml::Value::as_table)
+            .expect("metadata table");
+        let oc = metadata_table
+            .get("oc_rsync")
+            .and_then(toml::Value::as_table)
+            .expect("oc_rsync table");
+
+        let snapshot = metadata();
+
+        assert_eq!(snapshot.brand(), oc["brand"].as_str().expect("brand"));
+        assert_eq!(
+            snapshot.upstream_version(),
+            oc["upstream_version"].as_str().expect("upstream_version")
+        );
+        assert_eq!(
+            snapshot.rust_version(),
+            oc["rust_version"].as_str().expect("rust_version")
+        );
+        assert_eq!(
+            snapshot.protocol_version(),
+            oc["protocol"].as_integer().expect("protocol") as u32
+        );
+        assert_eq!(
+            snapshot.client_program_name(),
+            oc["client_bin"].as_str().expect("client_bin")
+        );
+        assert_eq!(
+            snapshot.daemon_program_name(),
+            oc["daemon_bin"].as_str().expect("daemon_bin")
+        );
+        assert_eq!(
+            snapshot.legacy_client_program_name(),
+            oc["legacy_client_bin"].as_str().expect("legacy_client_bin")
+        );
+        assert_eq!(
+            snapshot.legacy_daemon_program_name(),
+            oc["legacy_daemon_bin"].as_str().expect("legacy_daemon_bin")
+        );
+        assert_eq!(
+            snapshot.daemon_config_dir(),
+            oc["daemon_config_dir"].as_str().expect("daemon_config_dir")
+        );
+        assert_eq!(
+            snapshot.daemon_config_path(),
+            oc["daemon_config"].as_str().expect("daemon_config")
+        );
+        assert_eq!(
+            snapshot.daemon_secrets_path(),
+            oc["daemon_secrets"].as_str().expect("daemon_secrets")
+        );
+        assert_eq!(
+            snapshot.legacy_daemon_config_dir(),
+            oc["legacy_daemon_config_dir"]
+                .as_str()
+                .expect("legacy_daemon_config_dir")
+        );
+        assert_eq!(
+            snapshot.legacy_daemon_config_path(),
+            oc["legacy_daemon_config"]
+                .as_str()
+                .expect("legacy_daemon_config")
+        );
+        assert_eq!(
+            snapshot.legacy_daemon_secrets_path(),
+            oc["legacy_daemon_secrets"]
+                .as_str()
+                .expect("legacy_daemon_secrets")
+        );
+        assert_eq!(
+            snapshot.source_url(),
+            oc["source"].as_str().expect("source")
+        );
     }
 }
