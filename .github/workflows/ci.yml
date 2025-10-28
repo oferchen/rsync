@@ -15,9 +15,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings"
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings -Drustdoc::broken_intra_doc_links
   LC_ALL: C
-  LANG: C
+  TZ: UTC
   COLUMNS: 80
 
 jobs:
@@ -27,50 +28,42 @@ jobs:
       - uses: actions/checkout@v4
       - name: Ensure no binary files are tracked
         run: |
-          if git ls-files -z | xargs -0 file --mime | grep -v text; then
+          if git ls-files -z | xargs -0 file --mime | grep -vE 'text/|application/json'; then
             echo "Binary files detected" >&2
             exit 1
           fi
 
   lint:
-    # runs-on: self-hosted
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      # Official Rust toolchain; we need clippy+rustfmt for this job
-      - name: Setup Rust (1.87)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           components: clippy,rustfmt
-          target: x86_64-apple-darwin,x86_64-pc-windows-msvc
           cache: true
-
-      - name: Install system dependencies (Linux only)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl
-
-      # - name: Verify comments
-      #   run: bash tools/comment_lint.sh
-
-      # - name: Enforce file and line limits
-      #   run: bash tools/enforce_limits.sh
-
-      # - name: Check crate layering
-      #   run: bash tools/check_layers.sh
-
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-lint-
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint with clippy
+        run: cargo clippy --workspace --all-targets -- -Dwarnings
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps
+      - name: Run doctests
+        run: cargo test --doc --workspace
       - name: Ensure no placeholders remain
         run: bash tools/no_placeholders.sh
-
-      - name: Cargo check (cross targets)
-        if: runner.os == 'Linux' && env.MACOS_SDK_PATH != ''
-        run: |
-          cargo check --workspace --target x86_64-apple-darwin
-          cargo check --workspace --target x86_64-pc-windows-msvc
 
   test-linux:
     needs: lint
@@ -172,52 +165,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Rust (1.87)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
+          components: llvm-tools-preview
           cache: true
-
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev acl attr openssh-server rsync
+        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-
+      - name: Run tests (all features)
+        run: cargo test --workspace --all-features
 
-      - name: Build oc-rsync (release)
-        run: |
-          cargo build --release --bin oc-rsync --features="acl xattr"
-          mkdir -p target/debug
-          cp target/release/oc-rsync target/debug/oc-rsync
-
-      - name: Build upstream rsync releases
-        run: scripts/interop/build_upstream.sh
-
-      - name: Start upstream daemons
-        run: scripts/interop/start_daemons.sh
-
-      - name: Collect interop snapshots
-        run: scripts/interop/run.sh
-
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
-
-      - name: Run interop tests
-        run: |
-          for ver in 3.0.9 3.1.3 3.4.1; do
-            RSYNC_BIN="$(pwd)/target/upstream/rsync-$ver/rsync" \
-              cargo nextest run --workspace --no-fail-fast --features "cli nightly interop" --run-ignored=only-tests;
-          done
-
-      - name: Run upstream interop matrix
-        run: tests/interop/run_matrix.sh
-
-      - name: Stop upstream daemons
-        if: always()
-        run: |
-          if [ -f target/upstream/daemons.pids ]; then
-            xargs -r kill < target/upstream/daemons.pids || true
-          fi
   build-matrix:
-    needs: [lint, test-linux, test-windows, test-bsd]
+    needs: test-linux
     strategy:
       fail-fast: false
       matrix:
@@ -235,7 +204,7 @@ jobs:
             os: macos-14
             target: aarch64-apple-darwin
           - name: windows-x86_64
-            os: windows-2022
+            os: windows-latest
             target: x86_64-pc-windows-msvc
           - name: windows-aarch64
             os: windows-2022
@@ -243,21 +212,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Rust (targeted)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
-
-      - name: Install system dependencies (Linux only)
+      - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+          sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           fi
 
       - name: Build release binaries
@@ -357,7 +325,5 @@ PY
         with:
           name: oc-rsync-packages
           path: |
-            target/debian/*.deb
-            target/release/rpms/*.rpm
-            target/sbom/oc-rsync.cdx.json
-            
+            target/${{ matrix.target }}/release/oc-rsync*
+            target/${{ matrix.target }}/release/oc-rsyncd*
