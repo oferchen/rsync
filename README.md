@@ -52,6 +52,31 @@ The workspace currently contains the following published crates:
   binaries so existing tooling expecting the upstream names can continue to
   function during the transition.
 
+## Branding and configuration defaults
+
+The project ships branded binaries (`oc-rsync` and `oc-rsyncd`) alongside
+compatibility wrappers named `rsync` and `rsyncd`. Branding details—including
+the program names rendered in `--version` output and the filesystem locations
+for packaged configuration—are centralised in
+[`rsync_core::branding`](crates/core/src/branding.rs). Consumers can query the
+module directly to discover the canonical installation paths:
+
+```rust
+use std::path::Path;
+
+let config = rsync_core::branding::oc_daemon_config_path();
+let secrets = rsync_core::branding::oc_daemon_secrets_path();
+
+assert_eq!(config, Path::new("/etc/oc-rsyncd/oc-rsyncd.conf"));
+assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
+```
+
+The packaging metadata installs example files at the same locations so new
+deployments pick up sane defaults out of the box. Compatibility wrappers defer
+to the upstream `rsync`/`rsyncd` names while still relying on the shared
+branding facade, ensuring help text, diagnostics, and configuration searches
+remain consistent across entry points.
+
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync` (and therefore the
 compatibility `rsync` wrapper), but delta transfer, remote transports, ACL
