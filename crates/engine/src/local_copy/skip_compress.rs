@@ -124,6 +124,14 @@ impl SkipCompressPattern {
 
         while let Some(ch) = chars.next() {
             match ch {
+                '.' if tokens.is_empty() => {
+                    // Ignore optional leading dots so patterns such as ".gz" match
+                    // extensions without requiring the dot to be present. Upstream
+                    // rsync treats the suffixes as dot-less regardless of the
+                    // caller's notation, making the parsing tolerant to the
+                    // commonly documented form.
+                    continue;
+                }
                 '[' => {
                     let mut class = Vec::new();
                     let mut terminated = false;
@@ -245,6 +253,15 @@ mod tests {
     fn parse_ignores_empty_segments() {
         let list = SkipCompressList::parse("//gz//").expect("parse succeeds");
         assert!(list.matches_path(Path::new("file.gz")));
+    }
+
+    #[test]
+    fn parse_accepts_leading_dots() {
+        let list = SkipCompressList::parse(".gz/.mp[34]").expect("parse succeeds");
+        assert!(list.matches_path(Path::new("archive.GZ")));
+        assert!(list.matches_path(Path::new("track.mp3")));
+        assert!(list.matches_path(Path::new("track.mp4")));
+        assert!(!list.matches_path(Path::new("track.mp5")));
     }
 
     #[test]
