@@ -13,6 +13,8 @@ at the Rust implementation.
   for capturing repo-relative source locations. Higher layers construct
   diagnostics through this API so trailer roles and version suffixes remain
   consistent.
+- [`branding`](src/branding.rs) centralises branded program names alongside the
+  default configuration and secrets paths installed by the packaging tooling.
 - [`version`](src/version.rs) holds the canonical `3.4.1-rust` identifier and the
   compiled feature set consumed by the CLI when rendering `--version` output.
 - [`client`](src/client.rs) defines configuration builders and entry points used
