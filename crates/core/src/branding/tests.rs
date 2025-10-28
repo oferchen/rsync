@@ -159,3 +159,18 @@ fn secrets_search_orders_match_brand_expectations() {
     assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_SECRETS_PATH));
     assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_SECRETS_PATH));
 }
+
+#[test]
+fn brand_from_str_accepts_aliases() {
+    assert_eq!(Brand::from_str("oc").unwrap(), Brand::Oc);
+    assert_eq!(Brand::from_str("OC-RSYNCD").unwrap(), Brand::Oc);
+    assert_eq!(Brand::from_str(" rsync-3.4.1 ").unwrap(), Brand::Upstream);
+    assert_eq!(Brand::from_str("RSYNCD").unwrap(), Brand::Upstream);
+}
+
+#[test]
+fn brand_from_str_rejects_unknown_values() {
+    assert!(Brand::from_str("").is_err());
+    assert!(Brand::from_str("unknown").is_err());
+    assert!(Brand::from_str("ocrsync").is_err());
+}

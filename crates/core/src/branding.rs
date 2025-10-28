@@ -31,8 +31,10 @@
 //! assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 //! ```
 
+use core::str::FromStr;
 use std::env;
 use std::ffi::OsStr;
+use std::fmt;
 use std::path::Path;
 
 /// Identifies the brand associated with an executable name.
@@ -45,12 +47,76 @@ use std::path::Path;
 /// [`Brand::profile`] method exposes the corresponding [`BrandProfile`], which in
 /// turn provides program names and filesystem locations for the selected
 /// distribution.
+///
+/// `Brand` implements [`FromStr`], allowing environment variables such as
+/// [`OC_RSYNC_BRAND`][brand_override_env_var] to accept human-readable aliases.
+/// The parser tolerates ASCII case differences, leading/trailing whitespace, and
+/// versioned program names:
+///
+/// ```
+/// use core::str::FromStr;
+/// use rsync_core::branding::Brand;
+///
+/// assert_eq!(Brand::from_str(" oc-rsync-3.4.1 ").unwrap(), Brand::Oc);
+/// assert_eq!(Brand::from_str("RSYNCD").unwrap(), Brand::Upstream);
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).
     Upstream,
     /// Branded binaries installed as `oc-rsync` and `oc-rsyncd`.
     Oc,
+}
+
+/// Error returned when parsing a [`Brand`] from an unrecognised string fails.
+///
+/// Parsing accepts ASCII case-insensitive aliases for both the upstream and
+/// branded binaries. Accepted values include `"oc"`, `"oc-rsync"`,
+/// `"oc-rsyncd"`, `"upstream"`, `"rsync"`, and `"rsyncd"`, as well as
+/// versioned variants such as `"oc-rsync-3.4.1"`. Whitespace surrounding the
+/// input is ignored. Any other value triggers `BrandParseError` so callers can
+/// fall back to defaults or surface a diagnostic to the user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BrandParseError;
+
+impl fmt::Display for BrandParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unrecognised brand; expected oc or upstream aliases")
+    }
+}
+
+impl std::error::Error for BrandParseError {}
+
+impl FromStr for Brand {
+    type Err = BrandParseError;
+
+    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
+        s = s.trim();
+        if s.is_empty() {
+            return Err(BrandParseError);
+        }
+
+        if s.eq_ignore_ascii_case("oc") {
+            return Ok(Brand::Oc);
+        }
+
+        if s.eq_ignore_ascii_case("upstream") {
+            return Ok(Brand::Upstream);
+        }
+
+        if matches_any_program_alias(s, &[OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME]) {
+            return Ok(Brand::Oc);
+        }
+
+        if matches_any_program_alias(
+            s,
+            &[UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME],
+        ) {
+            return Ok(Brand::Upstream);
+        }
+
+        Err(BrandParseError)
+    }
 }
 
 impl Brand {
@@ -399,6 +465,12 @@ fn matches_program_alias(program: &str, canonical: &str) -> bool {
         .is_some_and(|separator| matches!(separator, '-' | '_' | '.'))
 }
 
+fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
+    programs
+        .iter()
+        .any(|canonical| matches_program_alias(value, canonical))
+}
+
 /// Detects the [`Brand`] associated with an invocation argument.
 ///
 /// The helper mirrors the logic used by the client and daemon front-ends when
@@ -450,33 +522,7 @@ fn brand_override_from_env() -> Option<Brand> {
     }
 
     let value = value.to_string_lossy();
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if matches_override_value(trimmed, &Brand::Oc) {
-        Some(Brand::Oc)
-    } else if matches_override_value(trimmed, &Brand::Upstream) {
-        Some(Brand::Upstream)
-    } else {
-        None
-    }
-}
-
-fn matches_override_value(value: &str, brand: &Brand) -> bool {
-    match brand {
-        Brand::Oc => {
-            value.eq_ignore_ascii_case("oc")
-                || value.eq_ignore_ascii_case(OC_CLIENT_PROGRAM_NAME)
-                || value.eq_ignore_ascii_case(OC_DAEMON_PROGRAM_NAME)
-        }
-        Brand::Upstream => {
-            value.eq_ignore_ascii_case("upstream")
-                || value.eq_ignore_ascii_case(UPSTREAM_CLIENT_PROGRAM_NAME)
-                || value.eq_ignore_ascii_case(UPSTREAM_DAEMON_PROGRAM_NAME)
-        }
-    }
+    value.trim().parse::<Brand>().ok()
 }
 
 /// Returns the legacy configuration path recognised for compatibility with upstream deployments.
