@@ -47,7 +47,10 @@
 //!
 //! assert!(rendered.contains("rsync warning: some files vanished"));
 //! assert!(rendered.contains("(code 24)"));
-//! assert!(rendered.contains("[receiver=3.4.1-rust]"));
+//! assert!(rendered.contains(&format!(
+//!     "[receiver={}]",
+//!     rsync_core::version::RUST_VERSION
+//! )));
 //! ```
 //!
 //! Convert a template directly into a [`Message`] without calling
