@@ -235,7 +235,7 @@ jobs:
         with:
           tool: cargo-zigbuild
       - name: Install cyclonedx-rust-cargo
-        if: !contains(matrix.target, 'windows')
+        if: ${{ !contains(matrix.target, 'windows') }}
         uses: taiki-e/install-action@v2
         with:
           tool: cyclonedx-rust-cargo
@@ -248,7 +248,7 @@ jobs:
         run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsyncd
 
       - name: Generate target SBOM
-        if: !contains(matrix.target, 'windows')
+        if: ${{ !contains(matrix.target, 'windows') }}
         run: cyclonedx-rust-cargo --output "target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json"
 
       - name: Upload oc-rsync artifact
