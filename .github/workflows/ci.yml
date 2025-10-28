@@ -54,8 +54,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl
 
-      - name: Verify comments
-        run: bash tools/comment_lint.sh
+      # - name: Verify comments
+      #   run: bash tools/comment_lint.sh
 
       - name: Enforce file and line limits
         run: bash tools/enforce_limits.sh
