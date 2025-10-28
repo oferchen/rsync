@@ -270,7 +270,8 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
             (first, &remainder[1..])
         };
 
-    let repetitions = match suffix.to_ascii_lowercase() {
+    let normalized_suffix = suffix.to_ascii_lowercase();
+    let repetitions = match normalized_suffix {
         b'b' => 0,
         b'k' => 1,
         b'm' => 2,
@@ -281,7 +282,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     };
 
     let mut base: u32 = 1024;
-    let mut alignment: u128 = 1024;
+    let mut alignment: u128 = if normalized_suffix == b'b' { 1 } else { 1024 };
 
     if !remainder_after_suffix.is_empty() {
         let bytes = remainder_after_suffix.as_bytes();
