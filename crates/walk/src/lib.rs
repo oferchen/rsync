@@ -85,7 +85,7 @@
 
 use std::collections::HashSet;
 use std::error::Error;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -357,6 +357,38 @@ impl WalkEntry {
     #[must_use]
     pub fn metadata(&self) -> &fs::Metadata {
         &self.metadata
+    }
+
+    /// Returns the file name associated with the entry, if any.
+    ///
+    /// The root entry of a traversal has no parent directory and therefore
+    /// yields `None`. All other entries return the final component of the
+    /// relative path, matching upstream rsync's expectations when constructing
+    /// file-list nodes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_walk::WalkBuilder;
+    /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let temp = tempfile::tempdir()?;
+    /// let root = temp.path().join("root");
+    /// std::fs::create_dir(&root)?;
+    /// let mut walker = WalkBuilder::new(&root).build()?;
+    /// let entry = walker.next().unwrap()?;
+    /// assert!(entry.metadata().is_dir());
+    /// assert!(entry.file_name().is_none());
+    /// # Ok(())
+    /// # }
+    /// # demo().unwrap();
+    /// ```
+    #[must_use]
+    pub fn file_name(&self) -> Option<&OsStr> {
+        if self.is_root {
+            None
+        } else {
+            self.relative_path.file_name()
+        }
     }
 
     /// Reports the depth of the entry relative to the root (root depth is `0`).
@@ -758,5 +790,28 @@ mod tests {
             .expect("build walker");
         let paths = collect_relative_paths(walker);
         assert_eq!(paths, vec![PathBuf::from("self")]);
+    }
+
+    #[test]
+    fn walk_entry_file_name_matches_tail_component() {
+        use std::ffi::OsStr;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        let nested_dir = root.join("nested");
+        let nested_file = nested_dir.join("file.txt");
+        fs::create_dir_all(&nested_dir).expect("create nested");
+        fs::write(&nested_file, b"data").expect("write nested file");
+
+        let mut walker = WalkBuilder::new(&root).build().expect("build walker");
+        let root_entry = walker.next().expect("root entry").expect("root ok");
+        assert!(root_entry.is_root());
+        assert!(root_entry.file_name().is_none());
+
+        let dir_entry = walker.next().expect("dir entry").expect("dir ok");
+        assert_eq!(dir_entry.file_name(), Some(OsStr::new("nested")));
+
+        let file_entry = walker.next().expect("file entry").expect("file ok");
+        assert_eq!(file_entry.file_name(), Some(OsStr::new("file.txt")));
     }
 }
