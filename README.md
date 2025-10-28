@@ -90,8 +90,8 @@ gaps and parity status are tracked in `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
 
-The workspace targets Rust 2024 and denies unsafe code across all crates. To
-run the existing unit and property tests:
+The workspace targets Rust 2024, requires `rustc` 1.87 or newer, and denies
+unsafe code across all crates. To run the existing unit and property tests:
 
 ```bash
 cargo test
