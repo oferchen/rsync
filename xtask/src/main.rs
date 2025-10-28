@@ -89,6 +89,15 @@ struct WorkspaceBranding {
     daemon_config: String,
     /// Primary daemon secrets file path.
     daemon_secrets: String,
+    /// Legacy daemon configuration directory used by upstream-compatible
+    /// installations.
+    legacy_daemon_config_dir: String,
+    /// Legacy daemon configuration file path used by upstream-compatible
+    /// installations.
+    legacy_daemon_config: String,
+    /// Legacy daemon secrets file path used by upstream-compatible
+    /// installations.
+    legacy_daemon_secrets: String,
     /// Project source URL advertised in documentation and banners.
     source: String,
 }
@@ -156,6 +165,9 @@ fn parse_workspace_branding(manifest: &str) -> Result<WorkspaceBranding, TaskErr
         daemon_config_dir: metadata_str(oc, "daemon_config_dir")?,
         daemon_config: metadata_str(oc, "daemon_config")?,
         daemon_secrets: metadata_str(oc, "daemon_secrets")?,
+        legacy_daemon_config_dir: metadata_str(oc, "legacy_daemon_config_dir")?,
+        legacy_daemon_config: metadata_str(oc, "legacy_daemon_config")?,
+        legacy_daemon_secrets: metadata_str(oc, "legacy_daemon_secrets")?,
         source: metadata_str(oc, "source")?,
     })
 }
@@ -751,6 +763,9 @@ mod tests {
             daemon_config_dir: String::from("/etc/oc-rsyncd"),
             daemon_config: String::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
             daemon_secrets: String::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
+            legacy_daemon_config_dir: String::from("/etc"),
+            legacy_daemon_config: String::from("/etc/rsyncd.conf"),
+            legacy_daemon_secrets: String::from("/etc/rsyncd.secrets"),
             source: String::from("https://github.com/oferchen/rsync"),
         };
         assert_eq!(branding, expected);
