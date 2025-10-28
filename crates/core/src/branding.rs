@@ -256,21 +256,9 @@ impl Brand {
 }
 
 fn resolve_default_brand(label: &str) -> Brand {
-    if matches_oc_brand(label) {
-        Brand::Oc
-    } else if matches_upstream_brand(label) {
-        Brand::Upstream
-    } else {
-        panic!("unsupported workspace brand; expected 'oc' or 'upstream'")
-    }
-}
-
-fn matches_oc_brand(label: &str) -> bool {
-    label == "oc" || label == "oc-rsync" || label == "oc-rsyncd"
-}
-
-fn matches_upstream_brand(label: &str) -> bool {
-    label == "upstream" || label == "rsync" || label == "rsyncd"
+    label.parse::<Brand>().unwrap_or_else(|_| {
+        panic!("unsupported workspace brand '{label}'; expected 'oc' or 'upstream' aliases")
+    })
 }
 
 /// Returns the brand configured for this workspace build.
@@ -935,6 +923,14 @@ mod tests {
         assert_eq!(brand_for_program_name("OC-RSYNCD_v2"), Brand::Oc);
         assert_eq!(brand_for_program_name("rsync-3.4.1"), Brand::Upstream);
         assert_eq!(brand_for_program_name("rsync_3.4.1"), Brand::Upstream);
+    }
+
+    #[test]
+    fn resolve_default_brand_accepts_aliases() {
+        assert_eq!(super::resolve_default_brand("OC"), Brand::Oc);
+        assert_eq!(super::resolve_default_brand("oc-rsync"), Brand::Oc);
+        assert_eq!(super::resolve_default_brand("UPSTREAM"), Brand::Upstream);
+        assert_eq!(super::resolve_default_brand("rsyncd"), Brand::Upstream);
     }
 
     #[test]
