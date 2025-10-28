@@ -88,15 +88,13 @@ const ZSTD_FEATURE_BIT: u8 = 1 << 2;
 const ICONV_FEATURE_BIT: u8 = 1 << 3;
 const SD_NOTIFY_FEATURE_BIT: u8 = 1 << 4;
 
-const fn assert_workspace_protocol_alignment() {
+const _: () = {
     let workspace_version = workspace::metadata().protocol_version();
     let crate_version = ProtocolVersion::NEWEST.as_u8() as u32;
     if workspace_version != crate_version {
         panic!("workspace protocol version must match ProtocolVersion::NEWEST");
     }
-}
-
-const _: () = assert_workspace_protocol_alignment();
+};
 
 /// Bitmap describing the optional features compiled into this build.
 ///
