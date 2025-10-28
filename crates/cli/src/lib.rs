@@ -43,7 +43,7 @@
 //! - Version output is delegated to [`rsync_core::version::VersionInfoReport`]
 //!   so the CLI remains byte-identical with the canonical banner used by other
 //!   workspace components.
-//! - Help output is rendered by [`render_help`] using a static snapshot that
+//! - Help output is rendered by a dedicated helper using a static snapshot that
 //!   documents the currently supported subset. The helper substitutes the
 //!   invoked program name so wrappers like `oc-rsync` display branded banners
 //!   while the full upstream-compatible renderer is implemented.
