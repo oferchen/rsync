@@ -557,6 +557,42 @@ impl LimiterChange {
             other
         }
     }
+
+    /// Returns `true` when the limiter configuration or activation state changed.
+    ///
+    /// The helper allows callers to gate follow-up work—such as logging or
+    /// recomputing pacing schedules—without matching on each variant
+    /// individually. Both [`LimiterChange::Enabled`] and
+    /// [`LimiterChange::Updated`] report `true`, as does
+    /// [`LimiterChange::Disabled`], while [`LimiterChange::Unchanged`]
+    /// indicates that no adjustments were applied.
+    #[must_use]
+    pub const fn is_changed(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
+
+    /// Returns `true` when the limiter remains active after the update.
+    ///
+    /// The method is useful for code that needs to distinguish between
+    /// reconfiguration and outright deactivation without matching on the enum.
+    /// [`LimiterChange::Enabled`] and [`LimiterChange::Updated`] both leave the
+    /// limiter active and therefore report `true`. All other variants return
+    /// `false`.
+    #[must_use]
+    pub const fn leaves_limiter_active(self) -> bool {
+        matches!(self, Self::Enabled | Self::Updated)
+    }
+
+    /// Returns `true` when throttling was disabled as a result of the update.
+    ///
+    /// This accessor mirrors upstream rsync's use case where daemon modules
+    /// need to surface when `bwlimit = 0` removes an existing limiter. Higher
+    /// layers can check the return value to avoid accessing an absent
+    /// [`BandwidthLimiter`].
+    #[must_use]
+    pub const fn disables_limiter(self) -> bool {
+        matches!(self, Self::Disabled)
+    }
 }
 
 /// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream rsync's
