@@ -4613,7 +4613,7 @@ where
                     )
                 ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
 
-            if requires_fallback && let Some(ctx) = fallback.take() {
+            if let Some(ctx) = requires_fallback.then(|| fallback.take()).flatten() {
                 return invoke_fallback(ctx);
             }
 
@@ -9317,9 +9317,11 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
     let trimmed = line.trim_matches(['\r', '\n']).trim_start();
     let remainder = strip_prefix_ignore_ascii_case(trimmed, "@ERROR")?;
 
-    if let Some(ch) = remainder.chars().next()
-        && ch != ':'
-        && !ch.is_ascii_whitespace()
+    if remainder
+        .chars()
+        .next()
+        .filter(|ch| *ch != ':' && !ch.is_ascii_whitespace())
+        .is_some()
     {
         return None;
     }
@@ -9684,9 +9686,7 @@ fn split_daemon_host_module(input: &str) -> Result<Option<(&str, &str)>, ClientE
                 previous_colon = None;
             }
             ':' if !in_brackets => {
-                if let Some(prev) = previous_colon
-                    && prev + 1 == idx
-                {
+                if let Some(prev) = previous_colon.filter(|prev| *prev + 1 == idx) {
                     let host = &input[..prev];
                     if !host.contains('[') {
                         let colon_count = host.chars().filter(|&ch| ch == ':').count();

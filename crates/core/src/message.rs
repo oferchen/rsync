@@ -2544,8 +2544,8 @@ impl fmt::Display for Message {
 /// The input string must already be normalised via [`normalize_path`]. When the path lives outside
 /// the workspace root (or the root is unknown), the original string is returned unchanged.
 fn strip_workspace_prefix_owned(normalized_path: String) -> String {
-    if let Some(root) = normalized_workspace_root()
-        && let Some(stripped) = strip_normalized_workspace_prefix(&normalized_path, root)
+    if let Some(stripped) = normalized_workspace_root()
+        .and_then(|root| strip_normalized_workspace_prefix(&normalized_path, root))
     {
         return stripped;
     }
