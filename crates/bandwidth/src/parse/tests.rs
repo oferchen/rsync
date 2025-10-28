@@ -18,6 +18,18 @@ fn parse_bandwidth_accepts_decimal_units() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_explicit_byte_suffix() {
+    let limit = parse_bandwidth_argument("512b").expect("parse succeeds");
+    assert_eq!(limit, NonZeroU64::new(512));
+
+    let uppercase = parse_bandwidth_argument("512B").expect("parse succeeds");
+    assert_eq!(uppercase, limit);
+
+    let too_small = parse_bandwidth_argument("10b").unwrap_err();
+    assert_eq!(too_small, BandwidthParseError::TooSmall);
+}
+
+#[test]
 fn parse_bandwidth_rejects_space_between_value_and_suffix() {
     let error = parse_bandwidth_argument("1 M").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
