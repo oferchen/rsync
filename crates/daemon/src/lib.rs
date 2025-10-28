@@ -4535,15 +4535,15 @@ fn format_bandwidth_rate(value: NonZeroU64) -> String {
     const PIB: u64 = TIB * 1024;
 
     let bytes = value.get();
-    if bytes % PIB == 0 {
+    if bytes.is_multiple_of(PIB) {
         format!("{} PiB/s", bytes / PIB)
-    } else if bytes % TIB == 0 {
+    } else if bytes.is_multiple_of(TIB) {
         format!("{} TiB/s", bytes / TIB)
-    } else if bytes % GIB == 0 {
+    } else if bytes.is_multiple_of(GIB) {
         format!("{} GiB/s", bytes / GIB)
-    } else if bytes % MIB == 0 {
+    } else if bytes.is_multiple_of(MIB) {
         format!("{} MiB/s", bytes / MIB)
-    } else if bytes % KIB == 0 {
+    } else if bytes.is_multiple_of(KIB) {
         format!("{} KiB/s", bytes / KIB)
     } else {
         format!("{} bytes/s", bytes)
