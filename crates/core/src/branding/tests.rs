@@ -142,6 +142,26 @@ fn config_directories_match_brand_profiles() {
 }
 
 #[test]
+fn config_paths_match_brand_profiles() {
+    assert_eq!(
+        Brand::Oc.daemon_config_path(),
+        Path::new(OC_DAEMON_CONFIG_PATH)
+    );
+    assert_eq!(
+        Brand::Oc.daemon_config_path_str(),
+        OC_DAEMON_CONFIG_PATH
+    );
+    assert_eq!(
+        Brand::Upstream.daemon_config_path(),
+        Path::new(LEGACY_DAEMON_CONFIG_PATH)
+    );
+    assert_eq!(
+        Brand::Upstream.daemon_config_path_str(),
+        LEGACY_DAEMON_CONFIG_PATH
+    );
+}
+
+#[test]
 fn secrets_search_orders_match_brand_expectations() {
     assert_eq!(
         Brand::Oc.secrets_path_candidate_strs(),
@@ -158,6 +178,23 @@ fn secrets_search_orders_match_brand_expectations() {
     let upstream_paths = Brand::Upstream.secrets_path_candidates();
     assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_SECRETS_PATH));
     assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_SECRETS_PATH));
+
+    assert_eq!(
+        Brand::Oc.daemon_secrets_path(),
+        Path::new(OC_DAEMON_SECRETS_PATH)
+    );
+    assert_eq!(
+        Brand::Oc.daemon_secrets_path_str(),
+        OC_DAEMON_SECRETS_PATH
+    );
+    assert_eq!(
+        Brand::Upstream.daemon_secrets_path(),
+        Path::new(LEGACY_DAEMON_SECRETS_PATH)
+    );
+    assert_eq!(
+        Brand::Upstream.daemon_secrets_path_str(),
+        LEGACY_DAEMON_SECRETS_PATH
+    );
 }
 
 #[test]
