@@ -2736,8 +2736,14 @@ fn render_help(program_name: ProgramName) -> String {
     let program = program_name.as_str();
     let header = format!("{program} 3.4.1-rust");
     let usage = format!("Usage: {program}");
-    let help = HELP_TEXT.replacen("rsync 3.4.1-rust", &header, 1);
-    help.replacen("Usage: rsync", &usage, 1)
+    let mut help = HELP_TEXT.replacen("rsync 3.4.1-rust", &header, 1);
+    help = help.replacen("Usage: rsync", &usage, 1);
+
+    if program_name == ProgramName::OcRsync {
+        help = help.replacen("(delegates to rsyncd)", "(delegates to oc-rsyncd)", 1);
+    }
+
+    help
 }
 
 /// Writes a [`Message`] to the supplied sink, appending a newline.
@@ -7951,6 +7957,18 @@ mod tests {
 
         let expected = render_help(ProgramName::OcRsync);
         assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn oc_help_mentions_oc_rsyncd_delegation() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("valid UTF-8");
+        assert!(rendered.contains("delegates to oc-rsyncd"));
+        assert!(!rendered.contains("delegates to rsyncd"));
     }
 
     #[test]
