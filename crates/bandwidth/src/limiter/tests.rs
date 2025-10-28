@@ -453,6 +453,25 @@ fn limiter_reset_clears_state_and_preserves_configuration() {
 }
 
 #[test]
+fn limiter_change_helper_methods_reflect_state() {
+    assert!(!LimiterChange::Unchanged.is_changed());
+    assert!(!LimiterChange::Unchanged.leaves_limiter_active());
+    assert!(!LimiterChange::Unchanged.disables_limiter());
+
+    assert!(LimiterChange::Enabled.is_changed());
+    assert!(LimiterChange::Enabled.leaves_limiter_active());
+    assert!(!LimiterChange::Enabled.disables_limiter());
+
+    assert!(LimiterChange::Updated.is_changed());
+    assert!(LimiterChange::Updated.leaves_limiter_active());
+    assert!(!LimiterChange::Updated.disables_limiter());
+
+    assert!(LimiterChange::Disabled.is_changed());
+    assert!(!LimiterChange::Disabled.leaves_limiter_active());
+    assert!(LimiterChange::Disabled.disables_limiter());
+}
+
+#[test]
 fn apply_effective_limit_disables_limiter_when_unrestricted() {
     let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
