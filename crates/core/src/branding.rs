@@ -574,6 +574,18 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::{OsStr, OsString};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn acquire_env_lock() -> MutexGuard<'static, ()> {
+        env_lock()
+            .lock()
+            .expect("environment lock poisoned during test")
+    }
 
     #[allow(unsafe_code)]
     fn set_env_var(key: &'static str, value: impl AsRef<OsStr>) {
@@ -592,6 +604,7 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
+        _lock: MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
@@ -599,15 +612,25 @@ mod tests {
         where
             V: AsRef<OsStr>,
         {
+            let lock = acquire_env_lock();
             let previous = env::var_os(key);
             set_env_var(key, value);
-            Self { key, previous }
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
         }
 
         fn remove(key: &'static str) -> Self {
+            let lock = acquire_env_lock();
             let previous = env::var_os(key);
             remove_env_var(key);
-            Self { key, previous }
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
         }
     }
 
