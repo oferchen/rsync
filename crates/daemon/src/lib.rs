@@ -753,6 +753,12 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
+    static TEST_CONFIG_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
+        RefCell::new(Some(Vec::new()));
+}
+
+#[cfg(test)]
+thread_local! {
     static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> = RefCell::new(None);
 }
 
@@ -1459,6 +1465,11 @@ fn environment_path_override(name: &'static str) -> Option<OsString> {
 }
 
 fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
+    #[cfg(test)]
+    if let Some(paths) = TEST_CONFIG_CANDIDATES.with(|cell| cell.borrow().clone()) {
+        return first_existing_path(paths.iter().map(PathBuf::as_path));
+    }
+
     first_existing_config_path(brand.config_path_candidate_strs())
 }
 
@@ -5549,10 +5560,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let missing_primary = dir.path().join("missing-primary.conf");
         let missing_legacy = dir.path().join("missing-legacy.conf");
-        let result = first_existing_config_path([
-            missing_primary.as_path(),
-            missing_legacy.as_path(),
-        ]);
+        let result =
+            first_existing_config_path([missing_primary.as_path(), missing_legacy.as_path()]);
 
         assert!(result.is_none());
     }
