@@ -79,10 +79,10 @@ pub enum Brand {
 /// Parsing accepts ASCII case-insensitive aliases for both the upstream and
 /// branded binaries. Accepted values include `"oc"`, `"oc-rsync"`,
 /// `"oc_rsync"`, `"oc.rsyncd"`, `"upstream"`, `"rsync"`, and `"rsyncd"`, as
-/// well as versioned variants such as `"oc-rsync-3.4.1"` or `"rsync_3.4.1"`.
-/// Whitespace surrounding the input is ignored. Any other value triggers
-/// `BrandParseError` so callers can fall back to defaults or surface a
-/// diagnostic to the user.
+/// well as versioned variants with numeric suffixes such as `"oc-rsync-3.4.1"`
+/// or `"rsync_3.4.1"`. Whitespace surrounding the input is ignored. Any other
+/// value triggers `BrandParseError` so callers can fall back to defaults or
+/// surface a diagnostic to the user.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BrandParseError;
 
@@ -573,19 +573,11 @@ fn matches_program_alias(program: &str, canonical: &str) -> bool {
         return true;
     }
 
-    if program.len() <= canonical.len() || !program.is_char_boundary(canonical.len()) {
-        return false;
-    }
-
-    let prefix = &program[..canonical.len()];
-    if !normalized_program_match(prefix, canonical) {
+    let Some(suffix) = program_suffix(program, canonical) else {
         return false;
     };
 
-    program
-        .get(canonical.len()..)
-        .and_then(|suffix| suffix.chars().next())
-        .is_some_and(|separator| matches!(separator, '-' | '_' | '.'))
+    version_suffix_is_allowed(suffix)
 }
 
 fn normalized_program_match(candidate: &str, canonical: &str) -> bool {
@@ -610,6 +602,48 @@ fn program_alias_byte_eq(candidate: u8, canonical: u8) -> bool {
     }
 
     canonical_lower == b'-' && matches!(candidate_lower, b'-' | b'_' | b'.')
+}
+
+fn program_suffix<'a>(program: &'a str, canonical: &str) -> Option<&'a str> {
+    if program.len() <= canonical.len() || !program.is_char_boundary(canonical.len()) {
+        return None;
+    }
+
+    let prefix = &program[..canonical.len()];
+    if !normalized_program_match(prefix, canonical) {
+        return None;
+    }
+
+    program.get(canonical.len()..)
+}
+
+fn version_suffix_is_allowed(suffix: &str) -> bool {
+    if suffix.is_empty() {
+        return true;
+    }
+
+    let mut chars = suffix.chars();
+    let Some(first) = chars.next() else {
+        return true;
+    };
+
+    if !matches!(first, '-' | '_' | '.') {
+        return false;
+    }
+
+    let mut has_digit = false;
+
+    for ch in chars {
+        if !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.' {
+            return false;
+        }
+
+        if ch.is_ascii_digit() {
+            has_digit = true;
+        }
+    }
+
+    has_digit
 }
 
 fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
@@ -956,6 +990,38 @@ mod tests {
             upstream_profile().daemon_secrets_path(),
             legacy_daemon_secrets_path()
         );
+    }
+
+    #[test]
+    fn matches_program_alias_accepts_version_suffix_with_digits() {
+        assert!(super::matches_program_alias(
+            "oc-rsync-3.4.1",
+            OC_CLIENT_PROGRAM_NAME
+        ));
+        assert!(super::matches_program_alias(
+            "oc_rsync_v2",
+            OC_CLIENT_PROGRAM_NAME
+        ));
+        assert!(super::matches_program_alias(
+            "rsync.v2025",
+            UPSTREAM_CLIENT_PROGRAM_NAME
+        ));
+    }
+
+    #[test]
+    fn matches_program_alias_rejects_non_numeric_suffixes() {
+        assert!(!super::matches_program_alias(
+            "oc-rsync-release",
+            OC_CLIENT_PROGRAM_NAME
+        ));
+        assert!(!super::matches_program_alias(
+            "oc-rsync-v",
+            OC_CLIENT_PROGRAM_NAME
+        ));
+        assert!(!super::matches_program_alias(
+            "rsync.snapshot",
+            UPSTREAM_CLIENT_PROGRAM_NAME
+        ));
     }
 
     #[test]
