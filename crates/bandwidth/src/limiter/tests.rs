@@ -22,6 +22,15 @@ fn limiter_supports_sub_kib_per_second_limits() {
 }
 
 #[test]
+fn limiter_write_max_bytes_reflects_effective_limit() {
+    let fast = BandwidthLimiter::new(NonZeroU64::new(8 * 1024).unwrap());
+    assert_eq!(fast.write_max_bytes(), 1024);
+
+    let slow = BandwidthLimiter::new(NonZeroU64::new(600).unwrap());
+    assert_eq!(slow.write_max_bytes(), 512);
+}
+
+#[test]
 fn limiter_preserves_buffer_for_fast_rates() {
     let limiter = BandwidthLimiter::new(NonZeroU64::new(8 * 1024 * 1024).unwrap());
     assert_eq!(limiter.recommended_read_size(8192), 8192);
@@ -34,6 +43,21 @@ fn limiter_respects_custom_burst() {
         NonZeroU64::new(2048),
     );
     assert_eq!(limiter.recommended_read_size(8192), 2048);
+}
+
+#[test]
+fn limiter_write_max_bytes_respects_burst_override() {
+    let capped = BandwidthLimiter::with_burst(
+        NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+        Some(NonZeroU64::new(2048).unwrap()),
+    );
+    assert_eq!(capped.write_max_bytes(), 2048);
+
+    let clamped = BandwidthLimiter::with_burst(
+        NonZeroU64::new(8 * 1024 * 1024).unwrap(),
+        Some(NonZeroU64::new(128).unwrap()),
+    );
+    assert_eq!(clamped.write_max_bytes(), 512);
 }
 
 #[test]

@@ -753,6 +753,29 @@ impl BandwidthLimiter {
         self.burst_bytes
     }
 
+    /// Returns the maximum chunk size the limiter schedules before sleeping.
+    ///
+    /// The value mirrors the calculation performed by
+    /// [`recommended_read_size`](Self::recommended_read_size) and provides the
+    /// upper bound directly so callers can provision buffers without issuing a
+    /// write first. When a burst override is present the returned size reflects
+    /// the effective cap after the burst and the minimum write threshold have
+    /// been applied, matching upstream rsync's token-bucket implementation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_bandwidth::BandwidthLimiter;
+    /// use std::num::NonZeroU64;
+    ///
+    /// let limiter = BandwidthLimiter::new(NonZeroU64::new(8 * 1024).unwrap());
+    /// assert_eq!(limiter.write_max_bytes(), 1024);
+    /// ```
+    #[must_use]
+    pub const fn write_max_bytes(&self) -> usize {
+        self.write_max
+    }
+
     /// Returns the maximum chunk size that should be written before sleeping.
     #[must_use]
     pub fn recommended_read_size(&self, buffer_len: usize) -> usize {
