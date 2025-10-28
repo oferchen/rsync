@@ -344,10 +344,22 @@ mod tests {
         const FUTURE_CLAMPED: bool = FUTURE.was_clamped();
         const SUPPORTED_CLAMPED: bool = SUPPORTED.was_clamped();
 
-        const _: () = assert!(CLAMPED);
-        const _: () = assert!(!NOT_CLAMPED);
-        const _: () = assert!(FUTURE_CLAMPED);
-        const _: () = assert!(!SUPPORTED_CLAMPED);
+        const _: () = match CLAMPED {
+            true => (),
+            false => panic!("remote advertisements must be clamped"),
+        };
+        const _: () = match NOT_CLAMPED {
+            false => (),
+            true => panic!("remote advertisement unexpectedly clamped"),
+        };
+        const _: () = match FUTURE_CLAMPED {
+            true => (),
+            false => panic!("future advertisement should be clamped"),
+        };
+        const _: () = match SUPPORTED_CLAMPED {
+            false => (),
+            true => panic!("supported advertisement should not be clamped"),
+        };
 
         let clamped = CLAMPED;
         let not_clamped = NOT_CLAMPED;
@@ -380,8 +392,14 @@ mod tests {
         const NOT_CAPPED: bool =
             local_cap_reduced_protocol(ProtocolVersion::V29, ProtocolVersion::V29);
 
-        const _: () = assert!(WAS_CAPPED);
-        const _: () = assert!(!NOT_CAPPED);
+        const _: () = match WAS_CAPPED {
+            true => (),
+            false => panic!("local cap reduction must be detected"),
+        };
+        const _: () = match NOT_CAPPED {
+            false => (),
+            true => panic!("local cap should not be detected"),
+        };
 
         let was_capped = WAS_CAPPED;
         let not_capped = NOT_CAPPED;
