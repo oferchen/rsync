@@ -7,4 +7,5 @@
 # OC_RSYNC_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf
 # RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf
 # OC_RSYNC_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets
+# RSYNCD_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets
 # RSYNCD_ARGS="--max-sessions 16"
