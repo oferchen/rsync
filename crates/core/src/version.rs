@@ -352,33 +352,50 @@ impl Default for VersionMetadata {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::version::version_metadata;
+/// use rsync_core::{branding::Brand, version::version_metadata};
 ///
 /// let metadata = version_metadata();
 /// assert_eq!(metadata.protocol_version().as_u8(), 32);
+/// assert_eq!(metadata.program_name(), "rsync");
+/// assert_eq!(
+///     rsync_core::version::version_metadata_for_client_brand(Brand::Oc).program_name(),
+///     "oc-rsync"
+/// );
 /// ```
 #[doc(alias = "--version")]
 #[must_use]
 pub const fn version_metadata() -> VersionMetadata {
-    version_metadata_for_program(branding::client_program_name())
+    version_metadata_for_client_brand(Brand::Upstream)
 }
 
 /// Returns metadata configured for the upstream-compatible `rsync` daemon banner.
 #[must_use]
 pub const fn daemon_version_metadata() -> VersionMetadata {
-    version_metadata_for_program(branding::daemon_program_name())
+    version_metadata_for_daemon_brand(Brand::Upstream)
 }
 
 /// Returns metadata configured for the branded `oc-rsync` client banner.
 #[must_use]
 pub const fn oc_version_metadata() -> VersionMetadata {
-    version_metadata_for_program(branding::oc_client_program_name())
+    version_metadata_for_client_brand(Brand::Oc)
 }
 
 /// Returns metadata configured for the branded `oc-rsyncd` daemon banner.
 #[must_use]
 pub const fn oc_daemon_version_metadata() -> VersionMetadata {
-    version_metadata_for_program(branding::oc_daemon_program_name())
+    version_metadata_for_daemon_brand(Brand::Oc)
+}
+
+/// Returns version metadata tailored to the client program associated with `brand`.
+#[must_use]
+pub const fn version_metadata_for_client_brand(brand: Brand) -> VersionMetadata {
+    version_metadata_for_program(brand.client_program_name())
+}
+
+/// Returns version metadata tailored to the daemon program associated with `brand`.
+#[must_use]
+pub const fn version_metadata_for_daemon_brand(brand: Brand) -> VersionMetadata {
+    version_metadata_for_program(brand.daemon_program_name())
 }
 
 /// Returns version metadata that renders a banner for the supplied program name.
@@ -1963,6 +1980,12 @@ mod tests {
         let branded_daemon = oc_daemon_version_metadata();
         assert_eq!(branded_daemon.program_name(), OC_DAEMON_PROGRAM_NAME);
         assert_eq!(branded_daemon.protocol_version(), ProtocolVersion::NEWEST);
+
+        let via_brand = version_metadata_for_client_brand(Brand::Oc);
+        assert_eq!(via_brand.program_name(), OC_PROGRAM_NAME);
+
+        let via_brand_daemon = version_metadata_for_daemon_brand(Brand::Oc);
+        assert_eq!(via_brand_daemon.program_name(), OC_DAEMON_PROGRAM_NAME);
 
         let custom = version_metadata_for_program("custom-rsync");
         assert_eq!(custom.program_name(), "custom-rsync");
