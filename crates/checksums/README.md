@@ -9,7 +9,7 @@ interchangeable with the C reference implementation.
 
 The crate currently offers two modules:
 
-- [`crate::rolling`] implements the Adler-32–style weak checksum (`rsum`) used
+- [`RollingChecksum`] implements the Adler-32–style weak checksum (`rsum`) used
   for block matching during delta transfers.
 - [`crate::strong`] exposes MD4, MD5, XXH64, and XXH3 (64- and 128-bit) digests
   together with the [`crate::strong::StrongDigest`] trait that higher layers use
@@ -20,7 +20,7 @@ layering while keeping checksum-specific optimisations in one place.
 
 ## Invariants
 
-- [`crate::rolling::RollingChecksum`] truncates both state components to 16 bits
+- [`RollingChecksum`] truncates both state components to 16 bits
   after every update, matching upstream rsync's behaviour.
 - Rolling updates reject mismatched slice lengths and empty windows so the
   caller never observes silent state corruption.
