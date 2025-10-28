@@ -880,6 +880,67 @@ fn validate_packaging_assets(
         )?;
     }
 
+    let systemd_unit = workspace
+        .join("packaging")
+        .join("systemd")
+        .join("oc-rsyncd.service");
+    let unit_contents = fs::read_to_string(&systemd_unit).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read {}: {}", systemd_unit.display(), error),
+        ))
+    })?;
+
+    let unit_snippets = [
+        branding.daemon_bin.as_str(),
+        branding.daemon_config.as_str(),
+        branding.daemon_secrets.as_str(),
+        "OC_RSYNC_CONFIG",
+        "OC_RSYNC_SECRETS",
+        "RSYNCD_CONFIG",
+        "RSYNCD_SECRETS",
+    ];
+
+    for snippet in unit_snippets {
+        ensure(
+            unit_contents.contains(snippet),
+            format!(
+                "systemd unit {} missing required snippet '{}': update packaging/systemd/oc-rsyncd.service",
+                systemd_unit.display(),
+                snippet
+            ),
+        )?;
+    }
+
+    let env_file = workspace
+        .join("packaging")
+        .join("default")
+        .join("oc-rsyncd");
+    let env_contents = fs::read_to_string(&env_file).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read {}: {}", env_file.display(), error),
+        ))
+    })?;
+
+    let env_snippets = [
+        "OC_RSYNC_CONFIG",
+        "RSYNCD_CONFIG",
+        "OC_RSYNC_SECRETS",
+        "RSYNCD_SECRETS",
+    ];
+
+    for snippet in env_snippets {
+        ensure(
+            env_contents.contains(snippet),
+            format!(
+                "environment defaults {} missing '{}': update packaging/default/oc-rsyncd",
+                env_file.display(),
+                snippet
+            ),
+        )?;
+    }
+
     Ok(())
 }
 
