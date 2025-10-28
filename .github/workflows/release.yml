@@ -83,16 +83,56 @@ jobs:
       - name: Install aarch64 toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} --bin oc-rsync
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            bins=("oc-rsync")
+          else
+            bins=("oc-rsync" "oc-rsyncd")
+          fi
+
+          for bin in "${bins[@]}"; do
+            cargo build --release --target "${{ matrix.target }}" --bin "$bin"
+          done
       - name: Package artifacts
         shell: bash
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/oc-rsync* dist/oc-rsync-${{ matrix.target }}
-          sha256sum dist/oc-rsync-${{ matrix.target }} > dist/oc-rsync-${{ matrix.target }}.sha256
+          set -euo pipefail
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            bins=("oc-rsync")
+            ext=".exe"
+          else
+            bins=("oc-rsync" "oc-rsyncd")
+            ext=""
+          fi
+
+          base_dir="dist/${{ matrix.target }}"
+          mkdir -p "$base_dir"
+
+          declare -a outputs=()
+          for bin in "${bins[@]}"; do
+            src="target/${{ matrix.target }}/release/${bin}${ext}"
+            dest="$base_dir/${bin}${ext}"
+            cp "$src" "$dest"
+            outputs+=("$dest")
+          done
+
+          python - <<'PY' "${outputs[@]}"
+import hashlib
+import pathlib
+import sys
+
+for arg in sys.argv[1:]:
+    path = pathlib.Path(arg)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    checksum_path = path.parent / f"{path.name}.sha256"
+    checksum_path.write_text(f"{digest}  {path.name}\n")
+PY
+
           cargo install cargo-sbom || true
-          cargo sbom --output dist/oc-rsync-${{ matrix.target }}-sbom.json
+          cargo sbom --output "$base_dir/oc-rsync-${{ matrix.target }}-sbom.json"
       - name: Build packages
         if: runner.os == 'Linux'
         shell: bash
