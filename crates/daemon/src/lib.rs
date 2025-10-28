@@ -9242,17 +9242,18 @@ mod tests {
     }
 
     fn connect_with_retries(port: u16) -> TcpStream {
-        for attempt in 0..100 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        loop {
             match TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
                 Ok(stream) => return stream,
                 Err(error) => {
-                    if attempt == 99 {
-                        panic!("failed to connect to daemon: {error}");
+                    if Instant::now() >= deadline {
+                        panic!("failed to connect to daemon within timeout: {error}");
                     }
                     thread::sleep(Duration::from_millis(20));
                 }
             }
         }
-        unreachable!("loop exits via return or panic");
     }
 }
