@@ -16,6 +16,7 @@
 mod brand;
 mod constants;
 mod detection;
+mod manifest;
 mod override_env;
 mod profile;
 
@@ -30,6 +31,7 @@ pub use constants::{
     UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME, brand_override_env_var,
 };
 pub use detection::{brand_for_program_name, detect_brand, resolve_brand_profile};
+pub use manifest::{BrandManifest, manifest};
 pub use profile::{
     BrandProfile, client_program_name, client_program_name_os_str, daemon_program_name,
     daemon_program_name_os_str, legacy_daemon_config_dir, legacy_daemon_config_path,
