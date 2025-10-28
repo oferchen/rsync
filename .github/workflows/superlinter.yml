@@ -2,7 +2,7 @@ name: Super-Linter
 
 on:
   pull_request:
-    branches: ["main"]
+    branches: ["master"]
 
 jobs:
   lint:
@@ -14,5 +14,5 @@ jobs:
       - name: Super-Linter
         uses: super-linter/super-linter@v8.1.0
         env:
-          DEFAULT_BRANCH: main
+          DEFAULT_BRANCH: master
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
