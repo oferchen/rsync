@@ -303,12 +303,10 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    macro_rules! const_assert {
-        ($condition:expr, $message:expr) => {{
-            if !$condition {
-                panic!("{}", $message);
-            }
-        }};
+    const fn assert_const(condition: bool, message: &str) {
+        if !condition {
+            panic!("{}", message);
+        }
     }
 
     fn negotiated_version_strategy() -> impl Strategy<Value = ProtocolVersion> {
@@ -391,12 +389,8 @@ mod tests {
         const NOT_CAPPED: bool =
             local_cap_reduced_protocol(ProtocolVersion::V29, ProtocolVersion::V29);
 
-        const _: () = {
-            const_assert!(WAS_CAPPED, "local cap reduction must be detected");
-        };
-        const _: () = {
-            const_assert!(!NOT_CAPPED, "local cap should not be detected");
-        };
+        const _: () = assert_const(WAS_CAPPED, "local cap reduction must be detected");
+        const _: () = assert_const(!NOT_CAPPED, "local cap should not be detected");
 
         let was_capped = WAS_CAPPED;
         let not_capped = NOT_CAPPED;
