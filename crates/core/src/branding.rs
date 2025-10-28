@@ -36,7 +36,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::workspace;
 
@@ -702,7 +702,12 @@ pub fn resolve_brand_profile(program: Option<&OsStr>) -> BrandProfile {
     detect_brand(program).profile()
 }
 
-static BRAND_OVERRIDE_CACHE: OnceLock<Mutex<Option<Option<Brand>>>> = OnceLock::new();
+const BRAND_OVERRIDE_UNINITIALIZED: u8 = 0;
+const BRAND_OVERRIDE_NONE: u8 = 1;
+const BRAND_OVERRIDE_UPSTREAM: u8 = 2;
+const BRAND_OVERRIDE_OC: u8 = 3;
+
+static BRAND_OVERRIDE_STATE: AtomicU8 = AtomicU8::new(BRAND_OVERRIDE_UNINITIALIZED);
 
 fn read_brand_override_from_env() -> Option<Brand> {
     let value = env::var_os(BRAND_OVERRIDE_ENV)?;
@@ -714,24 +719,55 @@ fn read_brand_override_from_env() -> Option<Brand> {
     value.trim().parse::<Brand>().ok()
 }
 
-fn brand_override_from_env() -> Option<Brand> {
-    let cache = BRAND_OVERRIDE_CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cache.lock().expect("brand override cache mutex poisoned");
-    if let Some(value) = *guard {
-        return value;
+fn encode_brand_override(value: Option<Brand>) -> u8 {
+    match value {
+        None => BRAND_OVERRIDE_NONE,
+        Some(Brand::Upstream) => BRAND_OVERRIDE_UPSTREAM,
+        Some(Brand::Oc) => BRAND_OVERRIDE_OC,
     }
+}
 
-    let value = read_brand_override_from_env();
-    *guard = Some(value);
-    value
+fn decode_brand_override(state: u8) -> Option<Brand> {
+    match state {
+        BRAND_OVERRIDE_NONE => None,
+        BRAND_OVERRIDE_UPSTREAM => Some(Brand::Upstream),
+        BRAND_OVERRIDE_OC => Some(Brand::Oc),
+        _ => {
+            debug_assert!(
+                state == BRAND_OVERRIDE_UNINITIALIZED,
+                "unexpected brand override state {state}",
+            );
+            None
+        }
+    }
+}
+
+fn brand_override_from_env() -> Option<Brand> {
+    let mut state = BRAND_OVERRIDE_STATE.load(Ordering::Acquire);
+
+    loop {
+        match state {
+            BRAND_OVERRIDE_UNINITIALIZED => {
+                let value = read_brand_override_from_env();
+                let encoded = encode_brand_override(value);
+                match BRAND_OVERRIDE_STATE.compare_exchange(
+                    BRAND_OVERRIDE_UNINITIALIZED,
+                    encoded,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return value,
+                    Err(current) => state = current,
+                }
+            }
+            _ => return decode_brand_override(state),
+        }
+    }
 }
 
 #[cfg(test)]
 fn reset_brand_override_cache() {
-    if let Some(cache) = BRAND_OVERRIDE_CACHE.get() {
-        let mut guard = cache.lock().expect("brand override cache mutex poisoned");
-        *guard = None;
-    }
+    BRAND_OVERRIDE_STATE.store(BRAND_OVERRIDE_UNINITIALIZED, Ordering::Release);
 }
 
 /// Returns the legacy configuration path recognised for compatibility with upstream deployments.
