@@ -36,7 +36,10 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU8, Ordering},
+};
 
 use crate::workspace;
 
@@ -666,10 +669,18 @@ pub fn detect_brand(program: Option<&OsStr>) -> Brand {
         return brand;
     }
 
-    env::current_exe()
-        .ok()
-        .and_then(|path| brand_for_program_path(&path))
-        .unwrap_or_else(default_brand)
+    brand_from_current_executable()
+}
+
+fn brand_from_current_executable() -> Brand {
+    static CURRENT_EXE_BRAND: OnceLock<Brand> = OnceLock::new();
+
+    *CURRENT_EXE_BRAND.get_or_init(|| {
+        env::current_exe()
+            .ok()
+            .and_then(|path| brand_for_program_path(&path))
+            .unwrap_or_else(default_brand)
+    })
 }
 
 /// Returns the [`BrandProfile`] resolved from the provided program identifier.
