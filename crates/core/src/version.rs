@@ -2143,9 +2143,29 @@ mod tests {
         assert!(actual.contains(&compiled_line));
         let build_info_line = format!("Build info:\n    {}\n", build_info);
         assert!(actual.contains(&build_info_line));
-        assert!(actual.contains("Checksum list:\n    xxh128 xxh3 xxh64 md5 md4 none\n"));
-        assert!(actual.contains("Compress list:\n    none\n"));
-        assert!(actual.contains("Daemon auth list:\n    md5 md4\n"));
+        let checksum_algorithms = default_checksum_algorithms()
+            .iter()
+            .map(|algo| algo.as_ref())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(actual.contains(&format!("Checksum list:\n    {}\n", checksum_algorithms)));
+
+        let compress_algorithms = default_compress_algorithms()
+            .iter()
+            .map(|algo| algo.as_ref())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(actual.contains(&format!("Compress list:\n    {}\n", compress_algorithms)));
+
+        let daemon_auth_algorithms = default_daemon_auth_algorithms()
+            .iter()
+            .map(|algo| algo.as_ref())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(actual.contains(&format!(
+            "Daemon auth list:\n    {}\n",
+            daemon_auth_algorithms
+        )));
         assert!(actual.ends_with(
             "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\nare welcome to redistribute it under certain conditions.  See the GNU\nGeneral Public Licence for details.\n"
         ));
