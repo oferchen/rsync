@@ -2848,14 +2848,10 @@ impl ProgramName {
 }
 
 fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
-    program
-        .and_then(|arg| Path::new(arg).file_stem())
-        .and_then(|stem| stem.to_str())
-        .map(|stem| match branding::brand_for_program_name(stem) {
-            Brand::Oc => ProgramName::OcRsyncd,
-            Brand::Upstream => ProgramName::Rsyncd,
-        })
-        .unwrap_or(ProgramName::Rsyncd)
+    match branding::detect_brand(program) {
+        Brand::Oc => ProgramName::OcRsyncd,
+        Brand::Upstream => ProgramName::Rsyncd,
+    }
 }
 
 struct ParsedArgs {

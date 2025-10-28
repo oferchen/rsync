@@ -28,6 +28,7 @@
 //! assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 //! ```
 
+use std::ffi::OsStr;
 use std::path::Path;
 
 /// Identifies the brand associated with an executable name.
@@ -270,6 +271,42 @@ pub fn brand_for_program_name(program: &str) -> Brand {
     }
 }
 
+/// Detects the [`Brand`] associated with an invocation argument.
+///
+/// The helper mirrors the logic used by the client and daemon front-ends when
+/// determining whether the binary was invoked as `rsync`/`rsyncd` or via the
+/// branded wrappers (`oc-rsync`/`oc-rsyncd`). It inspects the stem of the first
+/// argument (commonly `argv[0]`), stripping directory prefixes and filename
+/// extensions before delegating to [`brand_for_program_name`]. When the program
+/// name is unavailable the upstream-compatible brand is assumed, matching the
+/// behaviour of the compatibility wrappers.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+///
+/// use rsync_core::branding::{self, Brand};
+///
+/// assert_eq!(
+///     branding::detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
+///     Brand::Oc
+/// );
+/// assert_eq!(
+///     branding::detect_brand(Some(OsStr::new("rsync"))),
+///     Brand::Upstream
+/// );
+/// assert_eq!(branding::detect_brand(None), Brand::Upstream);
+/// ```
+#[must_use]
+pub fn detect_brand(program: Option<&OsStr>) -> Brand {
+    program
+        .and_then(|arg| Path::new(arg).file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(brand_for_program_name)
+        .unwrap_or(Brand::Upstream)
+}
+
 /// Returns the legacy configuration path recognised for compatibility with upstream deployments.
 #[must_use]
 pub fn legacy_daemon_config_path() -> &'static Path {
@@ -373,5 +410,16 @@ mod tests {
         let oc = Brand::Oc.profile();
         assert_eq!(oc.client_program_name(), OC_CLIENT_PROGRAM_NAME);
         assert_eq!(oc.daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn detect_brand_matches_invocation_argument() {
+        assert_eq!(detect_brand(None), Brand::Upstream);
+        assert_eq!(detect_brand(Some(OsStr::new("rsync"))), Brand::Upstream);
+        assert_eq!(
+            detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
+            Brand::Oc
+        );
+        assert_eq!(detect_brand(Some(OsStr::new("oc-rsyncd"))), Brand::Oc);
     }
 }
