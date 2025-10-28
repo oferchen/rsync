@@ -1,6 +1,6 @@
 # Production Scope P1 (Ship Bar)
 
-This document freezes the mandatory scope that must reach green status before the Rust rsync implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project.
+This document freezes the mandatory scope that must reach green status before the Rust rsync implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project while tracking the branded **oc-rsync 3.4.1-rust** release line.
 
 > **Binary naming note**: The production scope targets the canonical
 > `oc-rsync` and `oc-rsyncd` binaries. The CLI/daemon still recognise the
@@ -77,6 +77,7 @@ This document freezes the mandatory scope that must reach green status before th
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
 - Systemd `oc-rsyncd.service` unit (ships with an alias for `rsyncd.service`)
+- Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 
 ## Deterministic Test Environment
