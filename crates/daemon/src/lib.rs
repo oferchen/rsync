@@ -3891,11 +3891,22 @@ fn respond_with_module_request(
             module.bandwidth_burst_specified(),
         );
 
-        let _ = change;
-
         let mut hostname_cache: Option<Option<String>> = None;
         let module_peer_host =
             module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
+
+        if change != LimiterChange::Unchanged {
+            if let Some(log) = log_sink {
+                log_module_bandwidth_change(
+                    log,
+                    module_peer_host.or(session_peer_host),
+                    peer_ip,
+                    request,
+                    limiter.as_ref(),
+                    change,
+                );
+            }
+        }
         if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
@@ -4122,6 +4133,72 @@ fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     }
 
     Cow::Owned(sanitized)
+}
+
+fn format_bandwidth_rate(value: NonZeroU64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    let bytes = value.get();
+    if bytes % GIB == 0 {
+        format!("{} GiB/s", bytes / GIB)
+    } else if bytes % MIB == 0 {
+        format!("{} MiB/s", bytes / MIB)
+    } else if bytes % KIB == 0 {
+        format!("{} KiB/s", bytes / KIB)
+    } else {
+        format!("{} bytes/s", bytes)
+    }
+}
+
+fn log_module_bandwidth_change(
+    log: &SharedLogSink,
+    host: Option<&str>,
+    peer_ip: IpAddr,
+    module: &str,
+    limiter: Option<&BandwidthLimiter>,
+    change: LimiterChange,
+) {
+    if change == LimiterChange::Unchanged {
+        return;
+    }
+
+    let display = format_host(host, peer_ip);
+    let module_display = sanitize_module_identifier(module);
+
+    let message = match change {
+        LimiterChange::Unchanged => return,
+        LimiterChange::Disabled => {
+            let text = format!(
+                "removed bandwidth limit for module '{}' requested from {} ({})",
+                module_display, display, peer_ip,
+            );
+            rsync_info!(text).with_role(Role::Daemon)
+        }
+        LimiterChange::Enabled | LimiterChange::Updated => {
+            let Some(limiter) = limiter else {
+                return;
+            };
+            let limit = format_bandwidth_rate(limiter.limit_bytes());
+            let burst = limiter
+                .burst_bytes()
+                .map(|value| format!(" with burst {}", format_bandwidth_rate(value)))
+                .unwrap_or_default();
+            let action = match change {
+                LimiterChange::Enabled => "enabled",
+                LimiterChange::Updated => "updated",
+                LimiterChange::Disabled | LimiterChange::Unchanged => unreachable!(),
+            };
+            let text = format!(
+                "{action} bandwidth limit {limit}{burst} for module '{}' requested from {} ({})",
+                module_display, display, peer_ip,
+            );
+            rsync_info!(text).with_role(Role::Daemon)
+        }
+    };
+
+    log_message(log, &message);
 }
 
 fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
@@ -8270,6 +8347,78 @@ mod tests {
         assert_eq!(change, LimiterChange::Unchanged);
 
         assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn log_module_bandwidth_change_logs_updates() {
+        let dir = tempdir().expect("log dir");
+        let path = dir.path().join("daemon.log");
+        let log = open_log_sink(&path).expect("open log");
+        let limiter = BandwidthLimiter::with_burst(
+            NonZeroU64::new(8 * 1024).expect("limit"),
+            Some(NonZeroU64::new(64 * 1024).expect("burst")),
+        );
+
+        log_module_bandwidth_change(
+            &log,
+            None,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "docs",
+            Some(&limiter),
+            LimiterChange::Enabled,
+        );
+
+        drop(log);
+
+        let contents = fs::read_to_string(&path).expect("read log");
+        assert!(contents.contains("enabled bandwidth limit 8 KiB/s with burst 64 KiB/s"));
+        assert!(contents.contains("module 'docs'"));
+        assert!(contents.contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn log_module_bandwidth_change_logs_disable() {
+        let dir = tempdir().expect("log dir");
+        let path = dir.path().join("daemon.log");
+        let log = open_log_sink(&path).expect("open log");
+
+        log_module_bandwidth_change(
+            &log,
+            Some("client.example"),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "docs",
+            None,
+            LimiterChange::Disabled,
+        );
+
+        drop(log);
+
+        let contents = fs::read_to_string(&path).expect("read log");
+        assert!(contents.contains("removed bandwidth limit"));
+        assert!(contents.contains("client.example"));
+    }
+
+    #[test]
+    fn log_module_bandwidth_change_ignores_unchanged() {
+        let dir = tempdir().expect("log dir");
+        let path = dir.path().join("daemon.log");
+        let log = open_log_sink(&path).expect("open log");
+
+        let limiter = BandwidthLimiter::new(NonZeroU64::new(4 * 1024).expect("limit"));
+
+        log_module_bandwidth_change(
+            &log,
+            None,
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "docs",
+            Some(&limiter),
+            LimiterChange::Unchanged,
+        );
+
+        drop(log);
+
+        let contents = fs::read_to_string(&path).expect("read log");
+        assert!(contents.is_empty());
     }
 
     #[test]

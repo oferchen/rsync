@@ -164,7 +164,9 @@ impl BandwidthLimitComponents {
             }
         }
 
-        if override_components.burst_specified && !override_components.limit_specified && rate.is_some()
+        if override_components.burst_specified
+            && !override_components.limit_specified
+            && rate.is_some()
         {
             burst = override_components.burst;
             burst_specified = true;
