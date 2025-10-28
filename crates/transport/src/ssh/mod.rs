@@ -6,8 +6,8 @@
 //! system `ssh` (or compatible) binary.  The struct follows a builder pattern:
 //! callers configure authentication parameters, additional command-line
 //! options, and the remote command to execute before requesting a
-//! [`SshConnection`].  The resulting connection implements [`Read`] and
-//! [`Write`], allowing higher layers to treat the remote shell exactly like any
+//! [`SshConnection`].  The resulting connection implements [`std::io::Read`] and
+//! [`std::io::Write`], allowing higher layers to treat the remote shell exactly like any
 //! other byte stream when negotiating rsync sessions.
 //!
 //! # Design
