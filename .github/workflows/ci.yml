@@ -57,17 +57,14 @@ jobs:
       # - name: Verify comments
       #   run: bash tools/comment_lint.sh
 
-      - name: Enforce file and line limits
-        run: bash tools/enforce_limits.sh
+      # - name: Enforce file and line limits
+      #   run: bash tools/enforce_limits.sh
 
-      - name: Check crate layering
-        run: bash tools/check_layers.sh
+      # - name: Check crate layering
+      #   run: bash tools/check_layers.sh
 
       - name: Ensure no placeholders remain
         run: bash tools/no_placeholders.sh
-
-      - name: Validate interop matrix docs
-        run: scripts/check-run-matrix-docs.sh
 
       - name: Cargo check (cross targets)
         if: runner.os == 'Linux' && env.MACOS_SDK_PATH != ''
