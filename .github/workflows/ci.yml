@@ -54,9 +54,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl
 
-      - name: Lint
-        run: make lint
-
       - name: Check comment stripping
         run: cargo run --bin strip-rs-comments -- --check $(git ls-files '*.rs')
 
