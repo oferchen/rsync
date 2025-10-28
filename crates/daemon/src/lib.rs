@@ -32,12 +32,14 @@
 //! - [`DaemonConfig`] stores the caller-provided daemon arguments. A
 //!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
 //!   full daemon support lands.
-//! - The runtime honours the `RSYNCD_CONFIG` environment variable and, when no
-//!   explicit configuration path is provided, attempts to load
-//!   `/etc/oc-rsyncd/oc-rsyncd.conf` when present so packaged defaults align
-//!   with production deployments. When that path is absent, the daemon also
-//!   checks the legacy `/etc/rsyncd.conf` so existing installations continue to
-//!   work during the transition to the prefixed configuration layout.
+//! - The runtime honours the branded `OC_RSYNC_CONFIG` environment variable and
+//!   falls back to the legacy `RSYNCD_CONFIG` override when the branded value is
+//!   unset. When no explicit configuration path is provided via CLI or
+//!   environment variables, the daemon attempts to load
+//!   `/etc/oc-rsyncd/oc-rsyncd.conf` so packaged defaults align with production
+//!   deployments. If that path is absent the daemon also checks the legacy
+//!   `/etc/rsyncd.conf` so existing installations continue to work during the
+//!   transition to the prefixed configuration layout.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
 //!   serves one or more connections. It recognises both the legacy ASCII
 //!   prologue and the binary negotiation used by modern clients, ensuring
@@ -236,6 +238,9 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
+
+const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
+const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1443,7 +1448,12 @@ where
 }
 
 fn environment_config_override() -> Option<OsString> {
-    let value = env::var_os("RSYNCD_CONFIG")?;
+    environment_path_override(BRANDED_CONFIG_ENV)
+        .or_else(|| environment_path_override(LEGACY_CONFIG_ENV))
+}
+
+fn environment_path_override(name: &'static str) -> Option<OsString> {
+    let value = env::var_os(name)?;
     if value.is_empty() { None } else { Some(value) }
 }
 
@@ -7498,7 +7508,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_options_loads_config_from_environment_variable() {
+    fn runtime_options_loads_config_from_branded_environment_variable() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
@@ -7510,7 +7520,7 @@ mod tests {
         )
         .expect("write config");
 
-        let _env = EnvGuard::set("RSYNCD_CONFIG", config_path.as_os_str());
+        let _env = EnvGuard::set(BRANDED_CONFIG_ENV, config_path.as_os_str());
         let options = RuntimeOptions::parse(&[]).expect("parse env config");
 
         assert_eq!(options.modules().len(), 1);
@@ -7522,6 +7532,75 @@ mod tests {
             &[
                 OsString::from("--config"),
                 config_path.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_loads_config_from_legacy_environment_variable() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!("[legacy]\npath = {}\n", module_dir.display()),
+        )
+        .expect("write config");
+
+        let _env = EnvGuard::set(LEGACY_CONFIG_ENV, config_path.as_os_str());
+        let options = RuntimeOptions::parse(&[]).expect("parse env config");
+
+        assert_eq!(options.modules().len(), 1);
+        let module = &options.modules()[0];
+        assert_eq!(module.name, "legacy");
+        assert_eq!(module.path, module_dir);
+        assert_eq!(
+            &options.delegate_arguments,
+            &[
+                OsString::from("--config"),
+                config_path.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_branded_config_env_overrides_legacy_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let dir = tempdir().expect("config dir");
+        let branded_dir = dir.path().join("branded");
+        let legacy_dir = dir.path().join("legacy");
+        fs::create_dir_all(&branded_dir).expect("branded module dir");
+        fs::create_dir_all(&legacy_dir).expect("legacy module dir");
+
+        let branded_config = dir.path().join("oc.conf");
+        fs::write(
+            &branded_config,
+            format!("[branded]\npath = {}\n", branded_dir.display()),
+        )
+        .expect("write branded config");
+
+        let legacy_config = dir.path().join("legacy.conf");
+        fs::write(
+            &legacy_config,
+            format!("[legacy]\npath = {}\n", legacy_dir.display()),
+        )
+        .expect("write legacy config");
+
+        let _legacy = EnvGuard::set(LEGACY_CONFIG_ENV, legacy_config.as_os_str());
+        let _branded = EnvGuard::set(BRANDED_CONFIG_ENV, branded_config.as_os_str());
+        let options = RuntimeOptions::parse(&[]).expect("parse env config");
+
+        assert_eq!(options.modules().len(), 1);
+        let module = &options.modules()[0];
+        assert_eq!(module.name, "branded");
+        assert_eq!(module.path, branded_dir);
+        assert_eq!(
+            &options.delegate_arguments,
+            &[
+                OsString::from("--config"),
+                branded_config.clone().into_os_string(),
             ]
         );
     }
@@ -7575,7 +7654,7 @@ mod tests {
         )
         .expect("write cli config");
 
-        let _env = EnvGuard::set("RSYNCD_CONFIG", env_config.as_os_str());
+        let _env = EnvGuard::set(LEGACY_CONFIG_ENV, env_config.as_os_str());
         let args = [
             OsString::from("--config"),
             cli_config.clone().into_os_string(),
