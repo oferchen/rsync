@@ -273,10 +273,9 @@ fn parse_docs_args<I>(args: I) -> Result<DocsOptions, TaskError>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut args = args.into_iter();
     let mut options = DocsOptions::default();
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         if is_help_flag(&arg) {
             return Err(TaskError::Help(docs_usage()));
         }
@@ -308,7 +307,11 @@ where
     let mut args = args.into_iter();
     let mut output = None;
 
-    while let Some(arg) = args.next() {
+    loop {
+        let Some(arg) = args.next() else {
+            break;
+        };
+
         if is_help_flag(&arg) {
             return Err(TaskError::Help(sbom_usage()));
         }
@@ -355,17 +358,18 @@ fn execute_sbom(workspace: &Path, options: SbomOptions) -> Result<(), TaskError>
     println!("Generating SBOM at {}", output_path.display());
 
     let manifest_path = workspace.join("Cargo.toml");
-    let mut args = Vec::new();
-    args.push(OsString::from("cyclonedx"));
-    args.push(OsString::from("--manifest-path"));
-    args.push(manifest_path.into_os_string());
-    args.push(OsString::from("--workspace"));
-    args.push(OsString::from("--format"));
-    args.push(OsString::from("json"));
-    args.push(OsString::from("--output"));
-    args.push(output_path.into_os_string());
-    args.push(OsString::from("--all-features"));
-    args.push(OsString::from("--locked"));
+    let args = vec![
+        OsString::from("cyclonedx"),
+        OsString::from("--manifest-path"),
+        manifest_path.into_os_string(),
+        OsString::from("--workspace"),
+        OsString::from("--format"),
+        OsString::from("json"),
+        OsString::from("--output"),
+        output_path.into_os_string(),
+        OsString::from("--all-features"),
+        OsString::from("--locked"),
+    ];
 
     run_cargo_tool(
         workspace,
@@ -419,8 +423,7 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
     })?;
     let mut path = PathBuf::from(manifest_dir);
     if !path.pop() {
-        return Err(TaskError::Io(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(TaskError::Io(io::Error::other(
             "failed to locate workspace root",
         )));
     }

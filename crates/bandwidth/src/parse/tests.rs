@@ -219,7 +219,7 @@ fn constrained_by_initialises_limiter_when_unlimited() {
 
     let combined = client.constrained_by(&module);
 
-    assert_eq!(combined.rate().map(NonZeroU64::get), Some(1 * 1024 * 1024));
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(1024 * 1024));
     assert_eq!(combined.burst().map(NonZeroU64::get), Some(32 * 1024));
     assert!(combined.burst_specified());
     assert!(combined.limit_specified());

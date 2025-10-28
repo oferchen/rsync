@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn counting_encoder_supports_write_trait() {
         let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
-        write!(&mut encoder, "{}", "payload").expect("write via trait");
+        write!(&mut encoder, "payload").expect("write via trait");
         encoder.flush().expect("flush encoder");
         let compressed = encoder.finish().expect("finish stream");
         assert!(compressed > 0);

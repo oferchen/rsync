@@ -173,10 +173,7 @@ fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str {
         return "unknown";
     }
 
-    let head = trimmed
-        .split(|ch| matches!(ch, '\r' | '\n'))
-        .next()
-        .unwrap_or("");
+    let head = trimmed.split(['\r', '\n']).next().unwrap_or("");
     let cleaned = head.trim();
 
     if cleaned.is_empty() || cleaned.chars().any(char::is_control) {

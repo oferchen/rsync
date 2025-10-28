@@ -4181,10 +4181,11 @@ impl ClientEvent {
             return candidate;
         }
 
-        if let Some(file_name) = destination_root.file_name() {
-            if relative == Path::new(file_name) {
-                return destination_root.to_path_buf();
-            }
+        if destination_root
+            .file_name()
+            .is_some_and(|file_name| relative == Path::new(file_name))
+        {
+            return destination_root.to_path_buf();
         }
 
         candidate
@@ -4803,6 +4804,55 @@ mod tests {
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
 
+    #[cfg(unix)]
+    const CAPTURE_PASSWORD_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+OUTPUT=""
+for arg in "$@"; do
+  case "$arg" in
+    CAPTURE=*)
+      OUTPUT="${arg#CAPTURE=}"
+      ;;
+  esac
+done
+: "${OUTPUT:?}"
+cat > "$OUTPUT"
+"#;
+
+    #[cfg(unix)]
+    const CAPTURE_ARGS_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+OUTPUT=""
+for arg in "$@"; do
+  case "$arg" in
+    CAPTURE=*)
+      OUTPUT="${arg#CAPTURE=}"
+      ;;
+  esac
+done
+: "${OUTPUT:?}"
+: > "$OUTPUT"
+for arg in "$@"; do
+  case "$arg" in
+    CAPTURE=*)
+      ;;
+    *)
+      printf '%s\n' "$arg" >> "$OUTPUT"
+      ;;
+  esac
+done
+"#;
+
+    #[cfg(unix)]
+    fn capture_password_script() -> String {
+        CAPTURE_PASSWORD_SCRIPT.to_string()
+    }
+
+    #[cfg(unix)]
+    fn capture_args_script() -> String {
+        CAPTURE_ARGS_SCRIPT.to_string()
+    }
+
     #[test]
     fn sensitive_bytes_zeroizes_on_drop() {
         let bytes = SensitiveBytes::new(b"topsecret".to_vec());
@@ -5062,11 +5112,11 @@ exit 42
     #[cfg(unix)]
     impl Write for FailingWriter {
         fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::Other, "forced failure"))
+            Err(io::Error::other("forced failure"))
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "forced failure"))
+            Err(io::Error::other("forced failure"))
         }
     }
 
@@ -6078,9 +6128,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("password.txt");
         let script_path = temp.path().join("capture-password.sh");
-        let script = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\ncat > \"$OUTPUT\"\n"
-        );
+        let script = capture_password_script();
         fs::write(&script_path, script).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6149,9 +6197,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6198,9 +6244,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6252,9 +6296,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6293,9 +6335,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6330,9 +6370,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6363,9 +6401,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6396,9 +6432,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6445,9 +6479,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6522,9 +6554,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6571,9 +6601,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6620,9 +6648,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6656,9 +6682,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6712,9 +6736,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6746,9 +6768,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6779,9 +6799,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n",
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6815,9 +6833,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -6848,9 +6864,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
@@ -7643,7 +7657,7 @@ exit 42
         let mut source_file = fs::File::create(&source).expect("create source");
         source_file.write_all(&[0x11]).expect("write leading");
         source_file
-            .seek(SeekFrom::Start(1 * 1024 * 1024))
+            .seek(SeekFrom::Start(1024 * 1024))
             .expect("seek to hole");
         source_file.write_all(&[0x22]).expect("write middle");
         source_file
@@ -8096,9 +8110,7 @@ exit 42
         let temp = tempdir().expect("tempdir created");
         let capture_path = temp.path().join("args.txt");
         let script_path = temp.path().join("capture.sh");
-        let script_contents = format!(
-            "#!/bin/sh\nset -eu\nOUTPUT=\"\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      OUTPUT=\"${{arg#CAPTURE=}}\"\n      ;;\n  esac\ndone\n: \"${{OUTPUT:?}}\"\n: > \"$OUTPUT\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    CAPTURE=*)\n      ;;\n    *)\n      printf '%s\\n' \"$arg\" >> \"$OUTPUT\"\n      ;;\n  esac\ndone\n"
-        );
+        let script_contents = capture_args_script();
         fs::write(&script_path, script_contents).expect("script written");
         let metadata = fs::metadata(&script_path).expect("script metadata");
         let mut permissions = metadata.permissions();
