@@ -5,16 +5,16 @@
 //! # Overview
 //!
 //! `rsync_logging` provides reusable logging primitives that operate on the
-//! [`Message`](rsync_core::message::Message) type shared across the Rust rsync
+//! [`rsync_core::message::Message`] type shared across the Rust rsync
 //! workspace. The initial focus is on streaming diagnostics to arbitrary writers
-//! while reusing [`MessageScratch`](rsync_core::message::MessageScratch)
+//! while reusing [`rsync_core::message::MessageScratch`]
 //! instances so higher layers avoid repeated buffer initialisation when printing
 //! large batches of messages.
 //!
 //! # Design
 //!
 //! The crate exposes [`MessageSink`], a lightweight wrapper around an
-//! [`io::Write`](std::io::Write) implementor. Each sink stores a
+//! [`std::io::Write`] implementor. Each sink stores a
 //! [`MessageScratch`] scratch buffer that is reused whenever a message is
 //! rendered, matching upstream rsync's approach of keeping stack-allocated
 //! buffers alive for the duration of a logging session. Callers can control
@@ -827,7 +827,7 @@ where
     ///
     /// The method accepts borrowed or owned [`Message`] values via
     /// [`Borrow<Message>`], allowing call sites to forward diagnostics without
-    /// cloning. This matches the flexibility offered by [`write_all`], making it
+    /// cloning. This matches the flexibility offered by [`std::io::Write::write_all`], making it
     /// inexpensive to reuse the same sink for ad-hoc or batched message
     /// emission.
     ///

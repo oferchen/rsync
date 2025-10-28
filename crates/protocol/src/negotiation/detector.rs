@@ -204,8 +204,7 @@ impl NegotiationPrologueDetector {
     /// the prefix handling as complete once the canonical marker is buffered or
     /// a divergence is detected. This helper mirrors that behavior so higher
     /// layers can determine when it is safe to hand the accumulated bytes to
-    /// [`parse_legacy_daemon_greeting_bytes`]
-    /// (`crate::legacy::parse_legacy_daemon_greeting_bytes`) without peeking at
+    /// [`crate::legacy::parse_legacy_daemon_greeting_bytes`] without peeking at
     /// the detector's internal fields.
     #[must_use]
     pub const fn legacy_prefix_complete(&self) -> bool {
@@ -247,7 +246,7 @@ impl NegotiationPrologueDetector {
     /// prefix. Callers of this Rust implementation can mirror that behavior by
     /// reading the buffered prefix through this accessor instead of re-reading
     /// from the underlying transport. The buffer continues to grow across
-    /// subsequent [`observe`] calls until the canonical `@RSYNCD:` prefix has
+    /// subsequent [`Self::observe`] calls until the canonical `@RSYNCD:` prefix has
     /// been captured or a mismatch forces the legacy classification. For binary
     /// negotiations, no bytes are retained and this method returns an empty
     /// slice.
@@ -307,7 +306,7 @@ impl NegotiationPrologueDetector {
     /// been selected the buffer remains empty. Higher layers that want to
     /// mirror upstream rsync's peek logic can query this helper to decide how
     /// many bytes should be replayed into the legacy greeting parser without
-    /// inspecting the raw slice returned by [`buffered_prefix`].
+    /// inspecting the raw slice returned by [`Self::buffered_prefix`].
     #[must_use]
     #[inline]
     pub const fn buffered_len(&self) -> usize {

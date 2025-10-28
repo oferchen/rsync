@@ -12,7 +12,7 @@
 //! # Design
 //!
 //! - [`generate_file_signature`] accepts an input reader, the
-//!   [`SignatureLayout`](crate::delta::SignatureLayout) obtained from
+//!   [`SignatureLayout`] obtained from
 //!   [`crate::delta::calculate_signature_layout`], and a [`SignatureAlgorithm`]
 //!   describing the strong checksum strategy. The helper reads each block in
 //!   sequence, computes the weak and strong digests, and returns a

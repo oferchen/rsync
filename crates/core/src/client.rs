@@ -12,12 +12,12 @@
 //!
 //! # Design
 //!
-//! - [`ClientConfig`] encapsulates the caller-provided transfer arguments. A
+//! - [`crate::client::ClientConfig`] encapsulates the caller-provided transfer arguments. A
 //!   builder is offered so future options (e.g. logging verbosity) can be wired
 //!   through without breaking call sites. Today it exposes toggles for dry-run
 //!   validation (`--dry-run`) and extraneous-destination cleanup (`--delete`).
-//! - [`run_client`] executes the client flow. The helper delegates to
-//!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
+//! - [`crate::client::run_client`] executes the client flow. The helper
+//!   delegates to `rsync_engine::local_copy` to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
 //!   filesystem while preserving permissions, timestamps, optional
 //!   ownership/group metadata, and sparse regions when requested. Delta
@@ -29,23 +29,23 @@
 //!   the helper removes destination entries that are absent from the source tree
 //!   before applying metadata and prunes excluded entries when explicitly
 //!   requested.
-//! - [`ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
-//!   `host::`) and [`run_module_list`] connects to the remote daemon using the
+//! - [`crate::client::ModuleListRequest`] parses daemon-style operands (`rsync://host/` or
+//!   `host::`) and [`crate::client::run_module_list`] connects to the remote daemon using the
 //!   legacy `@RSYNCD:` negotiation to retrieve the advertised module table.
-//! - [`ClientError`] carries the exit code and fully formatted
-//!   [`Message`](crate::message::Message) so binaries can surface diagnostics via
+//! - [`crate::client::ClientError`] carries the exit code and fully formatted
+//!   [`crate::message::Message`] values so binaries can surface diagnostics via
 //!   the central rendering helpers.
 //!
 //! # Invariants
 //!
 //! - `ClientError::exit_code` always matches the exit code embedded in the
-//!   [`Message`].
+//!   [`crate::message::Message`].
 //! - `run_client` never panics and preserves the provided configuration even
 //!   when reporting unsupported functionality.
 //!
 //! # Errors
 //!
-//! All failures are routed through [`ClientError`]. The structure implements
+//! All failures are routed through [`crate::client::ClientError`]. The structure implements
 //! [`std::error::Error`], allowing integration with higher-level error handling
 //! stacks without losing access to the formatted diagnostic.
 //!
@@ -2254,7 +2254,7 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
     })
 }
 
-/// Parses the [`RSYNC_SKIP_COMPRESS`] environment variable into a [`SkipCompressList`].
+/// Parses the `RSYNC_SKIP_COMPRESS` environment variable into a [`SkipCompressList`].
 ///
 /// Returning [`Ok(None)`] indicates that the variable was unset, allowing
 /// callers to retain their default skip-compress configuration. When the
@@ -2521,7 +2521,7 @@ impl BandwidthLimit {
         Self::new_internal(bytes_per_second, burst, burst.is_some())
     }
 
-    /// Converts parsed [`BandwidthLimitComponents`] into a [`BandwidthLimit`].
+    /// Converts parsed [`bandwidth::BandwidthLimitComponents`] into a [`BandwidthLimit`].
     ///
     /// Returning `None` mirrors upstream rsync's interpretation of `0` as an
     /// unlimited rate. Callers that parse `--bwlimit` arguments can therefore
@@ -2563,7 +2563,7 @@ impl BandwidthLimit {
         self.burst_specified
     }
 
-    /// Produces the shared [`BandwidthLimitComponents`] representation for this limit.
+    /// Produces the shared [`bandwidth::BandwidthLimitComponents`] representation for this limit.
     ///
     /// The conversion retains both the byte-per-second rate and the optional burst
     /// component so higher layers can forward the configuration to helpers that
@@ -2579,7 +2579,7 @@ impl BandwidthLimit {
         )
     }
 
-    /// Consumes the limit and returns the [`BandwidthLimitComponents`] representation.
+    /// Consumes the limit and returns the [`bandwidth::BandwidthLimitComponents`] representation.
     ///
     /// This by-value variant mirrors [`Self::components`] for callers that want
     /// to forward the components without keeping the original [`BandwidthLimit`]
@@ -3148,7 +3148,7 @@ pub struct RemoteFallbackArgs {
     pub address_mode: AddressMode,
     /// Optional override for the fallback executable path.
     ///
-    /// When unspecified the helper consults the [`CLIENT_FALLBACK_ENV`](crate::fallback::CLIENT_FALLBACK_ENV) environment variable (`OC_RSYNC_FALLBACK`) and
+    /// When unspecified the helper consults [`crate::fallback::CLIENT_FALLBACK_ENV`] (`OC_RSYNC_FALLBACK`) and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
     /// Optional override for the remote rsync executable.
@@ -9459,7 +9459,7 @@ impl ModuleListRequest {
         Self::from_operands_with_port(operands, Self::DEFAULT_PORT)
     }
 
-    /// Equivalent to [`from_operands`] but allows overriding the default daemon port.
+    /// Equivalent to [`Self::from_operands`] but allows overriding the default daemon port.
     pub fn from_operands_with_port(
         operands: &[OsString],
         default_port: u16,

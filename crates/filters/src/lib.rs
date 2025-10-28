@@ -71,8 +71,8 @@
 //!
 //! # See also
 //!
-//! - [`rsync_engine::local_copy`] integrates [`FilterSet`] to prune directory
-//!   traversals during deterministic local copies.
+//! - The `rsync_engine::local_copy` module integrates [`FilterSet`] to prune
+//!   directory traversals during deterministic local copies.
 //! - [`globset`] for the glob matching primitives used internally.
 
 use std::collections::HashSet;

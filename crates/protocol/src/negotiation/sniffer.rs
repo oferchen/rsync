@@ -259,14 +259,14 @@ impl NegotiationPrologueSniffer {
     /// been produced by sniffing the same bytes and calling
     /// [`take_buffered`](Self::take_buffered), making it possible for higher
     /// layers to store the negotiation replay data separately (for example
-    /// inside [`NegotiatedStreamParts`](crate::negotiation::NegotiatedStreamParts))
-    /// and later rebuild a sniffer for further parsing.
+    /// inside transport-layer `NegotiatedStreamParts` structures) and later
+    /// rebuild a sniffer for further parsing.
     ///
     /// `decision` must reflect the negotiated style (`Binary`, `LegacyAscii`, or
     /// `NeedMoreData`). `sniffed_prefix_len` indicates how many of the buffered
     /// bytes were required to classify the negotiation. Any additional payload
     /// in `buffered` is preserved so helpers like
-    /// [`read_legacy_daemon_line`](Self::read_legacy_daemon_line) can replay it
+    /// [`read_legacy_daemon_line`](super::read_legacy_daemon_line) can replay it
     /// verbatim.
     ///
     /// # Errors
@@ -546,7 +546,7 @@ impl NegotiationPrologueSniffer {
     /// Drains the buffered bytes (including any remainder beyond the detection prefix) into an
     /// existing vector supplied by the caller.
     ///
-    /// The helper mirrors [`take_buffered`] but avoids allocating a new vector when the
+    /// The helper mirrors [`Self::take_buffered`] but avoids allocating a new vector when the
     /// caller already owns a reusable buffer. When the destination lacks sufficient capacity the
     /// helper transfers ownership of the sniffer's allocation to `target`, avoiding a redundant
     /// copy before the destination inevitably reallocates. Otherwise the buffered bytes (prefix
@@ -595,7 +595,7 @@ impl NegotiationPrologueSniffer {
     /// Drains the buffered bytes (prefix and any captured remainder) into the caller-provided
     /// slice without allocating.
     ///
-    /// The helper mirrors [`take_buffered_into`] but writes the buffered bytes directly into
+    /// The helper mirrors [`Self::take_buffered_into`] but writes the buffered bytes directly into
     /// `target`, allowing callers with stack-allocated storage to replay the negotiation prologue
     /// and forward any remainder captured in the same read without constructing a temporary
     /// [`Vec`]. When `target` is too small to hold the buffered contents a

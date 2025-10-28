@@ -8,7 +8,7 @@
 //! keeps the binary front-ends and supporting crates free from duplicated string
 //! literals. Callers should prefer these helpers instead of hard-coding program
 //! names or configuration paths. Consumers that need the entire metadata set can
-//! use [`metadata`] to obtain a snapshot that mirrors the manifest entries.
+//! use the [`metadata()`](crate::workspace::metadata) helper to obtain a snapshot that mirrors the manifest entries.
 
 use std::path::Path;
 

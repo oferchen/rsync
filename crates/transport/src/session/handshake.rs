@@ -18,7 +18,7 @@ use super::parts::SessionHandshakeParts;
 ///
 /// The enum wraps either the binary remote-shell handshake or the legacy ASCII
 /// daemon negotiation while exposing convenience accessors that mirror the
-/// per-variant helpers. Higher layers can match on the [`decision`] to branch on
+/// per-variant helpers. Higher layers can match on [`SessionHandshake::decision`] to branch on
 /// the negotiated style without re-sniffing the transport. Conversions are
 /// provided via [`From`] and [`TryFrom`] so variant-specific wrappers can be
 /// promoted or recovered ergonomically.

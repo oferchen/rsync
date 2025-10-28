@@ -1176,7 +1176,7 @@ impl fmt::Display for SourceLocation {
 ///
 /// This macro expands at the call-site and therefore records the location of the
 /// expansion. When the caller is a helper annotated with `#[track_caller]`,
-/// consider using [`tracked_message_source!`] to surface the original
+/// consider using [`macro@crate::tracked_message_source`] to surface the original
 /// invocation location instead.
 ///
 /// # Examples
@@ -1249,7 +1249,7 @@ macro_rules! tracked_message_source {
 /// Constructs an error [`Message`] with the provided exit code and payload.
 ///
 /// The macro mirrors upstream diagnostics by automatically attaching the
-/// call-site [`SourceLocation`] using [`macro@tracked_message_source`]. It accepts either a
+/// call-site [`SourceLocation`] using [`macro@crate::tracked_message_source`]. It accepts either a
 /// string literal/`Cow<'static, str>` payload or a [`format!`] style template.
 /// Callers can further customise the returned [`Message`] by chaining helpers
 /// such as [`Message::with_role`].
@@ -1296,7 +1296,7 @@ macro_rules! rsync_error {
 ///
 /// Like [`macro@rsync_error`], the macro records the call-site source location so
 /// diagnostics include repo-relative paths. The macro relies on
-/// [`macro@tracked_message_source`], meaning callers annotated with
+/// [`macro@crate::tracked_message_source`], meaning callers annotated with
 /// `#[track_caller]` automatically propagate their invocation site. Additional
 /// context, such as exit codes, can be attached using [`Message::with_code`].
 ///
@@ -1330,7 +1330,7 @@ macro_rules! rsync_warning {
 /// attaches the call-site source location. Upstream rsync typically omits source
 /// locations for informational output, but retaining the metadata simplifies
 /// debugging and keeps the API consistent across severities. As with the other
-/// message macros, [`macro@tracked_message_source`] ensures `#[track_caller]`
+/// message macros, [`macro@crate::tracked_message_source`] ensures `#[track_caller]`
 /// annotations propagate the original invocation site into diagnostics.
 ///
 /// # Examples
@@ -1357,11 +1357,11 @@ macro_rules! rsync_info {
 /// Constructs a [`Message`] using the canonical wording for a known exit code.
 ///
 /// The macro delegates to [`Message::from_exit_code`] and attaches the caller's source location
-/// via [`macro@tracked_message_source`]. Returning an [`Option`] mirrors the underlying helper:
+/// via [`macro@crate::tracked_message_source`]. Returning an [`Option`] mirrors the underlying helper:
 /// upstream rsync only assigns stock diagnostics to a fixed set of exit codes. Callers can use
 /// [`Option::unwrap_or_else`] to supply bespoke text when the exit code is not recognised.
 ///
-/// Because the macro relies on [`macro@tracked_message_source`], functions annotated with
+/// Because the macro relies on [`macro@crate::tracked_message_source`], functions annotated with
 /// `#[track_caller]` propagate their call-site into the rendered diagnostic just like the other
 /// `rsync_*` macros.
 ///
@@ -1426,8 +1426,8 @@ impl Message {
     /// Returns the vectored representation of the rendered message.
     ///
     /// The helper exposes the same slices used internally when emitting the message into an
-    /// [`io::Write`] implementor. Callers that need to integrate with custom buffered pipelines can
-    /// reuse the returned segments with [`Write::write_vectored`], avoiding redundant allocations or
+    /// [`std::io::Write`] implementor. Callers that need to integrate with custom buffered pipelines can
+    /// reuse the returned segments with [`std::io::Write::write_vectored`], avoiding redundant allocations or
     /// per-segment formatting logic.
     ///
     /// # Examples
@@ -2294,7 +2294,7 @@ impl Message {
     /// Appends the rendered message into the provided byte buffer.
     ///
     /// The helper mirrors [`Self::render_to_writer`] but avoids the overhead of
-    /// constructing a temporary [`Vec`] or going through the [`Write`] trait for
+    /// constructing a temporary [`Vec`] or going through the [`std::io::Write`] trait for
     /// `Vec<u8>`. Callers that batch multiple diagnostics can therefore reuse
     /// an output buffer across invocations without repeated allocations or
     /// trait-object dispatch. The buffer is grown exactly enough to hold the

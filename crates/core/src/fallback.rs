@@ -13,11 +13,11 @@
 //!
 //! # Design
 //!
-//! The module exposes [`fallback_override`] to decode a single environment
-//! variable into a [`FallbackOverride`]. Callers can chain multiple invocations
+//! The module exposes [`crate::fallback::fallback_override`] to decode a single environment
+//! variable into a [`crate::fallback::FallbackOverride`]. Callers can chain multiple invocations
 //! to honour primary and secondary environment names before deciding whether a
-//! delegation binary is available. The [`FallbackOverride::resolve_or_default`]
-//! helper converts the parsed override into an [`OsString`] when delegation is
+//! delegation binary is available. The [`crate::fallback::FallbackOverride::resolve_or_default`]
+//! helper converts the parsed override into an [`std::ffi::OsString`] when delegation is
 //! enabled, falling back to the supplied default executable (`rsync`) when the
 //! override is `auto` or unspecified.
 //!
@@ -35,13 +35,14 @@
 //! The helpers do not construct [`Message`](crate::message::Message) instances
 //! because callers must decide how to report disabled delegation. Instead, the
 //! parsing functions return [`None`] when an override is not present or
-//! [`FallbackOverride::Disabled`] when delegation is explicitly turned off.
+//! [`crate::fallback::FallbackOverride::Disabled`] when delegation is explicitly turned off.
 //!
 //! # Examples
 //!
 //! Construct overrides directly and resolve them to executable paths. In real
-//! usage call [`fallback_override`] to parse environment variables into the
-//! [`FallbackOverride`] enum before invoking [`FallbackOverride::resolve_or_default`].
+//! usage call [`crate::fallback::fallback_override`] to parse environment variables into the
+//! [`crate::fallback::FallbackOverride`] enum before invoking
+//! [`crate::fallback::FallbackOverride::resolve_or_default`].
 //!
 //! ```
 //! use rsync_core::fallback::FallbackOverride;
@@ -62,9 +63,9 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::client::run_remote_transfer_fallback`] for the primary
+//! - The `rsync_core::client::run_remote_transfer_fallback` helper is the primary
 //!   consumer of these helpers on the client side.
-//! - [`rsync_daemon::run`] for daemon-side delegation.
+//! - The `rsync_daemon::run` entry point handles daemon-side delegation.
 
 use std::env;
 use std::ffi::{OsStr, OsString};
