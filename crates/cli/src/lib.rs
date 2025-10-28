@@ -42,7 +42,8 @@
 //!   so the CLI remains byte-identical with the canonical banner used by other
 //!   workspace components.
 //! - Help output is rendered by [`render_help`] using a static snapshot that
-//!   documents the currently supported subset. This keeps the wording stable
+//!   documents the currently supported subset. The helper substitutes the
+//!   invoked program name so wrappers like `oc-rsync` display branded banners
 //!   while the full upstream-compatible renderer is implemented.
 //! - Transfer attempts are forwarded to [`rsync_core::client::run_client`] so
 //!   diagnostics and success cases remain centralised while higher-fidelity
@@ -2727,8 +2728,16 @@ where
 }
 
 /// Renders the help text describing the currently supported options.
-fn render_help() -> String {
-    HELP_TEXT.to_string()
+fn render_help(program_name: ProgramName) -> String {
+    if program_name == ProgramName::Rsync {
+        return HELP_TEXT.to_string();
+    }
+
+    let program = program_name.as_str();
+    let header = format!("{program} 3.4.1-rust");
+    let usage = format!("Usage: {program}");
+    let help = HELP_TEXT.replacen("rsync 3.4.1-rust", &header, 1);
+    help.replacen("Usage: rsync", &usage, 1)
 }
 
 /// Writes a [`Message`] to the supplied sink, appending a newline.
@@ -3233,7 +3242,7 @@ where
     }
 
     if show_help {
-        let help = render_help();
+        let help = render_help(program_name);
         if stdout.write_all(help.as_bytes()).is_err() {
             let _ = writeln!(stdout, "{help}");
             return 1;
@@ -7839,7 +7848,18 @@ mod tests {
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
 
-        let expected = render_help();
+        let expected = render_help(ProgramName::Rsync);
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn oc_help_flag_uses_wrapped_program_name() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = render_help(ProgramName::OcRsync);
         assert_eq!(stdout, expected.into_bytes());
     }
 
