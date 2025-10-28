@@ -36,6 +36,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use crate::workspace;
 
@@ -650,7 +651,9 @@ pub fn resolve_brand_profile(program: Option<&OsStr>) -> BrandProfile {
     detect_brand(program).profile()
 }
 
-fn brand_override_from_env() -> Option<Brand> {
+static BRAND_OVERRIDE_CACHE: OnceLock<Mutex<Option<Option<Brand>>>> = OnceLock::new();
+
+fn read_brand_override_from_env() -> Option<Brand> {
     let value = env::var_os(BRAND_OVERRIDE_ENV)?;
     if value.is_empty() {
         return None;
@@ -658,6 +661,26 @@ fn brand_override_from_env() -> Option<Brand> {
 
     let value = value.to_string_lossy();
     value.trim().parse::<Brand>().ok()
+}
+
+fn brand_override_from_env() -> Option<Brand> {
+    let cache = BRAND_OVERRIDE_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache.lock().expect("brand override cache mutex poisoned");
+    if let Some(value) = *guard {
+        return value;
+    }
+
+    let value = read_brand_override_from_env();
+    *guard = Some(value);
+    value
+}
+
+#[cfg(test)]
+fn reset_brand_override_cache() {
+    if let Some(cache) = BRAND_OVERRIDE_CACHE.get() {
+        let mut guard = cache.lock().expect("brand override cache mutex poisoned");
+        *guard = None;
+    }
 }
 
 /// Returns the legacy configuration path recognised for compatibility with upstream deployments.
@@ -728,6 +751,7 @@ mod tests {
         unsafe {
             env::set_var(key, value);
         }
+        super::reset_brand_override_cache();
     }
 
     #[allow(unsafe_code)]
@@ -735,6 +759,7 @@ mod tests {
         unsafe {
             env::remove_var(key);
         }
+        super::reset_brand_override_cache();
     }
 
     struct EnvGuard {
