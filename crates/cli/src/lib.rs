@@ -976,14 +976,10 @@ impl ProgramName {
 }
 
 fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
-    program
-        .and_then(|arg| Path::new(arg).file_stem())
-        .and_then(|stem| stem.to_str())
-        .map(|stem| match branding::brand_for_program_name(stem) {
-            Brand::Oc => ProgramName::OcRsync,
-            Brand::Upstream => ProgramName::Rsync,
-        })
-        .unwrap_or(ProgramName::Rsync)
+    match branding::detect_brand(program) {
+        Brand::Oc => ProgramName::OcRsync,
+        Brand::Upstream => ProgramName::Rsync,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
