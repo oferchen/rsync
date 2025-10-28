@@ -973,6 +973,14 @@ impl ProgramName {
             Self::OcRsync => Brand::Oc.client_program_name(),
         }
     }
+
+    #[inline]
+    const fn brand(self) -> Brand {
+        match self {
+            Self::Rsync => Brand::Upstream,
+            Self::OcRsync => Brand::Oc,
+        }
+    }
 }
 
 fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
@@ -3264,7 +3272,7 @@ where
     }
 
     if show_version {
-        let report = VersionInfoReport::default().with_program_name(program_name.as_str());
+        let report = VersionInfoReport::default().with_client_brand(program_name.brand());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
             return 1;
@@ -7752,7 +7760,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(Brand::Oc.client_program_name())
+            .with_client_brand(Brand::Oc)
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
@@ -7826,7 +7834,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(Brand::Oc.client_program_name())
+            .with_client_brand(Brand::Oc)
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
