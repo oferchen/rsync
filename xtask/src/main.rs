@@ -57,7 +57,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 use toml::Value;
@@ -249,6 +249,16 @@ where
             let workspace = workspace_root()?;
             execute_no_binaries(&workspace, options)
         }
+        "enforce-limits" => {
+            let options = parse_enforce_limits_args(args)?;
+            let workspace = workspace_root()?;
+            execute_enforce_limits(&workspace, options)
+        }
+        "no-placeholders" => {
+            let options = parse_no_placeholders_args(args)?;
+            let workspace = workspace_root()?;
+            execute_no_placeholders(&workspace, options)
+        }
         "preflight" => {
             let options = parse_preflight_args(args)?;
             let workspace = workspace_root()?;
@@ -289,6 +299,15 @@ struct DocsOptions {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NoBinariesOptions;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct EnforceLimitsOptions {
+    max_lines: Option<usize>,
+    warn_lines: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NoPlaceholdersOptions;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PreflightOptions;
@@ -369,6 +388,76 @@ where
     }
 
     Ok(NoBinariesOptions)
+}
+
+fn parse_enforce_limits_args<I>(args: I) -> Result<EnforceLimitsOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut options = EnforceLimitsOptions::default();
+
+    while let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(enforce_limits_usage()));
+        }
+
+        match arg.to_string_lossy().as_ref() {
+            "--max-lines" => {
+                let value = args.next().ok_or_else(|| {
+                    TaskError::Usage(String::from(
+                        "--max-lines requires a positive integer value",
+                    ))
+                })?;
+                let parsed = parse_positive_usize_arg(&value, "--max-lines")?;
+                options.max_lines = Some(parsed);
+            }
+            "--warn-lines" => {
+                let value = args.next().ok_or_else(|| {
+                    TaskError::Usage(String::from(
+                        "--warn-lines requires a positive integer value",
+                    ))
+                })?;
+                let parsed = parse_positive_usize_arg(&value, "--warn-lines")?;
+                options.warn_lines = Some(parsed);
+            }
+            other => {
+                return Err(TaskError::Usage(format!(
+                    "unrecognised argument '{other}' for enforce-limits command"
+                )));
+            }
+        }
+    }
+
+    if let (Some(warn), Some(max)) = (options.warn_lines, options.max_lines) {
+        if warn > max {
+            return Err(TaskError::Usage(format!(
+                "warn line limit ({warn}) cannot exceed maximum line limit ({max})"
+            )));
+        }
+    }
+
+    Ok(options)
+}
+
+fn parse_no_placeholders_args<I>(args: I) -> Result<NoPlaceholdersOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+
+    if let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(no_placeholders_usage()));
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for no-placeholders command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    Ok(NoPlaceholdersOptions)
 }
 
 fn parse_preflight_args<I>(args: I) -> Result<PreflightOptions, TaskError>
@@ -552,6 +641,107 @@ fn execute_no_binaries(workspace: &Path, _options: NoBinariesOptions) -> Result<
 
     binary_paths.sort();
     Err(TaskError::BinaryFiles(binary_paths))
+}
+
+fn execute_enforce_limits(
+    workspace: &Path,
+    options: EnforceLimitsOptions,
+) -> Result<(), TaskError> {
+    const DEFAULT_MAX_LINES: usize = 600;
+    const DEFAULT_WARN_LINES: usize = 400;
+
+    let env_max = read_limit_env_var("MAX_RUST_LINES")?;
+    let env_warn = read_limit_env_var("WARN_RUST_LINES")?;
+    let max_lines = options.max_lines.or(env_max).unwrap_or(DEFAULT_MAX_LINES);
+    let warn_lines = options
+        .warn_lines
+        .or(env_warn)
+        .unwrap_or(DEFAULT_WARN_LINES);
+
+    if warn_lines > max_lines {
+        return Err(validation_error(format!(
+            "warn line limit ({warn_lines}) cannot exceed maximum line limit ({max_lines})"
+        )));
+    }
+
+    let rust_files = collect_rust_sources(workspace)?;
+    if rust_files.is_empty() {
+        eprintln!("No Rust sources found.");
+        return Ok(());
+    }
+
+    let mut failure_detected = false;
+    let mut warned = false;
+
+    for path in rust_files {
+        let line_count = count_file_lines(&path)?;
+        if line_count > max_lines {
+            eprintln!(
+                "::error file={}::Rust source has {} lines (limit {})",
+                path.display(),
+                line_count,
+                max_lines
+            );
+            failure_detected = true;
+            continue;
+        }
+
+        if line_count > warn_lines {
+            eprintln!(
+                "::warning file={}::Rust source has {} lines (target {})",
+                path.display(),
+                line_count,
+                warn_lines
+            );
+            warned = true;
+        }
+    }
+
+    if failure_detected {
+        return Err(validation_error(
+            "Rust source files exceed the enforced maximum line count.",
+        ));
+    }
+
+    if warned {
+        eprintln!("Rust source files exceed target length but remain under the enforced limit.");
+    }
+
+    Ok(())
+}
+
+fn execute_no_placeholders(
+    workspace: &Path,
+    _options: NoPlaceholdersOptions,
+) -> Result<(), TaskError> {
+    let mut violations_present = false;
+    let rust_files = list_rust_sources_via_git(workspace)?;
+
+    for relative in rust_files {
+        let absolute = workspace.join(&relative);
+        let findings = scan_rust_file_for_placeholders(&absolute)?;
+        if findings.is_empty() {
+            continue;
+        }
+
+        violations_present = true;
+        for finding in findings {
+            eprintln!(
+                "{}:{}:{}",
+                relative.display(),
+                finding.line,
+                finding.snippet
+            );
+        }
+    }
+
+    if violations_present {
+        return Err(validation_error(
+            "placeholder markers detected in Rust sources; remove todo/unimplemented/fixme/xxx references",
+        ));
+    }
+
+    Ok(())
 }
 
 fn execute_preflight(workspace: &Path, _options: PreflightOptions) -> Result<(), TaskError> {
@@ -882,7 +1072,7 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  branding     Display workspace branding metadata\n  docs         Build API documentation and run doctests\n  no-binaries  Ensure no tracked binary artifacts are committed\n  preflight    Validate branding, packaging, and documentation metadata\n  package      Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom         Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help         Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  branding          Display workspace branding metadata\n  docs              Build API documentation and run doctests\n  enforce-limits    Enforce Rust source line count caps\n  no-binaries       Ensure no tracked binary artifacts are committed\n  no-placeholders   Scan Rust sources for placeholder markers\n  preflight         Validate branding, packaging, and documentation metadata\n  package           Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom              Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help              Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
     )
 }
 
@@ -901,6 +1091,18 @@ fn branding_usage() -> String {
 fn no_binaries_usage() -> String {
     String::from(
         "Usage: cargo xtask no-binaries\n\nOptions:\n  -h, --help      Show this help message",
+    )
+}
+
+fn enforce_limits_usage() -> String {
+    String::from(
+        "Usage: cargo xtask enforce-limits [OPTIONS]\n\nOptions:\n  --max-lines NUM   Override the maximum allowed lines per Rust source file\n  --warn-lines NUM  Override the warning threshold for Rust source files\n  -h, --help        Show this help message",
+    )
+}
+
+fn no_placeholders_usage() -> String {
+    String::from(
+        "Usage: cargo xtask no-placeholders\n\nOptions:\n  -h, --help      Show this help message",
     )
 }
 
@@ -1048,6 +1250,262 @@ fn list_tracked_files(workspace: &Path) -> Result<Vec<PathBuf>, TaskError> {
     }
 
     Ok(files)
+}
+
+fn read_limit_env_var(name: &str) -> Result<Option<usize>, TaskError> {
+    match env::var(name) {
+        Ok(value) => {
+            if value.is_empty() {
+                return Err(validation_error(format!(
+                    "{name} must be a positive integer, found an empty value"
+                )));
+            }
+
+            let parsed = parse_positive_usize_from_env(name, &value)?;
+            Ok(Some(parsed))
+        }
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(validation_error(format!(
+            "{name} must contain a UTF-8 encoded positive integer"
+        ))),
+    }
+}
+
+fn parse_positive_usize_from_env(name: &str, value: &str) -> Result<usize, TaskError> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        validation_error(format!(
+            "{name} must be a positive integer, found '{value}'"
+        ))
+    })?;
+
+    if parsed == 0 {
+        return Err(validation_error(format!(
+            "{name} must be greater than zero, found '{value}'"
+        )));
+    }
+
+    Ok(parsed)
+}
+
+fn parse_positive_usize_arg(value: &OsString, flag: &str) -> Result<usize, TaskError> {
+    let text = value.to_str().ok_or_else(|| {
+        TaskError::Usage(format!("{flag} requires a UTF-8 positive integer value"))
+    })?;
+
+    let parsed = text.parse::<usize>().map_err(|_| {
+        TaskError::Usage(format!(
+            "{flag} requires a positive integer value, found '{text}'"
+        ))
+    })?;
+
+    if parsed == 0 {
+        return Err(TaskError::Usage(format!(
+            "{flag} requires a positive integer value, found '{text}'"
+        )));
+    }
+
+    Ok(parsed)
+}
+
+fn collect_rust_sources(root: &Path) -> Result<Vec<PathBuf>, TaskError> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = entry.metadata()?;
+
+            if metadata.is_dir() {
+                if should_skip_directory(&path) {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+
+            if metadata.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext.eq_ignore_ascii_case("rs") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn should_skip_directory(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("target") | Some(".git")
+    )
+}
+
+fn count_file_lines(path: &Path) -> Result<usize, TaskError> {
+    let file = fs::File::open(path)?;
+    let mut reader = io::BufReader::new(file);
+    let mut buffer = String::new();
+    let mut count = 0usize;
+
+    loop {
+        buffer.clear();
+        let read = reader.read_line(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+fn list_rust_sources_via_git(workspace: &Path) -> Result<Vec<PathBuf>, TaskError> {
+    let output = Command::new("git")
+        .current_dir(workspace)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "*.rs",
+        ])
+        .output()
+        .map_err(|error| {
+            map_command_error(
+                error,
+                "git ls-files",
+                "install git and ensure it is available in PATH",
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(TaskError::CommandFailed {
+            program: String::from("git ls-files"),
+            status: output.status,
+        });
+    }
+
+    let mut files = Vec::new();
+    for entry in output.stdout.split(|byte| *byte == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            files.push(PathBuf::from(OsString::from_vec(entry.to_vec())));
+        }
+
+        #[cfg(not(unix))]
+        {
+            let path = String::from_utf8(entry.to_vec()).map_err(|_| {
+                TaskError::Metadata(String::from(
+                    "git reported a non-UTF-8 path; placeholder scanning requires UTF-8 file names on this platform",
+                ))
+            })?;
+            files.push(PathBuf::from(path));
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct PlaceholderFinding {
+    line: usize,
+    snippet: String,
+}
+
+fn scan_rust_file_for_placeholders(path: &Path) -> Result<Vec<PlaceholderFinding>, TaskError> {
+    let file = fs::File::open(path)?;
+    let mut reader = io::BufReader::new(file);
+    let mut buffer = String::new();
+    let mut findings = Vec::new();
+    let mut line_number = 0usize;
+
+    loop {
+        buffer.clear();
+        let read = reader.read_line(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+
+        line_number += 1;
+        if line_number == 1 {
+            continue;
+        }
+
+        let line = buffer.trim_end_matches(['\r', '\n']);
+        if contains_placeholder(line) {
+            findings.push(PlaceholderFinding {
+                line: line_number,
+                snippet: line.to_string(),
+            });
+        }
+    }
+
+    Ok(findings)
+}
+
+fn contains_placeholder(line: &str) -> bool {
+    if line.contains("todo!") || line.contains("unimplemented!") {
+        return true;
+    }
+
+    let lower = line.to_ascii_lowercase();
+    if contains_standalone_word(&lower, "fixme") || contains_standalone_word(&lower, "xxx") {
+        return true;
+    }
+
+    if line.contains("panic!")
+        && (contains_standalone_word(&lower, "todo")
+            || contains_standalone_word(&lower, "fixme")
+            || contains_standalone_word(&lower, "xxx")
+            || contains_standalone_word(&lower, "unimplemented"))
+    {
+        return true;
+    }
+
+    false
+}
+
+fn contains_standalone_word(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+
+    if needle_bytes.is_empty() || bytes.len() < needle_bytes.len() {
+        return false;
+    }
+
+    let mut index = 0usize;
+    while let Some(position) = haystack[index..].find(needle) {
+        let absolute = index + position;
+        let before_ok = absolute == 0 || !is_identifier_byte(bytes[absolute.saturating_sub(1)]);
+        let after_index = absolute + needle_bytes.len();
+        let after_ok = after_index >= bytes.len() || !is_identifier_byte(bytes[after_index]);
+
+        if before_ok && after_ok {
+            return true;
+        }
+
+        index = absolute + 1;
+    }
+
+    false
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 
 fn is_probably_binary(path: &Path) -> Result<bool, TaskError> {
@@ -1231,11 +1689,13 @@ fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), Task
 #[cfg(test)]
 mod tests {
     use super::{
-        BrandingOptions, DocsOptions, NoBinariesOptions, PackageOptions, PreflightOptions,
-        SbomOptions, TaskError, WorkspaceBranding, branding_usage, docs_usage, no_binaries_usage,
-        package_usage, parse_branding_args, parse_docs_args, parse_no_binaries_args,
+        BrandingOptions, DocsOptions, EnforceLimitsOptions, NoBinariesOptions,
+        NoPlaceholdersOptions, PackageOptions, PreflightOptions, SbomOptions, TaskError,
+        WorkspaceBranding, branding_usage, docs_usage, enforce_limits_usage, no_binaries_usage,
+        no_placeholders_usage, package_usage, parse_branding_args, parse_docs_args,
+        parse_enforce_limits_args, parse_no_binaries_args, parse_no_placeholders_args,
         parse_package_args, parse_preflight_args, parse_sbom_args, parse_workspace_branding,
-        preflight_usage, sbom_usage, top_level_usage,
+        preflight_usage, sbom_usage, scan_rust_file_for_placeholders, top_level_usage,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1324,6 +1784,85 @@ mod tests {
     fn top_level_usage_mentions_no_binaries_command() {
         let usage = top_level_usage();
         assert!(usage.contains("no-binaries"));
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_accepts_default_configuration() {
+        let options = parse_enforce_limits_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, EnforceLimitsOptions::default());
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_accepts_custom_limits() {
+        let options = parse_enforce_limits_args([
+            OsString::from("--max-lines"),
+            OsString::from("700"),
+            OsString::from("--warn-lines"),
+            OsString::from("500"),
+        ])
+        .expect("parse succeeds");
+        assert_eq!(
+            options,
+            EnforceLimitsOptions {
+                max_lines: Some(700),
+                warn_lines: Some(500),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_rejects_invalid_values() {
+        let error = parse_enforce_limits_args([OsString::from("--max-lines"), OsString::from("0")])
+            .unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--max-lines")));
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_reports_help_request() {
+        let error = parse_enforce_limits_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == enforce_limits_usage()));
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_rejects_warn_exceeding_maximum() {
+        let error = parse_enforce_limits_args([
+            OsString::from("--warn-lines"),
+            OsString::from("800"),
+            OsString::from("--max-lines"),
+            OsString::from("700"),
+        ])
+        .unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("warn line limit")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_enforce_limits_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("enforce-limits"));
+    }
+
+    #[test]
+    fn parse_no_placeholders_args_accepts_default_configuration() {
+        let options = parse_no_placeholders_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, NoPlaceholdersOptions);
+    }
+
+    #[test]
+    fn parse_no_placeholders_args_reports_help_request() {
+        let error = parse_no_placeholders_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == no_placeholders_usage()));
+    }
+
+    #[test]
+    fn parse_no_placeholders_args_rejects_unknown_argument() {
+        let error = parse_no_placeholders_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_no_placeholders_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("no-placeholders"));
     }
 
     #[test]
@@ -1542,6 +2081,37 @@ mod tests {
         let manifest = r#"[workspace]\n[workspace.metadata]\n"#;
         let error = parse_workspace_branding(manifest).unwrap_err();
         assert!(matches!(error, TaskError::Metadata(_)));
+    }
+
+    #[test]
+    fn scan_rust_file_for_placeholders_detects_todo_macro() {
+        let path = unique_temp_path("todo_macro");
+        fs::write(&path, "fn example() {\n    todo!();\n}\n").expect("write sample");
+        let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 2);
+        assert!(findings[0].snippet.contains("todo!"));
+    }
+
+    #[test]
+    fn scan_rust_file_for_placeholders_detects_fixme_comment() {
+        let path = unique_temp_path("fixme_comment");
+        fs::write(&path, "// header\n// FIXME: implement\nfn ready() {}\n").expect("write sample");
+        let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 2);
+        assert!(findings[0].snippet.to_ascii_lowercase().contains("fixme"));
+    }
+
+    #[test]
+    fn scan_rust_file_for_placeholders_ignores_first_line() {
+        let path = unique_temp_path("first_line_ignored");
+        fs::write(&path, "// TODO: license\nfn ok() {}\n").expect("write sample");
+        let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert!(findings.is_empty());
     }
 
     #[test]
