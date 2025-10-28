@@ -32,6 +32,10 @@
 //! - [`DaemonConfig`] stores the caller-provided daemon arguments. A
 //!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
 //!   full daemon support lands.
+//! - The runtime honours the `RSYNCD_CONFIG` environment variable and, when no
+//!   explicit configuration path is provided, attempts to load
+//!   `/etc/oc-rsyncd/oc-rsyncd.conf` when present so packaged defaults align
+//!   with production deployments.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
 //!   serves one or more connections. It recognises both the legacy ASCII
 //!   prologue and the binary negotiation used by modern clients, ensuring
@@ -238,7 +242,6 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
-#[cfg(test)]
 const DEFAULT_CONFIG_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.conf";
 #[cfg(test)]
 const DEFAULT_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
@@ -816,6 +819,17 @@ impl RuntimeOptions {
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
         let mut options = Self::default();
         let mut seen_modules = HashSet::new();
+        if !config_argument_present(arguments) {
+            if let Some(path) = environment_config_override() {
+                options.delegate_arguments.push(OsString::from("--config"));
+                options.delegate_arguments.push(path.clone());
+                options.load_config_modules(&path, &mut seen_modules)?;
+            } else if let Some(path) = default_config_path_if_present() {
+                options.delegate_arguments.push(OsString::from("--config"));
+                options.delegate_arguments.push(path.clone());
+                options.load_config_modules(&path, &mut seen_modules)?;
+            }
+        }
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
@@ -1288,6 +1302,37 @@ where
     }
 
     Ok(None)
+}
+
+fn config_argument_present(arguments: &[OsString]) -> bool {
+    for argument in arguments {
+        if argument == "--config" {
+            return true;
+        }
+
+        let text = argument.to_string_lossy();
+        if let Some(rest) = text.strip_prefix("--config") {
+            if rest.starts_with('=') {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn environment_config_override() -> Option<OsString> {
+    let value = env::var_os("RSYNCD_CONFIG")?;
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn default_config_path_if_present() -> Option<OsString> {
+    let path = Path::new(DEFAULT_CONFIG_PATH);
+    if path.is_file() {
+        Some(OsString::from(DEFAULT_CONFIG_PATH))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7011,6 +7056,78 @@ mod tests {
     fn runtime_options_default_enables_reverse_lookup() {
         let options = RuntimeOptions::parse(&[]).expect("parse defaults");
         assert!(options.reverse_lookup());
+    }
+
+    #[test]
+    fn runtime_options_loads_config_from_environment_variable() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let config_path = dir.path().join("oc-rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!("[data]\npath = {}\n", module_dir.display()),
+        )
+        .expect("write config");
+
+        let _env = EnvGuard::set("RSYNCD_CONFIG", config_path.as_os_str());
+        let options = RuntimeOptions::parse(&[]).expect("parse env config");
+
+        assert_eq!(options.modules().len(), 1);
+        let module = &options.modules()[0];
+        assert_eq!(module.name, "data");
+        assert_eq!(module.path, module_dir);
+        assert_eq!(
+            &options.delegate_arguments,
+            &[
+                OsString::from("--config"),
+                config_path.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_cli_config_overrides_environment_variable() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let dir = tempdir().expect("config dir");
+        let env_module_dir = dir.path().join("env-module");
+        let cli_module_dir = dir.path().join("cli-module");
+        fs::create_dir_all(&env_module_dir).expect("env module dir");
+        fs::create_dir_all(&cli_module_dir).expect("cli module dir");
+
+        let env_config = dir.path().join("env.conf");
+        fs::write(
+            &env_config,
+            format!("[env]\npath = {}\n", env_module_dir.display()),
+        )
+        .expect("write env config");
+
+        let cli_config = dir.path().join("cli.conf");
+        fs::write(
+            &cli_config,
+            format!("[cli]\npath = {}\n", cli_module_dir.display()),
+        )
+        .expect("write cli config");
+
+        let _env = EnvGuard::set("RSYNCD_CONFIG", env_config.as_os_str());
+        let args = [
+            OsString::from("--config"),
+            cli_config.clone().into_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse cli config");
+
+        assert_eq!(options.modules().len(), 1);
+        let module = &options.modules()[0];
+        assert_eq!(module.name, "cli");
+        assert_eq!(module.path, cli_module_dir);
+        assert_eq!(
+            options.delegate_arguments,
+            vec![
+                OsString::from("--config"),
+                cli_config.clone().into_os_string(),
+            ]
+        );
     }
 
     #[test]
