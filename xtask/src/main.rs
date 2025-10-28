@@ -708,38 +708,65 @@ fn validate_workspace_package_rust_version(manifest: &Value) -> Result<(), TaskE
 }
 
 fn validate_documentation(workspace: &Path, branding: &WorkspaceBranding) -> Result<(), TaskError> {
-    let readme_path = workspace.join("README.md");
-    let readme = fs::read_to_string(&readme_path).map_err(|error| {
-        TaskError::Io(io::Error::new(
-            error.kind(),
-            format!("failed to read {}: {error}", readme_path.display()),
-        ))
-    })?;
+    struct DocumentationCheck<'a> {
+        relative_path: &'a str,
+        required_snippets: Vec<&'a str>,
+    }
 
-    let required_snippets = [
-        branding.client_bin.as_str(),
-        branding.daemon_bin.as_str(),
-        branding.rust_version.as_str(),
-        branding.daemon_config.as_str(),
+    let checks = [
+        DocumentationCheck {
+            relative_path: "README.md",
+            required_snippets: vec![
+                branding.client_bin.as_str(),
+                branding.daemon_bin.as_str(),
+                branding.rust_version.as_str(),
+                branding.daemon_config.as_str(),
+            ],
+        },
+        DocumentationCheck {
+            relative_path: "docs/production_scope_p1.md",
+            required_snippets: vec![
+                branding.client_bin.as_str(),
+                branding.daemon_bin.as_str(),
+                branding.rust_version.as_str(),
+                branding.daemon_config_dir.as_str(),
+                branding.daemon_config.as_str(),
+                branding.daemon_secrets.as_str(),
+            ],
+        },
     ];
 
-    let missing: Vec<&str> = required_snippets
-        .iter()
-        .copied()
-        .filter(|snippet| !readme.contains(snippet))
-        .collect();
+    for check in checks {
+        let path = workspace.join(check.relative_path);
+        let contents = fs::read_to_string(&path).map_err(|error| {
+            TaskError::Io(io::Error::new(
+                error.kind(),
+                format!("failed to read {}: {error}", path.display()),
+            ))
+        })?;
 
-    ensure(
-        missing.is_empty(),
-        format!(
-            "README.md missing required documentation snippets: {}",
-            missing
-                .iter()
-                .map(|snippet| format!("'{}'", snippet))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    )
+        let missing: Vec<&str> = check
+            .required_snippets
+            .iter()
+            .copied()
+            .filter(|snippet| !snippet.is_empty() && !contents.contains(snippet))
+            .collect();
+
+        ensure(
+            missing.is_empty(),
+            format!(
+                "{} missing required documentation snippets: {}",
+                check.relative_path,
+                missing
+                    .iter()
+                    .map(|snippet| format!("'{}'", snippet))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )?;
+    }
+
+    Ok(())
 }
 
 fn cargo_metadata_json(workspace: &Path) -> Result<JsonValue, TaskError> {
