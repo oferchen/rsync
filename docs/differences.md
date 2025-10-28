@@ -76,9 +76,10 @@ referenced functionality ships and parity is verified by tests or goldens.
     that exercises upstream rsync releases. Packaging metadata for
     `cargo-deb`/`cargo-rpm` installs both binaries, a hardened `oc-rsyncd.service`
     systemd unit (with a compatibility alias for `rsyncd.service`), and example
-    configuration files, and the GitHub Actions workflow builds `.deb`/`.rpm`
-    artifacts and a CycloneDX SBOM for every push. Automated installation tests
-    and cross-version parity checks remain pending.
+    configuration files installed at `/etc/oc-rsyncd/oc-rsyncd.conf` and
+    `/etc/oc-rsyncd/oc-rsyncd.secrets`; the GitHub Actions workflow builds
+    `.deb`/`.rpm` artifacts and a CycloneDX SBOM for every push. Automated
+    installation tests and cross-version parity checks remain pending.
   - *Removal plan*: Stand up the parity harness (`tests/goldens`), CI workflows,
     and finish the packaging pipeline by wiring the remaining install-verification
     tests once higher-level crates are available.
