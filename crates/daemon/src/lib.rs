@@ -248,8 +248,9 @@ const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "
 /// Deterministic help text describing the currently supported daemon surface.
 ///
 /// The snapshot adjusts the banner, usage line, and default configuration path
-/// to reflect the supplied [`Brand`], ensuring `rsyncd` compatibility shims and
-/// the canonical `oc-rsyncd` binary emit brand-appropriate help output.
+/// to reflect the supplied [`Brand`], ensuring invocations via compatibility
+/// symlinks and the canonical `oc-rsyncd` binary emit brand-appropriate help
+/// output.
 fn help_text(brand: Brand) -> String {
     let profile = brand.profile();
     let program = profile.daemon_program_name();
