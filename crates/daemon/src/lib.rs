@@ -245,8 +245,6 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
-const DEFAULT_CONFIG_PATH: &str = branding::OC_DAEMON_CONFIG_PATH;
-const LEGACY_CONFIG_PATH: &str = branding::LEGACY_DAEMON_CONFIG_PATH;
 #[cfg(test)]
 const DEFAULT_SECRETS_PATH: &str = branding::OC_DAEMON_SECRETS_PATH;
 
@@ -5326,7 +5324,10 @@ mod tests {
     fn default_config_candidates_prefer_oc_branding() {
         assert_eq!(
             Brand::Oc.config_path_candidate_strs(),
-            [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH]
+            [
+                branding::OC_DAEMON_CONFIG_PATH,
+                branding::LEGACY_DAEMON_CONFIG_PATH,
+            ]
         );
     }
 
@@ -5334,7 +5335,10 @@ mod tests {
     fn default_config_candidates_prefer_legacy_for_upstream_brand() {
         assert_eq!(
             Brand::Upstream.config_path_candidate_strs(),
-            [LEGACY_CONFIG_PATH, DEFAULT_CONFIG_PATH]
+            [
+                branding::LEGACY_DAEMON_CONFIG_PATH,
+                branding::OC_DAEMON_CONFIG_PATH,
+            ]
         );
     }
 
@@ -5528,7 +5532,7 @@ mod tests {
             OsStr::new("rsyncd"),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--config"),
-            OsStr::new(DEFAULT_CONFIG_PATH),
+            OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
@@ -5536,7 +5540,7 @@ mod tests {
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
         assert!(recorded.contains("--no-detach"));
-        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
+        assert!(recorded.contains(&format!("--config {}", branding::OC_DAEMON_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5595,14 +5599,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new(DEFAULT_CONFIG_PATH),
+            OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
+        assert!(recorded.contains(&format!("--config {}", branding::OC_DAEMON_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5802,14 +5806,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new(DEFAULT_CONFIG_PATH),
+            OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
+        assert!(recorded.contains(&format!("--config {}", branding::OC_DAEMON_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5826,14 +5830,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new(DEFAULT_CONFIG_PATH),
+            OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
+        assert!(recorded.contains(&format!("--config {}", branding::OC_DAEMON_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
