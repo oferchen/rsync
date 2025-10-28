@@ -147,8 +147,3 @@ path = "crates/protocol/src/legacy/lines.rs"
 max_lines = 827
 warn_lines = 727
 
-[[overrides]]
-path = "crates/meta/src/chmod.rs"
-max_lines = 819
-warn_lines = 719
-
