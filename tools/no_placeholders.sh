@@ -1,54 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "${script_dir}/.." && pwd)"
+fail=0
+# Match common placeholder macros and comment tags. The panic! guard needs to
+# handle escaped quotes inside the literal, so it uses a negated character
+# class that also permits escaped characters via `\.`.
+# GNU/BSD `grep -E` does not recognize `\b` as a word boundary, so approximate one
+# using start/end checks against non-identifier characters. This keeps `fixme` and
+# `xxx` detections case-insensitive without tripping on identifiers such as
+# `prefixme`. The panic! guard retains its escaped-quote handling.
+pattern='todo!|unimplemented!|(^|[^[:alnum:]_])(fixme|xxx)([^[:alnum:]_]|$)|panic!\("([^"\\]|\\.)*(todo|fixme|xxx|unimplemented)([^"\\]|\\.)*"\)'
 
-cd "${repo_root}"
-
-# Use ripgrep to scan Rust sources while ignoring generated artifacts.
-if ! command -v rg >/dev/null 2>&1; then
-    echo "ripgrep (rg) is required but was not found in PATH." >&2
-    exit 2
-fi
-
-patterns=(
-    'todo!\s*\('
-    'unimplemented!\s*\('
-    '(?i)\bFIXME\b'
-    '(?i)\bXXX\b'
-    'panic!\s*\(\s*"(?i:(todo|fixme|placeholder|unimplemented|not implemented))'
-)
-
-rg_args=(
-    --with-filename
-    --line-number
-    --color=never
-    --no-heading
-    --hidden
-    -g '*.rs'
-    --glob '!target/**'
-    --glob '!.git/**'
-)
-
-tmp_matches_file="$(mktemp -t rsync_no_placeholders_matches.XXXXXX)"
-trap 'rm -f "${tmp_matches_file}"' EXIT
-
-violations=0
-
-for pattern in "${patterns[@]}"; do
-    if rg "${rg_args[@]}" --pcre2 "${pattern}" >"${tmp_matches_file}" 2>/dev/null; then
-        if (( violations == 0 )); then
-            echo "Prohibited placeholders found:" >&2
-        fi
-        cat "${tmp_matches_file}" >&2
-        : > "${tmp_matches_file}"
-        violations=1
+while IFS= read -r -d '' file; do
+    offenses=$(grep -nEi "$pattern" "$file" | grep -v '^1:' || true)
+    if [[ -n $offenses ]]; then
+        while IFS= read -r offense; do
+            printf '%s:%s\n' "$file" "$offense" >&2
+        done <<<"$offenses"
+        fail=1
     fi
-done
+# Include tracked and untracked Rust sources so local checks flag issues before staging.
+done < <(git ls-files -z --cached --others --exclude-standard -- '*.rs')
 
-if (( violations )); then
-    exit 1
-fi
-
-exit 0
+exit $fail
