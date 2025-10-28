@@ -298,7 +298,7 @@ jobs:
           tool: cyclonedx-rust-cargo
 
       - name: Display workspace metadata
-        run: cargo metadata --format-version 1 --no-deps | jq '.workspace_metadata.oc_rsync'
+        run: cargo run -p xtask -- branding
 
       - name: Build Debian package
         run: cargo deb -p oc-rsync-bin
