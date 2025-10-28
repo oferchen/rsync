@@ -103,8 +103,10 @@ metadata records the canonical program names, configuration locations, source
 URL, and supported protocol version so packaging tasks and CI workflows can
 validate branding before producing release artifacts. CI now invokes
 `cargo xtask branding` to surface the metadata without relying on external
-tools, and local operators can run the same command to confirm that binaries,
-documentation, and packaging assets share a consistent brand profile.
+tools. Pass `--json` to emit the same information in machine-readable form,
+allowing release automation to consume the data directly. Local operators can
+run the command in either mode to confirm that binaries, documentation, and
+packaging assets share a consistent brand profile.
 
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync` (and therefore any
