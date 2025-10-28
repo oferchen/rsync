@@ -5291,7 +5291,6 @@ mod tests {
     use std::num::{NonZeroU32, NonZeroU64};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -5327,8 +5326,6 @@ mod tests {
     }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    static NEXT_TEST_PORT: AtomicU32 = AtomicU32::new(0);
-
     fn with_test_secrets_candidates<F, R>(candidates: Vec<PathBuf>, func: F) -> R
     where
         F: FnOnce() -> R,
@@ -5342,18 +5339,11 @@ mod tests {
     }
 
     fn allocate_test_port() -> u16 {
-        const START: u16 = 40_000;
-        const RANGE: u16 = 20_000;
-
-        loop {
-            let offset = (NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed) % u32::from(RANGE)) as u16;
-            let candidate = START + offset;
-
-            if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, candidate)) {
-                drop(listener);
-                return candidate;
-            }
-        }
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .expect("bind ephemeral port")
+            .local_addr()
+            .expect("local address")
+            .port()
     }
 
     struct EnvGuard {
