@@ -30,6 +30,46 @@
 
 use std::path::Path;
 
+/// Identifies the brand associated with an executable name.
+///
+/// The workspace distributes both upstream-compatible binaries (`rsync`/`rsyncd`)
+/// and branded wrappers (`oc-rsync`/`oc-rsyncd`). Centralising the mapping keeps
+/// higher layers free from string comparisons and ensures configuration paths,
+/// help banners, and diagnostics stay consistent across entry points. The
+/// [`Brand::profile`] method exposes the corresponding [`BrandProfile`], which in
+/// turn provides program names and filesystem locations for the selected
+/// distribution.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Brand {
+    /// Upstream-compatible binaries (`rsync` and `rsyncd`).
+    Upstream,
+    /// Branded binaries installed as `oc-rsync` and `oc-rsyncd`.
+    Oc,
+}
+
+impl Brand {
+    /// Returns the [`BrandProfile`] describing this brand.
+    #[must_use]
+    pub const fn profile(self) -> BrandProfile {
+        match self {
+            Self::Upstream => UPSTREAM_PROFILE,
+            Self::Oc => OC_PROFILE,
+        }
+    }
+
+    /// Returns the canonical client program name for this brand.
+    #[must_use]
+    pub const fn client_program_name(self) -> &'static str {
+        self.profile().client_program_name()
+    }
+
+    /// Returns the canonical daemon program name for this brand.
+    #[must_use]
+    pub const fn daemon_program_name(self) -> &'static str {
+        self.profile().daemon_program_name()
+    }
+}
+
 /// Describes the public-facing identity used by a binary distribution.
 ///
 /// The structure captures the canonical client and daemon program names
@@ -190,13 +230,44 @@ pub const fn oc_daemon_program_name() -> &'static str {
 /// Returns the canonical configuration path used by `oc-rsyncd`.
 #[must_use]
 pub fn oc_daemon_config_path() -> &'static Path {
-    Path::new(OC_DAEMON_CONFIG_PATH)
+    oc_profile().daemon_config_path()
 }
 
 /// Returns the canonical secrets path used by `oc-rsyncd`.
 #[must_use]
 pub fn oc_daemon_secrets_path() -> &'static Path {
-    OC_PROFILE.daemon_secrets_path()
+    oc_profile().daemon_secrets_path()
+}
+
+/// Returns the branding profile that matches the provided program name.
+///
+/// The helper inspects the supplied stem (for example the output of
+/// [`Path::file_stem`]) and returns [`Brand::Oc`] when the binary belongs to the
+/// branded `oc-` family. All other names fall back to the upstream-compatible
+/// profile so wrappers like the compatibility `rsync` binary keep their
+/// semantics aligned with the reference implementation.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::branding;
+///
+/// assert_eq!(
+///     branding::brand_for_program_name("oc-rsync"),
+///     branding::Brand::Oc
+/// );
+/// assert_eq!(
+///     branding::brand_for_program_name("rsync"),
+///     branding::Brand::Upstream
+/// );
+/// ```
+#[must_use]
+pub fn brand_for_program_name(program: &str) -> Brand {
+    if program == OC_CLIENT_PROGRAM_NAME || program == OC_DAEMON_PROGRAM_NAME {
+        Brand::Oc
+    } else {
+        Brand::Upstream
+    }
 }
 
 /// Returns the legacy configuration path recognised for compatibility with upstream deployments.
@@ -283,5 +354,24 @@ mod tests {
             upstream_profile().daemon_secrets_path(),
             legacy_daemon_secrets_path()
         );
+    }
+
+    #[test]
+    fn brand_detection_matches_program_names() {
+        assert_eq!(brand_for_program_name("rsync"), Brand::Upstream);
+        assert_eq!(brand_for_program_name("rsyncd"), Brand::Upstream);
+        assert_eq!(brand_for_program_name("oc-rsync"), Brand::Oc);
+        assert_eq!(brand_for_program_name("oc-rsyncd"), Brand::Oc);
+    }
+
+    #[test]
+    fn brand_profiles_expose_program_names() {
+        let upstream = Brand::Upstream.profile();
+        assert_eq!(upstream.client_program_name(), UPSTREAM_CLIENT_PROGRAM_NAME);
+        assert_eq!(upstream.daemon_program_name(), UPSTREAM_DAEMON_PROGRAM_NAME);
+
+        let oc = Brand::Oc.profile();
+        assert_eq!(oc.client_program_name(), OC_CLIENT_PROGRAM_NAME);
+        assert_eq!(oc.daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
     }
 }

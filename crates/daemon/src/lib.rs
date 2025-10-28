@@ -200,7 +200,7 @@ use rsync_core::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         apply_effective_limit, parse_bandwidth_limit,
     },
-    branding,
+    branding::{self, Brand},
     fallback::fallback_override,
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
@@ -2841,8 +2841,8 @@ impl ProgramName {
     #[inline]
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Rsyncd => rsync_core::version::DAEMON_PROGRAM_NAME,
-            Self::OcRsyncd => rsync_core::version::OC_DAEMON_PROGRAM_NAME,
+            Self::Rsyncd => Brand::Upstream.daemon_program_name(),
+            Self::OcRsyncd => Brand::Oc.daemon_program_name(),
         }
     }
 }
@@ -2851,12 +2851,9 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     program
         .and_then(|arg| Path::new(arg).file_stem())
         .and_then(|stem| stem.to_str())
-        .map(|stem| {
-            if stem == rsync_core::version::OC_DAEMON_PROGRAM_NAME {
-                ProgramName::OcRsyncd
-            } else {
-                ProgramName::Rsyncd
-            }
+        .map(|stem| match branding::brand_for_program_name(stem) {
+            Brand::Oc => ProgramName::OcRsyncd,
+            Brand::Upstream => ProgramName::Rsyncd,
         })
         .unwrap_or(ProgramName::Rsyncd)
 }
@@ -9031,7 +9028,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(rsync_core::version::DAEMON_PROGRAM_NAME)
+            .with_program_name(Brand::Upstream.daemon_program_name())
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
@@ -9045,7 +9042,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(rsync_core::version::OC_DAEMON_PROGRAM_NAME)
+            .with_program_name(Brand::Oc.daemon_program_name())
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
@@ -9131,7 +9128,7 @@ mod tests {
 
     #[test]
     fn clap_parse_error_is_reported_via_message() {
-        let command = clap_command(rsync_core::version::DAEMON_PROGRAM_NAME);
+        let command = clap_command(Brand::Upstream.daemon_program_name());
         let error = command
             .try_get_matches_from(vec!["rsyncd", "--version=extra"])
             .unwrap_err();
