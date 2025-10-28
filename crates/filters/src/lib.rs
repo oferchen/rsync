@@ -93,6 +93,8 @@ pub enum FilterAction {
     Protect,
     /// Remove previously applied protection, allowing deletion when matched.
     Risk,
+    /// Clear previously defined filter rules for the affected transfer sides.
+    Clear,
 }
 
 /// User-visible filter rule consisting of an action and pattern.
@@ -145,6 +147,18 @@ impl FilterRule {
             action: FilterAction::Risk,
             pattern: pattern.into(),
             applies_to_sender: false,
+            applies_to_receiver: true,
+        }
+    }
+
+    /// Clears all previously configured rules for the applicable transfer sides.
+    #[must_use]
+    #[doc(alias = "!")]
+    pub fn clear() -> Self {
+        Self {
+            action: FilterAction::Clear,
+            pattern: String::new(),
+            applies_to_sender: true,
             applies_to_receiver: true,
         }
     }
@@ -302,6 +316,18 @@ impl FilterSet {
                 FilterAction::Protect | FilterAction::Risk => {
                     protect_risk.push(CompiledRule::new(rule)?);
                 }
+                FilterAction::Clear => {
+                    apply_clear_rule(
+                        &mut include_exclude,
+                        rule.applies_to_sender,
+                        rule.applies_to_receiver,
+                    );
+                    apply_clear_rule(
+                        &mut protect_risk,
+                        rule.applies_to_sender,
+                        rule.applies_to_receiver,
+                    );
+                }
             }
         }
 
@@ -406,7 +432,7 @@ impl FilterSetInner {
             match rule.action {
                 FilterAction::Protect => decision.protect(),
                 FilterAction::Risk => decision.unprotect(),
-                FilterAction::Include | FilterAction::Exclude => {}
+                FilterAction::Include | FilterAction::Exclude | FilterAction::Clear => {}
             }
         }
 
@@ -525,6 +551,24 @@ impl CompiledRule {
 
         false
     }
+
+    fn clear_sides(&mut self, sender: bool, receiver: bool) -> bool {
+        if sender {
+            self.applies_to_sender = false;
+        }
+        if receiver {
+            self.applies_to_receiver = false;
+        }
+        self.applies_to_sender || self.applies_to_receiver
+    }
+}
+
+fn apply_clear_rule(rules: &mut Vec<CompiledRule>, sender: bool, receiver: bool) {
+    if !sender && !receiver {
+        return;
+    }
+
+    rules.retain_mut(|rule| rule.clear_sides(sender, receiver));
 }
 
 fn compile_patterns(
@@ -596,6 +640,36 @@ mod tests {
         assert!(set.allows(Path::new("foo/bar.txt"), false));
         assert!(!set.allows(Path::new("foo/baz.txt"), false));
         assert!(set.allows_deletion(Path::new("foo/bar.txt"), false));
+    }
+
+    #[test]
+    fn clear_rule_removes_previous_rules() {
+        let rules = [
+            FilterRule::exclude("*.tmp"),
+            FilterRule::protect("secrets/"),
+            FilterRule::clear(),
+            FilterRule::include("*.tmp"),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+        assert!(set.allows(Path::new("scratch.tmp"), false));
+        assert!(set.allows_deletion(Path::new("scratch.tmp"), false));
+        assert!(set.allows_deletion(Path::new("secrets/data"), false));
+    }
+
+    #[test]
+    fn clear_rule_respects_side_flags() {
+        let rules = [
+            FilterRule::exclude("sender.txt").with_sides(true, false),
+            FilterRule::exclude("receiver.txt").with_sides(false, true),
+            FilterRule::clear().with_sides(true, false),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // Sender-side rule cleared, so transfers allow the path again.
+        assert!(set.allows(Path::new("sender.txt"), false));
+
+        // Receiver-side rule remains active and prevents deletion.
+        assert!(!set.allows_deletion(Path::new("receiver.txt"), false));
     }
 
     #[test]
