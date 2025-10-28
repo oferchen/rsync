@@ -238,6 +238,10 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
+#[cfg(test)]
+const DEFAULT_CONFIG_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.conf";
+#[cfg(test)]
+const DEFAULT_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
@@ -256,7 +260,7 @@ const HELP_TEXT: &str = concat!(
     "  --port PORT         Listen on the supplied TCP port (default 873).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
-    "  --config FILE      Load module definitions from FILE (rsyncd.conf subset).\n",
+    "  --config FILE      Load module definitions from FILE (packages install /etc/oc-rsyncd/oc-rsyncd.conf).\n",
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
@@ -5311,7 +5315,7 @@ mod tests {
             OsStr::new("rsyncd"),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--config"),
-            OsStr::new("/etc/rsyncd.conf"),
+            OsStr::new(DEFAULT_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
@@ -5319,7 +5323,7 @@ mod tests {
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
         assert!(recorded.contains("--no-detach"));
-        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5378,14 +5382,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new("/etc/rsyncd.conf"),
+            OsStr::new(DEFAULT_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5589,14 +5593,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new("/etc/rsyncd.conf"),
+            OsStr::new(DEFAULT_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5613,14 +5617,14 @@ mod tests {
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
             OsStr::new("--config"),
-            OsStr::new("/etc/rsyncd.conf"),
+            OsStr::new(DEFAULT_CONFIG_PATH),
         ]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
         let recorded = fs::read_to_string(&log_path).expect("read invocation log");
         assert!(recorded.contains("--daemon"));
-        assert!(recorded.contains("--config /etc/rsyncd.conf"));
+        assert!(recorded.contains(&format!("--config {}", DEFAULT_CONFIG_PATH)));
     }
 
     #[cfg(unix)]
@@ -5821,7 +5825,7 @@ mod tests {
         let options = RuntimeOptions::parse(&[
             OsString::from("--module"),
             OsString::from(
-                "mirror=./data;use-chroot=no;read-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/rsyncd.secrets;bwlimit=1m;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
+                "mirror=./data;use-chroot=no;read-only=yes;list=no;numeric-ids=yes;hosts-allow=192.0.2.0/24;auth-users=alice,bob;secrets-file=/etc/oc-rsyncd/oc-rsyncd.secrets;bwlimit=1m;refuse-options=compress;uid=1000;gid=2000;timeout=600;max-connections=5",
             ),
         ])
         .expect("parse module with inline options");
@@ -5847,7 +5851,7 @@ mod tests {
             module
                 .secrets_file()
                 .map(|path| path.to_string_lossy().into_owned()),
-            Some(String::from("/etc/rsyncd.secrets"))
+            Some(String::from(DEFAULT_SECRETS_PATH))
         );
         assert_eq!(
             module.bandwidth_limit().map(NonZeroU64::get),

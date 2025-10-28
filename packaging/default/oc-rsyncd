@@ -4,5 +4,5 @@
 # daemon or to point at an alternate configuration file. Values are consumed
 # by the systemd unit installed with the oc-rsync packages.
 #
-# RSYNCD_CONFIG=/etc/rsyncd.conf
+# RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf
 # RSYNCD_ARGS="--max-sessions 16"
