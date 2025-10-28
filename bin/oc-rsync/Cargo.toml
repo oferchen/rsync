@@ -24,7 +24,7 @@ extended-description = "Pure-Rust implementation of oc-rsync-compatible client a
 assets = [
     ["../../target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
     ["../../target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
-    ["../../packaging/systemd/rsyncd.service", "/lib/systemd/system/rsyncd.service", "644"],
+    ["../../packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["../../packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
 ]
@@ -37,7 +37,7 @@ requires = ["glibc", "libgcc"]
 assets = [
     { path = "../../target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
     { path = "../../target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
-    { path = "../../packaging/systemd/rsyncd.service", dest = "/usr/lib/systemd/system/rsyncd.service", mode = "0644" },
+    { path = "../../packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { path = "../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { path = "../../packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
 ]
