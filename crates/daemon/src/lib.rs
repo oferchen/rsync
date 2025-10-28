@@ -201,7 +201,9 @@ use rsync_core::{
         apply_effective_limit, parse_bandwidth_limit,
     },
     branding::{self, Brand},
-    fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, fallback_override},
+    fallback::{
+        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, fallback_override,
+    },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     version::{RUST_VERSION, VersionInfoReport},
@@ -5113,7 +5115,7 @@ where
 }
 
 fn auto_delegate_system_rsync_enabled() -> bool {
-    matches!(env_flag("OC_RSYNC_DAEMON_AUTO_DELEGATE"), Some(true))
+    matches!(env_flag(DAEMON_AUTO_DELEGATE_ENV), Some(true))
 }
 
 fn configured_fallback_binary() -> Option<OsString> {
@@ -5140,13 +5142,20 @@ fn fallback_binary() -> OsString {
 fn env_flag(name: &str) -> Option<bool> {
     let value = env::var_os(name)?;
     let value = value.to_string_lossy();
-    if value.trim().is_empty() {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
         return Some(true);
     }
 
-    match value.trim().to_ascii_lowercase().as_str() {
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => Some(true),
+    if trimmed.eq_ignore_ascii_case("0")
+        || trimmed.eq_ignore_ascii_case("false")
+        || trimmed.eq_ignore_ascii_case("no")
+        || trimmed.eq_ignore_ascii_case("off")
+    {
+        Some(false)
+    } else {
+        Some(true)
     }
 }
 
@@ -5701,7 +5710,7 @@ mod tests {
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
         let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
-        let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("1"));
+        let _auto = EnvGuard::set(DAEMON_AUTO_DELEGATE_ENV, OsStr::new("1"));
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
@@ -5957,7 +5966,7 @@ mod tests {
         let script = format!("#!/bin/sh\necho invoked > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
         let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
-        let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("0"));
+        let _auto = EnvGuard::set(DAEMON_AUTO_DELEGATE_ENV, OsStr::new("0"));
 
         let (code, stdout, _stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
 
