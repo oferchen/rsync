@@ -5,8 +5,8 @@ After=network.target
 
 [Service]
 Type=simple
-Environment="RSYNCD_CONFIG=/etc/rsyncd.conf"
-EnvironmentFile=-/etc/default/rsyncd
+Environment="RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
+EnvironmentFile=-/etc/default/oc-rsyncd
 ExecStart=/usr/bin/oc-rsyncd --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
