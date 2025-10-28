@@ -200,6 +200,7 @@ use rsync_core::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         apply_effective_limit, parse_bandwidth_limit,
     },
+    branding,
     fallback::fallback_override,
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
@@ -244,10 +245,10 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
-const DEFAULT_CONFIG_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.conf";
-const LEGACY_CONFIG_PATH: &str = "/etc/rsyncd.conf";
+const DEFAULT_CONFIG_PATH: &str = branding::OC_DAEMON_CONFIG_PATH;
+const LEGACY_CONFIG_PATH: &str = branding::LEGACY_DAEMON_CONFIG_PATH;
 #[cfg(test)]
-const DEFAULT_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
+const DEFAULT_SECRETS_PATH: &str = branding::OC_DAEMON_SECRETS_PATH;
 
 /// Deterministic help text describing the currently supported daemon surface.
 const HELP_TEXT: &str = concat!(
@@ -266,7 +267,9 @@ const HELP_TEXT: &str = concat!(
     "  --port PORT         Listen on the supplied TCP port (default 873).\n",
     "  --once              Accept a single connection and exit.\n",
     "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
-    "  --config FILE      Load module definitions from FILE (packages install /etc/oc-rsyncd/oc-rsyncd.conf).\n",
+    "  --config FILE      Load module definitions from FILE (packages install ",
+    DEFAULT_CONFIG_PATH,
+    ").\n",
     "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
     "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",
     "  --motd-line TEXT   Append TEXT as an additional MOTD line.\n",
