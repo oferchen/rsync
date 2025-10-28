@@ -76,6 +76,12 @@ shared branding facade, ensuring help text, diagnostics, and configuration
 searches remain consistent across entry points regardless of the executable
 name that launched the process.
 
+Workspace automation consumes the same identifiers via the
+`[workspace.metadata.oc_rsync]` section in the top-level `Cargo.toml`. The
+metadata records the canonical program names, configuration locations, source
+URL, and supported protocol version so packaging tasks and CI workflows can
+validate branding before producing release artifacts.
+
 Higher-level crates such as `daemon` remain under development. The new engine
 module powers the local copy mode shipped by `oc-rsync` (and therefore any
 compatibility symlink that targets it), but delta transfer, remote transports,
