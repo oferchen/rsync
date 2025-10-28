@@ -618,6 +618,36 @@ pub fn detect_brand(program: Option<&OsStr>) -> Brand {
         .unwrap_or(Brand::Upstream)
 }
 
+/// Returns the [`BrandProfile`] resolved from the provided program identifier.
+///
+/// The helper mirrors [`detect_brand`] but directly returns the
+/// [`BrandProfile`] associated with the resolved [`Brand`]. Callers that only
+/// need filesystem paths or canonical program names can therefore avoid
+/// matching on [`Brand`] manually.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use rsync_core::branding::{resolve_brand_profile, Brand};
+///
+/// let oc_profile = resolve_brand_profile(Some(OsStr::new("oc-rsync")));
+/// assert_eq!(
+///     oc_profile.client_program_name(),
+///     Brand::Oc.client_program_name()
+/// );
+///
+/// let upstream_profile = resolve_brand_profile(Some(OsStr::new("rsync")));
+/// assert_eq!(
+///     upstream_profile.daemon_config_path(),
+///     Brand::Upstream.daemon_config_path()
+/// );
+/// ```
+#[must_use]
+pub fn resolve_brand_profile(program: Option<&OsStr>) -> BrandProfile {
+    detect_brand(program).profile()
+}
+
 fn brand_override_from_env() -> Option<Brand> {
     let value = env::var_os(BRAND_OVERRIDE_ENV)?;
     if value.is_empty() {
@@ -863,6 +893,20 @@ mod tests {
         assert_eq!(
             detect_brand(Some(OsStr::new("/usr/local/bin/rsync-3.4.1"))),
             Brand::Upstream
+        );
+    }
+
+    #[test]
+    fn resolve_brand_profile_delegates_to_detect_brand() {
+        let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
+
+        let oc = resolve_brand_profile(Some(OsStr::new("oc-rsync")));
+        assert_eq!(oc.client_program_name(), Brand::Oc.client_program_name());
+
+        let upstream = resolve_brand_profile(Some(OsStr::new("rsync")));
+        assert_eq!(
+            upstream.daemon_program_name(),
+            Brand::Upstream.daemon_program_name()
         );
     }
 
