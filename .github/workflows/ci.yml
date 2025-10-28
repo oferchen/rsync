@@ -148,32 +148,39 @@ jobs:
 
   build-matrix:
     needs: test-linux
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: linux-x86_64
-            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            builder: native
+            bins: "oc-rsync oc-rsyncd"
           - name: linux-aarch64
-            os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-          - name: macos-x86_64
-            os: macos-13
+            builder: native
+            bins: "oc-rsync oc-rsyncd"
+          - name: darwin-x86_64
             target: x86_64-apple-darwin
-          - name: macos-aarch64
-            os: macos-14
+            builder: zig
+            bins: "oc-rsync oc-rsyncd"
+          - name: darwin-aarch64
             target: aarch64-apple-darwin
+            builder: zig
+            bins: "oc-rsync oc-rsyncd"
           - name: windows-x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-gnu
+            builder: zig
+            bins: "oc-rsync"
           - name: windows-x86
-            os: windows-latest
-            target: i686-pc-windows-msvc
+            target: i686-pc-windows-gnu
+            builder: zig
+            bins: "oc-rsync"
           - name: windows-aarch64
-            os: windows-2022
-            target: aarch64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
+            target: aarch64-pc-windows-gnu
+            builder: zig
+            bins: "oc-rsync"
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -181,8 +188,7 @@ jobs:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
@@ -191,45 +197,48 @@ jobs:
             echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           fi
+      - name: Install Zig toolchain
+        if: ${{ matrix.builder == 'zig' }}
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.builder == 'zig' }}
+        run: cargo install cargo-zigbuild --locked
 
       - name: Build release binaries
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            bins=("oc-rsync")
-          else
-            bins=("oc-rsync" "oc-rsyncd")
-          fi
-
+          read -r -a bins <<< "${{ matrix.bins }}"
           for bin in "${bins[@]}"; do
-            cargo build --release --target "${{ matrix.target }}" --bin "$bin"
+            if [[ "${{ matrix.builder }}" == "zig" ]]; then
+              cargo zigbuild --release --target "${{ matrix.target }}" --bin "$bin"
+            else
+              cargo build --release --target "${{ matrix.target }}" --bin "$bin"
+            fi
           done
 
       - name: Package artifacts
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            bins=("oc-rsync")
+          read -r -a bins <<< "${{ matrix.bins }}"
+          ext=""
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
             ext=".exe"
-          else
-            bins=("oc-rsync" "oc-rsyncd")
-            ext=""
           fi
 
           base_dir="dist/${{ matrix.name }}"
           mkdir -p "$base_dir"
 
-          declare -a outputs=()
           for bin in "${bins[@]}"; do
             src="target/${{ matrix.target }}/release/${bin}${ext}"
             dest="$base_dir/${bin}${ext}"
             cp "$src" "$dest"
-            outputs+=("$dest")
           done
 
-          if [[ "${{ runner.os }}" != "Windows" ]]; then
+          if [[ "${{ matrix.target }}" != *"windows"* ]]; then
             cargo install cyclonedx-rust-cargo || true
             cyclonedx-rust-cargo --output "$base_dir/oc-rsync-${{ matrix.name }}-sbom.json"
           fi
