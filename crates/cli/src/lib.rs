@@ -631,8 +631,7 @@ impl OutFormat {
                                     | OutFormatPlaceholder::FileNameWithSymlinkTarget
                             ),
                         );
-                        if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget)
-                        {
+                        if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget) {
                             if let Some(metadata) = event.metadata() {
                                 if let Some(target) = metadata.symlink_target() {
                                     buffer.push_str(" -> ");
