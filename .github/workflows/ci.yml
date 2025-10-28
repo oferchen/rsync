@@ -71,7 +71,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -Dwarnings
         
       - name: Enforce line count limits
-        run: MAX_RUST_LINES=600 bash tools/enforce_limits.sh
+        run: cargo run -p xtask -- enforce-limits
         
       - name: Build documentation
         run: cargo doc --workspace --no-deps
@@ -80,7 +80,7 @@ jobs:
         run: cargo test --doc --workspace
         
       - name: Ensure no placeholders remain
-        run: bash tools/no_placeholders.sh
+        run: cargo run -p xtask -- no-placeholders
 
   test-linux:
     needs: lint
