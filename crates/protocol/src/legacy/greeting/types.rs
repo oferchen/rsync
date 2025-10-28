@@ -1,10 +1,10 @@
 use crate::error::NegotiationError;
 use crate::version::ProtocolVersion;
-use core::fmt::{self, Write as FmtWrite};
 use std::borrow::ToOwned;
 
-mod tokens;
-pub use tokens::DigestListTokens;
+use super::super::LEGACY_DAEMON_PREFIX;
+use super::tokens::DigestListTokens;
+
 /// Owned representation of a legacy ASCII daemon greeting.
 ///
 /// [`LegacyDaemonGreeting`] borrows the buffer that backed the parsed line,
@@ -21,8 +21,6 @@ pub struct LegacyDaemonGreetingOwned {
     subprotocol: Option<u32>,
     digest_list: Option<String>,
 }
-
-use super::{LEGACY_DAEMON_PREFIX, malformed_legacy_greeting};
 
 /// Detailed representation of a legacy ASCII daemon greeting.
 ///
@@ -96,6 +94,20 @@ impl<'a> LegacyDaemonGreeting<'a> {
     #[must_use]
     pub const fn has_digest_list(self) -> bool {
         self.digest_list.is_some()
+    }
+
+    pub(super) fn new(
+        protocol: ProtocolVersion,
+        advertised_protocol: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<&'a str>,
+    ) -> Self {
+        Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        }
     }
 
     /// Returns an iterator over the whitespace-separated digest tokens announced by the daemon.
@@ -215,7 +227,7 @@ impl LegacyDaemonGreetingOwned {
 
     /// Constructs an owned legacy daemon greeting from its parsed components.
     ///
-    /// The helper mirrors [`parse_legacy_daemon_greeting_details`] by clamping
+    /// The helper mirrors [`crate::parse_legacy_daemon_greeting_details`] by clamping
     /// future protocol advertisements, normalising digest lists, and enforcing
     /// the rule that protocol 31 and newer must include a fractional suffix.
     /// This is primarily useful in tests that want to exercise higher layers
@@ -400,200 +412,3 @@ impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
         }
     }
 }
-
-/// Parses a legacy ASCII daemon greeting of the form `@RSYNCD: <version>`.
-///
-/// This convenience wrapper retains the historical API by returning only the
-/// negotiated [`ProtocolVersion`]. Callers that need access to the advertised
-/// protocol number, subprotocol suffix, or digest list should use
-/// [`parse_legacy_daemon_greeting_details`].
-#[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
-pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, NegotiationError> {
-    parse_legacy_daemon_greeting_details(line).map(LegacyDaemonGreeting::protocol)
-}
-
-/// Parses a legacy ASCII daemon greeting and returns an owned representation.
-///
-/// Legacy negotiation helpers frequently need to retain the parsed metadata
-/// beyond the lifetime of the buffer that backed the original line. This
-/// wrapper mirrors [`parse_legacy_daemon_greeting_details`] but converts the
-/// borrowed [`LegacyDaemonGreeting`] into the fully owned
-/// [`LegacyDaemonGreetingOwned`], allowing callers to drop the input buffer
-/// immediately after parsing.
-///
-/// # Examples
-///
-/// ```
-/// use rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
-///
-/// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 29\n")?;
-/// assert_eq!(owned.protocol(), ProtocolVersion::from_supported(29).unwrap());
-/// assert_eq!(owned.advertised_protocol(), 29);
-/// assert!(!owned.has_subprotocol());
-/// # Ok::<_, rsync_protocol::NegotiationError>(())
-/// ```
-#[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
-pub fn parse_legacy_daemon_greeting_owned(
-    line: &str,
-) -> Result<LegacyDaemonGreetingOwned, NegotiationError> {
-    parse_legacy_daemon_greeting_details(line).map(Into::into)
-}
-
-/// Parses a legacy daemon greeting and returns a structured representation.
-#[doc(alias = "@RSYNCD")]
-#[must_use = "legacy daemon greeting parsing errors must be handled"]
-pub fn parse_legacy_daemon_greeting_details(
-    line: &str,
-) -> Result<LegacyDaemonGreeting<'_>, NegotiationError> {
-    let trimmed = line.trim_end_matches(['\r', '\n']);
-    let malformed = || malformed_legacy_greeting(trimmed);
-
-    let after_prefix = trimmed
-        .strip_prefix(LEGACY_DAEMON_PREFIX)
-        .ok_or_else(malformed)?;
-
-    let mut remainder = after_prefix.trim_start();
-    if remainder.is_empty() {
-        return Err(malformed());
-    }
-
-    let digits_len = ascii_digit_prefix_len(remainder);
-    if digits_len == 0 {
-        return Err(malformed());
-    }
-
-    let digits = &remainder[..digits_len];
-    let advertised_protocol = parse_ascii_digits_to_u32(digits);
-    remainder = &remainder[digits_len..];
-
-    let mut subprotocol = None;
-    loop {
-        let trimmed_remainder = remainder.trim_start_matches(char::is_whitespace);
-        let had_leading_whitespace = trimmed_remainder.len() != remainder.len();
-
-        if trimmed_remainder.is_empty() {
-            remainder = trimmed_remainder;
-            break;
-        }
-
-        if let Some(after_dot) = trimmed_remainder.strip_prefix('.') {
-            let fractional_len = ascii_digit_prefix_len(after_dot);
-            if fractional_len == 0 {
-                return Err(malformed());
-            }
-
-            let fractional_digits = &after_dot[..fractional_len];
-            subprotocol = Some(parse_ascii_digits_to_u32(fractional_digits));
-            remainder = &after_dot[fractional_len..];
-            continue;
-        }
-
-        if !had_leading_whitespace {
-            return Err(malformed());
-        }
-
-        remainder = trimmed_remainder;
-        break;
-    }
-
-    if advertised_protocol >= 31 && subprotocol.is_none() {
-        return Err(malformed());
-    }
-
-    let digest_list = remainder.trim();
-    let digest_list = if digest_list.is_empty() {
-        None
-    } else {
-        Some(digest_list)
-    };
-
-    let negotiated = advertised_protocol.min(u32::from(u8::MAX)) as u8;
-    let protocol = ProtocolVersion::from_peer_advertisement(negotiated)?;
-
-    Ok(LegacyDaemonGreeting {
-        protocol,
-        advertised_protocol,
-        subprotocol,
-        digest_list,
-    })
-}
-
-/// Returns the length of the leading ASCII-digit run within `input`.
-fn ascii_digit_prefix_len(input: &str) -> usize {
-    input
-        .as_bytes()
-        .iter()
-        .take_while(|byte| byte.is_ascii_digit())
-        .count()
-}
-
-/// Parses a string consisting solely of ASCII digits into a `u32`, saturating on
-/// overflow.
-fn parse_ascii_digits_to_u32(digits: &str) -> u32 {
-    let mut value: u32 = 0;
-
-    for &byte in digits.as_bytes() {
-        debug_assert!(byte.is_ascii_digit());
-        let digit = u32::from(byte - b'0');
-        value = value.saturating_mul(10);
-        value = value.saturating_add(digit);
-    }
-
-    value
-}
-
-/// Writes the legacy ASCII daemon greeting into the supplied [`fmt::Write`] sink.
-///
-/// Upstream daemons send a line such as `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n` when speaking to
-/// older clients. The helper mirrors that layout without allocating, enabling
-/// callers to render the greeting directly into stack buffers or
-/// pre-allocated `String`s. The newline terminator is appended automatically to
-/// match upstream rsync's behaviour.
-pub fn write_legacy_daemon_greeting<W: FmtWrite>(
-    writer: &mut W,
-    version: ProtocolVersion,
-) -> fmt::Result {
-    writer.write_str(LEGACY_DAEMON_PREFIX)?;
-    writer.write_char(' ')?;
-
-    let mut value = version.as_u8();
-    let mut digits = [0u8; 3];
-    let mut len = 0usize;
-
-    loop {
-        debug_assert!(
-            len < digits.len(),
-            "protocol version must fit in three decimal digits"
-        );
-        digits[len] = value % 10;
-        len += 1;
-        value /= 10;
-
-        if value == 0 {
-            break;
-        }
-    }
-
-    for index in (0..len).rev() {
-        writer.write_char(char::from(b'0' + digits[index]))?;
-    }
-
-    writer.write_str(".0\n")
-}
-
-/// Formats the legacy ASCII daemon greeting used by pre-protocol-30 peers.
-///
-/// This convenience wrapper allocates a [`String`] and delegates to
-/// [`write_legacy_daemon_greeting`] so existing call sites can retain their API
-/// while newer code paths format directly into reusable buffers.
-#[must_use]
-pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
-    let mut banner = String::with_capacity(LEGACY_DAEMON_PREFIX.len() + 6);
-    write_legacy_daemon_greeting(&mut banner, version).expect("writing to a String cannot fail");
-    banner
-}
-
-#[cfg(test)]
-mod tests;
