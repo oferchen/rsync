@@ -6,10 +6,16 @@ use std::str::FromStr;
 use crate::limiter::BandwidthLimiter;
 
 /// Parsed `--bwlimit` components consisting of an optional rate and burst size.
+///
+/// In addition to the negotiated byte-per-second rate, the structure records
+/// whether the user explicitly supplied the limit. This allows callers to
+/// distinguish between inherited defaults and requests such as `--bwlimit=0`
+/// that disable throttling while remaining user-driven decisions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BandwidthLimitComponents {
     rate: Option<NonZeroU64>,
     burst: Option<NonZeroU64>,
+    limit_specified: bool,
     burst_specified: bool,
 }
 
@@ -21,7 +27,7 @@ impl BandwidthLimitComponents {
     /// so the helper mirrors that behaviour by discarding the supplied burst.
     #[must_use]
     pub const fn new(rate: Option<NonZeroU64>, burst: Option<NonZeroU64>) -> Self {
-        Self::new_with_specified(rate, burst, burst.is_some())
+        Self::new_internal(rate, burst, rate.is_some(), burst.is_some())
     }
 
     /// Returns a component set that disables throttling.
@@ -33,7 +39,7 @@ impl BandwidthLimitComponents {
     /// can be used in static initialisers and default values.
     #[must_use]
     pub const fn unlimited() -> Self {
-        Self::new(None, None)
+        Self::new_internal(None, None, false, false)
     }
 
     /// Constructs a new component set and records whether the burst component
@@ -44,22 +50,25 @@ impl BandwidthLimitComponents {
         burst: Option<NonZeroU64>,
         burst_specified: bool,
     ) -> Self {
-        let effective_rate = rate;
-        let effective_burst = if effective_rate.is_some() {
-            burst
-        } else {
-            None
-        };
-        let effective_specified = if effective_rate.is_some() {
-            burst_specified
-        } else {
-            false
-        };
+        Self::new_internal(rate, burst, rate.is_some(), burst_specified)
+    }
+
+    const fn new_internal(
+        rate: Option<NonZeroU64>,
+        burst: Option<NonZeroU64>,
+        limit_specified: bool,
+        burst_specified: bool,
+    ) -> Self {
+        let has_rate = rate.is_some();
+        let effective_limit_specified = if has_rate { true } else { limit_specified };
+        let effective_burst = if has_rate { burst } else { None };
+        let effective_burst_specified = if has_rate { burst_specified } else { false };
 
         Self {
-            rate: effective_rate,
+            rate,
             burst: effective_burst,
-            burst_specified: effective_specified,
+            limit_specified: effective_limit_specified,
+            burst_specified: effective_burst_specified,
         }
     }
 
@@ -79,6 +88,12 @@ impl BandwidthLimitComponents {
     #[must_use]
     pub const fn burst_specified(&self) -> bool {
         self.burst_specified
+    }
+
+    /// Indicates whether the rate component was explicitly specified.
+    #[must_use]
+    pub const fn limit_specified(&self) -> bool {
+        self.limit_specified
     }
 
     /// Indicates whether the limit disables throttling.
@@ -388,15 +403,20 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
     if let Some((rate_text, burst_text)) = trimmed.split_once(':') {
         let rate = parse_bandwidth_argument(rate_text)?;
         if rate.is_none() {
-            return Ok(BandwidthLimitComponents::unlimited());
+            return Ok(BandwidthLimitComponents::new_internal(
+                None, None, true, false,
+            ));
         }
 
         let burst = parse_bandwidth_argument(burst_text)?;
-        Ok(BandwidthLimitComponents::new_with_specified(
-            rate, burst, true,
+        Ok(BandwidthLimitComponents::new_internal(
+            rate, burst, true, true,
         ))
     } else {
-        parse_bandwidth_argument(trimmed).map(|rate| BandwidthLimitComponents::new(rate, None))
+        parse_bandwidth_argument(trimmed).map(|rate| match rate {
+            Some(rate) => BandwidthLimitComponents::new(Some(rate), None),
+            None => BandwidthLimitComponents::new_internal(None, None, true, false),
+        })
     }
 }
 
