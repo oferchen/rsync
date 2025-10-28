@@ -367,10 +367,27 @@ pub const fn client_program_name() -> &'static str {
     upstream_client_program_name()
 }
 
+/// Returns the canonical client program name as an [`OsStr`].
+///
+/// The helper avoids repeating `OsStr::new(client_program_name())` at call sites,
+/// keeping conversions centralised alongside the raw string constant. The
+/// returned slice borrows the compile-time string and therefore lives for the
+/// duration of the program.
+#[must_use]
+pub fn client_program_name_os_str() -> &'static OsStr {
+    OsStr::new(client_program_name())
+}
+
 /// Returns the canonical daemon program name for upstream-compatible binaries.
 #[must_use]
 pub const fn daemon_program_name() -> &'static str {
     upstream_daemon_program_name()
+}
+
+/// Returns the canonical daemon program name as an [`OsStr`].
+#[must_use]
+pub fn daemon_program_name_os_str() -> &'static OsStr {
+    OsStr::new(daemon_program_name())
 }
 
 /// Returns the branded client program name exposed as `oc-rsync`.
@@ -379,10 +396,22 @@ pub const fn oc_client_program_name() -> &'static str {
     OC_CLIENT_PROGRAM_NAME
 }
 
+/// Returns the branded client program name as an [`OsStr`].
+#[must_use]
+pub fn oc_client_program_name_os_str() -> &'static OsStr {
+    OsStr::new(oc_client_program_name())
+}
+
 /// Returns the branded daemon program name exposed as `oc-rsyncd`.
 #[must_use]
 pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
+}
+
+/// Returns the branded daemon program name as an [`OsStr`].
+#[must_use]
+pub fn oc_daemon_program_name_os_str() -> &'static OsStr {
+    OsStr::new(oc_daemon_program_name())
 }
 
 /// Returns the canonical configuration directory used by `oc-rsyncd`.
