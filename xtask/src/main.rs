@@ -57,7 +57,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 use toml::Value;
@@ -244,6 +244,11 @@ where
             let workspace = workspace_root()?;
             execute_docs(&workspace, options)
         }
+        "no-binaries" => {
+            let options = parse_no_binaries_args(args)?;
+            let workspace = workspace_root()?;
+            execute_no_binaries(&workspace, options)
+        }
         "preflight" => {
             let options = parse_preflight_args(args)?;
             let workspace = workspace_root()?;
@@ -281,6 +286,9 @@ struct SbomOptions {
 struct DocsOptions {
     open: bool,
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NoBinariesOptions;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PreflightOptions;
@@ -341,6 +349,26 @@ where
     }
 
     Ok(options)
+}
+
+fn parse_no_binaries_args<I>(args: I) -> Result<NoBinariesOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+
+    if let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(no_binaries_usage()));
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for no-binaries command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    Ok(NoBinariesOptions)
 }
 
 fn parse_preflight_args<I>(args: I) -> Result<PreflightOptions, TaskError>
@@ -504,6 +532,26 @@ fn execute_docs(workspace: &Path, options: DocsOptions) -> Result<(), TaskError>
         "cargo test --doc",
         "ensure the Rust toolchain is installed",
     )
+}
+
+fn execute_no_binaries(workspace: &Path, _options: NoBinariesOptions) -> Result<(), TaskError> {
+    let tracked_files = list_tracked_files(workspace)?;
+    let mut binary_paths = Vec::new();
+
+    for relative in tracked_files {
+        let absolute = workspace.join(&relative);
+        if is_probably_binary(&absolute)? {
+            binary_paths.push(relative);
+        }
+    }
+
+    if binary_paths.is_empty() {
+        println!("No tracked binary files detected.");
+        return Ok(());
+    }
+
+    binary_paths.sort();
+    Err(TaskError::BinaryFiles(binary_paths))
 }
 
 fn execute_preflight(workspace: &Path, _options: PreflightOptions) -> Result<(), TaskError> {
@@ -818,7 +866,7 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  branding Display workspace branding metadata\n  docs     Build API documentation and run doctests\n  preflight Validate branding, packaging, and documentation metadata\n  package  Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom     Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help     Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  branding     Display workspace branding metadata\n  docs         Build API documentation and run doctests\n  no-binaries  Ensure no tracked binary artifacts are committed\n  preflight    Validate branding, packaging, and documentation metadata\n  package      Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom         Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help         Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
     )
 }
 
@@ -831,6 +879,12 @@ fn docs_usage() -> String {
 fn branding_usage() -> String {
     String::from(
         "Usage: cargo xtask branding\n\nOptions:\n  -h, --help      Show this help message",
+    )
+}
+
+fn no_binaries_usage() -> String {
+    String::from(
+        "Usage: cargo xtask no-binaries\n\nOptions:\n  -h, --help      Show this help message",
     )
 }
 
@@ -860,6 +914,7 @@ enum TaskError {
     ToolMissing(String),
     Metadata(String),
     Validation(String),
+    BinaryFiles(Vec<PathBuf>),
     CommandFailed { program: String, status: ExitStatus },
 }
 
@@ -872,6 +927,13 @@ impl fmt::Display for TaskError {
             TaskError::Io(error) => write!(f, "{error}"),
             TaskError::ToolMissing(message) => f.write_str(message),
             TaskError::Metadata(message) => f.write_str(message),
+            TaskError::BinaryFiles(paths) => {
+                writeln!(f, "binary files detected in repository:")?;
+                for path in paths {
+                    writeln!(f, "  {}", path.display())?;
+                }
+                Ok(())
+            }
             TaskError::CommandFailed { program, status } => {
                 if let Some(code) = status.code() {
                     write!(f, "{program} exited with status code {code}")
@@ -924,6 +986,94 @@ fn run_cargo_tool(
         program: display.to_string(),
         status: output.status,
     })
+}
+
+fn list_tracked_files(workspace: &Path) -> Result<Vec<PathBuf>, TaskError> {
+    let output = Command::new("git")
+        .current_dir(workspace)
+        .args(["ls-files", "-z"])
+        .output()
+        .map_err(|error| {
+            map_command_error(
+                error,
+                "git ls-files",
+                "install git and ensure it is available in PATH",
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(TaskError::CommandFailed {
+            program: String::from("git ls-files"),
+            status: output.status,
+        });
+    }
+
+    let mut files = Vec::new();
+    for entry in output.stdout.split(|byte| *byte == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            files.push(PathBuf::from(OsString::from_vec(entry.to_vec())));
+        }
+
+        #[cfg(not(unix))]
+        {
+            let path = String::from_utf8(entry.to_vec()).map_err(|_| {
+                TaskError::Metadata(String::from(
+                    "git reported a non-UTF-8 path; binary audit requires UTF-8 file names on this platform",
+                ))
+            })?;
+            files.push(PathBuf::from(path));
+        }
+    }
+
+    Ok(files)
+}
+
+fn is_probably_binary(path: &Path) -> Result<bool, TaskError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Ok(false);
+    }
+
+    let mut file = fs::File::open(path)?;
+    let mut buffer = [0u8; 8192];
+    let mut printable = 0usize;
+    let mut control = 0usize;
+    let mut inspected = 0usize;
+
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+
+        inspected += read;
+
+        for &byte in &buffer[..read] {
+            match byte {
+                0 => return Ok(true),
+                0x07 | 0x08 | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => printable += 1,
+                0x20..=0x7E => printable += 1,
+                _ if byte >= 0x80 => printable += 1,
+                _ => control += 1,
+            }
+        }
+
+        if control > printable {
+            return Ok(true);
+        }
+
+        if inspected >= buffer.len() {
+            break;
+        }
+    }
+
+    Ok(false)
 }
 
 fn parse_package_args<I>(args: I) -> Result<PackageOptions, TaskError>
@@ -1065,12 +1215,14 @@ fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), Task
 #[cfg(test)]
 mod tests {
     use super::{
-        BrandingOptions, DocsOptions, PackageOptions, PreflightOptions, SbomOptions, TaskError,
-        WorkspaceBranding, branding_usage, docs_usage, package_usage, parse_branding_args,
-        parse_docs_args, parse_package_args, parse_preflight_args, parse_sbom_args,
-        parse_workspace_branding, preflight_usage, sbom_usage, top_level_usage,
+        BrandingOptions, DocsOptions, NoBinariesOptions, PackageOptions, PreflightOptions,
+        SbomOptions, TaskError, WorkspaceBranding, branding_usage, docs_usage, no_binaries_usage,
+        package_usage, parse_branding_args, parse_docs_args, parse_no_binaries_args,
+        parse_package_args, parse_preflight_args, parse_sbom_args, parse_workspace_branding,
+        preflight_usage, sbom_usage, top_level_usage,
     };
     use std::ffi::OsString;
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -1132,6 +1284,30 @@ mod tests {
     fn top_level_usage_mentions_docs_command() {
         let usage = top_level_usage();
         assert!(usage.contains("docs"));
+    }
+
+    #[test]
+    fn parse_no_binaries_args_accepts_default_configuration() {
+        let options = parse_no_binaries_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, NoBinariesOptions);
+    }
+
+    #[test]
+    fn parse_no_binaries_args_reports_help_request() {
+        let error = parse_no_binaries_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == no_binaries_usage()));
+    }
+
+    #[test]
+    fn parse_no_binaries_args_rejects_unknown_argument() {
+        let error = parse_no_binaries_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_no_binaries_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("no-binaries"));
     }
 
     #[test]
@@ -1350,5 +1526,33 @@ mod tests {
         let manifest = r#"[workspace]\n[workspace.metadata]\n"#;
         let error = parse_workspace_branding(manifest).unwrap_err();
         assert!(matches!(error, TaskError::Metadata(_)));
+    }
+
+    #[test]
+    fn is_probably_binary_flags_null_byte_payloads() {
+        let path = unique_temp_path("binary");
+        fs::write(&path, b"text\0binary").expect("write sample");
+        let is_binary = super::is_probably_binary(&path).expect("analysis succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert!(is_binary);
+    }
+
+    #[test]
+    fn is_probably_binary_accepts_utf8_text() {
+        let path = unique_temp_path("text");
+        fs::write(&path, "Rust makes systems programming enjoyable!\n").expect("write sample");
+        let is_binary = super::is_probably_binary(&path).expect("analysis succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert!(!is_binary);
+    }
+
+    fn unique_temp_path(suffix: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time monotonic")
+            .as_nanos();
+        std::env::temp_dir().join(format!("oc_rsync_xtask_{now}_{suffix}"))
     }
 }

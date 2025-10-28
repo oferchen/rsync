@@ -26,8 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure no binary files are tracked
-        run: test -z "$(git ls-files -z | xargs -0 file --mime | grep -vE 'text/|application/json')"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.87
+          cache: true
+      - name: Audit repository for tracked binary artifacts
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: -p xtask -- no-binaries
 
   lint:
     runs-on: ubuntu-latest
