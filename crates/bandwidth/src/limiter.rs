@@ -70,7 +70,7 @@ impl<'a> RecordedSleepSession<'a> {
     #[inline]
     fn with_recorded_sleeps_mut<R>(&self, op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
         let mut guard = lock_recorded_sleeps();
-        op(&mut *guard)
+        op(guard.as_mut())
     }
 
     /// Removes any previously recorded durations.
