@@ -99,12 +99,14 @@ fn parse_bandwidth_limit_accepts_burst_component() {
         components,
         BandwidthLimitComponents::new(NonZeroU64::new(1_048_576), NonZeroU64::new(64 * 1024),)
     );
+    assert!(components.limit_specified());
 }
 
 #[test]
 fn parse_bandwidth_limit_accepts_unlimited_rate() {
     let components: BandwidthLimitComponents = "0".parse().expect("parse succeeds");
     assert!(components.is_unlimited());
+    assert!(components.limit_specified());
 }
 
 #[test]
@@ -122,7 +124,9 @@ fn parse_bandwidth_limit_rejects_negative_burst() {
 #[test]
 fn parse_bandwidth_limit_zero_rate_disables_burst() {
     let components = parse_bandwidth_limit("0:128K").expect("parse succeeds");
-    assert_eq!(components, BandwidthLimitComponents::unlimited());
+    assert!(components.is_unlimited());
+    assert!(components.limit_specified());
+    assert!(components.burst().is_none());
 }
 
 #[test]
@@ -137,8 +141,10 @@ fn components_discard_burst_for_unlimited_rate() {
 fn parse_bandwidth_limit_reports_unlimited_state() {
     let components = parse_bandwidth_limit("0").expect("parse succeeds");
     assert!(components.is_unlimited());
+    assert!(components.limit_specified());
     let limited = parse_bandwidth_limit("1M").expect("parse succeeds");
     assert!(!limited.is_unlimited());
+    assert!(limited.limit_specified());
 }
 
 #[test]
@@ -147,6 +153,7 @@ fn bandwidth_limit_components_unlimited_matches_default() {
     assert!(unlimited.is_unlimited());
     assert_eq!(unlimited, BandwidthLimitComponents::default());
     assert!(!unlimited.burst_specified());
+    assert!(!unlimited.limit_specified());
 }
 
 #[test]
@@ -157,6 +164,7 @@ fn parse_bandwidth_limit_accepts_zero_burst() {
         BandwidthLimitComponents::new_with_specified(NonZeroU64::new(1_048_576), None, true,)
     );
     assert!(components.burst_specified());
+    assert!(components.limit_specified());
 }
 
 #[test]
