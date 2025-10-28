@@ -20,7 +20,7 @@ layering while keeping checksum-specific optimisations in one place.
 
 ## Invariants
 
-- [`crate::rolling::RollingChecksum`] truncates both state components to 16 bits
+- [`RollingChecksum`] truncates both state components to 16 bits
   after every update, matching upstream rsync's behaviour.
 - Rolling updates reject mismatched slice lengths and empty windows so the
   caller never observes silent state corruption.
