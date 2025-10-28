@@ -85,6 +85,15 @@ pub const CLIENT_FALLBACK_ENV: &str = "OC_RSYNC_FALLBACK";
 /// operators to toggle delegation independently for the daemon process.
 pub const DAEMON_FALLBACK_ENV: &str = "OC_RSYNC_DAEMON_FALLBACK";
 
+/// Name of the daemon auto-delegation environment variable.
+///
+/// Setting [`DAEMON_AUTO_DELEGATE_ENV`] to a truthy value enables the
+/// compatibility mode where `oc-rsyncd` launches the upstream `rsync` binary
+/// without requiring the `--delegate-system-rsync` flag. The constant lives in
+/// this module so callers and integration tests share the same identifier when
+/// toggling the behaviour.
+pub const DAEMON_AUTO_DELEGATE_ENV: &str = "OC_RSYNC_DAEMON_AUTO_DELEGATE";
+
 /// Represents the parsed interpretation of a fallback environment override.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FallbackOverride {
@@ -192,6 +201,7 @@ mod tests {
     fn fallback_env_constants_match_expected() {
         assert_eq!(CLIENT_FALLBACK_ENV, "OC_RSYNC_FALLBACK");
         assert_eq!(DAEMON_FALLBACK_ENV, "OC_RSYNC_DAEMON_FALLBACK");
+        assert_eq!(DAEMON_AUTO_DELEGATE_ENV, "OC_RSYNC_DAEMON_AUTO_DELEGATE");
     }
 
     impl Drop for EnvVarGuard {
