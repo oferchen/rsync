@@ -23,11 +23,12 @@ rsync-protocol = { path = "../protocol" }
 rsync-bandwidth = { path = "../bandwidth" }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
+libc = { version = "0.2", optional = true }
 
 [features]
 default = []
 xattr = ["rsync-meta/xattr"]
-acl = ["rsync-meta/acl"]
+acl = ["rsync-meta/acl", "dep:libc"]
 
 [dev-dependencies]
 filetime = "0.2"
