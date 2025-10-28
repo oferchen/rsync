@@ -2,8 +2,6 @@
 members = [
     "bin/oc-rsync",
     "bin/oc-rsyncd",
-    "bin/rsync",
-    "bin/rsyncd",
     "crates/cli",
     "crates/bandwidth",
     "crates/checksums",
