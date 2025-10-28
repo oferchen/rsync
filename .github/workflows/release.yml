@@ -96,6 +96,7 @@ jobs:
           for bin in "${bins[@]}"; do
             cargo build --release --target "${{ matrix.target }}" --bin "$bin"
           done
+
       - name: Package artifacts
         shell: bash
         run: |
@@ -121,6 +122,7 @@ jobs:
 
           cargo install cargo-sbom || true
           cargo sbom --output "$base_dir/oc-rsync-${{ matrix.target }}-sbom.json"
+          
       - name: Build packages
         if: runner.os == 'Linux'
         shell: bash

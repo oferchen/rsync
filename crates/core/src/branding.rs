@@ -75,10 +75,11 @@ pub enum Brand {
 ///
 /// Parsing accepts ASCII case-insensitive aliases for both the upstream and
 /// branded binaries. Accepted values include `"oc"`, `"oc-rsync"`,
-/// `"oc-rsyncd"`, `"upstream"`, `"rsync"`, and `"rsyncd"`, as well as
-/// versioned variants such as `"oc-rsync-3.4.1"`. Whitespace surrounding the
-/// input is ignored. Any other value triggers `BrandParseError` so callers can
-/// fall back to defaults or surface a diagnostic to the user.
+/// `"oc_rsync"`, `"oc.rsyncd"`, `"upstream"`, `"rsync"`, and `"rsyncd"`, as
+/// well as versioned variants such as `"oc-rsync-3.4.1"` or `"rsync_3.4.1"`.
+/// Whitespace surrounding the input is ignored. Any other value triggers
+/// `BrandParseError` so callers can fall back to defaults or surface a
+/// diagnostic to the user.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BrandParseError;
 
@@ -533,11 +534,12 @@ pub fn oc_daemon_secrets_path() -> &'static Path {
 /// The helper inspects the supplied stem (for example the output of
 /// [`Path::file_stem`]) and returns [`Brand::Oc`] when the binary belongs to the
 /// branded `oc-` family. The comparison tolerates versioned wrapper names such
-/// as `oc-rsync-3.4.1` or `oc-rsyncd_v2` so distribution-specific symlinks keep
-/// their branded behaviour without additional configuration. Executables that
-/// do not resemble either family fall back to [`default_brand`], ensuring
-/// repackaged builds retain their configured identity even when launched via
-/// intermediate wrappers that obscure the program name.
+/// as `oc-rsync-3.4.1` or `oc_rsyncd_v2` and treats `-`, `_`, and `.` as
+/// interchangeable separators so distribution-specific symlinks keep their
+/// branded behaviour without additional configuration. All other names fall
+/// back to the upstream-compatible profile so symlinked invocations using the
+/// upstream names keep their semantics aligned with the reference
+/// implementation.
 ///
 /// # Examples
 ///
@@ -576,22 +578,47 @@ pub fn brand_for_program_name(program: &str) -> Brand {
 }
 
 fn matches_program_alias(program: &str, canonical: &str) -> bool {
-    if program.eq_ignore_ascii_case(canonical) {
+    if normalized_program_match(program, canonical) {
         return true;
     }
 
-    let Some(prefix) = program.get(..canonical.len()) else {
-        return false;
-    };
-
-    if !prefix.eq_ignore_ascii_case(canonical) {
+    if program.len() <= canonical.len() || !program.is_char_boundary(canonical.len()) {
         return false;
     }
+
+    let prefix = &program[..canonical.len()];
+    if !normalized_program_match(prefix, canonical) {
+        return false;
+    };
 
     program
         .get(canonical.len()..)
         .and_then(|suffix| suffix.chars().next())
         .is_some_and(|separator| matches!(separator, '-' | '_' | '.'))
+}
+
+fn normalized_program_match(candidate: &str, canonical: &str) -> bool {
+    if candidate.len() != canonical.len() {
+        return false;
+    }
+
+    candidate
+        .bytes()
+        .zip(canonical.bytes())
+        .all(|(candidate_byte, canonical_byte)| {
+            program_alias_byte_eq(candidate_byte, canonical_byte)
+        })
+}
+
+fn program_alias_byte_eq(candidate: u8, canonical: u8) -> bool {
+    let candidate_lower = candidate.to_ascii_lowercase();
+    let canonical_lower = canonical.to_ascii_lowercase();
+
+    if candidate_lower == canonical_lower {
+        return true;
+    }
+
+    canonical_lower == b'-' && matches!(candidate_lower, b'-' | b'_' | b'.')
 }
 
 fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
@@ -902,9 +929,12 @@ mod tests {
         assert_eq!(brand_for_program_name("rsyncd"), Brand::Upstream);
         assert_eq!(brand_for_program_name("oc-rsync"), Brand::Oc);
         assert_eq!(brand_for_program_name("oc-rsyncd"), Brand::Oc);
+        assert_eq!(brand_for_program_name("oc_rsync"), Brand::Oc);
+        assert_eq!(brand_for_program_name("OC.RSYNCD"), Brand::Oc);
         assert_eq!(brand_for_program_name("oc-rsync-3.4.1"), Brand::Oc);
         assert_eq!(brand_for_program_name("OC-RSYNCD_v2"), Brand::Oc);
         assert_eq!(brand_for_program_name("rsync-3.4.1"), Brand::Upstream);
+        assert_eq!(brand_for_program_name("rsync_3.4.1"), Brand::Upstream);
     }
 
     #[test]
@@ -1093,7 +1123,11 @@ mod tests {
     fn brand_from_str_accepts_aliases() {
         assert_eq!(Brand::from_str("oc").unwrap(), Brand::Oc);
         assert_eq!(Brand::from_str("OC-RSYNCD").unwrap(), Brand::Oc);
+        assert_eq!(Brand::from_str("oc_rsync").unwrap(), Brand::Oc);
+        assert_eq!(Brand::from_str("OC.RSYNC").unwrap(), Brand::Oc);
         assert_eq!(Brand::from_str(" rsync-3.4.1 ").unwrap(), Brand::Upstream);
+        assert_eq!(Brand::from_str("rsync_3.4.1").unwrap(), Brand::Upstream);
+        assert_eq!(Brand::from_str("RSYNC.3.4.1").unwrap(), Brand::Upstream);
         assert_eq!(Brand::from_str("RSYNCD").unwrap(), Brand::Upstream);
     }
 
