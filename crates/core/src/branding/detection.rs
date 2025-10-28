@@ -6,27 +6,29 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use super::brand::{Brand, default_brand, matches_program_alias};
-use super::constants::{
-    OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
-    UPSTREAM_DAEMON_PROGRAM_NAME,
-};
+use super::manifest;
 use super::override_env::brand_override_from_env;
 use super::profile::BrandProfile;
 
 /// Returns the branding profile that matches the provided program name.
 #[must_use]
 pub fn brand_for_program_name(program: &str) -> Brand {
-    if matches_program_alias(program, OC_CLIENT_PROGRAM_NAME)
-        || matches_program_alias(program, OC_DAEMON_PROGRAM_NAME)
-    {
-        Brand::Oc
-    } else if matches_program_alias(program, UPSTREAM_CLIENT_PROGRAM_NAME)
-        || matches_program_alias(program, UPSTREAM_DAEMON_PROGRAM_NAME)
-    {
-        Brand::Upstream
-    } else {
-        default_brand()
+    let manifest = manifest();
+    let oc_client = manifest.client_program_name_for(Brand::Oc);
+    let oc_daemon = manifest.daemon_program_name_for(Brand::Oc);
+    if matches_program_alias(program, oc_client) || matches_program_alias(program, oc_daemon) {
+        return Brand::Oc;
     }
+
+    let upstream_client = manifest.client_program_name_for(Brand::Upstream);
+    let upstream_daemon = manifest.daemon_program_name_for(Brand::Upstream);
+    if matches_program_alias(program, upstream_client)
+        || matches_program_alias(program, upstream_daemon)
+    {
+        return Brand::Upstream;
+    }
+
+    default_brand()
 }
 
 fn brand_for_program_path(path: &Path) -> Option<Brand> {
