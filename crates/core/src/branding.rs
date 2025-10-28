@@ -153,6 +153,23 @@ impl Brand {
         self.profile().daemon_config_dir()
     }
 
+    /// Returns the canonical daemon configuration path for this brand.
+    ///
+    /// The value reflects the configuration file packaged with the binary
+    /// distribution. Branded invocations (`oc-rsyncd`) resolve to
+    /// `/etc/oc-rsyncd/oc-rsyncd.conf` while upstream-compatible invocations
+    /// default to `/etc/rsyncd.conf`.
+    #[must_use]
+    pub const fn daemon_config_path_str(self) -> &'static str {
+        self.profile().daemon_config_path_str()
+    }
+
+    /// Returns the canonical daemon configuration path as a [`Path`].
+    #[must_use]
+    pub fn daemon_config_path(self) -> &'static Path {
+        self.profile().daemon_config_path()
+    }
+
     /// Returns the preferred daemon configuration search order for this brand.
     ///
     /// The branded `oc-` binaries consult `/etc/oc-rsyncd/oc-rsyncd.conf`
@@ -186,6 +203,21 @@ impl Brand {
             Self::Oc => [OC_DAEMON_SECRETS_PATH, LEGACY_DAEMON_SECRETS_PATH],
             Self::Upstream => [LEGACY_DAEMON_SECRETS_PATH, OC_DAEMON_SECRETS_PATH],
         }
+    }
+
+    /// Returns the canonical daemon secrets path for this brand.
+    ///
+    /// Branded invocations resolve to `/etc/oc-rsyncd/oc-rsyncd.secrets` while
+    /// upstream-compatible invocations default to `/etc/rsyncd.secrets`.
+    #[must_use]
+    pub const fn daemon_secrets_path_str(self) -> &'static str {
+        self.profile().daemon_secrets_path_str()
+    }
+
+    /// Returns the canonical daemon secrets path as a [`Path`].
+    #[must_use]
+    pub fn daemon_secrets_path(self) -> &'static Path {
+        self.profile().daemon_secrets_path()
     }
 
     /// Returns the preferred secrets-file search order as [`Path`]s.
@@ -784,6 +816,23 @@ mod tests {
     }
 
     #[test]
+    fn config_paths_match_brand_profiles() {
+        assert_eq!(
+            Brand::Oc.daemon_config_path(),
+            Path::new(OC_DAEMON_CONFIG_PATH)
+        );
+        assert_eq!(Brand::Oc.daemon_config_path_str(), OC_DAEMON_CONFIG_PATH);
+        assert_eq!(
+            Brand::Upstream.daemon_config_path(),
+            Path::new(LEGACY_DAEMON_CONFIG_PATH)
+        );
+        assert_eq!(
+            Brand::Upstream.daemon_config_path_str(),
+            LEGACY_DAEMON_CONFIG_PATH
+        );
+    }
+
+    #[test]
     fn secrets_search_orders_match_brand_expectations() {
         assert_eq!(
             Brand::Oc.secrets_path_candidate_strs(),
@@ -800,6 +849,20 @@ mod tests {
         let upstream_paths = Brand::Upstream.secrets_path_candidates();
         assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_SECRETS_PATH));
         assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_SECRETS_PATH));
+
+        assert_eq!(
+            Brand::Oc.daemon_secrets_path(),
+            Path::new(OC_DAEMON_SECRETS_PATH)
+        );
+        assert_eq!(Brand::Oc.daemon_secrets_path_str(), OC_DAEMON_SECRETS_PATH);
+        assert_eq!(
+            Brand::Upstream.daemon_secrets_path(),
+            Path::new(LEGACY_DAEMON_SECRETS_PATH)
+        );
+        assert_eq!(
+            Brand::Upstream.daemon_secrets_path_str(),
+            LEGACY_DAEMON_SECRETS_PATH
+        );
     }
 
     #[test]

@@ -255,9 +255,8 @@ const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "
 /// symlinks and the canonical `oc-rsyncd` binary emit brand-appropriate help
 /// output.
 fn help_text(brand: Brand) -> String {
-    let profile = brand.profile();
-    let program = profile.daemon_program_name();
-    let default_config = profile.daemon_config_path_str();
+    let program = brand.daemon_program_name();
+    let default_config = brand.daemon_config_path_str();
 
     format!(
         concat!(
