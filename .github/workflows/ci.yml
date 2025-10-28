@@ -103,7 +103,7 @@ jobs:
         run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
       - name: Run CLI version tests without ACL/iconv support
         if: steps.install_nextest.outcome == 'success'
-        run: cargo test -p oc-rsync-cli --test version --no-default-features --features "xattr zlib zstd"
+        run: cargo test -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
       - name: Test with coverage (95% lines & functions)
         if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
         run: |
