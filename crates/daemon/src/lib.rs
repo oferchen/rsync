@@ -1440,9 +1440,10 @@ where
     None
 }
 
-fn first_existing_config_path<'a, I>(paths: I) -> Option<OsString>
+fn first_existing_config_path<I, P>(paths: I) -> Option<OsString>
 where
-    I: IntoIterator<Item = &'a str>,
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
 {
     first_existing_path(paths)
 }
@@ -5524,11 +5525,10 @@ mod tests {
         fs::write(&primary, "# primary").expect("write primary");
         fs::write(&legacy, "# legacy").expect("write legacy");
 
-        let primary_str = primary.to_string_lossy().into_owned();
-        let legacy_str = legacy.to_string_lossy().into_owned();
-        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+        let expected = primary.as_os_str().to_os_string();
+        let result = first_existing_config_path([primary.as_path(), legacy.as_path()]);
 
-        assert_eq!(result, Some(OsString::from(primary_str)));
+        assert_eq!(result, Some(expected));
     }
 
     #[test]
@@ -5537,31 +5537,22 @@ mod tests {
         let legacy = dir.path().join("legacy.conf");
         fs::write(&legacy, "# legacy").expect("write legacy");
 
-        let primary_str = dir
-            .path()
-            .join("missing.conf")
-            .to_string_lossy()
-            .into_owned();
-        let legacy_str = legacy.to_string_lossy().into_owned();
-        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+        let missing = dir.path().join("missing.conf");
+        let expected = legacy.as_os_str().to_os_string();
+        let result = first_existing_config_path([missing.as_path(), legacy.as_path()]);
 
-        assert_eq!(result, Some(OsString::from(legacy_str)));
+        assert_eq!(result, Some(expected));
     }
 
     #[test]
     fn first_existing_config_path_returns_none_when_absent() {
         let dir = tempdir().expect("tempdir");
-        let primary_str = dir
-            .path()
-            .join("missing-primary.conf")
-            .to_string_lossy()
-            .into_owned();
-        let legacy_str = dir
-            .path()
-            .join("missing-legacy.conf")
-            .to_string_lossy()
-            .into_owned();
-        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+        let missing_primary = dir.path().join("missing-primary.conf");
+        let missing_legacy = dir.path().join("missing-legacy.conf");
+        let result = first_existing_config_path([
+            missing_primary.as_path(),
+            missing_legacy.as_path(),
+        ]);
 
         assert!(result.is_none());
     }
