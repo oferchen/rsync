@@ -6,33 +6,20 @@ use std::ffi::OsString;
 use std::path::Path;
 
 /// Output format supported by the `branding` command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BrandingOutputFormat {
     /// Human-readable text report.
+    #[default]
     Text,
     /// Structured JSON report suitable for automation.
     Json,
 }
 
-impl Default for BrandingOutputFormat {
-    fn default() -> Self {
-        BrandingOutputFormat::Text
-    }
-}
-
 /// Options accepted by the `branding` command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BrandingOptions {
     /// Desired output format.
     pub format: BrandingOutputFormat,
-}
-
-impl Default for BrandingOptions {
-    fn default() -> Self {
-        BrandingOptions {
-            format: BrandingOutputFormat::default(),
-        }
-    }
 }
 
 /// Parses CLI arguments for the `branding` command.
