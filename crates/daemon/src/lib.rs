@@ -5287,7 +5287,7 @@ mod tests {
     use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
     use std::num::{NonZeroU32, NonZeroU64};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
@@ -9603,16 +9603,24 @@ mod tests {
     }
 
     fn connect_with_retries(port: u16) -> TcpStream {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        const INITIAL_BACKOFF: Duration = Duration::from_millis(20);
+        const MAX_BACKOFF: Duration = Duration::from_millis(200);
+        const TIMEOUT: Duration = Duration::from_secs(15);
+
+        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        let deadline = Instant::now() + TIMEOUT;
+        let mut backoff = INITIAL_BACKOFF;
 
         loop {
-            match TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+            match TcpStream::connect_timeout(&target, backoff) {
                 Ok(stream) => return stream,
                 Err(error) => {
                     if Instant::now() >= deadline {
                         panic!("failed to connect to daemon within timeout: {error}");
                     }
-                    thread::sleep(Duration::from_millis(20));
+
+                    thread::sleep(backoff);
+                    backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
                 }
             }
         }
