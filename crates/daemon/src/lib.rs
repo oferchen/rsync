@@ -51,8 +51,8 @@
 //!   challenge, verifies the client's response against the configured secrets
 //!   file using MD5, and only then reports that transfers are unavailable while
 //!   the data path is under construction.
-//! - [`render_help`] returns a deterministic description of the limited daemon
-//!   capabilities available today, keeping the help text aligned with actual
+//! - A dedicated help renderer returns a deterministic description of the limited
+//!   daemon capabilities available today, keeping the help text aligned with actual
 //!   behaviour until the parity help renderer is implemented.
 //!
 //! # Invariants

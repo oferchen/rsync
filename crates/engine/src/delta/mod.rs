@@ -18,7 +18,7 @@
 //! Rust's type system to surface invalid inputs as structured errors. The helper
 //! takes a [`ProtocolVersion`] so call-sites do not need to translate negotiated
 //! versions into ad-hoc integers, and the checksum length uses
-//! [`NonZeroU8`](core::num::NonZeroU8) to reflect upstream's guarantee that the
+//! [`NonZeroU8`] to reflect upstream's guarantee that the
 //! value never reaches zero. Intermediate calculations use [`u128`] to avoid
 //! overflow when comparing `block_length^2` against large file sizes. Overflow
 //! scenarios—such as a block count that exceeds [`i32::MAX`]—are reported via

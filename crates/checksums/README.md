@@ -9,7 +9,7 @@ interchangeable with the C reference implementation.
 
 The crate currently offers two modules:
 
-- [`crate::rolling`] implements the Adler-32–style weak checksum (`rsum`) used
+- The `rolling` module implements the Adler-32–style weak checksum (`rsum`) used
   for block matching during delta transfers.
 - [`crate::strong`] exposes MD4, MD5, XXH64, and XXH3 (64- and 128-bit) digests
   together with the [`crate::strong::StrongDigest`] trait that higher layers use
