@@ -227,6 +227,11 @@ where
     let command = first.to_string_lossy();
     match command.as_ref() {
         "help" => Err(TaskError::Help(top_level_usage())),
+        "docs" => {
+            let options = parse_docs_args(args)?;
+            let workspace = workspace_root()?;
+            execute_docs(&workspace, options)
+        }
         "sbom" => {
             let options = parse_sbom_args(args)?;
             let workspace = workspace_root()?;
@@ -252,11 +257,48 @@ struct SbomOptions {
     output: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct DocsOptions {
+    open: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PackageOptions {
     build_deb: bool,
     build_rpm: bool,
     profile: Option<OsString>,
+}
+
+fn parse_docs_args<I>(args: I) -> Result<DocsOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut options = DocsOptions::default();
+
+    while let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(docs_usage()));
+        }
+
+        if arg == "--open" {
+            if options.open {
+                return Err(TaskError::Usage(String::from(
+                    "--open specified multiple times",
+                )));
+            }
+
+            options.open = true;
+            continue;
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for docs command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    Ok(options)
 }
 
 fn parse_sbom_args<I>(args: I) -> Result<SbomOptions, TaskError>
@@ -333,6 +375,41 @@ fn execute_sbom(workspace: &Path, options: SbomOptions) -> Result<(), TaskError>
     )
 }
 
+fn execute_docs(workspace: &Path, options: DocsOptions) -> Result<(), TaskError> {
+    println!("Building API documentation");
+    let mut doc_args = vec![
+        OsString::from("doc"),
+        OsString::from("--workspace"),
+        OsString::from("--no-deps"),
+        OsString::from("--locked"),
+    ];
+    if options.open {
+        doc_args.push(OsString::from("--open"));
+    }
+
+    run_cargo_tool(
+        workspace,
+        doc_args,
+        "cargo doc",
+        "ensure the Rust toolchain is installed",
+    )?;
+
+    println!("Running doctests");
+    let test_args = vec![
+        OsString::from("test"),
+        OsString::from("--doc"),
+        OsString::from("--workspace"),
+        OsString::from("--locked"),
+    ];
+
+    run_cargo_tool(
+        workspace,
+        test_args,
+        "cargo test --doc",
+        "ensure the Rust toolchain is installed",
+    )
+}
+
 fn workspace_root() -> Result<PathBuf, TaskError> {
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").ok_or_else(|| {
         TaskError::Io(io::Error::new(
@@ -352,7 +429,13 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  package Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom    Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help    Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  docs    Build API documentation and run doctests\n  package Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom    Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help    Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+    )
+}
+
+fn docs_usage() -> String {
+    String::from(
+        "Usage: cargo xtask docs [--open]\n\nOptions:\n  --open          Open the generated documentation in a browser after building\n  -h, --help      Show this help message",
     )
 }
 
@@ -578,11 +661,49 @@ fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), Task
 #[cfg(test)]
 mod tests {
     use super::{
-        PackageOptions, SbomOptions, TaskError, WorkspaceBranding, package_usage,
-        parse_package_args, parse_sbom_args, parse_workspace_branding, sbom_usage, top_level_usage,
+        DocsOptions, PackageOptions, SbomOptions, TaskError, WorkspaceBranding, docs_usage,
+        package_usage, parse_docs_args, parse_package_args, parse_sbom_args,
+        parse_workspace_branding, sbom_usage, top_level_usage,
     };
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn parse_docs_args_accepts_default_configuration() {
+        let options = parse_docs_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, DocsOptions { open: false });
+    }
+
+    #[test]
+    fn parse_docs_args_enables_open_flag() {
+        let options = parse_docs_args([OsString::from("--open")]).expect("parse succeeds");
+        assert_eq!(options, DocsOptions { open: true });
+    }
+
+    #[test]
+    fn parse_docs_args_rejects_duplicate_open_flag() {
+        let error =
+            parse_docs_args([OsString::from("--open"), OsString::from("--open")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--open")));
+    }
+
+    #[test]
+    fn parse_docs_args_reports_help_request() {
+        let error = parse_docs_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == docs_usage()));
+    }
+
+    #[test]
+    fn parse_docs_args_rejects_unknown_argument() {
+        let error = parse_docs_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_docs_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("docs"));
+    }
 
     #[test]
     fn parse_sbom_args_accepts_default_configuration() {

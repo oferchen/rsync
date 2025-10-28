@@ -97,6 +97,12 @@ unsafe code across all crates. To run the existing unit and property tests:
 cargo test
 ```
 
+Rebuild the API documentation and run doctests via the workspace helper:
+
+```bash
+cargo run -p xtask -- docs
+```
+
 Generate a CycloneDX SBOM for packaging via the workspace helper:
 
 ```bash
