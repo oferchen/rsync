@@ -245,9 +245,6 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
-#[cfg(test)]
-const DEFAULT_SECRETS_PATH: &str = branding::OC_DAEMON_SECRETS_PATH;
-
 /// Deterministic help text describing the currently supported daemon surface.
 ///
 /// The snapshot adjusts the banner, usage line, and default configuration path
