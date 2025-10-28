@@ -33,15 +33,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
           components: clippy,rustfmt
           cache: true
+          
       - name: Update apt cache
         run: sudo apt-get update
+        
       - name: Install system dependencies
         run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+        
       - uses: actions/cache@v4
         with:
           path: |
@@ -52,16 +56,22 @@ jobs:
           key: ${{ runner.os }}-lint-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-lint-
+            
       - name: Check formatting
         run: cargo fmt --all -- --check
+        
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -Dwarnings
+        
       - name: Enforce line count limits
         run: MAX_RUST_LINES=600 bash tools/enforce_limits.sh
+        
       - name: Build documentation
         run: cargo doc --workspace --no-deps
+        
       - name: Run doctests
         run: cargo test --doc --workspace
+        
       - name: Ensure no placeholders remain
         run: bash tools/no_placeholders.sh
 
@@ -81,6 +91,7 @@ jobs:
 
       - name: Update apt cache
         run: sudo apt-get update
+        
       - name: Install system dependencies
         run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
 
@@ -99,10 +110,13 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast
+        
       - name: Run tests (extended features)
         run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
+        
       - name: Run CLI version tests without ACL/iconv support
         run: cargo test -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
+        
       - name: Test with coverage (95% lines & functions)
         run: cargo llvm-cov nextest --workspace --features "cli nightly" --fail-under-lines 95 --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
 
@@ -114,9 +128,11 @@ jobs:
         with:
           name: coverage-lcov
           path: coverage.lcov
+          
   interop:
     needs: test-linux
     runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -126,8 +142,10 @@ jobs:
           cache: true
       - name: Update apt cache
         run: sudo apt-get update
+        
       - name: Install system dependencies
         run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+        
       - uses: actions/cache@v4
         with:
           path: |
@@ -138,6 +156,7 @@ jobs:
           key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-test-
+            
       - name: Run tests (all features)
         run: cargo test --workspace --all-features
 
@@ -152,26 +171,32 @@ jobs:
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
+            
           - name: linux-aarch64
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
+            
           - name: darwin-x86_64
             target: x86_64-apple-darwin
             build_command: zigbuild
             build_daemon: true
+            
           - name: darwin-aarch64
             target: aarch64-apple-darwin
             build_command: zigbuild
             build_daemon: true
+            
           - name: windows-x86_64
             target: x86_64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
+            
           - name: windows-x86
             target: i686-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
+            
           - name: windows-aarch64
             target: aarch64-pc-windows-gnu
             build_command: zigbuild
@@ -183,21 +208,27 @@ jobs:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
+          
       - name: Update apt cache
         run: sudo apt-get update
+        
       - name: Install system dependencies
         run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+        
       - name: Install aarch64 cross toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get install -y gcc-aarch64-linux-gnu
+        
       - name: Configure aarch64 environment
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: printf 'CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc\nCARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n' >> "$GITHUB_ENV"
+
       - name: Install Zig toolchain
         if: matrix.build_command == 'zigbuild'
         uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
+          
       - name: Install cargo-zigbuild
         if: matrix.build_command == 'zigbuild'
         uses: taiki-e/install-action@v2
@@ -246,6 +277,7 @@ jobs:
 
       - name: Update apt cache
         run: sudo apt-get update
+        
       - name: Install system dependencies
         run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
 
@@ -253,10 +285,12 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb
+          
       - name: Install cargo-rpm
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-rpm
+          
       - name: Install cyclonedx-rust-cargo
         uses: taiki-e/install-action@v2
         with:
@@ -267,6 +301,7 @@ jobs:
 
       - name: Build Debian package
         run: cargo deb -p oc-rsync-bin
+        
       - name: Build RPM package
         run: cargo rpm build --release
 
