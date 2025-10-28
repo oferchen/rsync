@@ -1,0 +1,163 @@
+# Per-file line count configuration for cargo xtask enforce-limits.
+# Files listed below are legacy ports of the upstream C implementation and
+# intentionally exceed the workspace-wide 600 line limit. Each entry grants a
+# modest buffer above the current line count so future cleanups continue to be
+# encouraged.
+
+default_max_lines = 600
+default_warn_lines = 400
+
+[[overrides]]
+path = "crates/cli/src/lib.rs"
+max_lines = 17652
+warn_lines = 17552
+
+[[overrides]]
+path = "crates/engine/src/local_copy.rs"
+max_lines = 14073
+warn_lines = 13973
+
+[[overrides]]
+path = "crates/core/src/client.rs"
+max_lines = 11320
+warn_lines = 11220
+
+[[overrides]]
+path = "crates/daemon/src/lib.rs"
+max_lines = 10203
+warn_lines = 10103
+
+[[overrides]]
+path = "crates/transport/src/negotiation.rs"
+max_lines = 6497
+warn_lines = 6397
+
+[[overrides]]
+path = "crates/core/src/message.rs"
+max_lines = 5268
+warn_lines = 5168
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests.rs"
+max_lines = 3659
+warn_lines = 3559
+
+[[overrides]]
+path = "crates/core/src/version.rs"
+max_lines = 2783
+warn_lines = 2683
+
+[[overrides]]
+path = "xtask/src/main.rs"
+max_lines = 2850
+warn_lines = 2750
+
+[[overrides]]
+path = "crates/protocol/src/multiplex.rs"
+max_lines = 2169
+warn_lines = 2069
+
+[[overrides]]
+path = "crates/transport/src/session/tests.rs"
+max_lines = 1831
+warn_lines = 1731
+
+[[overrides]]
+path = "crates/transport/src/binary.rs"
+max_lines = 1827
+warn_lines = 1727
+
+[[overrides]]
+path = "crates/logging/src/lib.rs"
+max_lines = 1817
+warn_lines = 1717
+
+[[overrides]]
+path = "crates/transport/src/daemon.rs"
+max_lines = 1745
+warn_lines = 1645
+
+[[overrides]]
+path = "crates/checksums/src/rolling.rs"
+max_lines = 1689
+warn_lines = 1589
+
+[[overrides]]
+path = "crates/protocol/src/version.rs"
+max_lines = 1651
+warn_lines = 1551
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/sniffer.rs"
+max_lines = 1596
+warn_lines = 1496
+
+[[overrides]]
+path = "crates/protocol/src/envelope.rs"
+max_lines = 1592
+warn_lines = 1492
+
+[[overrides]]
+path = "crates/protocol/src/version/tests.rs"
+max_lines = 1524
+warn_lines = 1424
+
+[[overrides]]
+path = "crates/meta/src/lib.rs"
+max_lines = 1429
+warn_lines = 1329
+
+[[overrides]]
+path = "crates/core/src/branding.rs"
+max_lines = 1395
+warn_lines = 1295
+
+[[overrides]]
+path = "crates/protocol/src/compatibility.rs"
+max_lines = 1303
+warn_lines = 1203
+
+[[overrides]]
+path = "crates/protocol/src/legacy/greeting.rs"
+max_lines = 1247
+warn_lines = 1147
+
+[[overrides]]
+path = "crates/bandwidth/src/limiter.rs"
+max_lines = 1100
+warn_lines = 1000
+
+[[overrides]]
+path = "crates/filters/src/lib.rs"
+max_lines = 1075
+warn_lines = 975
+
+[[overrides]]
+path = "crates/walk/src/lib.rs"
+max_lines = 1017
+warn_lines = 917
+
+[[overrides]]
+path = "crates/bandwidth/src/limiter/tests.rs"
+max_lines = 1010
+warn_lines = 910
+
+[[overrides]]
+path = "crates/transport/src/session/handshake.rs"
+max_lines = 897
+warn_lines = 797
+
+[[overrides]]
+path = "crates/protocol/src/legacy/lines.rs"
+max_lines = 827
+warn_lines = 727
+
+[[overrides]]
+path = "crates/meta/src/chmod.rs"
+max_lines = 819
+warn_lines = 719
+
+[[overrides]]
+path = "crates/transport/src/ssh/mod.rs"
+max_lines = 807
+warn_lines = 707
