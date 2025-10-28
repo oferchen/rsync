@@ -112,7 +112,7 @@ use rsync_core::{
     fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
-    version::{RUST_VERSION, VersionInfoReport},
+    version::{RUST_VERSION, VersionInfoReport, WEB_SITE},
 };
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
@@ -127,10 +127,10 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 fn help_text() -> String {
     format!(
         concat!(
-            "rsync {version}\n",
-            "https://github.com/oferchen/rsync\n",
+            "{program} {version}\n",
+            "{website}\n",
             "\n",
-            "Usage: rsync [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
+            "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE] SOURCE... DEST\n",
             "\n",
             "This development snapshot implements deterministic local filesystem\n",
             "copies for regular files, directories, and symbolic links. The\n",
@@ -148,7 +148,7 @@ fn help_text() -> String {
             "      --no-secluded-args  Alias of --no-protect-args.\n",
             "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
             "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
-            "      --daemon    Run as an rsync daemon (delegates to rsyncd).\n",
+            "      --daemon    Run as an rsync daemon (delegates to {daemon}).\n",
             "  -n, --dry-run    Validate transfers without modifying the destination.\n",
             "      --list-only  List files without performing a transfer.\n",
             "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
@@ -277,7 +277,10 @@ fn help_text() -> String {
             "sources are supplied, DEST must name a directory. Metadata preservation\n",
             "covers permissions, timestamps, and optional ownership metadata.\n",
         ),
+        program = branding::client_program_name(),
         version = RUST_VERSION,
+        website = WEB_SITE,
+        daemon = branding::daemon_program_name(),
     )
 }
 
@@ -2777,7 +2780,7 @@ where
 {
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
     if args.is_empty() {
-        args.push(OsString::from("rsync"));
+        args.push(OsString::from(Brand::Upstream.client_program_name()));
     }
 
     if server_mode_requested(&args) {
@@ -2852,18 +2855,20 @@ where
     let _ = stdout.flush();
     let _ = stderr.flush();
 
+    let upstream_program = Brand::Upstream.client_program_name();
+    let upstream_program_os = OsStr::new(upstream_program);
     let fallback = match fallback_override("OC_RSYNC_FALLBACK") {
         Some(FallbackOverride::Disabled) => {
-            write_server_fallback_error(
-                stderr,
-                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream rsync binary",
+            let text = format!(
+                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
             );
+            write_server_fallback_error(stderr, text);
             return 1;
         }
         Some(other) => other
-            .resolve_or_default(OsStr::new("rsync"))
-            .unwrap_or_else(|| OsString::from("rsync")),
-        None => OsString::from("rsync"),
+            .resolve_or_default(upstream_program_os)
+            .unwrap_or_else(|| OsString::from(upstream_program)),
+        None => OsString::from(upstream_program),
     };
 
     let mut command = Command::new(&fallback);
@@ -2876,7 +2881,7 @@ where
         Ok(child) => child,
         Err(error) => {
             let text = format!(
-                "failed to launch fallback rsync binary '{}': {error}",
+                "failed to launch fallback {upstream_program} binary '{}': {error}",
                 Path::new(&fallback).display()
             );
             write_server_fallback_error(stderr, text);
@@ -2924,7 +2929,7 @@ where
                 terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                 write_server_fallback_error(
                     stderr,
-                    format!("failed to read stdout from fallback rsync: {error}"),
+                    format!("failed to read stdout from fallback {upstream_program}: {error}"),
                 );
                 return 1;
             }
@@ -2932,7 +2937,7 @@ where
                 terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                 write_server_fallback_error(
                     stderr,
-                    format!("failed to read stderr from fallback rsync: {error}"),
+                    format!("failed to read stderr from fallback {upstream_program}: {error}"),
                 );
                 return 1;
             }
@@ -2955,7 +2960,7 @@ where
         Err(error) => {
             write_server_fallback_error(
                 stderr,
-                format!("failed to wait for fallback rsync process: {error}"),
+                format!("failed to wait for fallback {upstream_program} process: {error}"),
             );
             1
         }
