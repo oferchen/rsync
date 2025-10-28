@@ -20,6 +20,7 @@ env:
   LC_ALL: C
   TZ: UTC
   COLUMNS: 80
+  TZ: UTC
 
 jobs:
   no-binaries:
