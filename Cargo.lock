@@ -597,13 +597,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsync-bin"
-version = "0.0.0"
-dependencies = [
- "rsync-cli",
-]
-
-[[package]]
 name = "rsync-checksums"
 version = "0.0.0"
 dependencies = [
@@ -741,13 +734,6 @@ name = "rsync-walk"
 version = "0.0.0"
 dependencies = [
  "tempfile",
-]
-
-[[package]]
-name = "rsyncd-bin"
-version = "0.0.0"
-dependencies = [
- "rsync-daemon",
 ]
 
 [[package]]
