@@ -5012,11 +5012,11 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 fn configured_fallback_binary() -> Option<OsString> {
-    if let Some(selection) = fallback_override("OC_RSYNC_DAEMON_FALLBACK") {
+    if let Some(selection) = fallback_override(DAEMON_FALLBACK_ENV) {
         return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
     }
 
-    if let Some(selection) = fallback_override("OC_RSYNC_FALLBACK") {
+    if let Some(selection) = fallback_override(CLIENT_FALLBACK_ENV) {
         return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
     }
 
