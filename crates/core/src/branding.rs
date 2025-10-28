@@ -2,12 +2,16 @@
 
 //! Branding constants shared across the workspace.
 //!
-//! The `branding` module centralises the branded program names and filesystem
+//! The `branding` module centralises the program names and filesystem
 //! locations that the workspace exposes publicly. Higher-level crates rely on
 //! these constants when rendering banners or searching for configuration files
-//! so that packaging, documentation, and runtime behaviour remain aligned. By
-//! funnelling branding details through this module we keep string literals out
-//! of business logic and make it trivial to update paths or names in one place.
+//! so that packaging, documentation, and runtime behaviour remain aligned. The
+//! module records both the upstream-compatible `rsync`/`rsyncd` names and the
+//! branded `oc-rsync`/`oc-rsyncd` wrappers together with convenience accessors
+//! that allow the CLI and daemon crates to select the correct identity for a
+//! given execution mode. By funnelling branding details through this module we
+//! keep string literals out of business logic and make it trivial to update
+//! paths or names in one place.
 //!
 //! # Examples
 //!
@@ -26,11 +30,19 @@
 
 use std::path::Path;
 
-/// Canonical binary name exposed by the client wrapper packaged as `oc-rsync`.
+/// Canonical binary name exposed by the upstream-compatible client wrapper.
+#[doc(alias = "rsync")]
+pub const CLIENT_PROGRAM_NAME: &str = "rsync";
+
+/// Canonical binary name exposed by the upstream-compatible daemon wrapper.
+#[doc(alias = "rsyncd")]
+pub const DAEMON_PROGRAM_NAME: &str = "rsyncd";
+
+/// Canonical binary name exposed by the branded client wrapper packaged as `oc-rsync`.
 #[doc(alias = "oc-rsync")]
 pub const OC_CLIENT_PROGRAM_NAME: &str = "oc-rsync";
 
-/// Canonical binary name exposed by the daemon wrapper packaged as `oc-rsyncd`.
+/// Canonical binary name exposed by the branded daemon wrapper packaged as `oc-rsyncd`.
 #[doc(alias = "oc-rsyncd")]
 pub const OC_DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
 
@@ -60,6 +72,30 @@ pub fn oc_daemon_config_path() -> &'static Path {
     Path::new(OC_DAEMON_CONFIG_PATH)
 }
 
+/// Returns the canonical client program name for upstream-compatible binaries.
+#[must_use]
+pub const fn client_program_name() -> &'static str {
+    CLIENT_PROGRAM_NAME
+}
+
+/// Returns the canonical daemon program name for upstream-compatible binaries.
+#[must_use]
+pub const fn daemon_program_name() -> &'static str {
+    DAEMON_PROGRAM_NAME
+}
+
+/// Returns the branded client program name exposed as `oc-rsync`.
+#[must_use]
+pub const fn oc_client_program_name() -> &'static str {
+    OC_CLIENT_PROGRAM_NAME
+}
+
+/// Returns the branded daemon program name exposed as `oc-rsyncd`.
+#[must_use]
+pub const fn oc_daemon_program_name() -> &'static str {
+    OC_DAEMON_PROGRAM_NAME
+}
+
 /// Returns the canonical secrets path used by `oc-rsyncd`.
 #[must_use]
 pub fn oc_daemon_secrets_path() -> &'static Path {
@@ -76,4 +112,31 @@ pub fn legacy_daemon_config_path() -> &'static Path {
 #[must_use]
 pub fn legacy_daemon_secrets_path() -> &'static Path {
     Path::new(LEGACY_DAEMON_SECRETS_PATH)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn program_names_are_consistent() {
+        assert_eq!(client_program_name(), CLIENT_PROGRAM_NAME);
+        assert_eq!(daemon_program_name(), DAEMON_PROGRAM_NAME);
+        assert_eq!(oc_client_program_name(), OC_CLIENT_PROGRAM_NAME);
+        assert_eq!(oc_daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn oc_paths_match_expected_locations() {
+        assert_eq!(oc_daemon_config_path(), Path::new(OC_DAEMON_CONFIG_PATH));
+        assert_eq!(oc_daemon_secrets_path(), Path::new(OC_DAEMON_SECRETS_PATH));
+        assert_eq!(
+            legacy_daemon_config_path(),
+            Path::new(LEGACY_DAEMON_CONFIG_PATH)
+        );
+        assert_eq!(
+            legacy_daemon_secrets_path(),
+            Path::new(LEGACY_DAEMON_SECRETS_PATH)
+        );
+    }
 }

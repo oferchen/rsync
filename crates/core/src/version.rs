@@ -66,6 +66,9 @@
 //!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
 //!   while advertising the Rust-branded binary name.
 
+use crate::branding::{
+    client_program_name, daemon_program_name, oc_client_program_name, oc_daemon_program_name,
+};
 use core::{
     fmt::{self, Write as FmtWrite},
     iter::{FromIterator, FusedIterator},
@@ -120,16 +123,16 @@ pub const COMPILED_FEATURE_BITMAP: u8 = {
 };
 
 /// Program name rendered by the `rsync` client when displaying version banners.
-pub const PROGRAM_NAME: &str = "rsync";
+pub use crate::branding::CLIENT_PROGRAM_NAME as PROGRAM_NAME;
 
 /// Program name rendered by the `rsyncd` daemon when displaying version banners.
-pub const DAEMON_PROGRAM_NAME: &str = "rsyncd";
+pub use crate::branding::DAEMON_PROGRAM_NAME;
 
 /// Program name used by the standalone `oc-rsync` client wrapper.
-pub const OC_PROGRAM_NAME: &str = "oc-rsync";
+pub use crate::branding::OC_CLIENT_PROGRAM_NAME as OC_PROGRAM_NAME;
 
 /// Program name used by the standalone `oc-rsyncd` daemon wrapper.
-pub const OC_DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
+pub use crate::branding::OC_DAEMON_PROGRAM_NAME;
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";
@@ -348,7 +351,25 @@ impl Default for VersionMetadata {
 #[doc(alias = "--version")]
 #[must_use]
 pub const fn version_metadata() -> VersionMetadata {
-    version_metadata_for_program(PROGRAM_NAME)
+    version_metadata_for_program(client_program_name())
+}
+
+/// Returns metadata configured for the upstream-compatible `rsync` daemon banner.
+#[must_use]
+pub const fn daemon_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(daemon_program_name())
+}
+
+/// Returns metadata configured for the branded `oc-rsync` client banner.
+#[must_use]
+pub const fn oc_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(oc_client_program_name())
+}
+
+/// Returns metadata configured for the branded `oc-rsyncd` daemon banner.
+#[must_use]
+pub const fn oc_daemon_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(oc_daemon_program_name())
 }
 
 /// Returns version metadata that renders a banner for the supplied program name.
@@ -1876,10 +1897,21 @@ mod tests {
 
     #[test]
     fn version_metadata_for_program_overrides_program_name() {
-        let metadata = version_metadata_for_program(DAEMON_PROGRAM_NAME);
-
+        let metadata = daemon_version_metadata();
         assert_eq!(metadata.program_name(), DAEMON_PROGRAM_NAME);
         assert_eq!(metadata.protocol_version(), ProtocolVersion::NEWEST);
+
+        let branded = oc_version_metadata();
+        assert_eq!(branded.program_name(), OC_PROGRAM_NAME);
+        assert_eq!(branded.protocol_version(), ProtocolVersion::NEWEST);
+
+        let branded_daemon = oc_daemon_version_metadata();
+        assert_eq!(branded_daemon.program_name(), OC_DAEMON_PROGRAM_NAME);
+        assert_eq!(branded_daemon.protocol_version(), ProtocolVersion::NEWEST);
+
+        let custom = version_metadata_for_program("custom-rsync");
+        assert_eq!(custom.program_name(), "custom-rsync");
+        assert_eq!(custom.protocol_version(), ProtocolVersion::NEWEST);
     }
 
     #[test]
