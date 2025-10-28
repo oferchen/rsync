@@ -347,14 +347,11 @@ mod tests {
             ProtocolVersion::V30.as_u8() as u32,
             ProtocolVersion::V30,
         );
-        const FUTURE_CLAMPED: bool = FUTURE.was_clamped();
-        const SUPPORTED_CLAMPED: bool = SUPPORTED.was_clamped();
-
         const _: () = assert_const(CLAMPED, "remote advertisements must be clamped");
         const _: () = assert_const(!NOT_CLAMPED, "remote advertisement unexpectedly clamped");
-        const _: () = assert_const(FUTURE_CLAMPED, "future advertisement should be clamped");
+        const _: () = assert_const(FUTURE.was_clamped(), "future advertisement should be clamped");
         const _: () = assert_const(
-            !SUPPORTED_CLAMPED,
+            !SUPPORTED.was_clamped(),
             "supported advertisement should not be clamped",
         );
 
