@@ -4984,7 +4984,8 @@ fn emit_stats<W: Write + ?Sized>(
 fn format_stat_categories(categories: &[(&str, u64)]) -> String {
     let parts: Vec<String> = categories
         .iter()
-        .filter_map(|(label, count)| (*count > 0).then(|| format!("{label}: {count}")))
+        .filter(|(_, count)| *count > 0)
+        .map(|(label, count)| format!("{label}: {count}"))
         .collect();
     if parts.is_empty() {
         String::new()
