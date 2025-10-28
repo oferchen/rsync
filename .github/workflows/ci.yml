@@ -154,7 +154,7 @@ jobs:
         run: cargo test --workspace --all-features
 
   build-matrix:
-    needs: test-linux
+    needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
