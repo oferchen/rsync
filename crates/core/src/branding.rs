@@ -6,8 +6,9 @@
 //! locations that the workspace exposes publicly. Higher-level crates rely on
 //! these constants when rendering banners or searching for configuration files
 //! so that packaging, documentation, and runtime behaviour remain aligned. The
-//! module records both the upstream-compatible `rsync`/`rsyncd` names and the
-//! branded `oc-rsync`/`oc-rsyncd` wrappers together with convenience accessors
+//! module records both the upstream-compatible `rsync`/`rsyncd` names (used by
+//! symlinks and remote invocations) and the branded `oc-rsync`/`oc-rsyncd`
+//! binaries together with convenience accessors
 //! that allow the CLI and daemon crates to select the correct identity for a
 //! given execution mode. By funnelling branding details through this module we
 //! keep string literals out of business logic and make it trivial to update
@@ -33,8 +34,9 @@ use std::path::Path;
 
 /// Identifies the brand associated with an executable name.
 ///
-/// The workspace distributes both upstream-compatible binaries (`rsync`/`rsyncd`)
-/// and branded wrappers (`oc-rsync`/`oc-rsyncd`). Centralising the mapping keeps
+/// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`),
+/// typically provided via symlinks or remote invocations, and the branded
+/// binaries (`oc-rsync`/`oc-rsyncd`). Centralising the mapping keeps
 /// higher layers free from string comparisons and ensures configuration paths,
 /// help banners, and diagnostics stay consistent across entry points. The
 /// [`Brand::profile`] method exposes the corresponding [`BrandProfile`], which in
@@ -74,9 +76,9 @@ impl Brand {
     ///
     /// The branded `oc-` binaries consult `/etc/oc-rsyncd/oc-rsyncd.conf`
     /// first and only fall back to the legacy `/etc/rsyncd.conf` when the
-    /// branded path is absent. Compatibility wrappers invert that order so
-    /// existing upstream deployments keep working without configuration
-    /// changes.
+    /// branded path is absent. Invocations that use the upstream names
+    /// (`rsync`/`rsyncd`) invert that order so existing deployments keep
+    /// working without configuration changes.
     #[must_use]
     pub const fn config_path_candidate_strs(self) -> [&'static str; 2] {
         match self {
@@ -95,8 +97,8 @@ impl Brand {
     /// Returns the preferred secrets-file search order for this brand.
     ///
     /// Similar to [`Self::config_path_candidate_strs`], the branded binaries
-    /// prefer `/etc/oc-rsyncd/oc-rsyncd.secrets` while compatibility wrappers
-    /// continue to read `/etc/rsyncd.secrets` by default.
+    /// prefer `/etc/oc-rsyncd/oc-rsyncd.secrets` while invocations that use the
+    /// upstream names continue to read `/etc/rsyncd.secrets` by default.
     #[must_use]
     pub const fn secrets_path_candidate_strs(self) -> [&'static str; 2] {
         match self {
@@ -287,7 +289,7 @@ pub fn oc_daemon_secrets_path() -> &'static Path {
 /// The helper inspects the supplied stem (for example the output of
 /// [`Path::file_stem`]) and returns [`Brand::Oc`] when the binary belongs to the
 /// branded `oc-` family. All other names fall back to the upstream-compatible
-/// profile so wrappers like the compatibility `rsync` binary keep their
+/// profile so symlinked invocations using the upstream names keep their
 /// semantics aligned with the reference implementation.
 ///
 /// # Examples
@@ -325,12 +327,12 @@ pub fn brand_for_program_name(program: &str) -> Brand {
 /// Detects the [`Brand`] associated with an invocation argument.
 ///
 /// The helper mirrors the logic used by the client and daemon front-ends when
-/// determining whether the binary was invoked as `rsync`/`rsyncd` or via the
-/// branded wrappers (`oc-rsync`/`oc-rsyncd`). It inspects the stem of the first
+    /// determining whether the binary was invoked as `rsync`/`rsyncd` or via the
+    /// branded binaries (`oc-rsync`/`oc-rsyncd`). It inspects the stem of the first
 /// argument (commonly `argv[0]`), stripping directory prefixes and filename
 /// extensions before delegating to [`brand_for_program_name`]. When the program
 /// name is unavailable the upstream-compatible brand is assumed, matching the
-/// behaviour of the compatibility wrappers.
+/// behaviour expected by remote invocations and compatibility symlinks.
 ///
 /// # Examples
 ///
@@ -370,7 +372,8 @@ pub fn legacy_daemon_secrets_path() -> &'static Path {
     UPSTREAM_PROFILE.daemon_secrets_path()
 }
 
-/// Returns the upstream-compatible branding profile used by compatibility wrappers.
+/// Returns the upstream-compatible branding profile used by invocations that
+/// employ the legacy program names.
 #[must_use]
 pub const fn upstream_profile() -> BrandProfile {
     UPSTREAM_PROFILE

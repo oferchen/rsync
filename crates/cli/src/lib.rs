@@ -19,8 +19,8 @@
 //! server implementation is completed. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
-//! downstream tooling to depend on a stable binary path (`rsync`) while
-//! development continues.
+//! downstream tooling to depend on a stable binary path (`oc-rsync`, or `rsync`
+//! via symlink) while development continues.
 //!
 //! # Design
 //!
@@ -73,7 +73,7 @@
 //! # See also
 //!
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
-//! - `bin/rsync` for the binary crate that wires [`run`] into `main`.
+//! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
 
 use std::collections::{HashSet, VecDeque};
 use std::env;

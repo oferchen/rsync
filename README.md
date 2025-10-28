@@ -2,13 +2,14 @@
 
 This workspace hosts a Rust rsync implementation supporting protocol version 32.
 The canonical distribution ships the **oc-rsync** and **oc-rsyncd** binaries,
-which wrap the shared CLI/daemon front-ends provided by this repository. For
-compatibility with existing automation the workspace also includes thin
-wrappers named **rsync** and **rsyncd** that delegate to the same
-implementations. The long-term goal is byte-for-byte parity with upstream
-behaviour while modernising the implementation in Rust. The project follows the
-requirements outlined in the repository's Codex Mission Brief and implements
-modules as cohesive crates so both binaries reuse the same core logic.
+which wrap the shared CLI/daemon front-ends provided by this repository. The
+command-line interface still inspects the invoked program name so operators can
+provide compatibility symlinks (`rsync` / `rsyncd`) when required, but the
+workspace no longer maintains separate wrapper crates. The long-term goal is
+byte-for-byte parity with upstream behaviour while modernising the
+implementation in Rust. The project follows the requirements outlined in the
+repository's Codex Mission Brief and implements modules as cohesive crates so
+both binaries reuse the same core logic.
 
 ## Repository layout
 
@@ -48,16 +49,12 @@ The workspace currently contains the following published crates:
   socket, performs the legacy `@RSYNCD:` handshake, lists configured in-memory
   modules for `#list` requests, and reports that full module transfers are still
   under development.
-- `bin/rsync` / `bin/rsyncd` — compatibility shims that forward to the canonical
-  binaries so existing tooling expecting the upstream names can continue to
-  function during the transition.
 
 ## Branding and configuration defaults
 
-The project ships branded binaries (`oc-rsync` and `oc-rsyncd`) alongside
-compatibility wrappers named `rsync` and `rsyncd`. Branding details—including
-the program names rendered in `--version` output and the filesystem locations
-for packaged configuration—are centralised in
+The project ships branded binaries (`oc-rsync` and `oc-rsyncd`). Branding
+details—including the program names rendered in `--version` output and the
+filesystem locations for packaged configuration—are centralised in
 [`rsync_core::branding`](crates/core/src/branding.rs). Consumers can query the
 module directly to discover the canonical installation paths:
 
@@ -72,15 +69,15 @@ assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 ```
 
 The packaging metadata installs example files at the same locations so new
-deployments pick up sane defaults out of the box. Compatibility wrappers defer
-to the upstream `rsync`/`rsyncd` names while still relying on the shared
-branding facade, ensuring help text, diagnostics, and configuration searches
-remain consistent across entry points.
+deployments pick up sane defaults out of the box. The binaries rely on the
+shared branding facade, ensuring help text, diagnostics, and configuration
+searches remain consistent across entry points regardless of the executable
+name that launched the process.
 
 Higher-level crates such as `daemon` remain under development. The new engine
-module powers the local copy mode shipped by `oc-rsync` (and therefore the
-compatibility `rsync` wrapper), but delta transfer, remote transports, ACL
-handling, advanced filter grammar, and compression are still pending. Current
+module powers the local copy mode shipped by `oc-rsync` (and therefore any
+compatibility symlink that targets it), but delta transfer, remote transports,
+ACL handling, advanced filter grammar, and compression are still pending. Current
 gaps and parity status are tracked in `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
