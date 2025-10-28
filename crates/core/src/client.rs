@@ -128,7 +128,7 @@ use tempfile::NamedTempFile;
 
 use crate::{
     bandwidth::{self, BandwidthLimiter, BandwidthParseError},
-    fallback::{FallbackOverride, fallback_override},
+    fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
 };
@@ -3150,7 +3150,7 @@ pub struct RemoteFallbackArgs {
     pub address_mode: AddressMode,
     /// Optional override for the fallback executable path.
     ///
-    /// When unspecified the helper consults the `OC_RSYNC_FALLBACK` environment variable and
+    /// When unspecified the helper consults the [`CLIENT_FALLBACK_ENV`](crate::fallback::CLIENT_FALLBACK_ENV) environment variable (`OC_RSYNC_FALLBACK`) and
     /// defaults to `rsync` if the override is missing or empty.
     pub fallback_binary: Option<OsString>,
     /// Optional override for the remote rsync executable.
@@ -3739,11 +3739,12 @@ where
     let binary = if let Some(path) = fallback_binary {
         path
     } else {
-        match fallback_override("OC_RSYNC_FALLBACK") {
+        match fallback_override(CLIENT_FALLBACK_ENV) {
             Some(FallbackOverride::Disabled) => {
-                return Err(fallback_error(
-                    "remote transfers are unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream rsync binary",
-                ));
+                return Err(fallback_error(format!(
+                    "remote transfers are unavailable because {env} is disabled; set {env} to point to an upstream rsync binary",
+                    env = CLIENT_FALLBACK_ENV
+                )));
             }
             Some(other) => other
                 .resolve_or_default(OsStr::new("rsync"))
@@ -7006,7 +7007,7 @@ exit 42
     #[test]
     fn remote_fallback_reports_disabled_override() {
         let _lock = env_lock().lock().expect("env mutex poisoned");
-        let _guard = EnvGuard::set_os("OC_RSYNC_FALLBACK", OsStr::new("no"));
+        let _guard = EnvGuard::set_os(CLIENT_FALLBACK_ENV, OsStr::new("no"));
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
@@ -7016,9 +7017,10 @@ exit 42
 
         assert_eq!(error.exit_code(), 1);
         let message = format!("{error}");
-        assert!(message.contains(
-            "remote transfers are unavailable because OC_RSYNC_FALLBACK is disabled",
-        ));
+        assert!(message.contains(&format!(
+            "remote transfers are unavailable because {env} is disabled",
+            env = CLIENT_FALLBACK_ENV,
+        )));
     }
 
     #[test]
