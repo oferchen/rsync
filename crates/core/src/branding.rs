@@ -96,11 +96,11 @@ impl FromStr for Brand {
             return Err(BrandParseError);
         }
 
-        if s.eq_ignore_ascii_case("oc") {
+        if s.eq_ignore_ascii_case(Brand::Oc.label()) {
             return Ok(Brand::Oc);
         }
 
-        if s.eq_ignore_ascii_case("upstream") {
+        if s.eq_ignore_ascii_case(Brand::Upstream.label()) {
             return Ok(Brand::Upstream);
         }
 
@@ -120,6 +120,29 @@ impl FromStr for Brand {
 }
 
 impl Brand {
+    /// Returns the canonical, human-readable label associated with the brand.
+    ///
+    /// The label matches the identifiers accepted by [`Brand::from_str`] and
+    /// rendered by [`Display`](fmt::Display). Higher-level components can
+    /// surface the selected brand without duplicating string constants by
+    /// delegating to this accessor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::branding::Brand;
+    ///
+    /// assert_eq!(Brand::Oc.label(), "oc");
+    /// assert_eq!(Brand::Upstream.label(), "upstream");
+    /// ```
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Upstream => "upstream",
+            Self::Oc => "oc",
+        }
+    }
+
     /// Returns the [`BrandProfile`] describing this brand.
     #[must_use]
     pub const fn profile(self) -> BrandProfile {
@@ -225,6 +248,12 @@ impl Brand {
     pub fn secrets_path_candidates(self) -> [&'static Path; 2] {
         let [primary, secondary] = self.secrets_path_candidate_strs();
         [Path::new(primary), Path::new(secondary)]
+    }
+}
+
+impl fmt::Display for Brand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -912,5 +941,17 @@ mod tests {
     fn detect_brand_ignores_invalid_override_environment_variable() {
         let _guard = EnvGuard::set(BRAND_OVERRIDE_ENV, OsStr::new("invalid"));
         assert_eq!(detect_brand(Some(OsStr::new("oc-rsync"))), Brand::Oc);
+    }
+
+    #[test]
+    fn brand_label_matches_expected() {
+        assert_eq!(Brand::Oc.label(), "oc");
+        assert_eq!(Brand::Upstream.label(), "upstream");
+    }
+
+    #[test]
+    fn brand_display_renders_label() {
+        assert_eq!(Brand::Oc.to_string(), "oc");
+        assert_eq!(Brand::Upstream.to_string(), "upstream");
     }
 }
