@@ -125,6 +125,12 @@ pub const PROGRAM_NAME: &str = "rsync";
 /// Program name rendered by the `rsyncd` daemon when displaying version banners.
 pub const DAEMON_PROGRAM_NAME: &str = "rsyncd";
 
+/// Program name used by the standalone `oc-rsync` client wrapper.
+pub const OC_PROGRAM_NAME: &str = "oc-rsync";
+
+/// Program name used by the standalone `oc-rsyncd` daemon wrapper.
+pub const OC_DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
+
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";
 
