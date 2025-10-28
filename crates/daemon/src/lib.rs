@@ -5146,6 +5146,7 @@ mod tests {
     use std::num::{NonZeroU32, NonZeroU64};
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
@@ -5181,6 +5182,22 @@ mod tests {
     }
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static NEXT_TEST_PORT: AtomicU32 = AtomicU32::new(0);
+
+    fn allocate_test_port() -> u16 {
+        const START: u16 = 40_000;
+        const RANGE: u16 = 20_000;
+
+        loop {
+            let offset = (NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed) % u32::from(RANGE)) as u16;
+            let candidate = START + offset;
+
+            if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, candidate)) {
+                drop(listener);
+                return candidate;
+            }
+        }
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -5639,9 +5656,7 @@ mod tests {
         let _marker = EnvGuard::set("FALLBACK_MARKER", marker_path.as_os_str());
         let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -5723,9 +5738,7 @@ mod tests {
         let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
         let _args = EnvGuard::set("ARGS_LOG", args_log_path.as_os_str());
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let log_path = temp.path().join("daemon.log");
         let pid_path = temp.path().join("daemon.pid");
@@ -7514,9 +7527,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -7569,9 +7580,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -7654,9 +7663,7 @@ mod tests {
         )
         .expect("write config");
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -7750,9 +7757,7 @@ mod tests {
         )
         .expect("write config");
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -7899,9 +7904,7 @@ mod tests {
         )
         .expect("write config");
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -7984,9 +7987,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -8039,9 +8040,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -8104,9 +8103,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
             .arguments([
@@ -8164,9 +8161,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let temp = tempdir().expect("pid dir");
         let pid_path = temp.path().join("rsyncd.pid");
@@ -8220,9 +8215,7 @@ mod tests {
         let mut recorder = rsync_bandwidth::recorded_sleep_session();
         recorder.clear();
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let comment = "x".repeat(4096);
         let config = DaemonConfig::builder()
@@ -8312,9 +8305,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
@@ -8735,9 +8726,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
@@ -8809,9 +8798,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(file, "[docs]\npath = /srv/docs\nhosts allow = 10.0.0.0/8\n",)
@@ -8875,9 +8862,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let mut file = NamedTempFile::new().expect("config file");
         writeln!(
@@ -8938,9 +8923,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let dir = tempdir().expect("motd dir");
         let motd_path = dir.path().join("motd.txt");
@@ -9019,9 +9002,7 @@ mod tests {
         let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
         let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
 
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
-        let port = listener.local_addr().expect("listener addr").port();
-        drop(listener);
+        let port = allocate_test_port();
 
         let temp = tempdir().expect("log dir");
         let log_path = temp.path().join("rsyncd.log");
