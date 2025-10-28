@@ -61,9 +61,11 @@ module directly to discover the canonical installation paths:
 ```rust
 use std::path::Path;
 
+let config_dir = rsync_core::branding::oc_daemon_config_dir();
 let config = rsync_core::branding::oc_daemon_config_path();
 let secrets = rsync_core::branding::oc_daemon_secrets_path();
 
+assert_eq!(config_dir, Path::new("/etc/oc-rsyncd"));
 assert_eq!(config, Path::new("/etc/oc-rsyncd/oc-rsyncd.conf"));
 assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 ```
