@@ -349,7 +349,10 @@ mod tests {
         );
         const _: () = assert_const(CLAMPED, "remote advertisements must be clamped");
         const _: () = assert_const(!NOT_CLAMPED, "remote advertisement unexpectedly clamped");
-        const _: () = assert_const(FUTURE.was_clamped(), "future advertisement should be clamped");
+        const _: () = assert_const(
+            FUTURE.was_clamped(),
+            "future advertisement should be clamped",
+        );
         const _: () = assert_const(
             !SUPPORTED.was_clamped(),
             "supported advertisement should not be clamped",
