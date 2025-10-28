@@ -25,3 +25,17 @@ rust-version = "1.85"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 version = "3.4.1-rust"
+
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
