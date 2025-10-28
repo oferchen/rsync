@@ -16,15 +16,17 @@
 //!
 //! # Examples
 //!
-//! Retrieve the canonical daemon configuration and secrets paths that
+//! Retrieve the canonical daemon configuration directory and secrets paths that
 //! `oc-rsyncd` uses when launched without explicit overrides:
 //!
 //! ```rust
 //! use std::path::Path;
 //!
+//! let config_dir = rsync_core::branding::oc_daemon_config_dir();
 //! let config = rsync_core::branding::oc_daemon_config_path();
 //! let secrets = rsync_core::branding::oc_daemon_secrets_path();
 //!
+//! assert_eq!(config_dir, Path::new("/etc/oc-rsyncd"));
 //! assert_eq!(config, Path::new("/etc/oc-rsyncd/oc-rsyncd.conf"));
 //! assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 //! ```
@@ -70,6 +72,18 @@ impl Brand {
     #[must_use]
     pub const fn daemon_program_name(self) -> &'static str {
         self.profile().daemon_program_name()
+    }
+
+    /// Returns the preferred daemon configuration directory for this brand.
+    #[must_use]
+    pub const fn daemon_config_dir_str(self) -> &'static str {
+        self.profile().daemon_config_dir_str()
+    }
+
+    /// Returns the preferred daemon configuration directory as a [`Path`].
+    #[must_use]
+    pub fn daemon_config_dir(self) -> &'static Path {
+        self.profile().daemon_config_dir()
     }
 
     /// Returns the preferred daemon configuration search order for this brand.
@@ -118,16 +132,18 @@ impl Brand {
 /// Describes the public-facing identity used by a binary distribution.
 ///
 /// The structure captures the canonical client and daemon program names
-/// together with the configuration and secrets paths that ship with the
-/// distribution. Higher layers select the appropriate [`BrandProfile`] to
-/// render banners, locate configuration files, or display diagnostic
-/// messages without duplicating string literals across the codebase. The
-/// profiles are intentionally lightweight and `Copy` so they can be used in
-/// constant contexts such as rustdoc examples and compile-time assertions.
+/// together with the configuration directory, configuration file, and secrets
+/// file that ship with the distribution. Higher layers select the appropriate
+/// [`BrandProfile`] to render banners, locate configuration files, or display
+/// diagnostic messages without duplicating string literals across the
+/// codebase. The profiles are intentionally lightweight and `Copy` so they can
+/// be used in constant contexts such as rustdoc examples and compile-time
+/// assertions.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct BrandProfile {
     client_program_name: &'static str,
     daemon_program_name: &'static str,
+    daemon_config_dir: &'static str,
     daemon_config_path: &'static str,
     daemon_secrets_path: &'static str,
 }
@@ -138,12 +154,14 @@ impl BrandProfile {
     pub const fn new(
         client_program_name: &'static str,
         daemon_program_name: &'static str,
+        daemon_config_dir: &'static str,
         daemon_config_path: &'static str,
         daemon_secrets_path: &'static str,
     ) -> Self {
         Self {
             client_program_name,
             daemon_program_name,
+            daemon_config_dir,
             daemon_config_path,
             daemon_secrets_path,
         }
@@ -159,6 +177,18 @@ impl BrandProfile {
     #[must_use]
     pub const fn daemon_program_name(&self) -> &'static str {
         self.daemon_program_name
+    }
+
+    /// Returns the daemon configuration directory as a string slice.
+    #[must_use]
+    pub const fn daemon_config_dir_str(&self) -> &'static str {
+        self.daemon_config_dir
+    }
+
+    /// Returns the daemon configuration directory as a [`Path`].
+    #[must_use]
+    pub fn daemon_config_dir(&self) -> &'static Path {
+        Path::new(self.daemon_config_dir)
     }
 
     /// Returns the daemon configuration path as a string slice.
@@ -189,6 +219,7 @@ impl BrandProfile {
 const UPSTREAM_PROFILE: BrandProfile = BrandProfile::new(
     UPSTREAM_CLIENT_PROGRAM_NAME,
     UPSTREAM_DAEMON_PROGRAM_NAME,
+    LEGACY_DAEMON_CONFIG_DIR,
     LEGACY_DAEMON_CONFIG_PATH,
     LEGACY_DAEMON_SECRETS_PATH,
 );
@@ -196,6 +227,7 @@ const UPSTREAM_PROFILE: BrandProfile = BrandProfile::new(
 const OC_PROFILE: BrandProfile = BrandProfile::new(
     OC_CLIENT_PROGRAM_NAME,
     OC_DAEMON_PROGRAM_NAME,
+    OC_DAEMON_CONFIG_DIR,
     OC_DAEMON_CONFIG_PATH,
     OC_DAEMON_SECRETS_PATH,
 );
@@ -231,6 +263,10 @@ pub const OC_DAEMON_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
 /// Legacy configuration file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.conf")]
 pub const LEGACY_DAEMON_CONFIG_PATH: &str = "/etc/rsyncd.conf";
+
+/// Legacy configuration directory that hosts upstream-compatible configuration files.
+#[doc(alias = "/etc")]
+pub const LEGACY_DAEMON_CONFIG_DIR: &str = "/etc";
 
 /// Legacy secrets file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.secrets")]
@@ -270,6 +306,12 @@ pub const fn oc_client_program_name() -> &'static str {
 #[must_use]
 pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
+}
+
+/// Returns the canonical configuration directory used by `oc-rsyncd`.
+#[must_use]
+pub fn oc_daemon_config_dir() -> &'static Path {
+    oc_profile().daemon_config_dir()
 }
 
 /// Returns the canonical configuration path used by `oc-rsyncd`.
@@ -388,6 +430,12 @@ pub fn legacy_daemon_config_path() -> &'static Path {
     UPSTREAM_PROFILE.daemon_config_path()
 }
 
+/// Returns the legacy configuration directory recognised for upstream deployments.
+#[must_use]
+pub fn legacy_daemon_config_dir() -> &'static Path {
+    UPSTREAM_PROFILE.daemon_config_dir()
+}
+
 /// Returns the legacy secrets path recognised for compatibility with upstream deployments.
 #[must_use]
 pub fn legacy_daemon_secrets_path() -> &'static Path {
@@ -411,6 +459,7 @@ pub const fn upstream_profile() -> BrandProfile {
 /// let profile = branding::oc_profile();
 /// assert_eq!(profile.client_program_name(), "oc-rsync");
 /// assert_eq!(profile.daemon_program_name(), "oc-rsyncd");
+/// assert_eq!(profile.daemon_config_dir(), branding::oc_daemon_config_dir());
 /// assert_eq!(profile.daemon_config_path(), branding::oc_daemon_config_path());
 /// assert_eq!(profile.daemon_secrets_path(), branding::oc_daemon_secrets_path());
 /// ```
@@ -433,11 +482,16 @@ mod tests {
 
     #[test]
     fn oc_paths_match_expected_locations() {
+        assert_eq!(oc_daemon_config_dir(), Path::new(OC_DAEMON_CONFIG_DIR));
         assert_eq!(oc_daemon_config_path(), Path::new(OC_DAEMON_CONFIG_PATH));
         assert_eq!(oc_daemon_secrets_path(), Path::new(OC_DAEMON_SECRETS_PATH));
         assert_eq!(
             legacy_daemon_config_path(),
             Path::new(LEGACY_DAEMON_CONFIG_PATH)
+        );
+        assert_eq!(
+            legacy_daemon_config_dir(),
+            Path::new(LEGACY_DAEMON_CONFIG_DIR)
         );
         assert_eq!(
             legacy_daemon_secrets_path(),
@@ -457,11 +511,16 @@ mod tests {
         );
         assert_eq!(oc_profile().client_program_name(), oc_client_program_name());
         assert_eq!(oc_profile().daemon_program_name(), oc_daemon_program_name());
+        assert_eq!(oc_profile().daemon_config_dir(), oc_daemon_config_dir());
         assert_eq!(oc_profile().daemon_config_path(), oc_daemon_config_path());
         assert_eq!(oc_profile().daemon_secrets_path(), oc_daemon_secrets_path());
         assert_eq!(
             upstream_profile().daemon_config_path(),
             legacy_daemon_config_path()
+        );
+        assert_eq!(
+            upstream_profile().daemon_config_dir(),
+            legacy_daemon_config_dir()
         );
         assert_eq!(
             upstream_profile().daemon_secrets_path(),
@@ -485,10 +544,15 @@ mod tests {
         let upstream = Brand::Upstream.profile();
         assert_eq!(upstream.client_program_name(), UPSTREAM_CLIENT_PROGRAM_NAME);
         assert_eq!(upstream.daemon_program_name(), UPSTREAM_DAEMON_PROGRAM_NAME);
+        assert_eq!(
+            upstream.daemon_config_dir(),
+            Path::new(LEGACY_DAEMON_CONFIG_DIR)
+        );
 
         let oc = Brand::Oc.profile();
         assert_eq!(oc.client_program_name(), OC_CLIENT_PROGRAM_NAME);
         assert_eq!(oc.daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
+        assert_eq!(oc.daemon_config_dir(), Path::new(OC_DAEMON_CONFIG_DIR));
     }
 
     #[test]
@@ -528,6 +592,23 @@ mod tests {
         let upstream_paths = Brand::Upstream.config_path_candidates();
         assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_CONFIG_PATH));
         assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_CONFIG_PATH));
+    }
+
+    #[test]
+    fn config_directories_match_brand_profiles() {
+        assert_eq!(
+            Brand::Oc.daemon_config_dir(),
+            Path::new(OC_DAEMON_CONFIG_DIR)
+        );
+        assert_eq!(Brand::Oc.daemon_config_dir_str(), OC_DAEMON_CONFIG_DIR);
+        assert_eq!(
+            Brand::Upstream.daemon_config_dir(),
+            Path::new(LEGACY_DAEMON_CONFIG_DIR)
+        );
+        assert_eq!(
+            Brand::Upstream.daemon_config_dir_str(),
+            LEGACY_DAEMON_CONFIG_DIR
+        );
     }
 
     #[test]
