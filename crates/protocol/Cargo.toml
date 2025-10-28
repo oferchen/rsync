@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Protocol negotiation utilities for the Rust rsync implementation"
+readme = "README.md"
 
 [package.metadata.docs.rs]
 all-features = true
