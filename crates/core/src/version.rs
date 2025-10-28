@@ -349,7 +349,25 @@ impl Default for VersionMetadata {
 #[doc(alias = "--version")]
 #[must_use]
 pub const fn version_metadata() -> VersionMetadata {
-    version_metadata_for_program(PROGRAM_NAME)
+    version_metadata_for_program(client_program_name())
+}
+
+/// Returns metadata configured for the upstream-compatible `rsync` daemon banner.
+#[must_use]
+pub const fn daemon_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(daemon_program_name())
+}
+
+/// Returns metadata configured for the branded `oc-rsync` client banner.
+#[must_use]
+pub const fn oc_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(oc_client_program_name())
+}
+
+/// Returns metadata configured for the branded `oc-rsyncd` daemon banner.
+#[must_use]
+pub const fn oc_daemon_version_metadata() -> VersionMetadata {
+    version_metadata_for_program(oc_daemon_program_name())
 }
 
 /// Returns version metadata that renders a banner for the supplied program name.
@@ -1877,10 +1895,21 @@ mod tests {
 
     #[test]
     fn version_metadata_for_program_overrides_program_name() {
-        let metadata = version_metadata_for_program(DAEMON_PROGRAM_NAME);
-
+        let metadata = daemon_version_metadata();
         assert_eq!(metadata.program_name(), DAEMON_PROGRAM_NAME);
         assert_eq!(metadata.protocol_version(), ProtocolVersion::NEWEST);
+
+        let branded = oc_version_metadata();
+        assert_eq!(branded.program_name(), OC_PROGRAM_NAME);
+        assert_eq!(branded.protocol_version(), ProtocolVersion::NEWEST);
+
+        let branded_daemon = oc_daemon_version_metadata();
+        assert_eq!(branded_daemon.program_name(), OC_DAEMON_PROGRAM_NAME);
+        assert_eq!(branded_daemon.protocol_version(), ProtocolVersion::NEWEST);
+
+        let custom = version_metadata_for_program("custom-rsync");
+        assert_eq!(custom.program_name(), "custom-rsync");
+        assert_eq!(custom.protocol_version(), ProtocolVersion::NEWEST);
     }
 
     #[test]
