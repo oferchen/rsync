@@ -8344,7 +8344,7 @@ mod tests {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
-        let _skip_guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new(""));
+        let _rsh_guard = clear_rsync_rsh();
 
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("file.bin");
@@ -8385,7 +8385,7 @@ mod tests {
         use tempfile::tempdir;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
-        let _skip_guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new(""));
+        let _rsh_guard = clear_rsync_rsh();
 
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("file.bin");

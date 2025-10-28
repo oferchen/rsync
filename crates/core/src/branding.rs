@@ -561,6 +561,16 @@ fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
         .any(|canonical| matches_program_alias(value, canonical))
 }
 
+fn brand_for_program_path(path: &Path) -> Option<Brand> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(brand_for_program_name)
+}
+
+fn brand_for_program_os_str(program: &OsStr) -> Option<Brand> {
+    brand_for_program_path(Path::new(program))
+}
+
 /// Detects the [`Brand`] associated with an invocation argument.
 ///
 /// The helper mirrors the logic used by the client and daemon front-ends when
@@ -598,10 +608,13 @@ pub fn detect_brand(program: Option<&OsStr>) -> Brand {
         return brand;
     }
 
-    program
-        .and_then(|arg| Path::new(arg).file_stem())
-        .and_then(|stem| stem.to_str())
-        .map(brand_for_program_name)
+    if let Some(brand) = program.and_then(brand_for_program_os_str) {
+        return brand;
+    }
+
+    env::current_exe()
+        .ok()
+        .and_then(|path| brand_for_program_path(&path))
         .unwrap_or(Brand::Upstream)
 }
 
@@ -801,6 +814,22 @@ mod tests {
     }
 
     #[test]
+    fn brand_for_program_path_matches_stems() {
+        assert_eq!(
+            brand_for_program_path(Path::new("/opt/bin/oc-rsync")),
+            Some(Brand::Oc)
+        );
+        assert_eq!(
+            brand_for_program_path(Path::new("/usr/local/bin/RSYNCD-3.4.1")),
+            Some(Brand::Upstream)
+        );
+        assert_eq!(
+            brand_for_program_path(Path::new("/tmp/custom-wrapper")),
+            Some(Brand::Upstream)
+        );
+    }
+
+    #[test]
     fn brand_profiles_expose_program_names() {
         let upstream = Brand::Upstream.profile();
         assert_eq!(upstream.client_program_name(), UPSTREAM_CLIENT_PROGRAM_NAME);
@@ -835,6 +864,16 @@ mod tests {
             detect_brand(Some(OsStr::new("/usr/local/bin/rsync-3.4.1"))),
             Brand::Upstream
         );
+    }
+
+    #[test]
+    fn detect_brand_falls_back_to_current_executable() {
+        let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
+        let expected = env::current_exe()
+            .ok()
+            .and_then(|path| brand_for_program_path(&path))
+            .unwrap_or(Brand::Upstream);
+        assert_eq!(detect_brand(None), expected);
     }
 
     #[test]

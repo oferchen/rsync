@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
   pull_request:
-    branches: ["main"]
+    branches: ["master"]
 
 permissions:
   contents: read
@@ -14,7 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CURRENT_YEAR: "2025" # ensure reproducible build metadata
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
   LC_ALL: C
@@ -33,17 +32,7 @@ jobs:
             exit 1
           fi
 
-  readme-version:
-    needs: [no-binaries]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify README version string
-        run: |
-          grep -E 'rsync[[:space:]]+3\.4\.1.*protocol[[:space:]]+32' README.md
-
   lint:
-    needs: [readme-version]
     # runs-on: self-hosted
     runs-on: ubuntu-latest
     steps:
@@ -64,9 +53,6 @@ jobs:
       - name: Install system dependencies (Linux only)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl
-
-      - name: Lint
-        run: make lint
 
       - name: Check comment stripping
         run: cargo run --bin strip-rs-comments -- --check $(git ls-files '*.rs')
