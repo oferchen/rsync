@@ -258,13 +258,22 @@ pub fn oc_daemon_secrets_path() -> &'static Path {
 ///     branding::Brand::Oc
 /// );
 /// assert_eq!(
+///     branding::brand_for_program_name("OC-RSYNC"),
+///     branding::Brand::Oc
+/// );
+/// assert_eq!(
 ///     branding::brand_for_program_name("rsync"),
 ///     branding::Brand::Upstream
 /// );
 /// ```
+/// The comparison is ASCII case-insensitive so that binaries launched on
+/// case-preserving filesystems (for example Windows) still select the correct
+/// brand even when the executable name was uppercased.
 #[must_use]
 pub fn brand_for_program_name(program: &str) -> Brand {
-    if program == OC_CLIENT_PROGRAM_NAME || program == OC_DAEMON_PROGRAM_NAME {
+    if program.eq_ignore_ascii_case(OC_CLIENT_PROGRAM_NAME)
+        || program.eq_ignore_ascii_case(OC_DAEMON_PROGRAM_NAME)
+    {
         Brand::Oc
     } else {
         Brand::Upstream
@@ -421,5 +430,6 @@ mod tests {
             Brand::Oc
         );
         assert_eq!(detect_brand(Some(OsStr::new("oc-rsyncd"))), Brand::Oc);
+        assert_eq!(detect_brand(Some(OsStr::new("OC-RSYNCD"))), Brand::Oc);
     }
 }
