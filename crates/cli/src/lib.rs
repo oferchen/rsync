@@ -108,7 +108,7 @@ use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
-    branding::{self, Brand},
+    branding::{self, Brand, manifest},
     client::{
         AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientEntryKind,
         ClientEntryMetadata, ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver,
@@ -121,7 +121,7 @@ use rsync_core::{
     fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
-    version::{RUST_VERSION, VersionInfoReport, WEB_SITE},
+    version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
@@ -134,11 +134,13 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 /// Renders deterministic help text describing the CLI surface supported by this build for `program_name`.
 fn help_text(program_name: ProgramName) -> String {
+    let manifest = manifest();
     let program = program_name.as_str();
-    let daemon = match program_name {
-        ProgramName::Rsync => branding::daemon_program_name(),
-        ProgramName::OcRsync => branding::oc_daemon_program_name(),
+    let daemon_profile = match program_name {
+        ProgramName::Rsync => manifest.upstream(),
+        ProgramName::OcRsync => manifest.oc(),
     };
+    let daemon = daemon_profile.daemon_program_name();
 
     format!(
         concat!(
@@ -295,8 +297,8 @@ fn help_text(program_name: ProgramName) -> String {
             "covers permissions, timestamps, and optional ownership metadata.\n",
         ),
         program = program,
-        version = RUST_VERSION,
-        website = WEB_SITE,
+        version = manifest.rust_version(),
+        website = manifest.source_url(),
         daemon = daemon,
     )
 }
@@ -7756,7 +7758,7 @@ fn render_module_list<W: Write, E: Write>(
 mod tests {
     use super::*;
     use rsync_checksums::strong::Md5;
-    use rsync_core::{client::FilterRuleKind, version::RUST_VERSION};
+    use rsync_core::{branding::manifest, client::FilterRuleKind};
     use rsync_daemon as daemon_cli;
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::collections::HashSet;
@@ -7779,7 +7781,7 @@ mod tests {
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
 
     fn assert_contains_client_trailer(rendered: &str) {
-        let expected = format!("[client={}]", RUST_VERSION);
+        let expected = format!("[client={}]", manifest().rust_version());
         assert!(
             rendered.contains(&expected),
             "expected message to contain {expected:?}, got {rendered:?}"
