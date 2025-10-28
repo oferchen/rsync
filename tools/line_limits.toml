@@ -108,11 +108,6 @@ max_lines = 1429
 warn_lines = 1329
 
 [[overrides]]
-path = "crates/core/src/branding.rs"
-max_lines = 1395
-warn_lines = 1295
-
-[[overrides]]
 path = "crates/protocol/src/compatibility.rs"
 max_lines = 1303
 warn_lines = 1203
