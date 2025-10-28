@@ -6076,7 +6076,7 @@ mod tests {
             module
                 .secrets_file()
                 .map(|path| path.to_string_lossy().into_owned()),
-            Some(String::from(DEFAULT_SECRETS_PATH))
+            Some(String::from(branding::OC_DAEMON_SECRETS_PATH))
         );
         assert_eq!(
             module.bandwidth_limit().map(NonZeroU64::get),
