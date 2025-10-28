@@ -62,6 +62,9 @@ mod parse;
 
 pub use parse::{RemoteShellParseError, parse_remote_shell};
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
 pub struct SshCommand {
@@ -271,7 +274,14 @@ impl SshCommand {
             target.push(user);
             target.push("@");
         }
-        target.push(&self.host);
+
+        if host_needs_ipv6_brackets(&self.host) {
+            target.push("[");
+            target.push(&self.host);
+            target.push("]");
+        } else {
+            target.push(&self.host);
+        }
 
         Some(target)
     }
@@ -279,6 +289,44 @@ impl SshCommand {
     #[cfg(test)]
     fn command_parts_for_testing(&self) -> (OsString, Vec<OsString>) {
         self.command_parts()
+    }
+}
+
+fn host_needs_ipv6_brackets(host: &OsStr) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+
+    if host_is_bracketed(host) {
+        return false;
+    }
+
+    host_contains_colon(host)
+}
+
+fn host_is_bracketed(host: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        let bytes = host.as_bytes();
+        return bytes.len() >= 2 && bytes.first() == Some(&b'[') && bytes.last() == Some(&b']');
+    }
+
+    #[cfg(not(unix))]
+    {
+        let text = host.to_string_lossy();
+        return text.starts_with('[') && text.ends_with(']');
+    }
+}
+
+fn host_contains_colon(host: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        host.as_bytes().contains(&b':')
+    }
+
+    #[cfg(not(unix))]
+    {
+        host.to_string_lossy().contains(':')
     }
 }
 
@@ -423,6 +471,49 @@ mod tests {
 
         let (_, args) = command.command_parts_for_testing();
         assert_eq!(args_to_strings(&args), vec!["example.com".to_string()]);
+    }
+
+    #[test]
+    fn wraps_ipv6_hosts_in_brackets() {
+        let command = SshCommand::new("2001:db8::1");
+        let (_, args) = command.command_parts_for_testing();
+
+        assert_eq!(
+            args_to_strings(&args),
+            vec!["-oBatchMode=yes".to_string(), "[2001:db8::1]".to_string()]
+        );
+    }
+
+    #[test]
+    fn wraps_ipv6_hosts_with_usernames() {
+        let mut command = SshCommand::new("2001:db8::1");
+        command.set_user("backup");
+
+        let (_, args) = command.command_parts_for_testing();
+
+        assert_eq!(
+            args_to_strings(&args),
+            vec![
+                "-oBatchMode=yes".to_string(),
+                "backup@[2001:db8::1]".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_bracketed_ipv6_literals() {
+        let mut command = SshCommand::new("[2001:db8::1]");
+        command.set_user("backup");
+
+        let (_, args) = command.command_parts_for_testing();
+
+        assert_eq!(
+            args_to_strings(&args),
+            vec![
+                "-oBatchMode=yes".to_string(),
+                "backup@[2001:db8::1]".to_string()
+            ]
+        );
     }
 
     #[cfg(unix)]
