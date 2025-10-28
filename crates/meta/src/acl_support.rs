@@ -62,6 +62,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::ptr;
 
 use crate::MetadataError;
 
@@ -79,6 +80,10 @@ mod sys {
     pub const ACL_TYPE_ACCESS: acl_type_t = 0x8000;
     pub const ACL_TYPE_DEFAULT: acl_type_t = 0x4000;
 
+    pub type acl_entry_t = *mut c_void;
+
+    pub const ACL_FIRST_ENTRY: c_int = 0;
+
     unsafe extern "C" {
         pub fn acl_get_file(path_p: *const c_char, ty: acl_type_t) -> acl_t;
         pub fn acl_set_file(path_p: *const c_char, ty: acl_type_t, acl: acl_t) -> c_int;
@@ -86,6 +91,7 @@ mod sys {
         pub fn acl_free(obj_p: *mut c_void) -> c_int;
         pub fn acl_from_mode(mode: mode_t) -> acl_t;
         pub fn acl_delete_def_file(path_p: *const c_char) -> c_int;
+        pub fn acl_get_entry(acl: acl_t, entry_id: c_int, entry_p: *mut acl_entry_t) -> c_int;
         #[cfg(test)]
         pub fn acl_to_text(acl: acl_t, len_p: *mut ssize_t) -> *mut c_char;
         #[cfg(test)]
@@ -140,9 +146,18 @@ pub fn sync_acls(
         Err(error) => return Err(MetadataError::new("read ACL", source, error)),
     };
 
-    let default = match fetch_acl(source, sys::ACL_TYPE_DEFAULT) {
+    let metadata = match fs::symlink_metadata(source) {
         Ok(value) => value,
-        Err(error) => return Err(MetadataError::new("read default ACL", source, error)),
+        Err(error) => return Err(MetadataError::new("stat", source, error)),
+    };
+
+    let default = if metadata.is_dir() {
+        match fetch_acl(source, sys::ACL_TYPE_DEFAULT) {
+            Ok(value) => value,
+            Err(error) => return Err(MetadataError::new("read default ACL", source, error)),
+        }
+    } else {
+        None
     };
 
     if let Err(error) = apply_access_acl(destination, access.as_ref()) {
@@ -176,6 +191,21 @@ impl PosixAcl {
             Ok(Self::from_raw(duplicated))
         }
     }
+
+    fn is_empty(&self) -> io::Result<bool> {
+        let mut entry: sys::acl_entry_t = ptr::null_mut();
+        // Safety: the ACL pointer remains valid for the duration of the call.
+        let result = unsafe { sys::acl_get_entry(self.0, sys::ACL_FIRST_ENTRY, &mut entry) };
+        match result {
+            0 => Ok(true),
+            1 => Ok(false),
+            -1 => Err(io::Error::last_os_error()),
+            value => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("unexpected acl_get_entry result {value}"),
+            )),
+        }
+    }
 }
 
 impl Drop for PosixAcl {
@@ -202,7 +232,12 @@ fn fetch_acl(path: &Path, ty: sys::acl_type_t) -> io::Result<Option<PosixAcl>> {
             _ => Err(error),
         }
     } else {
-        Ok(Some(PosixAcl::from_raw(acl)))
+        let acl = PosixAcl::from_raw(acl);
+        if acl.is_empty()? {
+            Ok(None)
+        } else {
+            Ok(Some(acl))
+        }
     }
 }
 
@@ -284,7 +319,7 @@ mod tests {
             sys::acl_free(text_ptr.cast());
             sys::acl_free(acl);
         }
-        Some(text)
+        if text.is_empty() { None } else { Some(text) }
     }
 
     fn set_acl_from_text(path: &Path, text: &str, ty: sys::acl_type_t) {
