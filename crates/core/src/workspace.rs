@@ -206,6 +206,35 @@ pub const fn metadata() -> Metadata {
     WORKSPACE_METADATA
 }
 
+/// Returns the configured protocol version as an 8-bit integer.
+///
+/// The workspace manifest records the highest supported protocol as a decimal
+/// integer. Upstream rsync encodes negotiated protocol numbers in a single
+/// byte, so the manifest value must remain within the `u8` range. The helper
+/// performs the bounds check at compile time and therefore causes compilation
+/// to fail immediately if the manifest is updated inconsistently. Callers that
+/// render diagnostics or capability banners can rely on this accessor without
+/// repeating the conversion logic.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::workspace;
+///
+/// assert_eq!(
+///     workspace::protocol_version_u8() as u32,
+///     workspace::metadata().protocol_version()
+/// );
+/// ```
+#[must_use]
+pub const fn protocol_version_u8() -> u8 {
+    let value = metadata().protocol_version();
+    if value > u8::MAX as u32 {
+        panic!("workspace protocol version must fit within a u8");
+    }
+    value as u8
+}
+
 /// Returns the configured daemon configuration directory as a [`Path`].
 #[must_use]
 pub fn daemon_config_dir() -> &'static Path {
@@ -250,6 +279,7 @@ mod tests {
     #[test]
     fn parse_protocol_matches_env() {
         assert_eq!(metadata().protocol_version(), 32);
+        assert_eq!(protocol_version_u8(), 32);
         assert_eq!(daemon_config_dir(), Path::new(DAEMON_CONFIG_DIR));
         assert_eq!(daemon_config_path(), Path::new(DAEMON_CONFIG_PATH));
         assert_eq!(daemon_secrets_path(), Path::new(DAEMON_SECRETS_PATH));
