@@ -798,6 +798,8 @@ struct RuntimeOptions {
     log_file: Option<PathBuf>,
     log_file_configured: bool,
     global_refuse_options: Option<Vec<String>>,
+    global_secrets_file: Option<PathBuf>,
+    global_secrets_from_config: bool,
     pid_file: Option<PathBuf>,
     pid_file_from_config: bool,
     reverse_lookup: bool,
@@ -824,6 +826,8 @@ impl Default for RuntimeOptions {
             log_file: None,
             log_file_configured: false,
             global_refuse_options: None,
+            global_secrets_file: None,
+            global_secrets_from_config: false,
             pid_file: None,
             pid_file_from_config: false,
             reverse_lookup: true,
@@ -925,7 +929,8 @@ impl RuntimeOptions {
                 let value = iter
                     .next()
                     .ok_or_else(|| missing_argument_value("--module"))?;
-                let mut module = parse_module_definition(value)?;
+                let mut module =
+                    parse_module_definition(value, options.global_secrets_file.as_deref())?;
                 if let Some(global) = &options.global_refuse_options {
                     module.inherit_refuse_options(global);
                 }
@@ -1114,6 +1119,10 @@ impl RuntimeOptions {
             }
         }
 
+        if let Some((secrets, origin)) = parsed.global_secrets_file {
+            self.set_global_secrets_file(secrets, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -1282,6 +1291,30 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_global_secrets_file(
+        &mut self,
+        path: PathBuf,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.global_secrets_file {
+            if self.global_secrets_from_config {
+                if existing == &path {
+                    return Ok(());
+                }
+
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'secrets file' directive in global section",
+                ));
+            }
+        }
+
+        self.global_secrets_file = Some(path);
+        self.global_secrets_from_config = true;
+        Ok(())
+    }
+
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let contents =
@@ -1384,6 +1417,7 @@ struct ParsedConfigModules {
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
+    global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -1420,6 +1454,7 @@ fn parse_config_modules_inner(
     let mut reverse_lookup: Option<(bool, ConfigDirectiveOrigin)> = None;
     let mut lock_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
     let mut global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)> = None;
+    let mut global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -1458,7 +1493,8 @@ fn parse_config_modules_inner(
                 }
 
                 if let Some(builder) = current.take() {
-                    modules.push(builder.finish(path)?);
+                    let default_secrets = global_secrets_file.as_ref().map(|(p, _)| p.as_path());
+                    modules.push(builder.finish(path, default_secrets)?);
                 }
 
                 current = Some(ModuleDefinitionBuilder::new(name.to_string(), line_number));
@@ -1703,6 +1739,23 @@ fn parse_config_modules_inner(
                             global_bwlimit = Some((components, origin));
                         }
                     }
+
+                    if let Some((secrets_path, origin)) = included.global_secrets_file {
+                        if let Some((existing, existing_origin)) = &global_secrets_file {
+                            if existing != &secrets_path {
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'secrets file' directive in global section (previously defined on line {})",
+                                        existing_origin.line
+                                    ),
+                                ));
+                            }
+                        } else {
+                            global_secrets_file = Some((secrets_path, origin));
+                        }
+                    }
                 }
                 "motd file" => {
                     let trimmed = value.trim();
@@ -1825,6 +1878,38 @@ fn parse_config_modules_inner(
                         global_bwlimit = Some((components, origin));
                     }
                 }
+                "secrets file" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'secrets file' directive must not be empty",
+                        ));
+                    }
+
+                    let resolved = resolve_config_relative_path(path, trimmed);
+                    let validated = validate_secrets_file(&resolved, path, line_number)?;
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &global_secrets_file {
+                        if existing != &validated {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'secrets file' directive in global section (previously defined on line {})",
+                                    existing_origin.line
+                                ),
+                            ));
+                        }
+                    } else {
+                        global_secrets_file = Some((validated, origin));
+                    }
+                }
                 "lock file" => {
                     let trimmed = value.trim();
                     if trimmed.is_empty() {
@@ -1867,7 +1952,8 @@ fn parse_config_modules_inner(
         }
 
         if let Some(builder) = current {
-            modules.push(builder.finish(path)?);
+            let default_secrets = global_secrets_file.as_ref().map(|(p, _)| p.as_path());
+            modules.push(builder.finish(path, default_secrets)?);
         }
 
         Ok(ParsedConfigModules {
@@ -1878,6 +1964,7 @@ fn parse_config_modules_inner(
             reverse_lookup,
             lock_file,
             global_bandwidth_limit: global_bwlimit,
+            global_secrets_file,
         })
     })();
 
@@ -2273,7 +2360,11 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
-    fn finish(self, config_path: &Path) -> Result<ModuleDefinition, DaemonError> {
+    fn finish(
+        self,
+        config_path: &Path,
+        default_secrets: Option<&Path>,
+    ) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
                 config_path,
@@ -2309,7 +2400,14 @@ impl ModuleDefinitionBuilder {
             ));
         }
 
-        if self.auth_users.is_some() && self.secrets_file.is_none() {
+        let auth_users = self.auth_users.unwrap_or_default();
+        let secrets_file = if auth_users.is_empty() {
+            self.secrets_file
+        } else if let Some(path) = self.secrets_file {
+            Some(path)
+        } else if let Some(default) = default_secrets {
+            Some(default.to_path_buf())
+        } else {
             return Err(config_parse_error(
                 config_path,
                 self.declaration_line,
@@ -2318,7 +2416,7 @@ impl ModuleDefinitionBuilder {
                     self.name
                 ),
             ));
-        }
+        };
 
         Ok(ModuleDefinition {
             name: self.name,
@@ -2326,8 +2424,8 @@ impl ModuleDefinitionBuilder {
             comment: self.comment,
             hosts_allow: self.hosts_allow.unwrap_or_default(),
             hosts_deny: self.hosts_deny.unwrap_or_default(),
-            auth_users: self.auth_users.unwrap_or_default(),
-            secrets_file: self.secrets_file,
+            auth_users,
+            secrets_file,
             bandwidth_limit: self.bandwidth_limit,
             bandwidth_limit_specified: self.bandwidth_limit_specified,
             bandwidth_burst: self.bandwidth_burst,
@@ -4524,7 +4622,10 @@ fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
         .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_string()))
 }
 
-fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonError> {
+fn parse_module_definition(
+    value: &OsString,
+    default_secrets: Option<&Path>,
+) -> Result<ModuleDefinition, DaemonError> {
     let text = value.to_string_lossy();
     let (name_part, remainder) = text.split_once('=').ok_or_else(|| {
         config_error(format!(
@@ -4583,13 +4684,22 @@ fn parse_module_definition(value: &OsString) -> Result<ModuleDefinition, DaemonE
     }
 
     if module.auth_users.is_empty() {
+        if module.secrets_file.is_none() {
+            if let Some(path) = default_secrets {
+                module.secrets_file = Some(path.to_path_buf());
+            }
+        }
         return Ok(module);
     }
 
     if module.secrets_file.is_none() {
-        return Err(config_error(
-            "module specified 'auth users' but did not supply a secrets file".to_string(),
-        ));
+        if let Some(path) = default_secrets {
+            module.secrets_file = Some(path.to_path_buf());
+        } else {
+            return Err(config_error(
+                "module specified 'auth users' but did not supply a secrets file".to_string(),
+            ));
+        }
     }
 
     Ok(module)
@@ -7418,6 +7528,86 @@ mod tests {
             module.auth_users(),
             &[String::from("alice"), String::from("bob")]
         );
+        assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_inherits_global_secrets_file_from_config() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!(
+                "secrets file = {}\n[secure]\npath = {}\nauth users = alice\n",
+                secrets_path.display(),
+                module_dir.display()
+            ),
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .expect("parse config");
+
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.auth_users(), &[String::from("alice")]);
+        assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
+    }
+
+    #[test]
+    fn runtime_options_inline_module_uses_global_secrets_file() {
+        let dir = tempdir().expect("config dir");
+        let module_dir = dir.path().join("module");
+        fs::create_dir_all(&module_dir).expect("module dir");
+        let secrets_path = dir.path().join("secrets.txt");
+        fs::write(&secrets_path, "alice:password\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let config_path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &config_path,
+            format!("secrets file = {}\n", secrets_path.display()),
+        )
+        .expect("write config");
+
+        let args = [
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+            OsString::from("--module"),
+            OsString::from(format!(
+                "secure={}{}auth users=alice",
+                module_dir.display(),
+                ';'
+            )),
+        ];
+
+        let options = RuntimeOptions::parse(&args).expect("parse inline module");
+        let modules = options.modules();
+        assert_eq!(modules.len(), 1);
+        let module = &modules[0];
+        assert_eq!(module.name, "secure");
         assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
     }
 
