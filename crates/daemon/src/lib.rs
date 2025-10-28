@@ -1370,15 +1370,8 @@ fn environment_config_override() -> Option<OsString> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-const fn default_config_candidates(brand: Brand) -> [&'static str; 2] {
-    match brand {
-        Brand::Oc => [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH],
-        Brand::Upstream => [LEGACY_CONFIG_PATH, DEFAULT_CONFIG_PATH],
-    }
-}
-
 fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
-    first_existing_config_path(default_config_candidates(brand))
+    first_existing_config_path(brand.config_path_candidate_strs())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5332,7 +5325,7 @@ mod tests {
     #[test]
     fn default_config_candidates_prefer_oc_branding() {
         assert_eq!(
-            default_config_candidates(Brand::Oc),
+            Brand::Oc.config_path_candidate_strs(),
             [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH]
         );
     }
@@ -5340,7 +5333,7 @@ mod tests {
     #[test]
     fn default_config_candidates_prefer_legacy_for_upstream_brand() {
         assert_eq!(
-            default_config_candidates(Brand::Upstream),
+            Brand::Upstream.config_path_candidate_strs(),
             [LEGACY_CONFIG_PATH, DEFAULT_CONFIG_PATH]
         );
     }

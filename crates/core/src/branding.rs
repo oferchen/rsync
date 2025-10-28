@@ -69,6 +69,48 @@ impl Brand {
     pub const fn daemon_program_name(self) -> &'static str {
         self.profile().daemon_program_name()
     }
+
+    /// Returns the preferred daemon configuration search order for this brand.
+    ///
+    /// The branded `oc-` binaries consult `/etc/oc-rsyncd/oc-rsyncd.conf`
+    /// first and only fall back to the legacy `/etc/rsyncd.conf` when the
+    /// branded path is absent. Compatibility wrappers invert that order so
+    /// existing upstream deployments keep working without configuration
+    /// changes.
+    #[must_use]
+    pub const fn config_path_candidate_strs(self) -> [&'static str; 2] {
+        match self {
+            Self::Oc => [OC_DAEMON_CONFIG_PATH, LEGACY_DAEMON_CONFIG_PATH],
+            Self::Upstream => [LEGACY_DAEMON_CONFIG_PATH, OC_DAEMON_CONFIG_PATH],
+        }
+    }
+
+    /// Returns the preferred daemon configuration search order as [`Path`]s.
+    #[must_use]
+    pub fn config_path_candidates(self) -> [&'static Path; 2] {
+        let [primary, secondary] = self.config_path_candidate_strs();
+        [Path::new(primary), Path::new(secondary)]
+    }
+
+    /// Returns the preferred secrets-file search order for this brand.
+    ///
+    /// Similar to [`Self::config_path_candidate_strs`], the branded binaries
+    /// prefer `/etc/oc-rsyncd/oc-rsyncd.secrets` while compatibility wrappers
+    /// continue to read `/etc/rsyncd.secrets` by default.
+    #[must_use]
+    pub const fn secrets_path_candidate_strs(self) -> [&'static str; 2] {
+        match self {
+            Self::Oc => [OC_DAEMON_SECRETS_PATH, LEGACY_DAEMON_SECRETS_PATH],
+            Self::Upstream => [LEGACY_DAEMON_SECRETS_PATH, OC_DAEMON_SECRETS_PATH],
+        }
+    }
+
+    /// Returns the preferred secrets-file search order as [`Path`]s.
+    #[must_use]
+    pub fn secrets_path_candidates(self) -> [&'static Path; 2] {
+        let [primary, secondary] = self.secrets_path_candidate_strs();
+        [Path::new(primary), Path::new(secondary)]
+    }
 }
 
 /// Describes the public-facing identity used by a binary distribution.
@@ -431,5 +473,43 @@ mod tests {
         );
         assert_eq!(detect_brand(Some(OsStr::new("oc-rsyncd"))), Brand::Oc);
         assert_eq!(detect_brand(Some(OsStr::new("OC-RSYNCD"))), Brand::Oc);
+    }
+
+    #[test]
+    fn config_search_orders_match_brand_expectations() {
+        assert_eq!(
+            Brand::Oc.config_path_candidate_strs(),
+            [OC_DAEMON_CONFIG_PATH, LEGACY_DAEMON_CONFIG_PATH]
+        );
+        assert_eq!(
+            Brand::Upstream.config_path_candidate_strs(),
+            [LEGACY_DAEMON_CONFIG_PATH, OC_DAEMON_CONFIG_PATH]
+        );
+
+        let oc_paths = Brand::Oc.config_path_candidates();
+        assert_eq!(oc_paths[0], Path::new(OC_DAEMON_CONFIG_PATH));
+        assert_eq!(oc_paths[1], Path::new(LEGACY_DAEMON_CONFIG_PATH));
+        let upstream_paths = Brand::Upstream.config_path_candidates();
+        assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_CONFIG_PATH));
+        assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_CONFIG_PATH));
+    }
+
+    #[test]
+    fn secrets_search_orders_match_brand_expectations() {
+        assert_eq!(
+            Brand::Oc.secrets_path_candidate_strs(),
+            [OC_DAEMON_SECRETS_PATH, LEGACY_DAEMON_SECRETS_PATH]
+        );
+        assert_eq!(
+            Brand::Upstream.secrets_path_candidate_strs(),
+            [LEGACY_DAEMON_SECRETS_PATH, OC_DAEMON_SECRETS_PATH]
+        );
+
+        let oc_paths = Brand::Oc.secrets_path_candidates();
+        assert_eq!(oc_paths[0], Path::new(OC_DAEMON_SECRETS_PATH));
+        assert_eq!(oc_paths[1], Path::new(LEGACY_DAEMON_SECRETS_PATH));
+        let upstream_paths = Brand::Upstream.secrets_path_candidates();
+        assert_eq!(upstream_paths[0], Path::new(LEGACY_DAEMON_SECRETS_PATH));
+        assert_eq!(upstream_paths[1], Path::new(OC_DAEMON_SECRETS_PATH));
     }
 }
