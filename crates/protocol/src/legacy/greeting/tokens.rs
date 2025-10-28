@@ -5,8 +5,10 @@ use std::str::SplitAsciiWhitespace;
 
 /// Iterator over whitespace-separated digest tokens advertised by a legacy daemon.
 ///
-/// Instances of this iterator are created via [`LegacyDaemonGreeting::digest_tokens`] or
-/// [`LegacyDaemonGreetingOwned::digest_tokens`]. The iterator yields each digest exactly once in the
+/// Instances of this iterator are created via
+/// [`crate::legacy::greeting::LegacyDaemonGreeting::digest_tokens`] or
+/// [`crate::legacy::greeting::LegacyDaemonGreetingOwned::digest_tokens`]. The iterator yields each
+/// digest exactly once in the
 /// order received from the peer, matching upstream rsync's processing of the challenge/response list.
 #[derive(Clone, Debug)]
 pub struct DigestListTokens<'a> {
