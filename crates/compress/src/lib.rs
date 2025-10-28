@@ -32,7 +32,8 @@
 //! # Errors
 //!
 //! The encoder and decoder functions return [`std::io::Result`]. When zlib
-//! reports an error the helper wraps it in [`io::ErrorKind::Other`]. Callers can
+//! reports an error the helper wraps it in
+//! [`std::io::ErrorKind::Other`]. Callers can
 //! surface these diagnostics via the central message facade in `rsync-core`.
 //!
 //! # Examples
@@ -60,6 +61,6 @@
 //! # See also
 //!
 //! - [`zlib`] for the encoder/decoder implementation and API surface.
-//! - [`rsync_engine`] for the transfer pipeline that integrates these helpers.
+//! - `rsync_engine` for the transfer pipeline that integrates these helpers.
 
 pub mod zlib;

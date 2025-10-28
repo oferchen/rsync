@@ -13,16 +13,16 @@
 //!
 //! The public modules mirror upstream rsync's layering:
 //!
-//! - [`negotiation`] implements [`sniff_negotiation_stream`] and
-//!   [`NegotiatedStream`], which classify the prologue without losing buffered
-//!   data.
-//! - [`binary`] and [`daemon`] wrap the protocol helpers to perform client and
-//!   daemon handshakes.
-//! - [`ssh`] spawns a subprocess (typically the system `ssh` binary) and
-//!   exposes its standard I/O handles through a [`Read`]/[`Write`] pair so the
-//!   negotiation layer can treat remote-shell sessions like any other stream.
-//! - [`session`] builds on top of both flows to expose a high-level session
-//!   negotiation entry point.
+//! - [`sniff_negotiation_stream`] and [`NegotiatedStream`] classify the prologue
+//!   without losing buffered data.
+//! - [`negotiate_binary_session`] and [`negotiate_legacy_daemon_session`] wrap
+//!   the protocol helpers to perform client and daemon handshakes.
+//! - [`parse_remote_shell`] spawns a subprocess (typically the system `ssh`
+//!   binary) and exposes its standard I/O handles through a [`std::io::Read`]
+//!   /[`std::io::Write`] pair so the negotiation layer can treat remote-shell
+//!   sessions like any other stream.
+//! - [`SessionHandshake`] builds on top of both flows to expose a high-level
+//!   session negotiation entry point.
 //!
 //! Each module is structured as a facade over the `rsync_protocol` crate, making
 //! it possible to slot different transports (SSH stdio vs TCP daemon) behind the
@@ -62,7 +62,7 @@
 //! # See also
 //!
 //! - [`rsync_protocol`] for the negotiation parsers that back these adapters.
-//! - [`rsync_core`] for the message helpers used when transport-level errors are
+//! - `rsync_core` for the message helpers used when transport-level errors are
 //!   reported to the user.
 
 mod binary;

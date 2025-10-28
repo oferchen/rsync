@@ -12,7 +12,7 @@
 //! # Design
 //!
 //! Functionality is decomposed into focused modules. The [`local_copy`] module
-//! exposes [`LocalCopyPlan`](local_copy::LocalCopyPlan) which performs
+//! exposes [`local_copy::LocalCopyPlan`] which performs
 //! recursive copies of regular files, directories, symbolic links, and FIFOs
 //! while preserving permissions and timestamps through the [`rsync_meta`]
 //! helpers. The [`delta`] module mirrors upstream rsync's signature layout
@@ -64,7 +64,7 @@
 //!
 //! # See also
 //!
-//! - [`rsync_core::client`] integrates the plan builder to power the `rsync`
+//! - `rsync_core::client` integrates the plan builder to power the `rsync`
 //!   binary's local copy mode.
 //! - [`delta`] exposes block-size and checksum heuristics that will be wired into
 //!   the delta-transfer engine.
