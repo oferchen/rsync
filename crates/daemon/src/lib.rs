@@ -206,7 +206,7 @@ use rsync_core::{
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
-    version::{RUST_VERSION, VersionInfoReport},
+    version::{RUST_VERSION, VersionInfoReport, WEB_SITE},
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{
@@ -261,7 +261,7 @@ fn help_text(brand: Brand) -> String {
     format!(
         concat!(
             "{program} {version}\n",
-            "https://github.com/oferchen/rsync\n",
+            "{web_site}\n",
             "\n",
             "Usage: {program} [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
             "\n",
@@ -290,6 +290,7 @@ fn help_text(brand: Brand) -> String {
         ),
         program = program,
         version = RUST_VERSION,
+        web_site = WEB_SITE,
         default_config = default_config,
     )
 }
