@@ -69,6 +69,101 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (1.87 + llvm-tools)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.87
+          components: llvm-tools-preview,clippy,rustfmt
+          cache: true
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
+
+      - name: Pre-flight check
+        run: scripts/preflight.sh
+
+      - name: Install cargo-llvm-cov
+        id: install_llvm_cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        id: install_nextest
+        run: cargo install cargo-nextest --locked
+
+      - name: Run tests
+        if: steps.install_nextest.outcome == 'success'
+        run: cargo nextest run --workspace --no-fail-fast
+      - name: Run tests (extended features)
+        if: steps.install_nextest.outcome == 'success'
+        run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
+      - name: Run CLI version tests without ACL/iconv support
+        if: steps.install_nextest.outcome == 'success'
+        run: cargo test -p oc-rsync-cli --test version --no-default-features --features "xattr zlib zstd"
+      - name: Test with coverage (95% lines & functions)
+        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
+        run: |
+          cargo llvm-cov nextest --workspace --features "cli nightly" \
+            --fail-under-lines 95 --fail-under-functions 95 \
+            --lcov --output-path coverage.lcov -- --no-fail-fast
+
+      - name: Verify coverage file exists
+        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
+        run: ls -l coverage.lcov
+
+      - name: Upload coverage artifact
+        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+
+
+  test-windows:
+    needs: lint
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (1.87)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.87
+          cache: true
+
+      - name: Run Windows-specific tests
+        shell: pwsh
+        run: |
+          cargo test --test windows
+          cargo test --test daemon_windows_integration
+
+  test-bsd:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run FreeBSD daemon integration tests
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '14.1'
+          copyback: false
+          envs: 'RUSTFLAGS=-Dwarnings CARGO_TERM_COLOR=always LC_ALL=C COLUMNS=80'
+          prepare: |
+            pkg install -y rust pkgconf
+          run: |
+            cd /workspace
+            cargo test --test daemon_bsd_integration
+
+
+  interop:
+    needs: test-linux
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -111,6 +206,9 @@ jobs:
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+          - name: windows-aarch64
+            os: windows-2022
+            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -129,26 +227,103 @@ jobs:
             echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           fi
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-build-
+
       - name: Build release binaries
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --target ${{ matrix.target }} -p oc-rsync-bin
-          cargo build --release --target ${{ matrix.target }} -p oc-rsyncd-bin
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            bins=("oc-rsync")
+          else
+            bins=("oc-rsync" "oc-rsyncd")
+          fi
+
+          for bin in "${bins[@]}"; do
+            cargo build --release --target "${{ matrix.target }}" --bin "$bin"
+          done
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            bins=("oc-rsync")
+            ext=".exe"
+          else
+            bins=("oc-rsync" "oc-rsyncd")
+            ext=""
+          fi
+
+          base_dir="dist/${{ matrix.name }}"
+          mkdir -p "$base_dir"
+
+          declare -a outputs=()
+          for bin in "${bins[@]}"; do
+            src="target/${{ matrix.target }}/release/${bin}${ext}"
+            dest="$base_dir/${bin}${ext}"
+            cp "$src" "$dest"
+            outputs+=("$dest")
+          done
+
+          python - <<'PY' "${outputs[@]}"
+import hashlib
+import pathlib
+import sys
+
+for arg in sys.argv[1:]:
+    path = pathlib.Path(arg)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    checksum_path = path.parent / f"{path.name}.sha256"
+    checksum_path.write_text(f"{digest}  {path.name}\n")
+PY
+
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            cargo install cyclonedx-rust-cargo || true
+            cyclonedx-rust-cargo --output "$base_dir/oc-rsync-${{ matrix.name }}-sbom.json"
+          fi
+
+      - uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+
+  package-linux:
+    needs: [test-linux, build-matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (1.87)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.87
+          cache: true
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
+
+      - name: Install packaging tools
+        run: cargo install cargo-deb cargo-rpm || true
+
+      - name: Install cyclonedx-rust-cargo
+        run: cargo install cyclonedx-rust-cargo || true
+
+      - name: Display workspace metadata
+        run: cargo metadata --format-version 1 --no-deps | jq '.workspace_metadata.oc_rsync'
+
+      - name: Build packages
+        run: |
+          cargo deb -p oc-rsync
+          cargo rpm build --release
+
+      - name: Generate SBOM
+        run: |
+          mkdir -p target/sbom
+          cyclonedx-rust-cargo --output target/sbom/oc-rsync.cdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-packages
           path: |
             target/${{ matrix.target }}/release/oc-rsync*
             target/${{ matrix.target }}/release/oc-rsyncd*

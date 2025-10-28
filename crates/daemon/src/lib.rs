@@ -32,8 +32,9 @@
 //! - [`DaemonConfig`] stores the caller-provided daemon arguments. A
 //!   [`DaemonConfigBuilder`] exposes an API that higher layers will expand once
 //!   full daemon support lands.
-//! - The runtime honours the branded `OC_RSYNC_CONFIG` environment variable and
-//!   falls back to the legacy `RSYNCD_CONFIG` override when the branded value is
+//! - The runtime honours the branded `OC_RSYNC_CONFIG` and
+//!   `OC_RSYNC_SECRETS` environment variables and falls back to the legacy
+//!   `RSYNCD_CONFIG`/`RSYNCD_SECRETS` overrides when the branded values are
 //!   unset. When no explicit configuration path is provided via CLI or
 //!   environment variables, the daemon attempts to load
 //!   `/etc/oc-rsyncd/oc-rsyncd.conf` so packaged defaults align with production
@@ -241,6 +242,8 @@ const DEFAULT_PORT: u16 = 873;
 
 const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
 const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
+const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
+const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -764,6 +767,18 @@ thread_local! {
 }
 
 #[cfg(test)]
+thread_local! {
+    static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> = RefCell::new(None);
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+struct TestSecretsEnvOverride {
+    branded: Option<OsString>,
+    legacy: Option<OsString>,
+}
+
+#[cfg(test)]
 fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
     TEST_HOSTNAME_OVERRIDES.with(|map| {
         map.borrow_mut()
@@ -902,7 +917,17 @@ impl RuntimeOptions {
         }
 
         if load_defaults && options.global_secrets_file.is_none() {
-            if let Some(path) = default_secrets_path_if_present(brand) {
+            if let Some((path, env)) = environment_secrets_override() {
+                let path_buf = PathBuf::from(&path);
+                if let Some(validated) = validate_secrets_file_from_env(&path_buf, env)? {
+                    options.global_secrets_file = Some(validated.clone());
+                    options.global_secrets_from_config = false;
+                    options
+                        .delegate_arguments
+                        .push(OsString::from("--secrets-file"));
+                    options.delegate_arguments.push(validated.into_os_string());
+                }
+            } else if let Some(path) = default_secrets_path_if_present(brand) {
                 options.global_secrets_file = Some(PathBuf::from(&path));
                 options.global_secrets_from_config = false;
                 options
@@ -1458,6 +1483,25 @@ where
 fn environment_config_override() -> Option<OsString> {
     environment_path_override(BRANDED_CONFIG_ENV)
         .or_else(|| environment_path_override(LEGACY_CONFIG_ENV))
+}
+
+fn environment_secrets_override() -> Option<(OsString, &'static str)> {
+    #[cfg(test)]
+    if let Some(env) = TEST_SECRETS_ENV.with(|cell| cell.borrow().clone()) {
+        if let Some(path) = env.branded.clone() {
+            return Some((path, BRANDED_SECRETS_ENV));
+        }
+
+        if let Some(path) = env.legacy.clone() {
+            return Some((path, LEGACY_SECRETS_ENV));
+        }
+    }
+
+    if let Some(path) = environment_path_override(BRANDED_SECRETS_ENV) {
+        return Some((path, BRANDED_SECRETS_ENV));
+    }
+
+    environment_path_override(LEGACY_SECRETS_ENV).map(|path| (path, LEGACY_SECRETS_ENV))
 }
 
 fn environment_path_override(name: &'static str) -> Option<OsString> {
@@ -2591,11 +2635,44 @@ fn validate_secrets_file(
         )
     })?;
 
+    if let Err(detail) = ensure_secrets_file(path, &metadata) {
+        return Err(config_parse_error(config_path, line, detail));
+    }
+
+    Ok(path.to_path_buf())
+}
+
+fn validate_secrets_file_from_env(
+    path: &Path,
+    env: &'static str,
+) -> Result<Option<PathBuf>, DaemonError> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            if error.kind() == io::ErrorKind::NotFound {
+                return Ok(None);
+            }
+
+            return Err(secrets_env_error(
+                env,
+                path,
+                format!("could not be accessed: {error}"),
+            ));
+        }
+    };
+
+    if let Err(detail) = ensure_secrets_file(path, &metadata) {
+        return Err(secrets_env_error(env, path, detail));
+    }
+
+    Ok(Some(path.to_path_buf()))
+}
+
+fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), String> {
     if !metadata.is_file() {
-        return Err(config_parse_error(
-            config_path,
-            line,
-            format!("secrets file '{}' must be a regular file", path.display()),
+        return Err(format!(
+            "secrets file '{}' must be a regular file",
+            path.display()
         ));
     }
 
@@ -2603,18 +2680,14 @@ fn validate_secrets_file(
     {
         let mode = metadata.permissions().mode();
         if mode & 0o077 != 0 {
-            return Err(config_parse_error(
-                config_path,
-                line,
-                format!(
-                    "secrets file '{}' must not be accessible to group or others (expected permissions 0600)",
-                    path.display()
-                ),
+            return Err(format!(
+                "secrets file '{}' must not be accessible to group or others (expected permissions 0600)",
+                path.display()
             ));
         }
     }
 
-    Ok(path.to_path_buf())
+    Ok(())
 }
 
 fn parse_boolean_directive(value: &str) -> Option<bool> {
@@ -5074,6 +5147,14 @@ fn config_error(text: String) -> DaemonError {
     DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
+fn secrets_env_error(env: &'static str, path: &Path, detail: impl Into<String>) -> DaemonError {
+    config_error(format!(
+        "environment variable {env} points to invalid secrets file '{}': {}",
+        path.display(),
+        detail.into()
+    ))
+}
+
 fn config_parse_error(path: &Path, line: usize, message: impl Into<String>) -> DaemonError {
     let text = format!(
         "failed to parse config '{}': {} (line {})",
@@ -5393,6 +5474,18 @@ mod tests {
     {
         TEST_SECRETS_CANDIDATES.with(|cell| {
             let previous = cell.replace(Some(candidates));
+            let result = func();
+            cell.replace(previous);
+            result
+        })
+    }
+
+    fn with_test_secrets_env<F, R>(override_value: Option<TestSecretsEnvOverride>, func: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        TEST_SECRETS_ENV.with(|cell| {
+            let previous = cell.replace(override_value);
             let result = func();
             cell.replace(previous);
             result
@@ -7629,6 +7722,126 @@ mod tests {
                 OsString::from("--secrets-file"),
                 secrets_path.into_os_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_loads_secrets_from_branded_environment_variable() {
+        let dir = tempdir().expect("secrets dir");
+        let secrets_path = dir.path().join("branded.txt");
+        fs::write(&secrets_path, "alice:secret\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let options = with_test_secrets_env(
+            Some(TestSecretsEnvOverride {
+                branded: Some(secrets_path.clone().into_os_string()),
+                legacy: None,
+            }),
+            || RuntimeOptions::parse(&[]),
+        )
+        .expect("parse env secrets");
+
+        assert_eq!(
+            options.delegate_arguments,
+            [
+                OsString::from("--secrets-file"),
+                secrets_path.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_loads_secrets_from_legacy_environment_variable() {
+        let dir = tempdir().expect("secrets dir");
+        let secrets_path = dir.path().join("legacy.txt");
+        fs::write(&secrets_path, "bob:secret\n").expect("write secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+
+        let options = with_test_secrets_env(
+            Some(TestSecretsEnvOverride {
+                branded: None,
+                legacy: Some(secrets_path.clone().into_os_string()),
+            }),
+            || RuntimeOptions::parse(&[]),
+        )
+        .expect("parse env secrets");
+
+        assert_eq!(
+            options.delegate_arguments,
+            [
+                OsString::from("--secrets-file"),
+                secrets_path.clone().into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn runtime_options_branded_secrets_env_overrides_legacy_env() {
+        let dir = tempdir().expect("secrets dir");
+        let branded_path = dir.path().join("branded.txt");
+        let legacy_path = dir.path().join("legacy.txt");
+        fs::write(&branded_path, "carol:secret\n").expect("write branded secrets");
+        fs::write(&legacy_path, "dave:secret\n").expect("write legacy secrets");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&branded_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod branded secrets");
+            fs::set_permissions(&legacy_path, PermissionsExt::from_mode(0o600))
+                .expect("chmod legacy secrets");
+        }
+
+        let options = with_test_secrets_env(
+            Some(TestSecretsEnvOverride {
+                branded: Some(branded_path.clone().into_os_string()),
+                legacy: Some(legacy_path.clone().into_os_string()),
+            }),
+            || RuntimeOptions::parse(&[]),
+        )
+        .expect("parse env secrets");
+
+        let delegate = &options.delegate_arguments;
+        let expected_tail = [
+            OsString::from("--secrets-file"),
+            branded_path.clone().into_os_string(),
+        ];
+        assert!(delegate.ends_with(&expected_tail));
+        assert!(
+            !delegate.iter().any(|arg| arg == legacy_path.as_os_str()),
+            "legacy secrets path should not be forwarded"
+        );
+    }
+
+    #[test]
+    fn runtime_options_rejects_missing_secrets_from_environment() {
+        let missing = OsString::from("/nonexistent/secrets.txt");
+        let options = with_test_secrets_env(
+            Some(TestSecretsEnvOverride {
+                branded: Some(missing.clone()),
+                legacy: None,
+            }),
+            || RuntimeOptions::parse(&[]),
+        )
+        .expect("missing secrets should be ignored");
+        assert!(
+            !options
+                .delegate_arguments
+                .iter()
+                .any(|arg| arg == "--secrets-file"),
+            "no secrets override should be forwarded when the environment path is missing"
         );
     }
 
