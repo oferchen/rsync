@@ -3,7 +3,10 @@ use crate::util::{is_help_flag, list_rust_sources_via_git, validation_error};
 use std::ffi::OsString;
 use std::fs;
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[cfg(test)]
+use std::path::PathBuf;
 
 /// Options accepted by the `no-placeholders` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
