@@ -66,7 +66,10 @@
 //!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
 //!   while advertising the Rust-branded binary name.
 
-use crate::branding::{self, Brand};
+use crate::{
+    branding::{self, Brand},
+    workspace,
+};
 use core::{
     fmt::{self, Write as FmtWrite},
     iter::{FromIterator, FusedIterator},
@@ -142,7 +145,7 @@ pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 
 /// Web site advertised by `rsync` in `--version` output.
-pub const WEB_SITE: &str = env!("CARGO_PKG_REPOSITORY");
+pub const WEB_SITE: &str = workspace::SOURCE_URL;
 
 /// Repository URL advertised by version banners and documentation.
 pub const SOURCE_URL: &str = WEB_SITE;
@@ -203,11 +206,11 @@ pub const SUBPROTOCOL_VERSION: u8 = 0;
 
 /// Upstream base version that the Rust implementation tracks.
 #[doc(alias = "3.4.1")]
-pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
+pub const UPSTREAM_BASE_VERSION: &str = workspace::UPSTREAM_VERSION;
 
 /// Full version string rendered by user-visible banners.
 #[doc(alias = "3.4.1-rust")]
-pub const RUST_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const RUST_VERSION: &str = workspace::RUST_VERSION;
 
 /// Highest protocol version supported by this build.
 pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
@@ -1957,6 +1960,19 @@ mod tests {
         assert_eq!(metadata.copyright_notice(), COPYRIGHT_NOTICE);
         assert_eq!(metadata.web_site(), WEB_SITE);
         assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
+    }
+
+    #[test]
+    fn workspace_version_matches_package_version() {
+        assert_eq!(RUST_VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn workspace_protocol_matches_latest() {
+        assert_eq!(
+            workspace::PROTOCOL_VERSION,
+            u32::from(ProtocolVersion::NEWEST.as_u8())
+        );
     }
 
     #[test]
