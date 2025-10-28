@@ -632,12 +632,13 @@ impl OutFormat {
                             ),
                         );
                         if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget)
-                            && let Some(target) = event
-                                .metadata()
-                                .and_then(ClientEntryMetadata::symlink_target)
                         {
-                            buffer.push_str(" -> ");
-                            buffer.push_str(&target.to_string_lossy());
+                            if let Some(metadata) = event.metadata() {
+                                if let Some(target) = metadata.symlink_target() {
+                                    buffer.push_str(" -> ");
+                                    buffer.push_str(&target.to_string_lossy());
+                                }
+                            }
                         }
                     }
                     OutFormatPlaceholder::ItemizedChanges => {
@@ -5055,12 +5056,13 @@ fn emit_verbose<W: Write + ?Sized>(
             }
 
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if let Some(metadata) = event.metadata()
-                && matches!(kind, ClientEventKind::SymlinkCopied)
-                && let Some(target) = metadata.symlink_target()
-            {
-                rendered.push_str(" -> ");
-                rendered.push_str(&target.to_string_lossy());
+            if matches!(kind, ClientEventKind::SymlinkCopied) {
+                if let Some(metadata) = event.metadata() {
+                    if let Some(target) = metadata.symlink_target() {
+                        rendered.push_str(" -> ");
+                        rendered.push_str(&target.to_string_lossy());
+                    }
+                }
             }
             writeln!(stdout, "{rendered}")?;
             continue;
@@ -5100,11 +5102,11 @@ fn emit_verbose<W: Write + ?Sized>(
                     "ignoring unsafe symlink \"{}\"",
                     event.relative_path().display()
                 );
-                if let Some(metadata) = event.metadata()
-                    && let Some(target) = metadata.symlink_target()
-                {
-                    rendered.push_str(" -> ");
-                    rendered.push_str(&target.to_string_lossy());
+                if let Some(metadata) = event.metadata() {
+                    if let Some(target) = metadata.symlink_target() {
+                        rendered.push_str(" -> ");
+                        rendered.push_str(&target.to_string_lossy());
+                    }
                 }
                 writeln!(stdout, "{rendered}")?;
                 continue;
@@ -5121,12 +5123,13 @@ fn emit_verbose<W: Write + ?Sized>(
         }
 
         let mut rendered = event.relative_path().to_string_lossy().into_owned();
-        if let Some(metadata) = event.metadata()
-            && matches!(kind, ClientEventKind::SymlinkCopied)
-            && let Some(target) = metadata.symlink_target()
-        {
-            rendered.push_str(" -> ");
-            rendered.push_str(&target.to_string_lossy());
+        if matches!(kind, ClientEventKind::SymlinkCopied) {
+            if let Some(metadata) = event.metadata() {
+                if let Some(target) = metadata.symlink_target() {
+                    rendered.push_str(" -> ");
+                    rendered.push_str(&target.to_string_lossy());
+                }
+            }
         }
 
         if verbosity == 1 {
