@@ -216,6 +216,41 @@ jobs:
           if [ -f target/upstream/daemons.pids ]; then
             xargs -r kill < target/upstream/daemons.pids || true
           fi
+
+  cross-build:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-gnu
+          - aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust (1.87)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.87
+          target: ${{ matrix.target }}
+          profile: minimal
+          cache: true
+
+      - name: Install Zig toolchain
+        uses: korandoru/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Cross-compile (${{ matrix.target }})
+        run: cargo zigbuild --release --workspace --bins --target ${{ matrix.target }}
   build-matrix:
     needs: [lint, test-linux, test-windows, test-bsd]
     strategy:
