@@ -303,10 +303,17 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    const fn assert_const(condition: bool, message: &str) {
-        if !condition {
-            panic!("{}", message);
-        }
+    macro_rules! const_assert {
+        ($condition:expr $(,)?) => {
+            const_assert!($condition, stringify!($condition));
+        };
+        ($condition:expr, $message:expr $(,)?) => {
+            const _: () = {
+                if !$condition {
+                    panic!("{}", $message);
+                }
+            };
+        };
     }
 
     fn negotiated_version_strategy() -> impl Strategy<Value = ProtocolVersion> {
@@ -347,13 +354,13 @@ mod tests {
             ProtocolVersion::V30.as_u8() as u32,
             ProtocolVersion::V30,
         );
-        const _: () = assert_const(CLAMPED, "remote advertisements must be clamped");
-        const _: () = assert_const(!NOT_CLAMPED, "remote advertisement unexpectedly clamped");
-        const _: () = assert_const(
+        const_assert!(CLAMPED, "remote advertisements must be clamped");
+        const_assert!(!NOT_CLAMPED, "remote advertisement unexpectedly clamped");
+        const_assert!(
             FUTURE.was_clamped(),
             "future advertisement should be clamped",
         );
-        const _: () = assert_const(
+        const_assert!(
             !SUPPORTED.was_clamped(),
             "supported advertisement should not be clamped",
         );
@@ -389,8 +396,8 @@ mod tests {
         const NOT_CAPPED: bool =
             local_cap_reduced_protocol(ProtocolVersion::V29, ProtocolVersion::V29);
 
-        const _: () = assert_const(WAS_CAPPED, "local cap reduction must be detected");
-        const _: () = assert_const(!NOT_CAPPED, "local cap should not be detected");
+        const_assert!(WAS_CAPPED, "local cap reduction must be detected");
+        const_assert!(!NOT_CAPPED, "local cap should not be detected");
 
         let was_capped = WAS_CAPPED;
         let not_capped = NOT_CAPPED;
