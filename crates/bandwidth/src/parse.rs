@@ -123,6 +123,55 @@ impl BandwidthLimitComponents {
         self.rate
             .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))
     }
+
+    /// Returns a new component set that applies an overriding cap to the current configuration.
+    ///
+    /// The method mirrors upstream rsync's precedence rules when a daemon module defines its own
+    /// `bwlimit`. The strictest byte-per-second rate wins while explicitly configured burst sizes
+    /// take effect. When the override disables throttling altogether (for example `bwlimit = 0`)
+    /// the resulting component becomes unlimited, even if the caller previously supplied a rate.
+    /// This allows higher layers to reason about the effective limiter without materialising a
+    /// [`BandwidthLimiter`] instance solely to combine configuration sources.
+    #[must_use]
+    pub fn constrained_by(&self, override_components: &Self) -> Self {
+        let mut rate = self.rate;
+        let mut burst = self.burst;
+        let limit_specified = self.limit_specified || override_components.limit_specified;
+        let mut burst_specified = self.burst_specified;
+        let had_limit = self.rate.is_some();
+
+        if override_components.limit_specified {
+            match override_components.rate {
+                Some(override_rate) => {
+                    rate = match rate {
+                        Some(existing) => Some(existing.min(override_rate)),
+                        None => Some(override_rate),
+                    };
+
+                    if override_components.burst_specified {
+                        burst = override_components.burst;
+                        burst_specified = true;
+                    } else if !had_limit {
+                        burst = None;
+                        burst_specified = false;
+                    }
+                }
+                None => {
+                    rate = None;
+                    burst = None;
+                    burst_specified = false;
+                }
+            }
+        }
+
+        if override_components.burst_specified && !override_components.limit_specified && rate.is_some()
+        {
+            burst = override_components.burst;
+            burst_specified = true;
+        }
+
+        Self::new_internal(rate, burst, limit_specified, burst_specified)
+    }
 }
 
 impl FromStr for BandwidthLimitComponents {
