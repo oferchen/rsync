@@ -211,13 +211,13 @@ use rsync_core::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         apply_effective_limit, parse_bandwidth_limit,
     },
-    branding::{self, Brand},
+    branding::{self, Brand, manifest},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, fallback_override,
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
-    version::{RUST_VERSION, VersionInfoReport, WEB_SITE},
+    version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{
@@ -270,6 +270,7 @@ const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "
 /// symlinks and the canonical `oc-rsyncd` binary emit brand-appropriate help
 /// output.
 fn help_text(brand: Brand) -> String {
+    let manifest = manifest();
     let program = brand.daemon_program_name();
     let default_config = brand.daemon_config_path_str();
 
@@ -305,8 +306,8 @@ fn help_text(brand: Brand) -> String {
             "replies with an @ERROR diagnostic while full module support is implemented.\n",
         ),
         program = program,
-        version = RUST_VERSION,
-        web_site = WEB_SITE,
+        version = manifest.rust_version(),
+        web_site = manifest.source_url(),
         default_config = default_config,
     )
 }
@@ -3254,6 +3255,8 @@ fn format_connection_status(active: usize) -> String {
 }
 
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
+    let manifest = manifest();
+    let version = manifest.rust_version();
     let RuntimeOptions {
         bind_address,
         port,
@@ -3318,7 +3321,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     if let Some(log) = log_sink.as_ref() {
         let text = format!(
             "rsyncd version {} starting, listening on port {}",
-            RUST_VERSION,
+            version,
             local_addr.port()
         );
         let message = rsync_info!(text).with_role(Role::Daemon);
@@ -3415,7 +3418,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     if let Some(log) = log_sink.as_ref() {
-        let text = format!("rsyncd version {} shutting down", RUST_VERSION);
+        let text = format!("rsyncd version {} shutting down", version);
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
     }

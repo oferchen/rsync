@@ -77,6 +77,20 @@ assert_eq!(config, Path::new("/etc/oc-rsyncd/oc-rsyncd.conf"));
 assert_eq!(secrets, Path::new("/etc/oc-rsyncd/oc-rsyncd.secrets"));
 ```
 
+For callers that need a complete snapshot, the
+[`rsync_core::branding::manifest()`](crates/core/src/branding/manifest.rs)
+helper caches the branded and upstream profiles together with the workspace
+version metadata:
+
+```rust
+let manifest = rsync_core::branding::manifest();
+
+assert_eq!(manifest.oc().daemon_program_name(), "oc-rsyncd");
+assert_eq!(manifest.upstream().daemon_program_name(), "rsyncd");
+assert_eq!(manifest.rust_version(), "3.4.1-rust");
+assert_eq!(manifest.source_url(), "https://github.com/oferchen/rsync");
+```
+
 The packaging metadata installs example files at the same locations so new
 deployments pick up sane defaults out of the box. The binaries rely on the
 shared branding facade, ensuring help text, diagnostics, and configuration
