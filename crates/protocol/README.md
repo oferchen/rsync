@@ -112,6 +112,6 @@ assert_eq!(
 ## See also
 
 - [`rsync_transport`](https://docs.rs/rsync-transport) for transport wrappers that reuse
-the sniffers and parsers exposed here.
+  the sniffers and parsers exposed here.
 - [`rsync_core`](https://docs.rs/rsync-core) for message formatting utilities that rely on
-negotiated protocol numbers.
+  negotiated protocol numbers.
