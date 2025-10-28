@@ -35,7 +35,9 @@
 //! - The runtime honours the `RSYNCD_CONFIG` environment variable and, when no
 //!   explicit configuration path is provided, attempts to load
 //!   `/etc/oc-rsyncd/oc-rsyncd.conf` when present so packaged defaults align
-//!   with production deployments.
+//!   with production deployments. When that path is absent, the daemon also
+//!   checks the legacy `/etc/rsyncd.conf` so existing installations continue to
+//!   work during the transition to the prefixed configuration layout.
 //! - [`run_daemon`] parses command-line arguments, binds a TCP listener, and
 //!   serves one or more connections. It recognises both the legacy ASCII
 //!   prologue and the binary negotiation used by modern clients, ensuring
@@ -243,6 +245,7 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
 /// Digest algorithms advertised during the legacy daemon greeting.
 const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 const DEFAULT_CONFIG_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.conf";
+const LEGACY_CONFIG_PATH: &str = "/etc/rsyncd.conf";
 #[cfg(test)]
 const DEFAULT_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
 
@@ -1321,18 +1324,26 @@ fn config_argument_present(arguments: &[OsString]) -> bool {
     false
 }
 
+fn first_existing_config_path<'a, I>(paths: I) -> Option<OsString>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    for candidate in paths {
+        if Path::new(candidate).is_file() {
+            return Some(OsString::from(candidate));
+        }
+    }
+
+    None
+}
+
 fn environment_config_override() -> Option<OsString> {
     let value = env::var_os("RSYNCD_CONFIG")?;
     if value.is_empty() { None } else { Some(value) }
 }
 
 fn default_config_path_if_present() -> Option<OsString> {
-    let path = Path::new(DEFAULT_CONFIG_PATH);
-    if path.is_file() {
-        Some(OsString::from(DEFAULT_CONFIG_PATH))
-    } else {
-        None
-    }
+    first_existing_config_path([DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH])
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5191,6 +5202,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn first_existing_config_path_prefers_primary_candidate() {
+        let dir = tempdir().expect("tempdir");
+        let primary = dir.path().join("primary.conf");
+        let legacy = dir.path().join("legacy.conf");
+        fs::write(&primary, "# primary").expect("write primary");
+        fs::write(&legacy, "# legacy").expect("write legacy");
+
+        let primary_str = primary.to_string_lossy().into_owned();
+        let legacy_str = legacy.to_string_lossy().into_owned();
+        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+
+        assert_eq!(result, Some(OsString::from(primary_str)));
+    }
+
+    #[test]
+    fn first_existing_config_path_falls_back_to_legacy_candidate() {
+        let dir = tempdir().expect("tempdir");
+        let legacy = dir.path().join("legacy.conf");
+        fs::write(&legacy, "# legacy").expect("write legacy");
+
+        let primary_str = dir
+            .path()
+            .join("missing.conf")
+            .to_string_lossy()
+            .into_owned();
+        let legacy_str = legacy.to_string_lossy().into_owned();
+        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+
+        assert_eq!(result, Some(OsString::from(legacy_str)));
+    }
+
+    #[test]
+    fn first_existing_config_path_returns_none_when_absent() {
+        let dir = tempdir().expect("tempdir");
+        let primary_str = dir
+            .path()
+            .join("missing-primary.conf")
+            .to_string_lossy()
+            .into_owned();
+        let legacy_str = dir
+            .path()
+            .join("missing-legacy.conf")
+            .to_string_lossy()
+            .into_owned();
+        let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
+
+        assert!(result.is_none());
     }
 
     #[test]
