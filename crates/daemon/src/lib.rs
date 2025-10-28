@@ -251,13 +251,21 @@ const LEGACY_CONFIG_PATH: &str = branding::LEGACY_DAEMON_CONFIG_PATH;
 const DEFAULT_SECRETS_PATH: &str = branding::OC_DAEMON_SECRETS_PATH;
 
 /// Deterministic help text describing the currently supported daemon surface.
-fn help_text() -> String {
+///
+/// The snapshot adjusts the banner, usage line, and default configuration path
+/// to reflect the supplied [`Brand`], ensuring `rsyncd` compatibility shims and
+/// the canonical `oc-rsyncd` binary emit brand-appropriate help output.
+fn help_text(brand: Brand) -> String {
+    let profile = brand.profile();
+    let program = profile.daemon_program_name();
+    let default_config = profile.daemon_config_path_str();
+
     format!(
         concat!(
-            "rsyncd {version}\n",
+            "{program} {version}\n",
             "https://github.com/oferchen/rsync\n",
             "\n",
-            "Usage: rsyncd [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
+            "Usage: {program} [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
             "\n",
             "Daemon mode is under active development. This build recognises:\n",
             "  --help        Show this help message and exit.\n",
@@ -282,8 +290,9 @@ fn help_text() -> String {
             "negotiated protocol as 32, lists configured modules for #list requests, and\n",
             "replies with an @ERROR diagnostic while full module support is implemented.\n",
         ),
+        program = program,
         version = RUST_VERSION,
-        default_config = DEFAULT_CONFIG_PATH,
+        default_config = default_config,
     )
 }
 
@@ -2936,8 +2945,8 @@ where
     })
 }
 
-fn render_help() -> String {
-    help_text()
+fn render_help(program_name: ProgramName) -> String {
+    help_text(program_name.brand())
 }
 
 fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::Result<()> {
@@ -4928,7 +4937,7 @@ where
     Err: Write,
 {
     if parsed.show_help {
-        let help = render_help();
+        let help = render_help(parsed.program_name);
         if stdout.write_all(help.as_bytes()).is_err() {
             let _ = writeln!(stdout, "{help}");
             return 1;
@@ -9058,7 +9067,18 @@ mod tests {
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
 
-        let expected = render_help();
+        let expected = render_help(ProgramName::Rsyncd);
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn oc_help_flag_renders_branded_snapshot() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = render_help(ProgramName::OcRsyncd);
         assert_eq!(stdout, expected.into_bytes());
     }
 
