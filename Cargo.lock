@@ -701,6 +701,7 @@ version = "3.4.1-rust"
 dependencies = [
  "filetime",
  "globset",
+ "libc",
  "rsync-bandwidth",
  "rsync-checksums",
  "rsync-compress",
