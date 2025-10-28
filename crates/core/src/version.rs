@@ -151,16 +151,25 @@ pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
 pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
 
 fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str {
-    match raw {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                "unknown"
-            } else {
-                trimmed
-            }
-        }
-        None => "unknown",
+    let Some(value) = raw else {
+        return "unknown";
+    };
+
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "unknown";
+    }
+
+    let head = trimmed
+        .split(|ch| matches!(ch, '\r' | '\n'))
+        .next()
+        .unwrap_or("");
+    let cleaned = head.trim();
+
+    if cleaned.is_empty() || cleaned.chars().any(char::is_control) {
+        "unknown"
+    } else {
+        cleaned
     }
 }
 
@@ -169,7 +178,9 @@ fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str {
 /// Whitespace surrounding the revision string is trimmed so the value can be embedded in version
 /// banners without introducing stray spaces or newlines. When the environment variable is unset or
 /// only contains whitespace the function returns `"unknown"`, mirroring upstream rsync's
-/// behaviour when revision metadata is unavailable.
+/// behaviour when revision metadata is unavailable. Embedded newlines are ignored by taking the
+/// first non-empty line, and control characters cause the revision to be reported as
+/// `"unknown"` to avoid rendering artifacts in version banners.
 #[must_use]
 pub fn build_revision() -> &'static str {
     sanitize_build_revision(option_env!("OC_RSYNC_BUILD_REV"))
@@ -1932,6 +1943,10 @@ mod tests {
     fn sanitize_build_revision_trims_and_filters_values() {
         assert_eq!(sanitize_build_revision(Some(" 1a2b3c ")), "1a2b3c");
         assert_eq!(sanitize_build_revision(Some("\n\t")), "unknown");
+        assert_eq!(sanitize_build_revision(Some("rev\nnext")), "rev");
+        assert_eq!(sanitize_build_revision(Some("rev\r\nnext")), "rev");
+        assert_eq!(sanitize_build_revision(Some("rev\u{7f}")), "unknown");
+        assert_eq!(sanitize_build_revision(Some("rev\0")), "unknown");
         assert_eq!(sanitize_build_revision(None), "unknown");
     }
 
