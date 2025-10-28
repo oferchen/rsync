@@ -83,7 +83,7 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
             )
         });
 
-    WorkspaceMetadata {
+    let metadata = WorkspaceMetadata {
         brand: str_field(oc_rsync_table, "brand"),
         upstream_version: str_field(oc_rsync_table, "upstream_version"),
         rust_version: str_field(oc_rsync_table, "rust_version"),
@@ -99,7 +99,10 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
         legacy_daemon_config: str_field(oc_rsync_table, "legacy_daemon_config"),
         legacy_daemon_secrets: str_field(oc_rsync_table, "legacy_daemon_secrets"),
         source: str_field(oc_rsync_table, "source"),
-    }
+    };
+
+    metadata.validate(&manifest_path);
+    metadata
 }
 
 fn git_directory(manifest_dir: &Path) -> Option<PathBuf> {
@@ -163,6 +166,116 @@ struct WorkspaceMetadata {
 }
 
 impl WorkspaceMetadata {
+    fn validate(&self, manifest_path: &Path) {
+        self.validate_branding(manifest_path);
+        self.validate_versions(manifest_path);
+        self.validate_protocol(manifest_path);
+        self.validate_legacy_paths(manifest_path);
+    }
+
+    fn validate_branding(&self, manifest_path: &Path) {
+        match self.brand.as_str() {
+            "oc" => {
+                expect_eq(&self.client_bin, "oc-rsync", manifest_path, "client_bin");
+                expect_eq(&self.daemon_bin, "oc-rsyncd", manifest_path, "daemon_bin");
+                expect_eq(
+                    &self.daemon_config_dir,
+                    "/etc/oc-rsyncd",
+                    manifest_path,
+                    "daemon_config_dir",
+                );
+                expect_eq(
+                    &self.daemon_config,
+                    "/etc/oc-rsyncd/oc-rsyncd.conf",
+                    manifest_path,
+                    "daemon_config",
+                );
+                expect_eq(
+                    &self.daemon_secrets,
+                    "/etc/oc-rsyncd/oc-rsyncd.secrets",
+                    manifest_path,
+                    "daemon_secrets",
+                );
+            }
+            "upstream" => {
+                expect_eq(&self.client_bin, "rsync", manifest_path, "client_bin");
+                expect_eq(&self.daemon_bin, "rsyncd", manifest_path, "daemon_bin");
+                expect_eq(
+                    &self.daemon_config_dir,
+                    "/etc",
+                    manifest_path,
+                    "daemon_config_dir",
+                );
+                expect_eq(
+                    &self.daemon_config,
+                    "/etc/rsyncd.conf",
+                    manifest_path,
+                    "daemon_config",
+                );
+                expect_eq(
+                    &self.daemon_secrets,
+                    "/etc/rsyncd.secrets",
+                    manifest_path,
+                    "daemon_secrets",
+                );
+            }
+            other => {
+                panic!(
+                    "unsupported workspace brand '{}' in {}",
+                    other,
+                    manifest_path.display()
+                );
+            }
+        }
+    }
+
+    fn validate_versions(&self, manifest_path: &Path) {
+        let expected = format!("{}-rust", self.upstream_version);
+        expect_eq(&self.rust_version, &expected, manifest_path, "rust_version");
+    }
+
+    fn validate_protocol(&self, manifest_path: &Path) {
+        if !(28..=32).contains(&self.protocol) {
+            panic!(
+                "workspace.metadata.oc_rsync.protocol must be between 28 and 32 in {}",
+                manifest_path.display()
+            );
+        }
+    }
+
+    fn validate_legacy_paths(&self, manifest_path: &Path) {
+        expect_eq(
+            &self.legacy_client_bin,
+            "rsync",
+            manifest_path,
+            "legacy_client_bin",
+        );
+        expect_eq(
+            &self.legacy_daemon_bin,
+            "rsyncd",
+            manifest_path,
+            "legacy_daemon_bin",
+        );
+        expect_eq(
+            &self.legacy_daemon_config_dir,
+            "/etc",
+            manifest_path,
+            "legacy_daemon_config_dir",
+        );
+        expect_eq(
+            &self.legacy_daemon_config,
+            "/etc/rsyncd.conf",
+            manifest_path,
+            "legacy_daemon_config",
+        );
+        expect_eq(
+            &self.legacy_daemon_secrets,
+            "/etc/rsyncd.secrets",
+            manifest_path,
+            "legacy_daemon_secrets",
+        );
+    }
+
     fn emit_cargo_env(&self) {
         println!("cargo:rustc-env=OC_RSYNC_WORKSPACE_BRAND={}", self.brand);
         println!(
@@ -218,6 +331,15 @@ impl WorkspaceMetadata {
             self.legacy_daemon_secrets
         );
         println!("cargo:rustc-env=OC_RSYNC_WORKSPACE_SOURCE={}", self.source);
+    }
+}
+
+fn expect_eq(actual: &str, expected: &str, manifest_path: &Path, field: &str) {
+    if actual != expected {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} must be '{expected}' (found '{actual}') in {}",
+            manifest_path.display()
+        );
     }
 }
 
