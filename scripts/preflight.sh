@@ -140,7 +140,25 @@ if declared_rust_version != "1.87":
         f"found {declared_rust_version!r}"
     )
 
+documentation_requirements = {
+    root / "README.md": [
+        "oc-rsync",
+        "oc-rsyncd",
+        "3.4.1-rust",
+        "/etc/oc-rsyncd/oc-rsyncd.conf",
+    ],
+}
+
+for path, snippets in documentation_requirements.items():
+    text = path.read_text(encoding="utf-8")
+    missing_snippets = [snippet for snippet in snippets if snippet not in text]
+    if missing_snippets:
+        joined = ", ".join(repr(snippet) for snippet in missing_snippets)
+        raise SystemExit(
+            f"{path.relative_to(root)} missing required documentation snippets: {joined}"
+        )
+
 print(
-    "Preflight checks passed: branding, version, packaging metadata, and toolchain requirements validated."
+    "Preflight checks passed: branding, version, packaging metadata, documentation, and toolchain requirements validated."
 )
 PY
