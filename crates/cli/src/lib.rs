@@ -130,8 +130,14 @@ use users::{get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_u
 /// Maximum exit code representable by a Unix process.
 const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
-/// Deterministic help text describing the CLI surface supported by this build.
-fn help_text() -> String {
+/// Renders deterministic help text describing the CLI surface supported by this build for `program_name`.
+fn help_text(program_name: ProgramName) -> String {
+    let program = program_name.as_str();
+    let daemon = match program_name {
+        ProgramName::Rsync => branding::daemon_program_name(),
+        ProgramName::OcRsync => branding::oc_daemon_program_name(),
+    };
+
     format!(
         concat!(
             "{program} {version}\n",
@@ -155,7 +161,7 @@ fn help_text() -> String {
             "      --no-secluded-args  Alias of --no-protect-args.\n",
             "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
             "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
-            "      --daemon    Run as an rsync daemon (delegates to {daemon}).\n",
+            "      --daemon    Run as an {program} daemon (delegates to {daemon}).\n",
             "  -n, --dry-run    Validate transfers without modifying the destination.\n",
             "      --list-only  List files without performing a transfer.\n",
             "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
@@ -286,10 +292,10 @@ fn help_text() -> String {
             "sources are supplied, DEST must name a directory. Metadata preservation\n",
             "covers permissions, timestamps, and optional ownership metadata.\n",
         ),
-        program = branding::client_program_name(),
+        program = program,
         version = RUST_VERSION,
         website = WEB_SITE,
-        daemon = branding::daemon_program_name(),
+        daemon = daemon,
     )
 }
 
@@ -2748,31 +2754,7 @@ where
 
 /// Renders the help text describing the currently supported options.
 fn render_help(program_name: ProgramName) -> String {
-    if program_name == ProgramName::Rsync {
-        return help_text();
-    }
-
-    let program = program_name.as_str();
-    let header = format!("{program} {}", RUST_VERSION);
-    let usage = format!("Usage: {program}");
-    let baseline_header = format!("{} {}", ProgramName::Rsync.as_str(), RUST_VERSION);
-    let mut help = help_text();
-    help = help.replacen(&baseline_header, &header, 1);
-    help = help.replacen("Usage: rsync", &usage, 1);
-
-    if program_name == ProgramName::OcRsync {
-        let upstream_delegation = format!("(delegates to {})", branding::daemon_program_name());
-        let branded_delegation = format!("(delegates to {})", branding::oc_daemon_program_name());
-        help = help.replacen(&upstream_delegation, &branded_delegation, 1);
-
-        let upstream_daemon_phrase =
-            format!("Run as an {} daemon", branding::client_program_name());
-        let branded_daemon_phrase =
-            format!("Run as an {} daemon", branding::oc_client_program_name());
-        help = help.replacen(&upstream_daemon_phrase, &branded_daemon_phrase, 1);
-    }
-
-    help
+    help_text(program_name)
 }
 
 /// Writes a [`Message`] to the supplied sink, appending a newline.
