@@ -9513,36 +9513,67 @@ mod tests {
     use std::os::unix::ffi::OsStrExt;
 
     #[cfg(all(unix, feature = "acl"))]
-    fn acl_to_text(path: &Path, ty: libc::acl_type_t) -> Option<String> {
+    mod acl_sys {
+        #![allow(unsafe_code)]
+
+        use libc::{c_char, c_int, c_void, ssize_t};
+
+        pub type AclHandle = *mut c_void;
+        pub type AclType = c_int;
+
+        pub const ACL_TYPE_ACCESS: AclType = 0x8000;
+
+        #[link(name = "acl")]
+        unsafe extern "C" {
+            pub fn acl_get_file(path_p: *const c_char, ty: AclType) -> AclHandle;
+            pub fn acl_set_file(path_p: *const c_char, ty: AclType, acl: AclHandle) -> c_int;
+            pub fn acl_to_text(acl: AclHandle, len_p: *mut ssize_t) -> *mut c_char;
+            pub fn acl_from_text(buf_p: *const c_char) -> AclHandle;
+            pub fn acl_free(obj_p: *mut c_void) -> c_int;
+        }
+
+        pub unsafe fn free(handle: AclHandle) {
+            // Safety: callers ensure the pointer originates from libacl.
+            let _ = unsafe { acl_free(handle) };
+        }
+
+        pub unsafe fn free_text(handle: *mut c_char) {
+            // Safety: callers ensure the pointer originates from libacl.
+            let _ = unsafe { acl_free(handle.cast()) };
+        }
+    }
+
+    #[cfg(all(unix, feature = "acl"))]
+    fn acl_to_text(path: &Path, ty: acl_sys::AclType) -> Option<String> {
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("cstring");
-        let acl = unsafe { libc::acl_get_file(c_path.as_ptr(), ty) };
+        let acl = unsafe { acl_sys::acl_get_file(c_path.as_ptr(), ty) };
         if acl.is_null() {
             return None;
         }
         let mut len = 0;
-        let text_ptr = unsafe { libc::acl_to_text(acl, &mut len) };
+        let text_ptr = unsafe { acl_sys::acl_to_text(acl, &mut len) };
         if text_ptr.is_null() {
-            unsafe { libc::acl_free(acl as *mut _) };
+            unsafe { acl_sys::free(acl) };
             return None;
         }
         let slice = unsafe { std::slice::from_raw_parts(text_ptr.cast::<u8>(), len as usize) };
         let text = String::from_utf8_lossy(slice).trim().to_string();
         unsafe {
-            libc::acl_free(text_ptr as *mut _);
-            libc::acl_free(acl as *mut _);
+            acl_sys::free_text(text_ptr);
+            acl_sys::free(acl);
         }
         Some(text)
     }
 
     #[cfg(all(unix, feature = "acl"))]
-    fn set_acl_from_text(path: &Path, text: &str, ty: libc::acl_type_t) {
+    fn set_acl_from_text(path: &Path, text: &str, ty: acl_sys::AclType) {
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).expect("cstring");
         let c_text = std::ffi::CString::new(text).expect("text");
-        let acl = unsafe { libc::acl_from_text(c_text.as_ptr()) };
+        let acl = unsafe { acl_sys::acl_from_text(c_text.as_ptr()) };
         assert!(!acl.is_null(), "acl_from_text");
-        let result = unsafe { libc::acl_set_file(c_path.as_ptr(), ty, acl) };
+        let result = unsafe { acl_sys::acl_set_file(c_path.as_ptr(), ty, acl) };
         unsafe {
-            libc::acl_free(acl as *mut _);
+            acl_sys::free(acl);
         }
         assert_eq!(result, 0, "acl_set_file");
     }
@@ -10726,7 +10757,7 @@ mod tests {
         let destination = temp.path().join("dest.txt");
         fs::write(&source, b"acl").expect("write source");
         let acl_text = "user::rw-\ngroup::r--\nother::r--\n";
-        set_acl_from_text(&source, acl_text, libc::ACL_TYPE_ACCESS);
+        set_acl_from_text(&source, acl_text, acl_sys::ACL_TYPE_ACCESS);
 
         let operands = vec![
             source.clone().into_os_string(),
@@ -10742,7 +10773,7 @@ mod tests {
             .expect("copy succeeds");
 
         assert_eq!(summary.files_copied(), 1);
-        let copied = acl_to_text(&destination, libc::ACL_TYPE_ACCESS).expect("dest acl");
+        let copied = acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS).expect("dest acl");
         assert!(copied.contains("user::rw-"));
     }
 

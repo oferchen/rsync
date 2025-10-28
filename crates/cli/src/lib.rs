@@ -7766,9 +7766,6 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
 
-    #[cfg(feature = "xattr")]
-    use xattr;
-
     const RSYNC: &str = branding::client_program_name();
     const OC_RSYNC: &str = branding::oc_client_program_name();
     const RSYNCD: &str = branding::daemon_program_name();
