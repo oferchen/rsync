@@ -152,7 +152,3 @@ path = "crates/meta/src/chmod.rs"
 max_lines = 819
 warn_lines = 719
 
-[[overrides]]
-path = "crates/transport/src/ssh/mod.rs"
-max_lines = 807
-warn_lines = 707
