@@ -2749,14 +2749,8 @@ fn render_help(program_name: ProgramName) -> String {
     help = help.replacen("Usage: rsync", &usage, 1);
 
     if program_name == ProgramName::OcRsync {
-        let upstream_delegation = format!(
-            "(delegates to {})",
-            branding::daemon_program_name()
-        );
-        let branded_delegation = format!(
-            "(delegates to {})",
-            branding::oc_daemon_program_name()
-        );
+        let upstream_delegation = format!("(delegates to {})", branding::daemon_program_name());
+        let branded_delegation = format!("(delegates to {})", branding::oc_daemon_program_name());
         help = help.replacen(&upstream_delegation, &branded_delegation, 1);
     }
 
@@ -7992,14 +7986,8 @@ mod tests {
         assert!(stderr.is_empty());
 
         let rendered = String::from_utf8(stdout).expect("valid UTF-8");
-        let upstream = format!(
-            "delegates to {}",
-            branding::daemon_program_name()
-        );
-        let branded = format!(
-            "delegates to {}",
-            branding::oc_daemon_program_name()
-        );
+        let upstream = format!("delegates to {}", branding::daemon_program_name());
+        let branded = format!("delegates to {}", branding::oc_daemon_program_name());
         assert!(rendered.contains(&branded));
         assert!(!rendered.contains(&upstream));
     }
