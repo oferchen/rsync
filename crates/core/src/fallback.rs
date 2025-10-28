@@ -69,6 +69,22 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
 
+/// Name of the client fallback override environment variable.
+///
+/// The `OC_RSYNC_FALLBACK` variable matches the historical environment knob
+/// used by packaging to control remote-shell delegation. Exposing the name as
+/// a constant keeps binaries and tests in sync when future rebranding requires
+/// updating the identifier in one place.
+pub const CLIENT_FALLBACK_ENV: &str = "OC_RSYNC_FALLBACK";
+
+/// Name of the daemon-specific fallback override environment variable.
+///
+/// When present, the value controls whether `oc-rsyncd` should delegate module
+/// sessions to the upstream `rsync` binary. The helper mirrors the
+/// workspace-wide client override ([`CLIENT_FALLBACK_ENV`]) while allowing
+/// operators to toggle delegation independently for the daemon process.
+pub const DAEMON_FALLBACK_ENV: &str = "OC_RSYNC_DAEMON_FALLBACK";
+
 /// Represents the parsed interpretation of a fallback environment override.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FallbackOverride {
@@ -170,6 +186,12 @@ mod tests {
             }
             Self { key, original }
         }
+    }
+
+    #[test]
+    fn fallback_env_constants_match_expected() {
+        assert_eq!(CLIENT_FALLBACK_ENV, "OC_RSYNC_FALLBACK");
+        assert_eq!(DAEMON_FALLBACK_ENV, "OC_RSYNC_DAEMON_FALLBACK");
     }
 
     impl Drop for EnvVarGuard {

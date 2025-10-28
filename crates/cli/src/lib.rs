@@ -109,7 +109,7 @@ use rsync_core::{
         TransferTimeout, parse_skip_compress_list, run_client_or_fallback,
         run_module_list_with_password_and_options, skip_compress_from_env,
     },
-    fallback::{FallbackOverride, fallback_override},
+    fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override},
     message::{Message, Role},
     rsync_error,
     version::{RUST_VERSION, VersionInfoReport, WEB_SITE},
@@ -13007,7 +13007,7 @@ mod tests {
         let _env_lock = ENV_LOCK.lock().expect("env lock");
         let _rsh_guard = clear_rsync_rsh();
         let missing = OsString::from("rsync-missing-binary");
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", missing.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, missing.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
             OsString::from("rsync"),
@@ -13093,7 +13093,7 @@ exit 99
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _marker_guard = EnvGuard::set("MARKER_FILE", marker_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -13808,7 +13808,7 @@ exit 37
         perms.set_mode(0o755);
         fs::set_permissions(&script_path, perms).expect("set script perms");
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
 
         let mut stdout = io::sink();
@@ -13847,7 +13847,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -13874,7 +13874,7 @@ exit 0
         use std::io;
 
         let _env_lock = ENV_LOCK.lock().expect("env lock");
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("no"));
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("no"));
 
         let mut stdout = io::sink();
         let mut stderr = Vec::new();
@@ -13892,11 +13892,10 @@ exit 0
 
         assert_eq!(exit_code, 1);
         let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
-        assert!(
-            stderr_text.contains(
-                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled",
-            )
-        );
+        assert!(stderr_text.contains(&format!(
+            "remote server mode is unavailable because {env} is disabled",
+            env = CLIENT_FALLBACK_ENV,
+        )));
     }
 
     #[cfg(unix)]
@@ -13919,7 +13918,7 @@ exit 7
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -13963,7 +13962,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14000,7 +13999,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14037,7 +14036,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14074,7 +14073,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14111,7 +14110,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14162,7 +14161,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
         let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
 
@@ -14204,7 +14203,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let partial_dir = temp.path().join("partials");
@@ -14255,7 +14254,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let temp_dir = temp.path().join("temp-stage");
@@ -14303,7 +14302,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14383,7 +14382,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14440,7 +14439,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14492,7 +14491,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14529,7 +14528,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14582,7 +14581,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -14619,7 +14618,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
             OsString::from("rsync"),
@@ -14665,7 +14664,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
         let _files_guard = EnvGuard::set("FILES_COPY", files_copy_path.as_os_str());
 
@@ -14708,7 +14707,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14769,7 +14768,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14826,7 +14825,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14904,7 +14903,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -14958,7 +14957,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -15006,7 +15005,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -15050,7 +15049,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -15103,7 +15102,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15159,7 +15158,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15216,7 +15215,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15255,7 +15254,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15294,7 +15293,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15335,7 +15334,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15376,7 +15375,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15414,7 +15413,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15451,7 +15450,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15490,7 +15489,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15527,7 +15526,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15565,7 +15564,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15603,7 +15602,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15642,7 +15641,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15681,7 +15680,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15720,7 +15719,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15757,7 +15756,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15795,7 +15794,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15832,7 +15831,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let destination = temp.path().join("dest");
@@ -15870,7 +15869,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
         let _protect_guard = EnvGuard::set("RSYNC_PROTECT_ARGS", OsStr::new("1"));
 
@@ -15908,7 +15907,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let (code, stdout, stderr) = run_with_args([
@@ -15948,7 +15947,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         std::fs::write(&args_path, b"untouched").expect("seed args file");
@@ -16000,7 +15999,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16049,7 +16048,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16086,7 +16085,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16122,7 +16121,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16158,7 +16157,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16193,7 +16192,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16233,7 +16232,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16271,7 +16270,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16307,7 +16306,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16420,7 +16419,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16456,7 +16455,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16492,7 +16491,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16529,7 +16528,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16564,7 +16563,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16599,7 +16598,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
@@ -16634,7 +16633,7 @@ exit 0
 "#;
         write_executable_script(&script_path, script);
 
-        let _fallback_guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
         let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
 
         let dest_path = temp.path().join("dest");
