@@ -11,7 +11,7 @@ use super::helpers::{
 
 /// Sends a multiplexed message to `writer` using the upstream rsync envelope format.
 ///
-/// The payload length is validated against [`MAX_PAYLOAD_LENGTH`], mirroring the
+/// The payload length is validated against [`crate::MAX_PAYLOAD_LENGTH`], mirroring the
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
@@ -22,10 +22,10 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 
 /// Sends an already constructed [`MessageFrame`] over `writer`.
 ///
-/// The helper mirrors [`send_msg`] but allows callers that already decoded or constructed a
+/// The helper mirrors [`crate::send_msg`] but allows callers that already decoded or constructed a
 /// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
 /// The payload length is recomputed through [`MessageFrame::header`] to catch mutations performed via
-/// [`DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
+/// [`core::ops::DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
 /// path. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from an
 /// owned frame.
 pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {
@@ -63,7 +63,7 @@ pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
 
 /// Receives the next multiplexed message into a caller-provided buffer.
 ///
-/// The helper mirrors [`recv_msg`] but avoids allocating a new vector for every
+/// The helper mirrors [`crate::recv_msg`] but avoids allocating a new vector for every
 /// frame. The buffer is cleared and then resized to the exact payload length,
 /// reusing any existing capacity to satisfy the workspace's buffer reuse
 /// guidance. The decoded message code is returned so the caller can dispatch on

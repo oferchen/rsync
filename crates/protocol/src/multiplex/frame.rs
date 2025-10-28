@@ -32,7 +32,7 @@ impl MessageFrame {
     /// # Errors
     ///
     /// Returns [`io::ErrorKind::InvalidInput`] when the payload length exceeds the 24-bit limit
-    /// enforced by upstream rsync, mirroring the error that [`send_msg`] would produce in the same
+    /// enforced by upstream rsync, mirroring the error that [`crate::send_msg`] would produce in the same
     /// situation.
     ///
     /// # Examples
@@ -116,7 +116,7 @@ impl MessageFrame {
     /// The buffer is extended with the four-byte multiplexed header followed by the payload bytes
     /// without clearing any existing contents. Capacity is grown with [`Vec::try_reserve`] to avoid
     /// panicking on allocation failure, matching the error semantics used throughout the crate.
-    /// This mirrors [`send_frame`], making it convenient for test fixtures and golden transcripts
+    /// This mirrors [`crate::send_frame`], making it convenient for test fixtures and golden transcripts
     /// that need to capture the exact byte representation of a frame without going through an I/O
     /// handle.
     ///
@@ -154,10 +154,10 @@ impl MessageFrame {
 
     /// Writes the frame into an [`io::Write`] implementor using the multiplexed envelope.
     ///
-    /// The helper mirrors [`send_frame`] but lives on [`MessageFrame`] so callers that already own
+    /// The helper mirrors [`crate::send_frame`] but lives on [`MessageFrame`] so callers that already own
     /// the decoded frame do not need to split it manually into tag and payload slices. The payload
     /// length is revalidated to guard against mutations performed through [`DerefMut`], and the
-    /// upstream vectored-write strategy is reused via [`send_msg`].
+    /// upstream vectored-write strategy is reused via [`crate::send_msg`].
     ///
     /// # Examples
     ///
@@ -181,12 +181,12 @@ impl MessageFrame {
 
     /// Decodes a multiplexed frame from the beginning of `bytes`.
     ///
-    /// The function mirrors [`recv_msg`] but operates on an in-memory slice, making it
+    /// The function mirrors [`crate::recv_msg`] but operates on an in-memory slice, making it
     /// convenient for test fixtures and golden transcript comparisons that already capture
     /// the full frame without going through `Read`. The returned tuple contains the decoded
     /// frame together with a slice pointing at the remaining, unread bytes. Callers that wish
     /// to parse exactly one frame can invoke [`TryFrom<&[u8]>`] to receive an error when extra
-    /// trailing data is present. Use [`BorrowedMessageFrame::decode_from_slice`] to parse without
+    /// trailing data is present. Use [`crate::BorrowedMessageFrame::decode_from_slice`] to parse without
     /// allocating a new buffer when a borrowed view suffices.
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
         let (header, payload, remainder) = super::helpers::decode_frame_parts(bytes)?;
