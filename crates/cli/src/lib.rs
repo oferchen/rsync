@@ -106,7 +106,7 @@ use rsync_core::{
         DirMergeOptions, FilterRuleKind, FilterRuleSpec, HumanReadableMode, ModuleListOptions,
         ModuleListRequest, RemoteFallbackArgs, RemoteFallbackContext, StrongChecksumChoice,
         TransferTimeout, parse_skip_compress_list, run_client_or_fallback,
-        run_module_list_with_password_and_options,
+        run_module_list_with_password_and_options, skip_compress_from_env,
     },
     fallback::{FallbackOverride, fallback_override},
     message::{Message, Role},
@@ -3465,8 +3465,8 @@ where
         _ => None,
     };
 
-    let skip_compress_list = match skip_compress.as_ref() {
-        Some(value) => match parse_skip_compress_list(value.as_os_str()) {
+    let skip_compress_list = if let Some(value) = skip_compress.as_ref() {
+        match parse_skip_compress_list(value.as_os_str()) {
             Ok(list) => Some(list),
             Err(message) => {
                 if write_message(&message, stderr).is_err() {
@@ -3475,8 +3475,18 @@ where
                 }
                 return 1;
             }
-        },
-        None => None,
+        }
+    } else {
+        match skip_compress_from_env("RSYNC_SKIP_COMPRESS") {
+            Ok(value) => value,
+            Err(message) => {
+                if write_message(&message, stderr).is_err() {
+                    let fallback = message.to_string();
+                    let _ = writeln!(stderr.writer_mut(), "{fallback}");
+                }
+                return 1;
+            }
+        }
     };
 
     let mut compression_setting = CompressionSetting::default();
@@ -7735,6 +7745,56 @@ mod tests {
 
         let expected = VersionInfoReport::default().human_readable();
         assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn skip_compress_env_variable_enables_list() {
+        use tempfile::tempdir;
+
+        let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("gz"));
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("archive.gz");
+        let destination = tmp.path().join("dest.gz");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("rsync"),
+            OsString::from("-z"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+        assert!(stdout.is_empty());
+        assert_eq!(std::fs::read(destination).expect("read dest"), b"payload");
+    }
+
+    #[test]
+    fn skip_compress_invalid_env_reports_error() {
+        use tempfile::tempdir;
+
+        let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
+        let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("["));
+
+        let tmp = tempdir().expect("tempdir");
+        let source = tmp.path().join("file.txt");
+        let destination = tmp.path().join("dest.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from("rsync"),
+            source.clone().into_os_string(),
+            destination.clone().into_os_string(),
+        ]);
+
+        assert_eq!(code, 1);
+        assert!(stdout.is_empty());
+        let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+        assert!(rendered.contains("RSYNC_SKIP_COMPRESS"));
+        assert!(rendered.contains("invalid"));
     }
 
     #[test]
