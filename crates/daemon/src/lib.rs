@@ -754,8 +754,9 @@ fn clear_test_hostname_overrides() {
 }
 
 /// Configuration describing the requested daemon operation.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DaemonConfig {
+    brand: Brand,
     arguments: Vec<OsString>,
 }
 
@@ -770,6 +771,12 @@ impl DaemonConfig {
     #[must_use]
     pub fn arguments(&self) -> &[OsString] {
         &self.arguments
+    }
+
+    /// Returns the branding profile associated with the daemon invocation.
+    #[must_use]
+    pub const fn brand(&self) -> Brand {
+        self.brand
     }
 
     /// Reports whether any daemon-specific arguments were provided.
@@ -835,7 +842,12 @@ impl Default for RuntimeOptions {
 }
 
 impl RuntimeOptions {
+    #[cfg(test)]
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
+        Self::parse_with_brand(arguments, Brand::Oc)
+    }
+
+    fn parse_with_brand(arguments: &[OsString], brand: Brand) -> Result<Self, DaemonError> {
         let mut options = Self::default();
         let mut seen_modules = HashSet::new();
         if !config_argument_present(arguments) {
@@ -843,7 +855,7 @@ impl RuntimeOptions {
                 options.delegate_arguments.push(OsString::from("--config"));
                 options.delegate_arguments.push(path.clone());
                 options.load_config_modules(&path, &mut seen_modules)?;
-            } else if let Some(path) = default_config_path_if_present() {
+            } else if let Some(path) = default_config_path_if_present(brand) {
                 options.delegate_arguments.push(OsString::from("--config"));
                 options.delegate_arguments.push(path.clone());
                 options.load_config_modules(&path, &mut seen_modules)?;
@@ -1358,8 +1370,15 @@ fn environment_config_override() -> Option<OsString> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-fn default_config_path_if_present() -> Option<OsString> {
-    first_existing_config_path([DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH])
+const fn default_config_candidates(brand: Brand) -> [&'static str; 2] {
+    match brand {
+        Brand::Oc => [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH],
+        Brand::Upstream => [LEGACY_CONFIG_PATH, DEFAULT_CONFIG_PATH],
+    }
+}
+
+fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
+    first_existing_config_path(default_config_candidates(brand))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2768,12 +2787,29 @@ fn parse_host_list(
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DaemonConfigBuilder {
+    brand: Brand,
     arguments: Vec<OsString>,
 }
 
+impl Default for DaemonConfigBuilder {
+    fn default() -> Self {
+        Self {
+            brand: Brand::Oc,
+            arguments: Vec::new(),
+        }
+    }
+}
+
 impl DaemonConfigBuilder {
+    /// Selects the branding profile that should be used for this configuration.
+    #[must_use]
+    pub fn brand(mut self, brand: Brand) -> Self {
+        self.brand = brand;
+        self
+    }
+
     /// Supplies the arguments that should be forwarded to the daemon loop once implemented.
     #[must_use]
     pub fn arguments<I, S>(mut self, arguments: I) -> Self
@@ -2789,6 +2825,7 @@ impl DaemonConfigBuilder {
     #[must_use]
     pub fn build(self) -> DaemonConfig {
         DaemonConfig {
+            brand: self.brand,
             arguments: self.arguments,
         }
     }
@@ -2835,7 +2872,7 @@ impl Error for DaemonError {}
 /// available. This behaviour gives higher layers a concrete negotiation target
 /// while keeping the observable output stable.
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
-    let options = RuntimeOptions::parse(config.arguments())?;
+    let options = RuntimeOptions::parse_with_brand(config.arguments(), config.brand())?;
     serve_connections(options)
 }
 
@@ -4961,7 +4998,10 @@ where
         return run_delegate_mode(parsed.remainder.as_slice(), stderr);
     }
 
-    let config = DaemonConfig::builder().arguments(parsed.remainder).build();
+    let config = DaemonConfig::builder()
+        .brand(parsed.program_name.brand())
+        .arguments(parsed.remainder)
+        .build();
 
     match run_daemon(config) {
         Ok(()) => 0,
@@ -5269,6 +5309,22 @@ mod tests {
         let result = first_existing_config_path([primary_str.as_str(), legacy_str.as_str()]);
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn default_config_candidates_prefer_oc_branding() {
+        assert_eq!(
+            default_config_candidates(Brand::Oc),
+            [DEFAULT_CONFIG_PATH, LEGACY_CONFIG_PATH]
+        );
+    }
+
+    #[test]
+    fn default_config_candidates_prefer_legacy_for_upstream_brand() {
+        assert_eq!(
+            default_config_candidates(Brand::Upstream),
+            [LEGACY_CONFIG_PATH, DEFAULT_CONFIG_PATH]
+        );
     }
 
     #[test]
@@ -5905,6 +5961,18 @@ mod tests {
             ]
         );
         assert!(config.has_runtime_request());
+        assert_eq!(config.brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn builder_allows_brand_override() {
+        let config = DaemonConfig::builder()
+            .brand(Brand::Upstream)
+            .arguments([OsString::from("--daemon")])
+            .build();
+
+        assert_eq!(config.brand(), Brand::Upstream);
+        assert_eq!(config.arguments(), &[OsString::from("--daemon")]);
     }
 
     #[test]
