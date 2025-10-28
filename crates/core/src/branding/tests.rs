@@ -211,3 +211,15 @@ fn brand_from_str_rejects_unknown_values() {
     assert!(Brand::from_str("unknown").is_err());
     assert!(Brand::from_str("ocrsync").is_err());
 }
+
+#[test]
+fn brand_label_matches_expected() {
+    assert_eq!(Brand::Oc.label(), "oc");
+    assert_eq!(Brand::Upstream.label(), "upstream");
+}
+
+#[test]
+fn brand_display_renders_label() {
+    assert_eq!(Brand::Oc.to_string(), "oc");
+    assert_eq!(Brand::Upstream.to_string(), "upstream");
+}
