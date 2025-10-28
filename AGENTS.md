@@ -20,7 +20,7 @@ This document defines the internal actors (“agents”), their responsibilities
 ## Agents Overview
 
 ### 1) Client (CLI Frontend)
-- **Binary**: `bin/rsync`  
+- **Binary**: `bin/oc-rsync`  
 - **Depends on**: `cli`, `core`, `transport`  
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
@@ -42,12 +42,12 @@ pub fn main() -> ExitCode {
 
 ### 2) Daemon (rsyncd)
 
-* **Binary**: `bin/rsyncd`
+* **Binary**: `bin/oc-rsyncd`
 * **Depends on**: `daemon`, `core`, `transport`, `logging`
 * **Responsibilities**:
 
   * Listen on TCP; legacy `@RSYNCD:` negotiation for pre-30; binary handshake otherwise.
-  * Apply `rsyncd.conf` semantics (auth users, secrets 0600, chroot, caps).
+  * Apply `oc-rsyncd.conf` semantics (auth users, secrets 0600, chroot, caps).
   * Enforce daemon `--bwlimit` as default and **cap**.
   * sd_notify ready/status; systemd unit/env-file integration.
 * **Invariants**:
