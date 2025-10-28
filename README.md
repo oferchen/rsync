@@ -1,11 +1,14 @@
 # rsync (Rust rsync implementation, protocol 32)
 
-This workspace hosts a Rust rsync implementation supporting protocol version 32
-under the **rsync** and **rsyncd** binaries. The long-term goal is
-byte-for-byte parity with upstream behaviour while modernising the
-implementation in Rust. The project follows the requirements outlined in the
-repository's Codex Mission Brief and implements modules as cohesive crates so
-both binaries reuse the same core logic.
+This workspace hosts a Rust rsync implementation supporting protocol version 32.
+The canonical distribution ships the **oc-rsync** and **oc-rsyncd** binaries,
+which wrap the shared CLI/daemon front-ends provided by this repository. For
+compatibility with existing automation the workspace also includes thin
+wrappers named **rsync** and **rsyncd** that delegate to the same
+implementations. The long-term goal is byte-for-byte parity with upstream
+behaviour while modernising the implementation in Rust. The project follows the
+requirements outlined in the repository's Codex Mission Brief and implements
+modules as cohesive crates so both binaries reuse the same core logic.
 
 ## Repository layout
 
@@ -36,21 +39,24 @@ The workspace currently contains the following published crates:
 
 ## Binaries
 
-- `bin/rsync` — thin wrapper that locks standard streams and invokes
-  [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the resulting exit
-  status into `std::process::ExitCode`. Supplying `--daemon` delegates argument
-  parsing to the daemon front-end so `rsync --daemon ...` behaves like
-  invoking the dedicated `rsyncd` binary.
-- `bin/rsyncd` — daemon wrapper that binds the requested TCP socket,
-  performs the legacy `@RSYNCD:` handshake, lists configured in-memory modules
-  for `#list` requests, and reports that full module transfers are still under
-  development.
+- `bin/oc-rsync` — canonical client wrapper that locks standard streams and
+  invokes [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the
+  resulting status into `std::process::ExitCode`. Supplying `--daemon` delegates
+  argument parsing to the daemon front-end so `oc-rsync --daemon ...` behaves
+  like invoking the dedicated daemon binary.
+- `bin/oc-rsyncd` — canonical daemon wrapper that binds the requested TCP
+  socket, performs the legacy `@RSYNCD:` handshake, lists configured in-memory
+  modules for `#list` requests, and reports that full module transfers are still
+  under development.
+- `bin/rsync` / `bin/rsyncd` — compatibility shims that forward to the canonical
+  binaries so existing tooling expecting the upstream names can continue to
+  function during the transition.
 
 Higher-level crates such as `daemon` remain under development. The new engine
-module powers the local copy mode shipped by `rsync`, but delta transfer,
-remote transports, ACL handling, advanced filter grammar, and compression
-are still pending. Current gaps and parity status are tracked in
-`docs/differences.md` and `docs/gaps.md`.
+module powers the local copy mode shipped by `oc-rsync` (and therefore the
+compatibility `rsync` wrapper), but delta transfer, remote transports, ACL
+handling, advanced filter grammar, and compression are still pending. Current
+gaps and parity status are tracked in `docs/differences.md` and `docs/gaps.md`.
 
 ## Getting started
 

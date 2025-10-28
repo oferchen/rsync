@@ -7,8 +7,8 @@ referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **Client binary uses native local copies and a fallback for remote transfers**
-  - *Impact*: `rsync` performs deterministic local filesystem copies for
+- **`oc-rsync` client uses native local copies and a fallback for remote transfers**
+  - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, and FIFOs while preserving
     permissions and timestamps. It can proactively create parent directories via
     `--mkpath` even when implied directories are disabled. Append-only updates via
@@ -31,13 +31,14 @@ referenced functionality ships and parity is verified by tests or goldens.
     richer statistics and delta-transfer metrics remain pending. The `--stats`
     flag emits a deterministic summary covering the counters implemented by the local copy
     engine while the richer upstream metrics remain pending delta-transfer
-    support.
+    support. The compatibility wrapper installed as `rsync` delegates to the
+    same front-end and therefore inherits these limitations.
   - *Removal plan*: Implement the delta-transfer engine plus supporting crates,
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, remove the fallback dependency, and
     validate the resulting behaviour via the parity harness.
-- **Daemon functionality incomplete**
-  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
+- **Daemon functionality incomplete (`oc-rsyncd` and compatibility wrapper)**
+  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config`. When the upstream
     `rsync` binary is available, the daemon now delegates authenticated module
@@ -49,7 +50,9 @@ referenced functionality ships and parity is verified by tests or goldens.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
     module serving and the broader directive matrix remain unimplemented when
-    delegation is not possible.
+    delegation is not possible. The compatibility wrapper installed as `rsyncd`
+    forwards to the same implementation and therefore inherits these
+    limitations.
   - *Removal plan*: Implement the daemon transport loop, configuration parser,
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.
