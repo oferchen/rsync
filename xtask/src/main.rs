@@ -227,6 +227,11 @@ where
     let command = first.to_string_lossy();
     match command.as_ref() {
         "help" => Err(TaskError::Help(top_level_usage())),
+        "branding" => {
+            let options = parse_branding_args(args)?;
+            let workspace = workspace_root()?;
+            execute_branding(&workspace, options)
+        }
         "docs" => {
             let options = parse_docs_args(args)?;
             let workspace = workspace_root()?;
@@ -252,6 +257,9 @@ fn is_help_flag(value: &OsString) -> bool {
     value == "--help" || value == "-h"
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BrandingOptions;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SbomOptions {
     output: Option<PathBuf>,
@@ -267,6 +275,26 @@ struct PackageOptions {
     build_deb: bool,
     build_rpm: bool,
     profile: Option<OsString>,
+}
+
+fn parse_branding_args<I>(args: I) -> Result<BrandingOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+
+    if let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(branding_usage()));
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for branding command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    Ok(BrandingOptions)
 }
 
 fn parse_docs_args<I>(args: I) -> Result<DocsOptions, TaskError>
@@ -375,6 +403,35 @@ fn execute_sbom(workspace: &Path, options: SbomOptions) -> Result<(), TaskError>
     )
 }
 
+fn execute_branding(workspace: &Path, _options: BrandingOptions) -> Result<(), TaskError> {
+    let branding = load_workspace_branding(workspace)?;
+
+    println!("Workspace branding summary:");
+    println!("  brand: {}", branding.brand);
+    println!("  upstream_version: {}", branding.upstream_version);
+    println!("  rust_version: {}", branding.rust_version);
+    println!("  protocol: {}", branding.protocol);
+    println!("  client_bin: {}", branding.client_bin);
+    println!("  daemon_bin: {}", branding.daemon_bin);
+    println!("  legacy_client_bin: {}", branding.legacy_client_bin);
+    println!("  legacy_daemon_bin: {}", branding.legacy_daemon_bin);
+    println!("  daemon_config_dir: {}", branding.daemon_config_dir);
+    println!("  daemon_config: {}", branding.daemon_config);
+    println!("  daemon_secrets: {}", branding.daemon_secrets);
+    println!(
+        "  legacy_daemon_config_dir: {}",
+        branding.legacy_daemon_config_dir
+    );
+    println!("  legacy_daemon_config: {}", branding.legacy_daemon_config);
+    println!(
+        "  legacy_daemon_secrets: {}",
+        branding.legacy_daemon_secrets
+    );
+    println!("  source: {}", branding.source);
+
+    Ok(())
+}
+
 fn execute_docs(workspace: &Path, options: DocsOptions) -> Result<(), TaskError> {
     println!("Building API documentation");
     let mut doc_args = vec![
@@ -429,13 +486,19 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  docs    Build API documentation and run doctests\n  package Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom    Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help    Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  branding Display workspace branding metadata\n  docs     Build API documentation and run doctests\n  package  Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom     Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help     Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
     )
 }
 
 fn docs_usage() -> String {
     String::from(
         "Usage: cargo xtask docs [--open]\n\nOptions:\n  --open          Open the generated documentation in a browser after building\n  -h, --help      Show this help message",
+    )
+}
+
+fn branding_usage() -> String {
+    String::from(
+        "Usage: cargo xtask branding\n\nOptions:\n  -h, --help      Show this help message",
     )
 }
 
@@ -661,12 +724,36 @@ fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), Task
 #[cfg(test)]
 mod tests {
     use super::{
-        DocsOptions, PackageOptions, SbomOptions, TaskError, WorkspaceBranding, docs_usage,
-        package_usage, parse_docs_args, parse_package_args, parse_sbom_args,
-        parse_workspace_branding, sbom_usage, top_level_usage,
+        BrandingOptions, DocsOptions, PackageOptions, SbomOptions, TaskError, WorkspaceBranding,
+        branding_usage, docs_usage, package_usage, parse_branding_args, parse_docs_args,
+        parse_package_args, parse_sbom_args, parse_workspace_branding, sbom_usage, top_level_usage,
     };
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn parse_branding_args_accepts_default_configuration() {
+        let options = parse_branding_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, BrandingOptions);
+    }
+
+    #[test]
+    fn parse_branding_args_reports_help_request() {
+        let error = parse_branding_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == branding_usage()));
+    }
+
+    #[test]
+    fn parse_branding_args_rejects_unknown_argument() {
+        let error = parse_branding_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_branding_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("branding"));
+    }
 
     #[test]
     fn parse_docs_args_accepts_default_configuration() {
