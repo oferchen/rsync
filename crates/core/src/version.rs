@@ -88,6 +88,16 @@ const ZSTD_FEATURE_BIT: u8 = 1 << 2;
 const ICONV_FEATURE_BIT: u8 = 1 << 3;
 const SD_NOTIFY_FEATURE_BIT: u8 = 1 << 4;
 
+const fn assert_workspace_protocol_alignment() {
+    let workspace_version = workspace::metadata().protocol_version();
+    let crate_version = ProtocolVersion::NEWEST.as_u8() as u32;
+    if workspace_version != crate_version {
+        panic!("workspace protocol version must match ProtocolVersion::NEWEST");
+    }
+}
+
+const _: () = assert_workspace_protocol_alignment();
+
 /// Bitmap describing the optional features compiled into this build.
 ///
 /// Each bit corresponds to one of the [`CompiledFeature`] variants, ordered according to
@@ -213,7 +223,7 @@ pub const UPSTREAM_BASE_VERSION: &str = workspace::UPSTREAM_VERSION;
 pub const RUST_VERSION: &str = workspace::RUST_VERSION;
 
 /// Highest protocol version supported by this build.
-pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
+pub const HIGHEST_PROTOCOL_VERSION: u8 = workspace::protocol_version_u8();
 
 /// Static metadata describing the standard version banner rendered by `rsync`.
 ///
