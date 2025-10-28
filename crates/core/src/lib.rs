@@ -16,3 +16,5 @@ pub mod fallback;
 pub mod message;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;
+/// Workspace metadata derived from the repository `Cargo.toml`.
+pub mod workspace;

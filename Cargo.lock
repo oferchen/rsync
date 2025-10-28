@@ -675,6 +675,7 @@ dependencies = [
  "rsync-transport",
  "socket2",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

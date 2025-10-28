@@ -37,6 +37,8 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
 
+use crate::workspace;
+
 /// Identifies the brand associated with an executable name.
 ///
 /// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`),
@@ -372,43 +374,43 @@ const OC_PROFILE: BrandProfile = BrandProfile::new(
 
 /// Canonical program name used by upstream `rsync` releases.
 #[doc(alias = "rsync")]
-pub const UPSTREAM_CLIENT_PROGRAM_NAME: &str = "rsync";
+pub const UPSTREAM_CLIENT_PROGRAM_NAME: &str = workspace::LEGACY_CLIENT_PROGRAM_NAME;
 
 /// Canonical program name used by upstream `rsyncd` daemon releases.
 #[doc(alias = "rsyncd")]
-pub const UPSTREAM_DAEMON_PROGRAM_NAME: &str = "rsyncd";
+pub const UPSTREAM_DAEMON_PROGRAM_NAME: &str = workspace::LEGACY_DAEMON_PROGRAM_NAME;
 
 /// Canonical binary name exposed by the client wrapper packaged as `oc-rsync`.
 #[doc(alias = "oc-rsync")]
-pub const OC_CLIENT_PROGRAM_NAME: &str = "oc-rsync";
+pub const OC_CLIENT_PROGRAM_NAME: &str = workspace::CLIENT_PROGRAM_NAME;
 
 /// Canonical binary name exposed by the branded daemon wrapper packaged as `oc-rsyncd`.
 #[doc(alias = "oc-rsyncd")]
-pub const OC_DAEMON_PROGRAM_NAME: &str = "oc-rsyncd";
+pub const OC_DAEMON_PROGRAM_NAME: &str = workspace::DAEMON_PROGRAM_NAME;
 
 /// Directory that packages install for daemon configuration snippets.
 #[doc(alias = "/etc/oc-rsyncd")]
-pub const OC_DAEMON_CONFIG_DIR: &str = "/etc/oc-rsyncd";
+pub const OC_DAEMON_CONFIG_DIR: &str = workspace::DAEMON_CONFIG_DIR;
 
 /// Default configuration file path consumed by the daemon when no override is provided.
 #[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.conf")]
-pub const OC_DAEMON_CONFIG_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.conf";
+pub const OC_DAEMON_CONFIG_PATH: &str = workspace::DAEMON_CONFIG_PATH;
 
 /// Default secrets file path consumed by the daemon when no override is provided.
 #[doc(alias = "/etc/oc-rsyncd/oc-rsyncd.secrets")]
-pub const OC_DAEMON_SECRETS_PATH: &str = "/etc/oc-rsyncd/oc-rsyncd.secrets";
+pub const OC_DAEMON_SECRETS_PATH: &str = workspace::DAEMON_SECRETS_PATH;
 
 /// Legacy configuration file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.conf")]
-pub const LEGACY_DAEMON_CONFIG_PATH: &str = "/etc/rsyncd.conf";
+pub const LEGACY_DAEMON_CONFIG_PATH: &str = workspace::LEGACY_DAEMON_CONFIG_PATH;
 
 /// Legacy configuration directory that hosts upstream-compatible configuration files.
 #[doc(alias = "/etc")]
-pub const LEGACY_DAEMON_CONFIG_DIR: &str = "/etc";
+pub const LEGACY_DAEMON_CONFIG_DIR: &str = workspace::LEGACY_DAEMON_CONFIG_DIR;
 
 /// Legacy secrets file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.secrets")]
-pub const LEGACY_DAEMON_SECRETS_PATH: &str = "/etc/rsyncd.secrets";
+pub const LEGACY_DAEMON_SECRETS_PATH: &str = workspace::LEGACY_DAEMON_SECRETS_PATH;
 
 /// Returns the canonical upstream client program name (`rsync`).
 #[must_use]
