@@ -7391,6 +7391,49 @@ fn transfer_requires_remote(remainder: &[OsString], file_list_operands: &[OsStri
         .any(|operand| operand_is_remote(operand.as_os_str()))
 }
 
+#[cfg(windows)]
+fn operand_has_windows_prefix(path: &OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    const COLON: u16 = b':' as u16;
+    const QUESTION: u16 = b'?' as u16;
+    const DOT: u16 = b'.' as u16;
+    const SLASH: u16 = b'/' as u16;
+    const BACKSLASH: u16 = b'\\' as u16;
+
+    fn is_ascii_alpha(unit: u16) -> bool {
+        (unit >= b'a' as u16 && unit <= b'z' as u16) || (unit >= b'A' as u16 && unit <= b'Z' as u16)
+    }
+
+    fn is_separator(unit: u16) -> bool {
+        unit == SLASH || unit == BACKSLASH
+    }
+
+    let units: Vec<u16> = path.encode_wide().collect();
+    if units.is_empty() {
+        return false;
+    }
+
+    if units.len() >= 4
+        && is_separator(units[0])
+        && is_separator(units[1])
+        && (units[2] == QUESTION || units[2] == DOT)
+        && is_separator(units[3])
+    {
+        return true;
+    }
+
+    if units.len() >= 2 && is_separator(units[0]) && is_separator(units[1]) {
+        return true;
+    }
+
+    if units.len() >= 2 && is_ascii_alpha(units[0]) && units[1] == COLON {
+        return true;
+    }
+
+    false
+}
+
 fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 
@@ -7403,6 +7446,11 @@ fn operand_is_remote(path: &OsStr) -> bool {
     }
 
     if let Some(colon_index) = text.find(':') {
+        #[cfg(windows)]
+        if operand_has_windows_prefix(path) {
+            return false;
+        }
+
         let after = &text[colon_index + 1..];
         if after.starts_with(':') {
             return true;
@@ -7421,6 +7469,43 @@ fn operand_is_remote(path: &OsStr) -> bool {
     }
 
     false
+}
+
+#[cfg(all(test, windows))]
+mod windows_operand_detection {
+    use super::operand_is_remote;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn drive_letter_paths_are_local() {
+        assert!(!operand_is_remote(OsStr::new(r"C:\\tmp\\file.txt")));
+        assert!(!operand_is_remote(OsStr::new(r"c:relative\\path")));
+    }
+
+    #[test]
+    fn extended_prefixes_are_local() {
+        assert!(!operand_is_remote(OsStr::new(r"\\\\?\\C:\\tmp\\file.txt")));
+        assert!(!operand_is_remote(OsStr::new(
+            r"\\\\?\\UNC\\server\\share\\file.txt"
+        )));
+        assert!(!operand_is_remote(OsStr::new(r"\\\\.\\pipe\\rsync")));
+    }
+
+    #[test]
+    fn unc_and_forward_slash_paths_are_local() {
+        assert!(!operand_is_remote(OsStr::new(
+            r"\\\\server\\share\\file.txt"
+        )));
+        assert!(!operand_is_remote(OsStr::new("//server/share/file.txt")));
+    }
+
+    #[test]
+    fn remote_operands_remain_remote() {
+        assert!(operand_is_remote(OsStr::new("host:path")));
+        assert!(operand_is_remote(OsStr::new("user@host:path")));
+        assert!(operand_is_remote(OsStr::new("host::module")));
+        assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
+    }
 }
 
 fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
