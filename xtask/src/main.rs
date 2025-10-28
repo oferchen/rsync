@@ -58,7 +58,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
 use toml::Value;
 
@@ -300,10 +300,11 @@ struct DocsOptions {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NoBinariesOptions;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct EnforceLimitsOptions {
     max_lines: Option<usize>,
     warn_lines: Option<usize>,
+    config_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -420,6 +421,17 @@ where
                 })?;
                 let parsed = parse_positive_usize_arg(&value, "--warn-lines")?;
                 options.warn_lines = Some(parsed);
+            }
+            "--config" => {
+                let value = args.next().ok_or_else(|| {
+                    TaskError::Usage(String::from("--config requires a path argument"))
+                })?;
+                if value.is_empty() {
+                    return Err(TaskError::Usage(String::from(
+                        "--config requires a non-empty path argument",
+                    )));
+                }
+                options.config_path = Some(PathBuf::from(value));
             }
             other => {
                 return Err(TaskError::Usage(format!(
@@ -650,12 +662,29 @@ fn execute_enforce_limits(
     const DEFAULT_MAX_LINES: usize = 600;
     const DEFAULT_WARN_LINES: usize = 400;
 
+    let EnforceLimitsOptions {
+        max_lines: cli_max,
+        warn_lines: cli_warn,
+        config_path,
+    } = options;
+
     let env_max = read_limit_env_var("MAX_RUST_LINES")?;
     let env_warn = read_limit_env_var("WARN_RUST_LINES")?;
-    let max_lines = options.max_lines.or(env_max).unwrap_or(DEFAULT_MAX_LINES);
-    let warn_lines = options
-        .warn_lines
+
+    let config_path = resolve_enforce_limits_config_path(workspace, config_path)?;
+    let config = if let Some(path) = config_path {
+        Some(load_line_limits_config(workspace, &path)?)
+    } else {
+        None
+    };
+
+    let max_lines = cli_max
+        .or(env_max)
+        .or_else(|| config.as_ref().and_then(|cfg| cfg.default_max_lines))
+        .unwrap_or(DEFAULT_MAX_LINES);
+    let warn_lines = cli_warn
         .or(env_warn)
+        .or_else(|| config.as_ref().and_then(|cfg| cfg.default_warn_lines))
         .unwrap_or(DEFAULT_WARN_LINES);
 
     if warn_lines > max_lines {
@@ -674,24 +703,57 @@ fn execute_enforce_limits(
     let mut warned = false;
 
     for path in rust_files {
+        let mut file_max = max_lines;
+        let mut file_warn = warn_lines;
+
+        if let Some(config) = &config {
+            let relative = path
+                .strip_prefix(workspace)
+                .map_err(|_| {
+                    validation_error(format!(
+                        "failed to compute path relative to workspace for {}",
+                        path.display()
+                    ))
+                })?
+                .to_path_buf();
+
+            if let Some(override_limits) = config.override_for(&relative) {
+                if let Some(max_override) = override_limits.max_lines {
+                    file_max = max_override;
+                }
+                if let Some(warn_override) = override_limits.warn_lines {
+                    file_warn = warn_override;
+                }
+            }
+
+            if file_warn > file_max {
+                return Err(validation_error(format!(
+                    "override for {} sets warn_lines ({}) above max_lines ({})",
+                    relative.display(),
+                    file_warn,
+                    file_max
+                )));
+            }
+        }
+
         let line_count = count_file_lines(&path)?;
-        if line_count > max_lines {
+        if line_count > file_max {
             eprintln!(
                 "::error file={}::Rust source has {} lines (limit {})",
                 path.display(),
                 line_count,
-                max_lines
+                file_max
             );
             failure_detected = true;
             continue;
         }
 
-        if line_count > warn_lines {
+        if line_count > file_warn {
             eprintln!(
                 "::warning file={}::Rust source has {} lines (target {})",
                 path.display(),
                 line_count,
-                warn_lines
+                file_warn
             );
             warned = true;
         }
@@ -1157,7 +1219,7 @@ fn no_binaries_usage() -> String {
 
 fn enforce_limits_usage() -> String {
     String::from(
-        "Usage: cargo xtask enforce-limits [OPTIONS]\n\nOptions:\n  --max-lines NUM   Override the maximum allowed lines per Rust source file\n  --warn-lines NUM  Override the warning threshold for Rust source files\n  -h, --help        Show this help message",
+        "Usage: cargo xtask enforce-limits [OPTIONS]\n\nOptions:\n  --max-lines NUM   Override the maximum allowed lines per Rust source file\n  --warn-lines NUM  Override the warning threshold for Rust source files\n  --config PATH     Load overrides from the given TOML configuration\n  -h, --help        Show this help message",
     )
 }
 
@@ -1423,6 +1485,275 @@ fn count_file_lines(path: &Path) -> Result<usize, TaskError> {
     }
 
     Ok(count)
+}
+
+#[derive(Debug, Default)]
+struct LineLimitsConfig {
+    default_max_lines: Option<usize>,
+    default_warn_lines: Option<usize>,
+    overrides: HashMap<PathBuf, FileLineLimit>,
+}
+
+impl LineLimitsConfig {
+    fn override_for(&self, relative: &Path) -> Option<&FileLineLimit> {
+        self.overrides.get(relative)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FileLineLimit {
+    max_lines: Option<usize>,
+    warn_lines: Option<usize>,
+}
+
+fn resolve_enforce_limits_config_path(
+    workspace: &Path,
+    explicit: Option<PathBuf>,
+) -> Result<Option<PathBuf>, TaskError> {
+    if let Some(path) = explicit {
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            workspace.join(path)
+        };
+
+        if !resolved.exists() {
+            return Err(validation_error(format!(
+                "line limit configuration {} does not exist",
+                resolved.display()
+            )));
+        }
+
+        if !resolved.is_file() {
+            return Err(validation_error(format!(
+                "line limit configuration {} is not a regular file",
+                resolved.display()
+            )));
+        }
+
+        return Ok(Some(resolved));
+    }
+
+    let default = workspace.join("tools/line_limits.toml");
+    if default.exists() {
+        if !default.is_file() {
+            return Err(validation_error(format!(
+                "expected {} to be a regular file for enforce-limits configuration",
+                default.display()
+            )));
+        }
+        return Ok(Some(default));
+    }
+
+    Ok(None)
+}
+
+fn load_line_limits_config(workspace: &Path, path: &Path) -> Result<LineLimitsConfig, TaskError> {
+    let contents = fs::read_to_string(path).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!(
+                "failed to read enforce-limits configuration at {}: {error}",
+                path.display()
+            ),
+        ))
+    })?;
+
+    let config = parse_line_limits_config(&contents, path)?;
+    validate_line_limit_overrides(workspace, path, &config)?;
+    Ok(config)
+}
+
+fn parse_line_limits_config(contents: &str, origin: &Path) -> Result<LineLimitsConfig, TaskError> {
+    let value = contents.parse::<Value>().map_err(|error| {
+        validation_error(format!(
+            "failed to parse {} as TOML: {error}",
+            origin.display()
+        ))
+    })?;
+
+    let table = value.as_table().ok_or_else(|| {
+        validation_error(format!(
+            "line limit configuration {} must be a TOML table",
+            origin.display()
+        ))
+    })?;
+
+    let mut config = LineLimitsConfig::default();
+
+    if let Some(default_max) = table.get("default_max_lines") {
+        config.default_max_lines = Some(parse_positive_usize_value(
+            default_max,
+            "default_max_lines",
+            origin,
+        )?);
+    }
+
+    if let Some(default_warn) = table.get("default_warn_lines") {
+        config.default_warn_lines = Some(parse_positive_usize_value(
+            default_warn,
+            "default_warn_lines",
+            origin,
+        )?);
+    }
+
+    if let (Some(warn), Some(max)) = (config.default_warn_lines, config.default_max_lines) {
+        if warn > max {
+            return Err(validation_error(format!(
+                "default warn_lines ({warn}) cannot exceed default max_lines ({max}) in {}",
+                origin.display()
+            )));
+        }
+    }
+
+    if let Some(overrides) = table.get("overrides") {
+        let entries = overrides.as_array().ok_or_else(|| {
+            validation_error(format!(
+                "'overrides' in {} must be an array",
+                origin.display()
+            ))
+        })?;
+
+        for (index, entry) in entries.iter().enumerate() {
+            let entry_table = entry.as_table().ok_or_else(|| {
+                validation_error(format!(
+                    "override #{index} in {} must be a table",
+                    origin.display()
+                ))
+            })?;
+
+            let path_value = entry_table
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    validation_error(format!(
+                        "override #{index} in {} must include a string 'path' field",
+                        origin.display()
+                    ))
+                })?;
+
+            let override_path = PathBuf::from(path_value);
+            if override_path.as_os_str().is_empty() {
+                return Err(validation_error(format!(
+                    "override #{index} in {} has an empty path",
+                    origin.display()
+                )));
+            }
+
+            if override_path.is_absolute() {
+                return Err(validation_error(format!(
+                    "override path {} in {} must be relative",
+                    override_path.display(),
+                    origin.display()
+                )));
+            }
+
+            if override_path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(validation_error(format!(
+                    "override path {} in {} may not contain parent directory components",
+                    override_path.display(),
+                    origin.display()
+                )));
+            }
+
+            if config.overrides.contains_key(&override_path) {
+                return Err(validation_error(format!(
+                    "duplicate override for {} in {}",
+                    override_path.display(),
+                    origin.display()
+                )));
+            }
+
+            let max_key = format!("overrides[{index}].max_lines");
+            let warn_key = format!("overrides[{index}].warn_lines");
+
+            let max_lines = entry_table
+                .get("max_lines")
+                .map(|value| parse_positive_usize_value(value, &max_key, origin))
+                .transpose()?;
+            let warn_lines = entry_table
+                .get("warn_lines")
+                .map(|value| parse_positive_usize_value(value, &warn_key, origin))
+                .transpose()?;
+
+            if let (Some(warn), Some(max)) = (warn_lines, max_lines) {
+                if warn > max {
+                    return Err(validation_error(format!(
+                        "override for {} in {} has warn_lines ({warn}) exceeding max_lines ({max})",
+                        override_path.display(),
+                        origin.display()
+                    )));
+                }
+            }
+
+            config.overrides.insert(
+                override_path,
+                FileLineLimit {
+                    max_lines,
+                    warn_lines,
+                },
+            );
+        }
+    }
+
+    Ok(config)
+}
+
+fn validate_line_limit_overrides(
+    workspace: &Path,
+    origin: &Path,
+    config: &LineLimitsConfig,
+) -> Result<(), TaskError> {
+    for relative in config.overrides.keys() {
+        let candidate = workspace.join(relative);
+        if !candidate.exists() {
+            return Err(validation_error(format!(
+                "override path {} in {} does not exist",
+                relative.display(),
+                origin.display()
+            )));
+        }
+
+        if !candidate.is_file() {
+            return Err(validation_error(format!(
+                "override path {} in {} is not a regular file",
+                relative.display(),
+                origin.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_positive_usize_value(
+    value: &Value,
+    field: &str,
+    origin: &Path,
+) -> Result<usize, TaskError> {
+    let integer = value.as_integer().ok_or_else(|| {
+        validation_error(format!(
+            "{field} in {} must be an integer",
+            origin.display()
+        ))
+    })?;
+
+    if integer <= 0 {
+        return Err(validation_error(format!(
+            "{field} in {} must be a positive integer",
+            origin.display()
+        )));
+    }
+
+    usize::try_from(integer).map_err(|_| {
+        validation_error(format!(
+            "{field} in {} exceeds supported range",
+            origin.display()
+        ))
+    })
 }
 
 fn list_rust_sources_via_git(workspace: &Path) -> Result<Vec<PathBuf>, TaskError> {
@@ -1754,13 +2085,14 @@ mod tests {
         NoPlaceholdersOptions, PackageOptions, PreflightOptions, SbomOptions, TaskError,
         WorkspaceBranding, branding_usage, docs_usage, enforce_limits_usage, no_binaries_usage,
         no_placeholders_usage, package_usage, parse_branding_args, parse_docs_args,
-        parse_enforce_limits_args, parse_no_binaries_args, parse_no_placeholders_args,
-        parse_package_args, parse_preflight_args, parse_sbom_args, parse_workspace_branding,
-        preflight_usage, sbom_usage, scan_rust_file_for_placeholders, top_level_usage,
+        parse_enforce_limits_args, parse_line_limits_config, parse_no_binaries_args,
+        parse_no_placeholders_args, parse_package_args, parse_preflight_args, parse_sbom_args,
+        parse_workspace_branding, preflight_usage, sbom_usage, scan_rust_file_for_placeholders,
+        top_level_usage,
     };
     use std::ffi::OsString;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parse_branding_args_accepts_default_configuration() {
@@ -1867,8 +2199,80 @@ mod tests {
             EnforceLimitsOptions {
                 max_lines: Some(700),
                 warn_lines: Some(500),
+                config_path: None,
             }
         );
+    }
+
+    #[test]
+    fn parse_enforce_limits_args_accepts_config_path() {
+        let options = parse_enforce_limits_args([
+            OsString::from("--config"),
+            OsString::from("tools/line_limits.toml"),
+        ])
+        .expect("parse succeeds");
+        assert_eq!(
+            options,
+            EnforceLimitsOptions {
+                max_lines: None,
+                warn_lines: None,
+                config_path: Some(PathBuf::from("tools/line_limits.toml")),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_line_limits_config_supports_overrides() {
+        let config = parse_line_limits_config(
+            r#"
+default_max_lines = 1200
+default_warn_lines = 1000
+
+[[overrides]]
+path = "src/lib.rs"
+max_lines = 1500
+warn_lines = 1400
+
+[[overrides]]
+path = "src/bin/main.rs"
+warn_lines = 650
+"#,
+            Path::new("line_limits.toml"),
+        )
+        .expect("parse succeeds");
+
+        assert_eq!(config.default_max_lines, Some(1200));
+        assert_eq!(config.default_warn_lines, Some(1000));
+
+        let primary = config
+            .override_for(Path::new("src/lib.rs"))
+            .expect("override present");
+        assert_eq!(primary.max_lines, Some(1500));
+        assert_eq!(primary.warn_lines, Some(1400));
+
+        let secondary = config
+            .override_for(Path::new("src/bin/main.rs"))
+            .expect("override present");
+        assert_eq!(secondary.max_lines, None);
+        assert_eq!(secondary.warn_lines, Some(650));
+    }
+
+    #[test]
+    fn parse_line_limits_config_rejects_parent_directories() {
+        let error = parse_line_limits_config(
+            r#"
+[[overrides]]
+path = "../src/lib.rs"
+max_lines = 900
+"#,
+            Path::new("line_limits.toml"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("parent directory")
+        ));
     }
 
     #[test]
