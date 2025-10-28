@@ -2755,6 +2755,12 @@ fn render_help(program_name: ProgramName) -> String {
         let upstream_delegation = format!("(delegates to {})", branding::daemon_program_name());
         let branded_delegation = format!("(delegates to {})", branding::oc_daemon_program_name());
         help = help.replacen(&upstream_delegation, &branded_delegation, 1);
+
+        let upstream_daemon_phrase =
+            format!("Run as an {} daemon", branding::client_program_name());
+        let branded_daemon_phrase =
+            format!("Run as an {} daemon", branding::oc_client_program_name());
+        help = help.replacen(&upstream_daemon_phrase, &branded_daemon_phrase, 1);
     }
 
     help
@@ -7993,6 +7999,20 @@ mod tests {
         let rendered = String::from_utf8(stdout).expect("valid UTF-8");
         let upstream = format!("delegates to {}", branding::daemon_program_name());
         let branded = format!("delegates to {}", branding::oc_daemon_program_name());
+        assert!(rendered.contains(&branded));
+        assert!(!rendered.contains(&upstream));
+    }
+
+    #[test]
+    fn oc_help_mentions_branded_daemon_phrase() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("--help")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let rendered = String::from_utf8(stdout).expect("valid UTF-8");
+        let upstream = format!("Run as an {} daemon", branding::client_program_name());
+        let branded = format!("Run as an {} daemon", branding::oc_client_program_name());
         assert!(rendered.contains(&branded));
         assert!(!rendered.contains(&upstream));
     }
