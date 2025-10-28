@@ -255,6 +255,38 @@ impl Brand {
     }
 }
 
+fn resolve_default_brand(label: &str) -> Brand {
+    if matches_oc_brand(label) {
+        Brand::Oc
+    } else if matches_upstream_brand(label) {
+        Brand::Upstream
+    } else {
+        panic!("unsupported workspace brand; expected 'oc' or 'upstream'")
+    }
+}
+
+fn matches_oc_brand(label: &str) -> bool {
+    label == "oc" || label == "oc-rsync" || label == "oc-rsyncd"
+}
+
+fn matches_upstream_brand(label: &str) -> bool {
+    label == "upstream" || label == "rsync" || label == "rsyncd"
+}
+
+/// Returns the brand configured for this workspace build.
+///
+/// The value reflects the `workspace.metadata.oc_rsync.brand` entry recorded in
+/// the repository `Cargo.toml`. Builds produced from the branded distribution
+/// therefore resolve to [`Brand::Oc`], while compatibility builds targeting the
+/// upstream names resolve to [`Brand::Upstream`]. Higher layers use this helper
+/// as the final fallback when neither the invocation name nor the
+/// `OC_RSYNC_BRAND` override provides an explicit brand, ensuring the binaries
+/// maintain a consistent identity across packaging environments.
+#[must_use]
+pub fn default_brand() -> Brand {
+    resolve_default_brand(workspace::BRAND)
+}
+
 impl fmt::Display for Brand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
@@ -536,8 +568,12 @@ pub fn brand_for_program_name(program: &str) -> Brand {
         || matches_program_alias(program, OC_DAEMON_PROGRAM_NAME)
     {
         Brand::Oc
-    } else {
+    } else if matches_program_alias(program, UPSTREAM_CLIENT_PROGRAM_NAME)
+        || matches_program_alias(program, UPSTREAM_DAEMON_PROGRAM_NAME)
+    {
         Brand::Upstream
+    } else {
+        default_brand()
     }
 }
 
@@ -611,9 +647,10 @@ fn brand_for_program_os_str(program: &OsStr) -> Option<Brand> {
 /// the executable name. When no override is present, the function inspects the
 /// stem of the first argument (commonly `argv[0]`), stripping directory
 /// prefixes and filename extensions before delegating to
-/// [`brand_for_program_name`]. If the program name is unavailable the
-/// upstream-compatible brand is assumed, matching the behaviour expected by
-/// remote invocations and compatibility symlinks.
+/// [`brand_for_program_name`]. If the program name is unavailable the helper
+/// falls back to [`default_brand`], ensuring binaries built with a branded
+/// workspace retain their configured identity even when launched via indirect
+/// mechanisms that hide the executable name.
 ///
 /// # Examples
 ///
@@ -630,7 +667,6 @@ fn brand_for_program_os_str(program: &OsStr) -> Option<Brand> {
 ///     branding::detect_brand(Some(OsStr::new("rsync"))),
 ///     Brand::Upstream
 /// );
-/// assert_eq!(branding::detect_brand(None), Brand::Upstream);
 /// ```
 #[must_use]
 pub fn detect_brand(program: Option<&OsStr>) -> Brand {
@@ -645,7 +681,7 @@ pub fn detect_brand(program: Option<&OsStr>) -> Brand {
     env::current_exe()
         .ok()
         .and_then(|path| brand_for_program_path(&path))
-        .unwrap_or(Brand::Upstream)
+        .unwrap_or_else(default_brand)
 }
 
 /// Returns the [`BrandProfile`] resolved from the provided program identifier.
@@ -913,7 +949,7 @@ mod tests {
         );
         assert_eq!(
             brand_for_program_path(Path::new("/tmp/custom-wrapper")),
-            Some(Brand::Upstream)
+            Some(default_brand())
         );
     }
 
@@ -936,7 +972,6 @@ mod tests {
     #[test]
     fn detect_brand_matches_invocation_argument() {
         let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
-        assert_eq!(detect_brand(None), Brand::Upstream);
         assert_eq!(detect_brand(Some(OsStr::new("rsync"))), Brand::Upstream);
         assert_eq!(
             detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
@@ -974,7 +1009,7 @@ mod tests {
         let expected = env::current_exe()
             .ok()
             .and_then(|path| brand_for_program_path(&path))
-            .unwrap_or(Brand::Upstream);
+            .unwrap_or(default_brand());
         assert_eq!(detect_brand(None), expected);
     }
 
