@@ -50,7 +50,7 @@
 //! ```
 //! use rsync_core::version::{compiled_features, CompiledFeature, RUST_VERSION};
 //!
-//! assert_eq!(RUST_VERSION, "3.4.1-rust");
+//! assert_eq!(RUST_VERSION, env!("CARGO_PKG_VERSION"));
 //! let features = compiled_features();
 //! #[cfg(feature = "xattr")]
 //! assert!(features.contains(&CompiledFeature::Xattr));
@@ -142,10 +142,10 @@ pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 
 /// Web site advertised by `rsync` in `--version` output.
-pub const WEB_SITE: &str = "https://github.com/oferchen/rsync";
+pub const WEB_SITE: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// Repository URL advertised by version banners and documentation.
-pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
+pub const SOURCE_URL: &str = WEB_SITE;
 
 /// Human-readable toolchain description rendered in `--version` output.
 pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
@@ -207,7 +207,7 @@ pub const UPSTREAM_BASE_VERSION: &str = "3.4.1";
 
 /// Full version string rendered by user-visible banners.
 #[doc(alias = "3.4.1-rust")]
-pub const RUST_VERSION: &str = "3.4.1-rust";
+pub const RUST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Highest protocol version supported by this build.
 pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
@@ -223,12 +223,15 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = ProtocolVersion::NEWEST.as_u8();
 /// # Examples
 ///
 /// ```
-/// use rsync_core::version::version_metadata;
+/// use rsync_core::version::{version_metadata, RUST_VERSION};
 ///
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();
 ///
-/// assert!(banner.starts_with("rsync  version 3.4.1-rust"));
+/// assert!(banner.starts_with(&format!(
+///     "rsync  version {} ",
+///     RUST_VERSION
+/// )));
 /// assert!(banner.contains("protocol version 32"));
 /// assert!(banner.contains("revision/build #"));
 /// assert!(banner.contains("https://github.com/oferchen/rsync"));
@@ -2003,11 +2006,15 @@ mod tests {
 
         let expected = format!(
             concat!(
-                "rsync  version 3.4.1-rust (revision/build #{build_revision})  protocol version 32\n",
-                "Copyright (C) 2025 by Ofer Chen.\n",
-                "Web site: https://github.com/oferchen/rsync\n"
+                "rsync  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n",
+                "Copyright {copyright}\n",
+                "Web site: {web_site}\n"
             ),
+            rust_version = RUST_VERSION,
             build_revision = build_revision(),
+            protocol = ProtocolVersion::NEWEST.as_u8(),
+            copyright = COPYRIGHT_NOTICE,
+            web_site = WEB_SITE,
         );
 
         assert_eq!(rendered, expected);
@@ -2090,7 +2097,7 @@ mod tests {
         };
 
         let build_info = build_info_line();
-        assert!(actual.starts_with("rsync  version 3.4.1-rust"));
+        assert!(actual.starts_with(&format!("rsync  version {}", RUST_VERSION)));
         assert!(actual.contains(&format!(
             "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
         )));

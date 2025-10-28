@@ -1264,7 +1264,10 @@ macro_rules! tracked_message_source {
 ///     .to_string();
 ///
 /// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
-/// assert!(rendered.contains("[sender=3.4.1-rust]"));
+/// assert!(rendered.contains(&format!(
+///     "[sender={}]",
+///     rsync_core::version::RUST_VERSION
+/// )));
 /// ```
 ///
 /// Formatting arguments are forwarded to [`format!`]:
@@ -1404,7 +1407,10 @@ macro_rules! rsync_exit_code {
 ///
 /// let rendered = message.to_string();
 /// assert!(rendered.contains("delta-transfer failure"));
-/// assert!(rendered.contains("[sender=3.4.1-rust]"));
+/// assert!(rendered.contains(&format!(
+///     "[sender={}]",
+///     rsync_core::version::RUST_VERSION
+/// )));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[must_use = "messages must be formatted or emitted to reach users"]
@@ -2119,7 +2125,10 @@ impl Message {
     ///     .unwrap();
     ///
     /// assert!(rendered.contains("rsync error: example (code 12)"));
-    /// assert!(rendered.contains("[sender=3.4.1-rust]"));
+    /// assert!(rendered.contains(&format!(
+    ///     "[sender={}]",
+    ///     rsync_core::version::RUST_VERSION
+    /// )));
     /// ```
     #[inline]
     #[must_use = "formatter writes can fail; propagate errors to preserve upstream diagnostics"]
@@ -2147,7 +2156,10 @@ impl Message {
     ///     .unwrap();
     ///
     /// assert!(rendered.ends_with('\n'));
-    /// assert!(rendered.contains("[generator=3.4.1-rust]"));
+    /// assert!(rendered.contains(&format!(
+    ///     "[generator={}]",
+    ///     rsync_core::version::RUST_VERSION
+    /// )));
     /// ```
     #[inline]
     #[must_use = "newline rendering can fail; handle formatting errors to retain diagnostics"]
@@ -2176,7 +2188,8 @@ impl Message {
     ///     .expect("Vec<u8> writes are infallible");
     ///
     /// assert!(bytes.starts_with(b"rsync error:"));
-    /// assert!(bytes.ends_with(b"[sender=3.4.1-rust]"));
+    /// let trailer = format!("[sender={}]", rsync_core::version::RUST_VERSION);
+    /// assert!(bytes.ends_with(trailer.as_bytes()));
     /// ```
     #[inline]
     #[must_use = "collecting rendered bytes allocates; handle potential I/O or allocation failures"]
@@ -2232,7 +2245,10 @@ impl Message {
     ///
     /// let rendered = String::from_utf8(output).unwrap();
     /// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
-    /// assert!(rendered.contains("[sender=3.4.1-rust]"));
+    /// assert!(rendered.contains(&format!(
+    ///     "[sender={}]",
+    ///     rsync_core::version::RUST_VERSION
+    /// )));
     /// ```
     #[inline]
     #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
@@ -2262,7 +2278,10 @@ impl Message {
     ///
     /// let rendered = String::from_utf8(output).unwrap();
     /// assert!(rendered.ends_with('\n'));
-    /// assert!(rendered.contains("[receiver=3.4.1-rust]"));
+    /// assert!(rendered.contains(&format!(
+    ///     "[receiver={}]",
+    ///     rsync_core::version::RUST_VERSION
+    /// )));
     /// ```
     #[inline]
     #[must_use = "rsync diagnostics must report I/O failures when streaming to writers"]
@@ -2293,7 +2312,8 @@ impl Message {
     ///     .append_to_vec(&mut buffer)?;
     ///
     /// assert!(buffer.starts_with(b"rsync error:"));
-    /// assert!(buffer.ends_with(b"[sender=3.4.1-rust]"));
+    /// let trailer = format!("[sender={}]", rsync_core::version::RUST_VERSION);
+    /// assert!(buffer.ends_with(trailer.as_bytes()));
     /// assert_eq!(appended, buffer.len());
     /// # Ok::<(), std::io::Error>(())
     /// ```
@@ -3014,7 +3034,7 @@ mod tests {
         let formatted = message.to_string();
 
         assert!(formatted.starts_with("rsync error: delta-transfer failure (code 23) at "));
-        assert!(formatted.contains("[sender=3.4.1-rust]"));
+        assert!(formatted.contains(&format!("[sender={}]", crate::version::RUST_VERSION)));
         assert!(formatted.contains("src/message.rs"));
     }
 
