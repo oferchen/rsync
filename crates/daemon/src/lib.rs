@@ -79,7 +79,14 @@
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
-//! let status = run(["rsyncd", "--version"], &mut stdout, &mut stderr);
+//! let status = run(
+//!     [
+//!         rsync_core::branding::daemon_program_name(),
+//!         "--version",
+//!     ],
+//!     &mut stdout,
+//!     &mut stderr,
+//! );
 //!
 //! assert_eq!(status, 0);
 //! assert!(stderr.is_empty());
@@ -5327,6 +5334,9 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
+    const RSYNCD: &str = branding::daemon_program_name();
+    const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
+
     fn base_module(name: &str) -> ModuleDefinition {
         ModuleDefinition {
             name: String::from(name),
@@ -5798,7 +5808,7 @@ mod tests {
         let _guard = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("rsyncd"),
+            OsStr::new(RSYNCD),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--config"),
             OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
@@ -5822,7 +5832,7 @@ mod tests {
         let _guard = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) =
-            run_with_args([OsStr::new("rsyncd"), OsStr::new("--delegate-system-rsync")]);
+            run_with_args([OsStr::new(RSYNCD), OsStr::new("--delegate-system-rsync")]);
 
         assert_eq!(code, 7);
         let stderr_str = String::from_utf8_lossy(&stderr);
@@ -5841,7 +5851,7 @@ mod tests {
         let _guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("rsyncd"),
+            OsStr::new(RSYNCD),
             OsStr::new("--delegate-system-rsync"),
             OsStr::new("--port"),
             OsStr::new("1234"),
@@ -5866,7 +5876,7 @@ mod tests {
         let _auto = EnvGuard::set(DAEMON_AUTO_DELEGATE_ENV, OsStr::new("1"));
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("rsyncd"),
+            OsStr::new(RSYNCD),
             OsStr::new("--config"),
             OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
@@ -6075,7 +6085,7 @@ mod tests {
         let _fallback = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("rsyncd"),
+            OsStr::new(RSYNCD),
             OsStr::new("--config"),
             OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
@@ -6099,7 +6109,7 @@ mod tests {
         let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
-            OsStr::new("rsyncd"),
+            OsStr::new(RSYNCD),
             OsStr::new("--config"),
             OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
         ]);
@@ -6123,7 +6133,7 @@ mod tests {
         let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
         let _auto = EnvGuard::set(DAEMON_AUTO_DELEGATE_ENV, OsStr::new("0"));
 
-        let (code, stdout, _stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, _stderr) = run_with_args([OsStr::new(RSYNCD), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(!stdout.is_empty());
@@ -9513,7 +9523,7 @@ mod tests {
 
     #[test]
     fn version_flag_renders_report() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--version")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new(RSYNCD), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -9527,7 +9537,7 @@ mod tests {
     #[test]
     fn oc_version_flag_renders_report() {
         let (code, stdout, stderr) =
-            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--version")]);
+            run_with_args([OsStr::new(OC_RSYNC_D), OsStr::new("--version")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -9540,7 +9550,7 @@ mod tests {
 
     #[test]
     fn help_flag_renders_static_help_snapshot() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new(RSYNCD), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -9551,7 +9561,7 @@ mod tests {
 
     #[test]
     fn oc_help_flag_renders_branded_snapshot() {
-        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--help")]);
+        let (code, stdout, stderr) = run_with_args([OsStr::new(OC_RSYNC_D), OsStr::new("--help")]);
 
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -9642,7 +9652,7 @@ mod tests {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run(
-            [OsString::from("rsyncd"), OsString::from("--version=extra")],
+            [OsString::from(RSYNCD), OsString::from("--version=extra")],
             &mut stdout,
             &mut stderr,
         );
