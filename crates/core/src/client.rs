@@ -4613,10 +4613,8 @@ where
                     )
                 ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
 
-            if requires_fallback {
-                if let Some(ctx) = fallback.take() {
-                    return invoke_fallback(ctx);
-                }
+            if requires_fallback && let Some(ctx) = fallback.take() {
+                return invoke_fallback(ctx);
             }
 
             return Err(map_local_copy_error(error));
@@ -9319,10 +9317,11 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
     let trimmed = line.trim_matches(['\r', '\n']).trim_start();
     let remainder = strip_prefix_ignore_ascii_case(trimmed, "@ERROR")?;
 
-    if let Some(ch) = remainder.chars().next() {
-        if ch != ':' && !ch.is_ascii_whitespace() {
-            return None;
-        }
+    if let Some(ch) = remainder.chars().next()
+        && ch != ':'
+        && !ch.is_ascii_whitespace()
+    {
+        return None;
     }
 
     let payload = remainder
@@ -9685,21 +9684,21 @@ fn split_daemon_host_module(input: &str) -> Result<Option<(&str, &str)>, ClientE
                 previous_colon = None;
             }
             ':' if !in_brackets => {
-                if let Some(prev) = previous_colon {
-                    if prev + 1 == idx {
-                        let host = &input[..prev];
-                        if !host.contains('[') {
-                            let colon_count = host.chars().filter(|&ch| ch == ':').count();
-                            if colon_count > 1 {
-                                return Err(daemon_error(
-                                    "IPv6 daemon addresses must be enclosed in brackets",
-                                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                                ));
-                            }
+                if let Some(prev) = previous_colon
+                    && prev + 1 == idx
+                {
+                    let host = &input[..prev];
+                    if !host.contains('[') {
+                        let colon_count = host.chars().filter(|&ch| ch == ':').count();
+                        if colon_count > 1 {
+                            return Err(daemon_error(
+                                "IPv6 daemon addresses must be enclosed in brackets",
+                                FEATURE_UNAVAILABLE_EXIT_CODE,
+                            ));
                         }
-                        let module = &input[idx + 1..];
-                        return Ok(Some((host, module)));
                     }
+                    let module = &input[idx + 1..];
+                    return Ok(Some((host, module)));
                 }
                 previous_colon = Some(idx);
             }
