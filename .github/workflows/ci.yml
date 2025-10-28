@@ -234,7 +234,6 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
-
       - name: Install cyclonedx-rust-cargo
         if: !contains(matrix.target, 'windows')
         uses: taiki-e/install-action@v2
@@ -243,6 +242,7 @@ jobs:
 
       - name: Build oc-rsync
         run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsync
+        
       - name: Build oc-rsyncd
         if: matrix.build_daemon
         run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsyncd
@@ -256,6 +256,7 @@ jobs:
         with:
           name: oc-rsync-${{ matrix.name }}
           path: target/${{ matrix.target }}/release/oc-rsync*
+          
       - name: Upload oc-rsyncd artifact
         if: matrix.build_daemon
         uses: actions/upload-artifact@v4
