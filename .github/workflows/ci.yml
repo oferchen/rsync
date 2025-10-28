@@ -229,17 +229,18 @@ jobs:
             outputs+=("$dest")
           done
 
-          python - <<'PY' "${outputs[@]}"
-import hashlib
-import pathlib
-import sys
+# causes an issue in github action yaml linting
+#           python - <<'PY' "${outputs[@]}"
+# import hashlib
+# import pathlib
+# import sys
 
-for arg in sys.argv[1:]:
-    path = pathlib.Path(arg)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    checksum_path = path.parent / f"{path.name}.sha256"
-    checksum_path.write_text(f"{digest}  {path.name}\n")
-PY
+# for arg in sys.argv[1:]:
+#     path = pathlib.Path(arg)
+#     digest = hashlib.sha256(path.read_bytes()).hexdigest()
+#     checksum_path = path.parent / f"{path.name}.sha256"
+#     checksum_path.write_text(f"{digest}  {path.name}\n")
+# PY
 
           if [[ "${{ runner.os }}" != "Windows" ]]; then
             cargo install cyclonedx-rust-cargo || true
