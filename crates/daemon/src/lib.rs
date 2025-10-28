@@ -107,6 +107,7 @@
 //! drop(listener);
 //!
 //! let config = DaemonConfig::builder()
+//!     .disable_default_paths()
 //!     .arguments(["--port", &port.to_string(), "--once"])
 //!     .build();
 //!
@@ -762,6 +763,7 @@ fn clear_test_hostname_overrides() {
 pub struct DaemonConfig {
     brand: Brand,
     arguments: Vec<OsString>,
+    load_default_paths: bool,
 }
 
 impl DaemonConfig {
@@ -781,6 +783,13 @@ impl DaemonConfig {
     #[must_use]
     pub const fn brand(&self) -> Brand {
         self.brand
+    }
+
+    /// Indicates whether default configuration and secrets paths should be
+    /// consulted when parsing runtime options.
+    #[must_use]
+    pub const fn load_default_paths(&self) -> bool {
+        self.load_default_paths
     }
 
     /// Reports whether any daemon-specific arguments were provided.
@@ -852,13 +861,17 @@ impl Default for RuntimeOptions {
 impl RuntimeOptions {
     #[cfg(test)]
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
-        Self::parse_with_brand(arguments, Brand::Oc)
+        Self::parse_with_brand(arguments, Brand::Oc, true)
     }
 
-    fn parse_with_brand(arguments: &[OsString], brand: Brand) -> Result<Self, DaemonError> {
+    fn parse_with_brand(
+        arguments: &[OsString],
+        brand: Brand,
+        load_defaults: bool,
+    ) -> Result<Self, DaemonError> {
         let mut options = Self::default();
         let mut seen_modules = HashSet::new();
-        if !config_argument_present(arguments) {
+        if load_defaults && !config_argument_present(arguments) {
             if let Some(path) = environment_config_override() {
                 options.delegate_arguments.push(OsString::from("--config"));
                 options.delegate_arguments.push(path.clone());
@@ -870,7 +883,7 @@ impl RuntimeOptions {
             }
         }
 
-        if options.global_secrets_file.is_none() {
+        if load_defaults && options.global_secrets_file.is_none() {
             if let Some(path) = default_secrets_path_if_present(brand) {
                 options.global_secrets_file = Some(PathBuf::from(&path));
                 options.global_secrets_from_config = false;
@@ -2916,6 +2929,7 @@ fn parse_host_list(
 pub struct DaemonConfigBuilder {
     brand: Brand,
     arguments: Vec<OsString>,
+    load_default_paths: bool,
 }
 
 impl Default for DaemonConfigBuilder {
@@ -2923,6 +2937,7 @@ impl Default for DaemonConfigBuilder {
         Self {
             brand: Brand::Oc,
             arguments: Vec::new(),
+            load_default_paths: true,
         }
     }
 }
@@ -2946,12 +2961,20 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Skips discovery of default configuration and secrets paths.
+    #[must_use]
+    pub fn disable_default_paths(mut self) -> Self {
+        self.load_default_paths = false;
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
         DaemonConfig {
             brand: self.brand,
             arguments: self.arguments,
+            load_default_paths: self.load_default_paths,
         }
     }
 }
@@ -2997,7 +3020,11 @@ impl Error for DaemonError {}
 /// available. This behaviour gives higher layers a concrete negotiation target
 /// while keeping the observable output stable.
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
-    let options = RuntimeOptions::parse_with_brand(config.arguments(), config.brand())?;
+    let options = RuntimeOptions::parse_with_brand(
+        config.arguments(),
+        config.brand(),
+        config.load_default_paths(),
+    )?;
     serve_connections(options)
 }
 
@@ -5136,6 +5163,7 @@ where
     }
 
     let config = DaemonConfig::builder()
+        .disable_default_paths()
         .brand(parsed.program_name.brand())
         .arguments(parsed.remainder)
         .build();
@@ -5898,6 +5926,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -5984,6 +6013,7 @@ mod tests {
         let lock_path = temp.path().join("daemon.lock");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -6199,6 +6229,7 @@ mod tests {
     #[test]
     fn builder_collects_arguments() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--config"),
                 OsString::from("/tmp/rsyncd.conf"),
@@ -6219,6 +6250,7 @@ mod tests {
     #[test]
     fn builder_allows_brand_override() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .brand(Brand::Upstream)
             .arguments([OsString::from("--daemon")])
             .build();
@@ -7911,6 +7943,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -7964,6 +7997,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8047,6 +8081,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8141,6 +8176,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8288,6 +8324,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8371,6 +8408,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8424,6 +8462,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8487,6 +8526,7 @@ mod tests {
         let port = allocate_test_port();
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8548,6 +8588,7 @@ mod tests {
         let pid_path = temp.path().join("rsyncd.pid");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8600,6 +8641,7 @@ mod tests {
 
         let comment = "x".repeat(4096);
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -8696,6 +8738,7 @@ mod tests {
         .expect("write config");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9117,6 +9160,7 @@ mod tests {
         .expect("write config");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9186,6 +9230,7 @@ mod tests {
             .expect("write config");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9253,6 +9298,7 @@ mod tests {
         .expect("write config");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9315,6 +9361,7 @@ mod tests {
         .expect("write motd");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9389,6 +9436,7 @@ mod tests {
         let log_path = temp.path().join("rsyncd.log");
 
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--port"),
                 OsString::from(port.to_string()),
@@ -9515,6 +9563,7 @@ mod tests {
     #[test]
     fn run_daemon_rejects_unknown_argument() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([OsString::from("--unknown")])
             .build();
 
@@ -9531,6 +9580,7 @@ mod tests {
     #[test]
     fn run_daemon_rejects_invalid_port() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([OsString::from("--port"), OsString::from("not-a-number")])
             .build();
 
@@ -9547,6 +9597,7 @@ mod tests {
     #[test]
     fn run_daemon_rejects_invalid_max_sessions() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([OsString::from("--max-sessions"), OsString::from("0")])
             .build();
 
@@ -9563,6 +9614,7 @@ mod tests {
     #[test]
     fn run_daemon_rejects_duplicate_session_limits() {
         let config = DaemonConfig::builder()
+            .disable_default_paths()
             .arguments([
                 OsString::from("--once"),
                 OsString::from("--max-sessions"),
