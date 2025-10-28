@@ -27,11 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Ensure no binary files are tracked
-        run: |
-          if git ls-files -z | xargs -0 file --mime | grep -vE 'text/|application/json'; then
-            echo "Binary files detected" >&2
-            exit 1
-          fi
+        run: test -z "$(git ls-files -z | xargs -0 file --mime | grep -vE 'text/|application/json')"
 
   lint:
     runs-on: ubuntu-latest
@@ -42,8 +38,10 @@ jobs:
           toolchain: 1.87
           components: clippy,rustfmt
           cache: true
+      - name: Update apt cache
+        run: sudo apt-get update
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
       - uses: actions/cache@v4
         with:
           path: |
@@ -79,44 +77,37 @@ jobs:
           components: llvm-tools-preview,clippy,rustfmt
           cache: true
 
+      - name: Update apt cache
+        run: sudo apt-get update
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
+        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
 
       - name: Pre-flight check
         run: scripts/preflight.sh
 
       - name: Install cargo-llvm-cov
-        id: install_llvm_cov
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
 
       - name: Install cargo-nextest
-        id: install_nextest
-        run: cargo install cargo-nextest --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - name: Run tests
-        if: steps.install_nextest.outcome == 'success'
         run: cargo nextest run --workspace --no-fail-fast
       - name: Run tests (extended features)
-        if: steps.install_nextest.outcome == 'success'
         run: cargo nextest run --workspace --no-fail-fast --features "cli nightly"
       - name: Run CLI version tests without ACL/iconv support
-        if: steps.install_nextest.outcome == 'success'
         run: cargo test -p rsync-cli --test version --no-default-features --features "xattr zlib zstd"
       - name: Test with coverage (95% lines & functions)
-        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
-        run: |
-          cargo llvm-cov nextest --workspace --features "cli nightly" \
-            --fail-under-lines 95 --fail-under-functions 95 \
-            --lcov --output-path coverage.lcov -- --no-fail-fast
+        run: cargo llvm-cov nextest --workspace --features "cli nightly" --fail-under-lines 95 --fail-under-functions 95 --lcov --output-path coverage.lcov -- --no-fail-fast
 
       - name: Verify coverage file exists
-        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
         run: ls -l coverage.lcov
 
       - name: Upload coverage artifact
-        if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
@@ -131,8 +122,10 @@ jobs:
           toolchain: 1.87
           components: llvm-tools-preview
           cache: true
+      - name: Update apt cache
+        run: sudo apt-get update
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
       - uses: actions/cache@v4
         with:
           path: |
@@ -155,32 +148,32 @@ jobs:
         include:
           - name: linux-x86_64
             target: x86_64-unknown-linux-gnu
-            builder: native
-            bins: "oc-rsync oc-rsyncd"
+            build_command: build
+            build_daemon: true
           - name: linux-aarch64
             target: aarch64-unknown-linux-gnu
-            builder: native
-            bins: "oc-rsync oc-rsyncd"
+            build_command: build
+            build_daemon: true
           - name: darwin-x86_64
             target: x86_64-apple-darwin
-            builder: zig
-            bins: "oc-rsync oc-rsyncd"
+            build_command: zigbuild
+            build_daemon: true
           - name: darwin-aarch64
             target: aarch64-apple-darwin
-            builder: zig
-            bins: "oc-rsync oc-rsyncd"
+            build_command: zigbuild
+            build_daemon: true
           - name: windows-x86_64
             target: x86_64-pc-windows-gnu
-            builder: zig
-            bins: "oc-rsync"
+            build_command: zigbuild
+            build_daemon: false
           - name: windows-x86
             target: i686-pc-windows-gnu
-            builder: zig
-            bins: "oc-rsync"
+            build_command: zigbuild
+            build_daemon: false
           - name: windows-aarch64
             target: aarch64-pc-windows-gnu
-            builder: zig
-            bins: "oc-rsync"
+            build_command: zigbuild
+            build_daemon: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -188,65 +181,54 @@ jobs:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
+      - name: Update apt cache
+        run: sudo apt-get update
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          fi
+        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+      - name: Install aarch64 cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Configure aarch64 environment
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: printf 'CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc\nCARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n' >> "$GITHUB_ENV"
       - name: Install Zig toolchain
-        if: ${{ matrix.builder == 'zig' }}
+        if: matrix.build_command == 'zigbuild'
         uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
       - name: Install cargo-zigbuild
-        if: ${{ matrix.builder == 'zig' }}
-        run: cargo install cargo-zigbuild --locked
+        if: matrix.build_command == 'zigbuild'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
 
-      - name: Build release binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          read -r -a bins <<< "${{ matrix.bins }}"
-          for bin in "${bins[@]}"; do
-            if [[ "${{ matrix.builder }}" == "zig" ]]; then
-              cargo zigbuild --release --target "${{ matrix.target }}" --bin "$bin"
-            else
-              cargo build --release --target "${{ matrix.target }}" --bin "$bin"
-            fi
-          done
+      - name: Install cyclonedx-rust-cargo
+        if: !contains(matrix.target, 'windows')
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cyclonedx-rust-cargo
 
-      - name: Package artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          read -r -a bins <<< "${{ matrix.bins }}"
-          ext=""
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            ext=".exe"
-          fi
+      - name: Build oc-rsync
+        run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsync
+      - name: Build oc-rsyncd
+        if: matrix.build_daemon
+        run: cargo ${{ matrix.build_command }} --release --target "${{ matrix.target }}" --bin oc-rsyncd
 
-          base_dir="dist/${{ matrix.name }}"
-          mkdir -p "$base_dir"
+      - name: Generate target SBOM
+        if: !contains(matrix.target, 'windows')
+        run: cyclonedx-rust-cargo --output "target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json"
 
-          for bin in "${bins[@]}"; do
-            src="target/${{ matrix.target }}/release/${bin}${ext}"
-            dest="$base_dir/${bin}${ext}"
-            cp "$src" "$dest"
-          done
-
-          if [[ "${{ matrix.target }}" != *"windows"* ]]; then
-            cargo install cyclonedx-rust-cargo || true
-            cyclonedx-rust-cargo --output "$base_dir/oc-rsync-${{ matrix.name }}-sbom.json"
-          fi
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload oc-rsync artifact
+        uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.name }}
-          path: dist/${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/oc-rsync*
+      - name: Upload oc-rsyncd artifact
+        if: matrix.build_daemon
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsyncd-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/oc-rsyncd*
 
   package-linux:
     needs: [test-linux, build-matrix]
@@ -260,27 +242,34 @@ jobs:
           toolchain: 1.87
           cache: true
 
+      - name: Update apt cache
+        run: sudo apt-get update
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
+        run: sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev
 
-      - name: Install packaging tools
-        run: cargo install cargo-deb cargo-rpm || true
-
+      - name: Install cargo-deb
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+      - name: Install cargo-rpm
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-rpm
       - name: Install cyclonedx-rust-cargo
-        run: cargo install cyclonedx-rust-cargo || true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cyclonedx-rust-cargo
 
       - name: Display workspace metadata
         run: cargo metadata --format-version 1 --no-deps | jq '.workspace_metadata.oc_rsync'
 
-      - name: Build packages
-        run: |
-          cargo deb -p oc-rsync-bin
-          cargo rpm build --release
+      - name: Build Debian package
+        run: cargo deb -p oc-rsync-bin
+      - name: Build RPM package
+        run: cargo rpm build --release
 
       - name: Generate SBOM
-        run: |
-          mkdir -p target/sbom
-          cyclonedx-rust-cargo --output target/sbom/oc-rsync.cdx.json
+        run: mkdir -p target/sbom && cyclonedx-rust-cargo --output target/sbom/oc-rsync.cdx.json
 
       - uses: actions/upload-artifact@v4
         with:
