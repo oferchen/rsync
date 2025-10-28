@@ -1,15 +1,16 @@
 # rsync (Rust rsync implementation, protocol 32)
 
-This workspace hosts a Rust rsync implementation supporting protocol version 32.
-The canonical distribution ships the **oc-rsync** and **oc-rsyncd** binaries,
-which wrap the shared CLI/daemon front-ends provided by this repository. The
-command-line interface still inspects the invoked program name so operators can
-provide compatibility symlinks (`rsync` / `rsyncd`) when required, but the
-workspace no longer maintains separate wrapper crates. The long-term goal is
-byte-for-byte parity with upstream behaviour while modernising the
-implementation in Rust. The project follows the requirements outlined in the
-repository's Codex Mission Brief and implements modules as cohesive crates so
-both binaries reuse the same core logic.
+This workspace hosts a Rust rsync implementation that targets upstream rsync
+**3.4.1** (protocol version **32**) under the branded version string
+**3.4.1-rust**. The canonical distribution ships the **oc-rsync** and
+**oc-rsyncd** binaries, which wrap the shared CLI/daemon front-ends provided by
+this repository. The command-line interface still inspects the invoked program
+name so operators can provide compatibility symlinks (`rsync` / `rsyncd`) when
+required, but the workspace no longer maintains separate wrapper crates. The
+long-term goal is byte-for-byte parity with upstream behaviour while
+modernising the implementation in Rust. The project follows the requirements
+outlined in the repository's Codex Mission Brief and implements modules as
+cohesive crates so both binaries reuse the same core logic.
 
 ## Repository layout
 
@@ -30,8 +31,10 @@ The workspace currently contains the following published crates:
   writers, mirroring upstream `rsync`'s logging pipeline.
 - `crates/engine` — the transfer engine facade. The current
   [`local_copy`](crates/engine/src/local_copy.rs) module provides deterministic
-  local filesystem copies for regular files, directories, symbolic links, and
-  named pipes (FIFOs) while preserving permissions and timestamps.
+  local filesystem copies for regular files, directory trees, symbolic links,
+  hard links, character/block devices, and named pipes (FIFOs) while preserving
+  permissions, timestamps, sparse extents, optional ownership metadata, and (when
+  compiled in) extended attributes and POSIX ACLs.
 - `crates/walk` — deterministic filesystem traversal that emits ordered file
   lists while enforcing relative-path safety and optional symlink following.
 - `crates/cli` — the command-line front-end that exposes `--help`, `--version`,
@@ -44,7 +47,11 @@ The workspace currently contains the following published crates:
   invokes [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the
   resulting status into `std::process::ExitCode`. Supplying `--daemon` delegates
   argument parsing to the daemon front-end so `oc-rsync --daemon ...` behaves
-  like invoking the dedicated daemon binary.
+  like invoking the dedicated daemon binary. Local copies honour the full
+  metadata matrix (`--owner`, `--group`, `--perms`, `--times`, sparse files,
+  hard links, devices, FIFOs, and optional ACL/xattr preservation) together with
+  deletion, partial transfer, reference directory, bandwidth, progress, and
+  stats flags.
 - `bin/oc-rsyncd` — canonical daemon wrapper that binds the requested TCP
   socket, performs the legacy `@RSYNCD:` handshake, lists configured in-memory
   modules for `#list` requests, and reports that full module transfers are still
