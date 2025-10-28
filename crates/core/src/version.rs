@@ -149,13 +149,29 @@ pub const SOURCE_URL: &str = "https://github.com/oferchen/rsync";
 /// Human-readable toolchain description rendered in `--version` output.
 pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
 
+fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str {
+    match raw {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                "unknown"
+            } else {
+                trimmed
+            }
+        }
+        None => "unknown",
+    }
+}
+
 /// Returns the Git revision baked into the build, if available.
+///
+/// Whitespace surrounding the revision string is trimmed so the value can be embedded in version
+/// banners without introducing stray spaces or newlines. When the environment variable is unset or
+/// only contains whitespace the function returns `"unknown"`, mirroring upstream rsync's
+/// behaviour when revision metadata is unavailable.
 #[must_use]
 pub fn build_revision() -> &'static str {
-    match option_env!("OC_RSYNC_BUILD_REV") {
-        Some(value) if !value.trim().is_empty() => value,
-        _ => "unknown",
-    }
+    sanitize_build_revision(option_env!("OC_RSYNC_BUILD_REV"))
 }
 
 /// Returns the build information line rendered in the capability section.
@@ -1849,6 +1865,13 @@ mod tests {
         assert_eq!(metadata.copyright_notice(), COPYRIGHT_NOTICE);
         assert_eq!(metadata.web_site(), WEB_SITE);
         assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
+    }
+
+    #[test]
+    fn sanitize_build_revision_trims_and_filters_values() {
+        assert_eq!(sanitize_build_revision(Some(" 1a2b3c ")), "1a2b3c");
+        assert_eq!(sanitize_build_revision(Some("\n\t")), "unknown");
+        assert_eq!(sanitize_build_revision(None), "unknown");
     }
 
     #[test]
