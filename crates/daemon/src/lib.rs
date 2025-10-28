@@ -4143,9 +4143,15 @@ fn format_bandwidth_rate(value: NonZeroU64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;
+    const TIB: u64 = GIB * 1024;
+    const PIB: u64 = TIB * 1024;
 
     let bytes = value.get();
-    if bytes % GIB == 0 {
+    if bytes % PIB == 0 {
+        format!("{} PiB/s", bytes / PIB)
+    } else if bytes % TIB == 0 {
+        format!("{} TiB/s", bytes / TIB)
+    } else if bytes % GIB == 0 {
         format!("{} GiB/s", bytes / GIB)
     } else if bytes % MIB == 0 {
         format!("{} MiB/s", bytes / MIB)
@@ -5082,6 +5088,23 @@ mod tests {
         let ident = "bad\nname\t";
         let sanitized = sanitize_module_identifier(ident);
         assert_eq!(sanitized.as_ref(), "bad?name?");
+    }
+
+    #[test]
+    fn format_bandwidth_rate_prefers_largest_whole_unit() {
+        let cases = [
+            (NonZeroU64::new(512).unwrap(), "512 bytes/s"),
+            (NonZeroU64::new(1024).unwrap(), "1 KiB/s"),
+            (NonZeroU64::new(8 * 1024).unwrap(), "8 KiB/s"),
+            (NonZeroU64::new(1024 * 1024).unwrap(), "1 MiB/s"),
+            (NonZeroU64::new(1024 * 1024 * 1024).unwrap(), "1 GiB/s"),
+            (NonZeroU64::new(1024u64.pow(4)).unwrap(), "1 TiB/s"),
+            (NonZeroU64::new(2 * 1024u64.pow(5)).unwrap(), "2 PiB/s"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(format_bandwidth_rate(input), expected);
+        }
     }
 
     #[test]
