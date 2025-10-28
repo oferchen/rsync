@@ -26,9 +26,14 @@ assets = [
     ["../../target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["../../packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
+    ["../../packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
     ["../../packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
 ]
-conf-files = ["etc/oc-rsyncd/oc-rsyncd.conf", "etc/default/oc-rsyncd"]
+conf-files = [
+    "etc/oc-rsyncd/oc-rsyncd.conf",
+    "etc/oc-rsyncd/oc-rsyncd.secrets",
+    "etc/default/oc-rsyncd",
+]
 
 [package.metadata.rpm]
 package = "oc-rsync"
@@ -39,5 +44,6 @@ assets = [
     { path = "../../target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
     { path = "../../packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { path = "../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
+    { path = "../../packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
     { path = "../../packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
 ]
