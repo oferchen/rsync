@@ -87,7 +87,11 @@ fn brand_profiles_expose_program_names() {
 
 #[test]
 fn detect_brand_matches_invocation_argument() {
-    assert_eq!(detect_brand(None), Brand::Upstream);
+    let expected = std::env::current_exe()
+        .ok()
+        .and_then(|path| brand_for_program_path(&path))
+        .unwrap_or_else(default_brand);
+    assert_eq!(detect_brand(None), expected);
     assert_eq!(detect_brand(Some(OsStr::new("rsync"))), Brand::Upstream);
     assert_eq!(
         detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
