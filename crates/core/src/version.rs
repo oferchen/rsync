@@ -66,7 +66,7 @@
 //!   [`VersionInfoReport`] to mirror upstream `--version` capability listings
 //!   while advertising the Rust-branded binary name.
 
-use crate::branding;
+use crate::branding::{self, Brand};
 use core::{
     fmt::{self, Write as FmtWrite},
     iter::{FromIterator, FusedIterator},
@@ -1623,6 +1623,47 @@ impl VersionInfoReport {
         self
     }
 
+    /// Returns a report using the client program name associated with `brand`.
+    ///
+    /// The helper preserves capability listings and other banner metadata while
+    /// swapping the program identifier so wrappers such as `oc-rsync` can
+    /// present branded banners without re-implementing the formatting logic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{branding::Brand, version::VersionInfoReport};
+    ///
+    /// let report = VersionInfoReport::default().with_client_brand(Brand::Oc);
+    /// let banner = report.metadata().standard_banner();
+    /// assert!(banner.starts_with("oc-rsync  version"));
+    /// ```
+    #[must_use]
+    pub fn with_client_brand(self, brand: Brand) -> Self {
+        self.with_program_name(brand.client_program_name())
+    }
+
+    /// Returns a report using the daemon program name associated with `brand`.
+    ///
+    /// This mirrors [`with_client_brand`](Self::with_client_brand) but targets
+    /// the daemon wrapper so the same version metadata code path renders both
+    /// `rsyncd` and `oc-rsyncd` banners without manual string handling in the
+    /// caller.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::{branding::Brand, version::VersionInfoReport};
+    ///
+    /// let report = VersionInfoReport::default().with_daemon_brand(Brand::Oc);
+    /// let banner = report.metadata().standard_banner();
+    /// assert!(banner.starts_with("oc-rsyncd  version"));
+    /// ```
+    #[must_use]
+    pub fn with_daemon_brand(self, brand: Brand) -> Self {
+        self.with_program_name(brand.daemon_program_name())
+    }
+
     /// Replaces the checksum algorithm list used in the rendered report.
     #[must_use]
     pub fn with_checksum_algorithms<I, S>(mut self, algorithms: I) -> Self
@@ -1867,6 +1908,7 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::branding::Brand;
     use core::str::FromStr;
 
     const ACL_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("ACLs");
@@ -2058,6 +2100,24 @@ mod tests {
         let banner = report.metadata().standard_banner();
 
         assert!(banner.starts_with("rsyncd  version"));
+    }
+
+    #[test]
+    fn version_info_report_with_client_brand_updates_banner() {
+        let report =
+            VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
+        let banner = report.metadata().standard_banner();
+
+        assert!(banner.starts_with("oc-rsync  version"));
+    }
+
+    #[test]
+    fn version_info_report_with_daemon_brand_updates_banner() {
+        let report =
+            VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
+        let banner = report.metadata().standard_banner();
+
+        assert!(banner.starts_with("oc-rsyncd  version"));
     }
 
     #[test]
