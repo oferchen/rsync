@@ -2,8 +2,11 @@
 
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
-what must land to eliminate the difference. Items remain in this list until the
-referenced functionality ships and parity is verified by tests or goldens.
+what must land to eliminate the difference. The branded binaries ship as
+**oc-rsync 3.4.1-rust** and **oc-rsyncd 3.4.1-rust**; references below use the
+prefixed names to match the distribution artefacts. Items remain in this list
+until the referenced functionality ships and parity is verified by tests or
+goldens.
 
 ## Blocking Differences
 
