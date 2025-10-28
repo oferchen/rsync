@@ -69,7 +69,7 @@ impl SkipCompressList {
         }
 
         let mut patterns = Vec::new();
-        for part in spec.split(|ch| matches!(ch, '/' | ',')) {
+        for part in spec.split(['/', ',']) {
             let trimmed = part.trim();
             if trimmed.is_empty() {
                 continue;
@@ -135,7 +135,7 @@ impl SkipCompressPattern {
                 '[' => {
                     let mut class = Vec::new();
                     let mut terminated = false;
-                    while let Some(item) = chars.next() {
+                    for item in chars.by_ref() {
                         if item == ']' {
                             terminated = true;
                             break;

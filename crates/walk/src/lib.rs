@@ -590,9 +590,9 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    fn collect_relative_paths(mut walker: Walker) -> Vec<PathBuf> {
+    fn collect_relative_paths(walker: Walker) -> Vec<PathBuf> {
         let mut paths = Vec::new();
-        while let Some(entry) = walker.next() {
+        for entry in walker {
             let entry = entry.expect("walker entry");
             if entry.is_root() {
                 continue;

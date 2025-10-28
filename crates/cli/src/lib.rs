@@ -3564,14 +3564,8 @@ where
         None => None,
     };
 
-    let owner_override_value = parsed_chown
-        .as_ref()
-        .and_then(|value| value.owner)
-        .map(u32::from);
-    let group_override_value = parsed_chown
-        .as_ref()
-        .and_then(|value| value.group)
-        .map(u32::from);
+    let owner_override_value = parsed_chown.as_ref().and_then(|value| value.owner);
+    let group_override_value = parsed_chown.as_ref().and_then(|value| value.group);
     let chown_spec = parsed_chown.as_ref().map(|value| value.spec.clone());
 
     #[cfg(not(feature = "xattr"))]
@@ -6214,11 +6208,11 @@ fn parse_filter_shorthand(
         return Some(Err(message));
     }
 
-    let first_non_space = remainder
+    if !remainder
         .chars()
         .next()
-        .filter(|ch| ch.is_ascii_whitespace() || *ch == '_');
-    if first_non_space.is_none() {
+        .is_some_and(|ch| ch.is_ascii_whitespace() || ch == '_')
+    {
         return None;
     }
 
@@ -15515,7 +15509,7 @@ exit 0
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
         assert!(args.contains(&"--delete"));
-        assert!(args.iter().any(|value| *value == "--max-delete=5"));
+        assert!(args.contains(&"--max-delete=5"));
     }
 
     #[cfg(unix)]
@@ -15590,8 +15584,8 @@ exit 0
 
         let recorded = std::fs::read_to_string(&args_path).expect("read args file");
         let args: Vec<&str> = recorded.lines().collect();
-        assert!(args.iter().any(|value| *value == "--min-size=1.5K"));
-        assert!(args.iter().any(|value| *value == "--max-size=2M"));
+        assert!(args.contains(&"--min-size=1.5K"));
+        assert!(args.contains(&"--max-size=2M"));
     }
 
     #[cfg(unix)]

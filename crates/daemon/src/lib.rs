@@ -571,28 +571,20 @@ impl ConnectionLimiter {
         file.lock_exclusive().map_err(ModuleConnectionError::io)?;
 
         let result = self.increment_count(&mut file, module, limit);
-        let unlock_result = file.unlock().map_err(ModuleConnectionError::io);
-
         drop(file);
 
-        match (result, unlock_result) {
-            (Ok(_), Ok(_)) => Ok(ConnectionLockGuard {
-                limiter: Arc::clone(self),
-                module: module.to_string(),
-            }),
-            (Err(error), Ok(_)) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Err(primary), Err(_)) => Err(primary),
-        }
+        result.map(|_| ConnectionLockGuard {
+            limiter: Arc::clone(self),
+            module: module.to_string(),
+        })
     }
 
     fn decrement(&self, module: &str) -> io::Result<()> {
         let mut file = self.open_file()?;
         file.lock_exclusive()?;
         let result = self.decrement_count(&mut file, module);
-        let unlock_result = file.unlock();
         drop(file);
-        result.and(unlock_result)
+        result
     }
 
     fn open_file(&self) -> io::Result<File> {
@@ -758,17 +750,18 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     static TEST_CONFIG_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
-        RefCell::new(Some(Vec::new()));
+        const { RefCell::new(Some(Vec::new())) };
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> = RefCell::new(None);
+    static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> = RefCell::new(None);
+    static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> =
+        const { RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -3361,13 +3354,15 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
                     handle_session(
                         stream,
                         peer_addr,
-                        modules_vec.as_slice(),
-                        motd_vec.as_slice(),
-                        bandwidth_limit,
-                        bandwidth_burst,
-                        log_for_worker,
-                        reverse_lookup,
-                        delegation_clone,
+                        SessionParams {
+                            modules: modules_vec.as_slice(),
+                            motd_lines: motd_vec.as_slice(),
+                            daemon_limit: bandwidth_limit,
+                            daemon_burst: bandwidth_burst,
+                            log_sink: log_for_worker,
+                            reverse_lookup,
+                            delegation: delegation_clone,
+                        },
                     )
                     .map_err(|error| (Some(peer_addr), error))
                 });
@@ -3525,17 +3520,41 @@ fn configure_stream(stream: &TcpStream) -> io::Result<()> {
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
 }
 
-fn handle_session(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
-    modules: &[ModuleRuntime],
-    motd_lines: &[String],
+struct SessionParams<'a> {
+    modules: &'a [ModuleRuntime],
+    motd_lines: &'a [String],
     daemon_limit: Option<NonZeroU64>,
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
     reverse_lookup: bool,
     delegation: Option<SessionDelegation>,
+}
+
+struct LegacySessionParams<'a> {
+    modules: &'a [ModuleRuntime],
+    motd_lines: &'a [String],
+    daemon_limit: Option<NonZeroU64>,
+    daemon_burst: Option<NonZeroU64>,
+    log_sink: Option<SharedLogSink>,
+    peer_host: Option<String>,
+    reverse_lookup: bool,
+}
+
+fn handle_session(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    params: SessionParams<'_>,
 ) -> io::Result<()> {
+    let SessionParams {
+        modules,
+        motd_lines,
+        daemon_limit,
+        daemon_burst,
+        log_sink,
+        reverse_lookup,
+        delegation,
+    } = params;
+
     if let Some(delegation) = delegation.as_ref() {
         let delegated = stream
             .try_clone()
@@ -3572,13 +3591,15 @@ fn handle_session(
         SessionStyle::Legacy => handle_legacy_session(
             stream,
             peer_addr,
-            modules,
-            motd_lines,
-            daemon_limit,
-            daemon_burst,
-            log_sink,
-            peer_host,
-            reverse_lookup,
+            LegacySessionParams {
+                modules,
+                motd_lines,
+                daemon_limit,
+                daemon_burst,
+                log_sink,
+                peer_host,
+                reverse_lookup,
+            },
         ),
     }
 }
@@ -3641,14 +3662,17 @@ fn write_limited(
 fn handle_legacy_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
-    modules: &[ModuleRuntime],
-    motd_lines: &[String],
-    daemon_limit: Option<NonZeroU64>,
-    daemon_burst: Option<NonZeroU64>,
-    log_sink: Option<SharedLogSink>,
-    peer_host: Option<String>,
-    reverse_lookup: bool,
+    params: LegacySessionParams<'_>,
 ) -> io::Result<()> {
+    let LegacySessionParams {
+        modules,
+        motd_lines,
+        daemon_limit,
+        daemon_burst,
+        log_sink,
+        peer_host,
+        reverse_lookup,
+    } = params;
     let mut reader = BufReader::new(stream);
     let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
 
@@ -3905,7 +3929,7 @@ fn delegate_binary_session(
 
     let write_bytes = writer
         .join()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to join writer thread"))??;
+        .map_err(|_| io::Error::other("failed to join writer thread"))??;
 
     #[allow(unused_must_use)]
     {
@@ -3915,7 +3939,7 @@ fn delegate_binary_session(
 
     let read_bytes = reader
         .join()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to join reader thread"))??;
+        .map_err(|_| io::Error::other("failed to join reader thread"))??;
 
     if let Some(log) = log_sink {
         let text =
@@ -5504,6 +5528,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .expect("open port allocator state");
 
@@ -8975,27 +9000,27 @@ mod tests {
         line.clear();
         reader.read_line(&mut line).expect("capabilities");
         assert_eq!(line, "@RSYNCD: CAP modules\n");
-        total_bytes += line.as_bytes().len();
+        total_bytes += line.len();
 
         line.clear();
         reader.read_line(&mut line).expect("ok line");
         assert_eq!(line, "@RSYNCD: OK\n");
-        total_bytes += line.as_bytes().len();
+        total_bytes += line.len();
 
         line.clear();
         reader.read_line(&mut line).expect("first module");
         assert_eq!(line.trim_end(), format!("docs\t{}", comment));
-        total_bytes += line.as_bytes().len();
+        total_bytes += line.len();
 
         line.clear();
         reader.read_line(&mut line).expect("second module");
         assert_eq!(line.trim_end(), "logs");
-        total_bytes += line.as_bytes().len();
+        total_bytes += line.len();
 
         line.clear();
         reader.read_line(&mut line).expect("exit line");
         assert_eq!(line, "@RSYNCD: EXIT\n");
-        total_bytes += line.as_bytes().len();
+        total_bytes += line.len();
 
         drop(reader);
         let result = handle.join().expect("daemon thread");
@@ -9011,11 +9036,7 @@ mod tests {
             .fold(Duration::ZERO, |acc, duration| acc + duration);
         let expected = Duration::from_secs_f64(total_bytes as f64 / 1024.0);
         let tolerance = Duration::from_millis(250);
-        let diff = if total_sleep > expected {
-            total_sleep - expected
-        } else {
-            expected - total_sleep
-        };
+        let diff = total_sleep.abs_diff(expected);
         assert!(
             diff <= tolerance,
             "expected sleep around {:?}, got {:?}",
