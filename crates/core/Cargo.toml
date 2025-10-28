@@ -39,3 +39,6 @@ sd-notify = []
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
+
+[build-dependencies]
+toml = "0.8"
