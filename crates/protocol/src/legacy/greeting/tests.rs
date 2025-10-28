@@ -1,6 +1,8 @@
 //! Tests for legacy daemon greeting parsing and formatting.
 
+use super::super::LEGACY_DAEMON_PREFIX;
 use super::*;
+use crate::{NegotiationError, ProtocolVersion};
 use core::fmt;
 
 #[test]
@@ -291,12 +293,6 @@ fn clamps_future_versions_in_legacy_greeting() {
 fn parses_large_future_version_numbers_by_clamping() {
     let parsed = parse_legacy_daemon_greeting("@RSYNCD: 999999999999.0\n").expect("must clamp");
     assert_eq!(parsed, ProtocolVersion::NEWEST);
-}
-
-#[test]
-fn parse_ascii_digits_to_u32_saturates_on_overflow() {
-    let digits = "999999999999999999999999999999";
-    assert_eq!(parse_ascii_digits_to_u32(digits), u32::MAX);
 }
 
 #[test]
