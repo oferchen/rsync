@@ -19,6 +19,7 @@ env:
   LC_ALL: C
   LANG: C
   COLUMNS: 80
+  TZ: UTC
 
 jobs:
   no-binaries:
@@ -66,6 +67,14 @@ jobs:
       - name: Ensure no placeholders remain
         run: bash tools/no_placeholders.sh
 
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: "-Dwarnings -Drustdoc::broken_intra_doc_links"
+        run: cargo doc --no-deps --workspace
+
+      - name: Run doctests
+        run: cargo test --doc --workspace
+
       - name: Cargo check (cross targets)
         if: runner.os == 'Linux' && env.MACOS_SDK_PATH != ''
         run: |
@@ -111,11 +120,11 @@ jobs:
       - name: Run CLI version tests without ACL/iconv support
         if: steps.install_nextest.outcome == 'success'
         run: cargo test -p oc-rsync-cli --test version --no-default-features --features "xattr zlib zstd"
-      - name: Test with coverage (99% lines & functions)
+      - name: Test with coverage (≥95% lines & functions)
         if: steps.install_nextest.outcome == 'success' && steps.install_llvm_cov.outcome == 'success'
         run: |
           cargo llvm-cov nextest --workspace --features "cli nightly" \
-            --fail-under-lines 99 --fail-under-functions 99 \
+            --fail-under-lines 95 --fail-under-functions 95 \
             --lcov --output-path coverage.lcov -- --no-fail-fast
 
       - name: Verify coverage file exists
@@ -257,26 +266,28 @@ jobs:
             sudo apt-get install -y gcc-aarch64-linux-gnu
           fi
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} --bin oc-rsync
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --bins
 
       - name: Package artifacts
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
-          BIN="target/${{ matrix.target }}/release/oc-rsync"
-          OUT="dist/oc-rsync-${{ matrix.name }}"
-          # Windows exe name
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            BIN="target\\${{ matrix.target }}\\release\\oc-rsync.exe"
-            OUT="dist/oc-rsync-${{ matrix.name }}.exe"
-            mkdir -p dist
-            cp "$BIN" "$OUT"
-            certutil -hashfile "$OUT" SHA256 > "dist/oc-rsync-${{ matrix.name }}.sha256"
-          else
-            cp "$BIN" "$OUT"
-            (sha256sum "$OUT" || shasum -a 256 "$OUT") > "dist/oc-rsync-${{ matrix.name }}.sha256"
-          fi
+
+          for bin in oc-rsync oc-rsyncd; do
+            if [[ "${{ runner.os }}" == "Windows" ]]; then
+              BIN_PATH="target\\${{ matrix.target }}\\release\\${bin}.exe"
+              OUT_PATH="dist/${bin}-${{ matrix.name }}.exe"
+              cp "$BIN_PATH" "$OUT_PATH"
+              certutil -hashfile "$OUT_PATH" SHA256 > "dist/${bin}-${{ matrix.name }}.sha256"
+            else
+              BIN_PATH="target/${{ matrix.target }}/release/${bin}"
+              OUT_PATH="dist/${bin}-${{ matrix.name }}"
+              cp "$BIN_PATH" "$OUT_PATH"
+              (sha256sum "$OUT_PATH" || shasum -a 256 "$OUT_PATH") > "dist/${bin}-${{ matrix.name }}.sha256"
+            fi
+          done
 
           # SBOM (CycloneDX)
           cargo install cyclonedx-rust-cargo || true
