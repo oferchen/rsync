@@ -99,6 +99,7 @@ use rsync_checksums::strong::Md5;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
     bandwidth::BandwidthParseError,
+    branding::{self, Brand},
     client::{
         AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientEntryKind,
         ClientEntryMetadata, ClientEvent, ClientEventKind, ClientOutcome, ClientProgressObserver,
@@ -968,8 +969,8 @@ impl ProgramName {
     #[inline]
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Rsync => rsync_core::version::PROGRAM_NAME,
-            Self::OcRsync => rsync_core::version::OC_PROGRAM_NAME,
+            Self::Rsync => Brand::Upstream.client_program_name(),
+            Self::OcRsync => Brand::Oc.client_program_name(),
         }
     }
 }
@@ -978,12 +979,9 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     program
         .and_then(|arg| Path::new(arg).file_stem())
         .and_then(|stem| stem.to_str())
-        .map(|stem| {
-            if stem == rsync_core::version::OC_PROGRAM_NAME {
-                ProgramName::OcRsync
-            } else {
-                ProgramName::Rsync
-            }
+        .map(|stem| match branding::brand_for_program_name(stem) {
+            Brand::Oc => ProgramName::OcRsync,
+            Brand::Upstream => ProgramName::Rsync,
         })
         .unwrap_or(ProgramName::Rsync)
 }
@@ -2806,8 +2804,8 @@ fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
 
     let program_name = detect_program_name(args.first().map(OsString::as_os_str));
     let daemon_program = match program_name {
-        ProgramName::Rsync => rsync_core::version::DAEMON_PROGRAM_NAME,
-        ProgramName::OcRsync => rsync_core::version::OC_DAEMON_PROGRAM_NAME,
+        ProgramName::Rsync => Brand::Upstream.daemon_program_name(),
+        ProgramName::OcRsync => Brand::Oc.daemon_program_name(),
     };
 
     let mut daemon_args = Vec::with_capacity(args.len());
@@ -7758,7 +7756,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(rsync_core::version::OC_PROGRAM_NAME)
+            .with_program_name(Brand::Oc.client_program_name())
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
@@ -7832,7 +7830,7 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default()
-            .with_program_name(rsync_core::version::OC_PROGRAM_NAME)
+            .with_program_name(Brand::Oc.client_program_name())
             .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
