@@ -1694,10 +1694,8 @@ impl ClientConfigBuilder {
     #[doc(alias = "-z")]
     pub const fn compress(mut self, compress: bool) -> Self {
         self.compress = compress;
-        if compress {
-            if self.compression_setting.is_disabled() {
-                self.compression_setting = CompressionSetting::level(CompressionLevel::Default);
-            }
+        if compress && self.compression_setting.is_disabled() {
+            self.compression_setting = CompressionSetting::level(CompressionLevel::Default);
         } else {
             self.compression_setting = CompressionSetting::disabled();
             self.compression_level = None;
@@ -3570,11 +3568,12 @@ where
     }
 
     if let Some(enabled) = protect_args {
-        if enabled {
-            command_args.push(OsString::from("--protect-args"));
+        let flag = if enabled {
+            "--protect-args"
         } else {
-            command_args.push(OsString::from("--no-protect-args"));
-        }
+            "--no-protect-args"
+        };
+        command_args.push(OsString::from(flag));
     }
 
     push_human_readable(&mut command_args, human_readable_mode);

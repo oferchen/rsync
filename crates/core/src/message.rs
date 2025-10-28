@@ -2570,15 +2570,12 @@ fn strip_normalized_workspace_prefix(path: &str, root: &str) -> Option<String> {
     }
 
     if !root.ends_with('/') {
-        if !suffix.starts_with('/') {
-            return None;
-        }
-
-        suffix = &suffix[1..];
-
-        if suffix.is_empty() {
+        let stripped_suffix = suffix.strip_prefix('/')?;
+        if stripped_suffix.is_empty() {
             return Some(String::from("."));
         }
+
+        suffix = stripped_suffix;
     }
 
     Some(suffix.to_owned())
