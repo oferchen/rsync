@@ -308,13 +308,13 @@ fn host_is_bracketed(host: &OsStr) -> bool {
     #[cfg(unix)]
     {
         let bytes = host.as_bytes();
-        return bytes.len() >= 2 && bytes.first() == Some(&b'[') && bytes.last() == Some(&b']');
+        bytes.len() >= 2 && bytes.first() == Some(&b'[') && bytes.last() == Some(&b']')
     }
 
     #[cfg(not(unix))]
     {
         let text = host.to_string_lossy();
-        return text.starts_with('[') && text.ends_with(']');
+        text.starts_with('[') && text.ends_with(']')
     }
 }
 
