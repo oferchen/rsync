@@ -9,3 +9,4 @@ publish = false
 
 [dependencies]
 toml = "0.8"
+serde_json = "1"
