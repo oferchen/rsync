@@ -430,14 +430,14 @@ dependencies = [
 
 [[package]]
 name = "oc-rsync-bin"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "rsync-cli",
 ]
 
 [[package]]
 name = "oc-rsyncd-bin"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "rsync-daemon",
 ]
@@ -591,14 +591,14 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "rsync-bandwidth"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "rsync-checksums"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "digest",
  "md-5",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "rsync-cli"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "base64",
  "clap",
@@ -631,14 +631,14 @@ dependencies = [
 
 [[package]]
 name = "rsync-compress"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "rsync-core"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "base64",
  "filetime",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "rsync-daemon"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "base64",
  "clap",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "rsync-engine"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "filetime",
  "globset",
@@ -691,21 +691,21 @@ dependencies = [
 
 [[package]]
 name = "rsync-filters"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "globset",
 ]
 
 [[package]]
 name = "rsync-logging"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "rsync-core",
 ]
 
 [[package]]
 name = "rsync-meta"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "filetime",
  "libc",
@@ -716,14 +716,14 @@ dependencies = [
 
 [[package]]
 name = "rsync-protocol"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "rsync-transport"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "proptest",
  "rsync-protocol",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "rsync-walk"
-version = "0.0.0"
+version = "3.4.1-rust"
 dependencies = [
  "tempfile",
 ]
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "3.4.1-rust"
 
 [[package]]
 name = "xxhash-rust"
