@@ -26,7 +26,7 @@ compiled-in features.
 
 The crate is primarily consumed by the `oc-rsync` binary:
 
-```rust
+```rust,no_run
 use std::{env, io, process::ExitCode};
 
 fn main() -> ExitCode {
