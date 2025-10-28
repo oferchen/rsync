@@ -951,7 +951,38 @@ impl ProgressSetting {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgramName {
+    Rsync,
+    OcRsync,
+}
+
+impl ProgramName {
+    #[inline]
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rsync => rsync_core::version::PROGRAM_NAME,
+            Self::OcRsync => rsync_core::version::OC_PROGRAM_NAME,
+        }
+    }
+}
+
+fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
+    program
+        .and_then(|arg| Path::new(arg).file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(|stem| {
+            if stem == rsync_core::version::OC_PROGRAM_NAME {
+                ProgramName::OcRsync
+            } else {
+                ProgramName::Rsync
+            }
+        })
+        .unwrap_or(ProgramName::Rsync)
+}
+
 struct ParsedArgs {
+    program_name: ProgramName,
     show_help: bool,
     show_version: bool,
     human_readable: Option<HumanReadableMode>,
@@ -1078,8 +1109,8 @@ fn env_protect_args_default() -> Option<bool> {
 }
 
 /// Builds the `clap` command used for parsing.
-fn clap_command() -> ClapCommand {
-    ClapCommand::new("rsync")
+fn clap_command(program_name: &'static str) -> ClapCommand {
+    ClapCommand::new(program_name)
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -2111,13 +2142,15 @@ where
 {
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
+    let program_name = detect_program_name(args.first().map(OsString::as_os_str));
+
     if args.is_empty() {
-        args.push(OsString::from("rsync"));
+        args.push(OsString::from(program_name.as_str()));
     }
 
     let raw_args = args.clone();
     let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&raw_args);
-    let mut matches = clap_command().try_get_matches_from(args)?;
+    let mut matches = clap_command(program_name.as_str()).try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
@@ -2566,6 +2599,7 @@ where
     let no_motd = matches.get_flag("no-motd");
 
     Ok(ParsedArgs {
+        program_name,
         show_help,
         show_version,
         human_readable,
@@ -2979,6 +3013,7 @@ where
     Err: Write,
 {
     let ParsedArgs {
+        program_name,
         show_help,
         show_version,
         human_readable,
@@ -3185,7 +3220,7 @@ where
     }
 
     if show_version {
-        let report = VersionInfoReport::default();
+        let report = VersionInfoReport::default().with_program_name(program_name.as_str());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
             return 1;
@@ -7642,6 +7677,20 @@ mod tests {
     }
 
     #[test]
+    fn oc_version_flag_renders_oc_banner() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsync"), OsStr::new("--version")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default()
+            .with_program_name(rsync_core::version::OC_PROGRAM_NAME)
+            .human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
     fn short_version_flag_renders_report() {
         let (code, stdout, stderr) = run_with_args([OsStr::new("rsync"), OsStr::new("-V")]);
 
@@ -7649,6 +7698,19 @@ mod tests {
         assert!(stderr.is_empty());
 
         let expected = VersionInfoReport::default().human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
+    fn oc_short_version_flag_renders_oc_banner() {
+        let (code, stdout, stderr) = run_with_args([OsStr::new("oc-rsync"), OsStr::new("-V")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default()
+            .with_program_name(rsync_core::version::OC_PROGRAM_NAME)
+            .human_readable();
         assert_eq!(stdout, expected.into_bytes());
     }
 
@@ -13207,7 +13269,7 @@ printf "example\tvia connect program\n@RSYNCD: EXIT\n"
 
     #[test]
     fn clap_parse_error_is_reported_via_message() {
-        let command = clap_command();
+        let command = clap_command(rsync_core::version::PROGRAM_NAME);
         let error = command
             .try_get_matches_from(vec!["rsync", "--version=extra"])
             .unwrap_err();

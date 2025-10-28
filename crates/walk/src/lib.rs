@@ -578,10 +578,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error.kind(), WalkErrorKind::RootMetadata { .. }));
-        assert_eq!(
-            error.path(),
-            Path::new("/nonexistent/path/for/walker")
-        );
+        assert_eq!(error.path(), Path::new("/nonexistent/path/for/walker"));
         assert_eq!(
             error.kind().path(),
             Path::new("/nonexistent/path/for/walker")

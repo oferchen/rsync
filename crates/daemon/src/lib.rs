@@ -2764,16 +2764,46 @@ pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
 }
 
 /// Parsed command produced by [`parse_args`].
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgramName {
+    Rsyncd,
+    OcRsyncd,
+}
+
+impl ProgramName {
+    #[inline]
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rsyncd => rsync_core::version::DAEMON_PROGRAM_NAME,
+            Self::OcRsyncd => rsync_core::version::OC_DAEMON_PROGRAM_NAME,
+        }
+    }
+}
+
+fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
+    program
+        .and_then(|arg| Path::new(arg).file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(|stem| {
+            if stem == rsync_core::version::OC_DAEMON_PROGRAM_NAME {
+                ProgramName::OcRsyncd
+            } else {
+                ProgramName::Rsyncd
+            }
+        })
+        .unwrap_or(ProgramName::Rsyncd)
+}
+
 struct ParsedArgs {
+    program_name: ProgramName,
     show_help: bool,
     show_version: bool,
     delegate_system_rsync: bool,
     remainder: Vec<OsString>,
 }
 
-fn clap_command() -> Command {
-    Command::new("rsyncd")
+fn clap_command(program_name: &'static str) -> Command {
+    Command::new(program_name)
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -2813,11 +2843,13 @@ where
 {
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
 
+    let program_name = detect_program_name(args.first().map(OsString::as_os_str));
+
     if args.is_empty() {
-        args.push(OsString::from("rsyncd"));
+        args.push(OsString::from(program_name.as_str()));
     }
 
-    let mut matches = clap_command().try_get_matches_from(args)?;
+    let mut matches = clap_command(program_name.as_str()).try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
@@ -2828,6 +2860,7 @@ where
         .unwrap_or_default();
 
     Ok(ParsedArgs {
+        program_name,
         show_help,
         show_version,
         delegate_system_rsync,
@@ -4753,8 +4786,7 @@ where
     }
 
     if parsed.show_version && parsed.remainder.is_empty() {
-        let report = VersionInfoReport::default()
-            .with_program_name(rsync_core::version::DAEMON_PROGRAM_NAME);
+        let report = VersionInfoReport::default().with_program_name(parsed.program_name.as_str());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
             return 1;
@@ -8644,6 +8676,20 @@ mod tests {
     }
 
     #[test]
+    fn oc_version_flag_renders_report() {
+        let (code, stdout, stderr) =
+            run_with_args([OsStr::new("oc-rsyncd"), OsStr::new("--version")]);
+
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+
+        let expected = VersionInfoReport::default()
+            .with_program_name(rsync_core::version::OC_DAEMON_PROGRAM_NAME)
+            .human_readable();
+        assert_eq!(stdout, expected.into_bytes());
+    }
+
+    #[test]
     fn help_flag_renders_static_help_snapshot() {
         let (code, stdout, stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
 
@@ -8724,7 +8770,7 @@ mod tests {
 
     #[test]
     fn clap_parse_error_is_reported_via_message() {
-        let command = clap_command();
+        let command = clap_command(rsync_core::version::DAEMON_PROGRAM_NAME);
         let error = command
             .try_get_matches_from(vec!["rsyncd", "--version=extra"])
             .unwrap_err();
