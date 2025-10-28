@@ -201,7 +201,7 @@ use rsync_core::{
         apply_effective_limit, parse_bandwidth_limit,
     },
     branding::{self, Brand},
-    fallback::fallback_override,
+    fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, fallback_override},
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     version::{RUST_VERSION, VersionInfoReport},
@@ -5019,11 +5019,11 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 fn configured_fallback_binary() -> Option<OsString> {
-    if let Some(selection) = fallback_override("OC_RSYNC_DAEMON_FALLBACK") {
+    if let Some(selection) = fallback_override(DAEMON_FALLBACK_ENV) {
         return selection.resolve_or_default(OsStr::new("rsync"));
     }
 
-    if let Some(selection) = fallback_override("OC_RSYNC_FALLBACK") {
+    if let Some(selection) = fallback_override(CLIENT_FALLBACK_ENV) {
         return selection.resolve_or_default(OsStr::new("rsync"));
     }
 
@@ -5330,32 +5330,32 @@ mod tests {
     #[test]
     fn configured_fallback_binary_defaults_to_rsync() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::remove("OC_RSYNC_DAEMON_FALLBACK");
-        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        let _primary = EnvGuard::remove(DAEMON_FALLBACK_ENV);
+        let _secondary = EnvGuard::remove(CLIENT_FALLBACK_ENV);
         assert_eq!(configured_fallback_binary(), Some(OsString::from("rsync")));
     }
 
     #[test]
     fn configured_fallback_binary_respects_primary_disable() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::remove(CLIENT_FALLBACK_ENV);
         assert!(configured_fallback_binary().is_none());
     }
 
     #[test]
     fn configured_fallback_binary_respects_secondary_disable() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::remove("OC_RSYNC_DAEMON_FALLBACK");
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("no"));
+        let _primary = EnvGuard::remove(DAEMON_FALLBACK_ENV);
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("no"));
         assert!(configured_fallback_binary().is_none());
     }
 
     #[test]
     fn configured_fallback_binary_supports_auto_value() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("auto"));
-        let _secondary = EnvGuard::remove("OC_RSYNC_FALLBACK");
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("auto"));
+        let _secondary = EnvGuard::remove(CLIENT_FALLBACK_ENV);
         assert_eq!(configured_fallback_binary(), Some(OsString::from("rsync")));
     }
 
@@ -5511,7 +5511,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _guard = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
@@ -5535,7 +5535,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let script_path = temp.path().join("rsync-wrapper.sh");
         write_executable_script(&script_path, "#!/bin/sh\nexit 7\n");
-        let _guard = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _guard = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) =
             run_with_args([OsStr::new("rsyncd"), OsStr::new("--delegate-system-rsync")]);
@@ -5554,7 +5554,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _guard = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
@@ -5578,7 +5578,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
         let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("1"));
 
         let (code, _stdout, stderr) = run_with_args([
@@ -5635,7 +5635,7 @@ mod tests {
             + "sys.stdout.buffer.flush()\n";
         write_executable_script(&script_path, &script);
 
-        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
         let _marker = EnvGuard::set("FALLBACK_MARKER", marker_path.as_os_str());
         let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
 
@@ -5719,7 +5719,7 @@ mod tests {
             + "sys.stdout.buffer.flush()\n";
         write_executable_script(&script_path, &script);
 
-        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
         let _hex = EnvGuard::set("BINARY_RESPONSE_HEX", OsStr::new(&expected_hex));
         let _args = EnvGuard::set("ARGS_LOG", args_log_path.as_os_str());
 
@@ -5790,7 +5790,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _fallback = EnvGuard::set("OC_RSYNC_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
@@ -5814,7 +5814,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho \"$@\" > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
 
         let (code, _stdout, stderr) = run_with_args([
             OsStr::new("rsyncd"),
@@ -5838,7 +5838,7 @@ mod tests {
         let log_path = temp.path().join("invocation.log");
         let script = format!("#!/bin/sh\necho invoked > {}\nexit 0\n", log_path.display());
         write_executable_script(&script_path, &script);
-        let _fallback = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", script_path.as_os_str());
+        let _fallback = EnvGuard::set(DAEMON_FALLBACK_ENV, script_path.as_os_str());
         let _auto = EnvGuard::set("OC_RSYNC_DAEMON_AUTO_DELEGATE", OsStr::new("0"));
 
         let (code, stdout, _stderr) = run_with_args([OsStr::new("rsyncd"), OsStr::new("--help")]);
@@ -7511,8 +7511,8 @@ mod tests {
     #[test]
     fn run_daemon_serves_single_legacy_connection() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -7566,8 +7566,8 @@ mod tests {
         use rsync_protocol::{BorrowedMessageFrames, MessageCode};
 
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -7627,8 +7627,8 @@ mod tests {
     #[test]
     fn run_daemon_requests_authentication_for_protected_module() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
@@ -7725,8 +7725,8 @@ mod tests {
     #[test]
     fn run_daemon_enforces_module_connection_limit() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
@@ -7872,8 +7872,8 @@ mod tests {
     #[test]
     fn run_daemon_accepts_valid_credentials() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let dir = tempdir().expect("config dir");
         let module_dir = dir.path().join("module");
@@ -7981,8 +7981,8 @@ mod tests {
     #[test]
     fn run_daemon_honours_max_sessions() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8036,8 +8036,8 @@ mod tests {
     #[test]
     fn run_daemon_handles_parallel_sessions() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8101,8 +8101,8 @@ mod tests {
     #[test]
     fn run_daemon_lists_modules_on_request() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8161,8 +8161,8 @@ mod tests {
     #[test]
     fn run_daemon_writes_and_removes_pid_file() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8214,8 +8214,8 @@ mod tests {
     #[test]
     fn run_daemon_enforces_bwlimit_during_module_list() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let mut recorder = rsync_bandwidth::recorded_sleep_session();
         recorder.clear();
@@ -8309,8 +8309,8 @@ mod tests {
     #[test]
     fn run_daemon_omits_unlisted_modules_from_listing() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8732,8 +8732,8 @@ mod tests {
     #[test]
     fn run_daemon_refuses_disallowed_module_options() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8806,8 +8806,8 @@ mod tests {
     #[test]
     fn run_daemon_denies_module_when_host_not_allowed() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8872,8 +8872,8 @@ mod tests {
     #[test]
     fn run_daemon_filters_modules_during_list_request() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -8935,8 +8935,8 @@ mod tests {
     #[test]
     fn run_daemon_lists_modules_with_motd_lines() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
@@ -9016,8 +9016,8 @@ mod tests {
     #[test]
     fn run_daemon_records_log_file_entries() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _primary = EnvGuard::set("OC_RSYNC_DAEMON_FALLBACK", OsStr::new("0"));
-        let _secondary = EnvGuard::set("OC_RSYNC_FALLBACK", OsStr::new("0"));
+        let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+        let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("ephemeral port");
         let port = listener.local_addr().expect("listener addr").port();
