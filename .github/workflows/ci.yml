@@ -32,6 +32,10 @@ jobs:
           toolchain: 1.87
           cache: true
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: no-binaries
+
       - name: Audit repository for tracked binary artifacts
         uses: actions-rs/cargo@v1
         with:
@@ -49,21 +53,14 @@ jobs:
           components: clippy,rustfmt
           cache: true
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
           version: 1
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-lint-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-lint-
 
       - name: Check formatting
         uses: actions-rs/cargo@v1
@@ -113,6 +110,10 @@ jobs:
           toolchain: 1.87
           components: llvm-tools-preview,clippy,rustfmt
           cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-tests
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
@@ -178,21 +179,14 @@ jobs:
           components: llvm-tools-preview
           cache: true
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: interop
+
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
           version: 1
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-test-
 
       - name: Run tests (all features)
         uses: actions-rs/cargo@v1
@@ -246,6 +240,11 @@ jobs:
           toolchain: 1.87
           target: ${{ matrix.target }}
           cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-${{ matrix.name }}
+          target: ${{ matrix.target }}
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
@@ -322,6 +321,10 @@ jobs:
         with:
           toolchain: 1.87
           cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: package-linux
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
