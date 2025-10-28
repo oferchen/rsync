@@ -83,7 +83,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl
 
       - name: Pre-flight check
-        run: scripts/preflight.sh
+        run: cargo run -p xtask -- preflight
 
       - name: Install cargo-llvm-cov
         id: install_llvm_cov

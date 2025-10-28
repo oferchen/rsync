@@ -5,9 +5,11 @@
 //! # Overview
 //!
 //! The `xtask` utility hosts workspace maintenance commands that are not part of
-//! the shipping binaries. The current implementation focuses on producing a
-//! CycloneDX Software Bill of Materials (SBOM) so packaging automation can ship
-//! reproducible metadata alongside the Rust `rsync` binaries.
+//! the shipping binaries. In addition to producing a CycloneDX Software Bill of
+//! Materials (SBOM) so packaging automation can ship reproducible metadata
+//! alongside the Rust `rsync` binaries, the tool now exposes a `preflight`
+//! command that validates workspace branding, version alignment, documentation,
+//! and packaging assets before CI continues.
 //!
 //! Invocations follow the conventional `cargo xtask <command>` pattern. The
 //! `sbom` command executes the installed `cargo-cyclonedx` plugin with the
@@ -49,6 +51,8 @@
 //! - [`cargo-cyclonedx`](https://github.com/CycloneDX/cyclonedx-rust-cargo) —
 //!   upstream documentation for the SBOM generator invoked by this task.
 
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
@@ -142,7 +146,10 @@ fn parse_workspace_branding(manifest: &str) -> Result<WorkspaceBranding, TaskErr
     let value = manifest.parse::<Value>().map_err(|error| {
         TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
     })?;
+    parse_workspace_branding_from_value(&value)
+}
 
+fn parse_workspace_branding_from_value(value: &Value) -> Result<WorkspaceBranding, TaskError> {
     let workspace = value
         .get("workspace")
         .ok_or_else(|| metadata_error("missing [workspace] table"))?;
@@ -237,6 +244,11 @@ where
             let workspace = workspace_root()?;
             execute_docs(&workspace, options)
         }
+        "preflight" => {
+            let options = parse_preflight_args(args)?;
+            let workspace = workspace_root()?;
+            execute_preflight(&workspace, options)
+        }
         "sbom" => {
             let options = parse_sbom_args(args)?;
             let workspace = workspace_root()?;
@@ -269,6 +281,9 @@ struct SbomOptions {
 struct DocsOptions {
     open: bool,
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PreflightOptions;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PackageOptions {
@@ -327,6 +342,26 @@ where
     }
 
     Ok(options)
+}
+
+fn parse_preflight_args<I>(args: I) -> Result<PreflightOptions, TaskError>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+
+    if let Some(arg) = args.next() {
+        if is_help_flag(&arg) {
+            return Err(TaskError::Help(preflight_usage()));
+        }
+
+        return Err(TaskError::Usage(format!(
+            "unrecognised argument '{}' for preflight command",
+            arg.to_string_lossy()
+        )));
+    }
+
+    Ok(PreflightOptions)
 }
 
 fn parse_sbom_args<I>(args: I) -> Result<SbomOptions, TaskError>
@@ -467,6 +502,273 @@ fn execute_docs(workspace: &Path, options: DocsOptions) -> Result<(), TaskError>
     )
 }
 
+fn execute_preflight(workspace: &Path, _options: PreflightOptions) -> Result<(), TaskError> {
+    let manifest_text = read_workspace_manifest(workspace)?;
+    let manifest_value = manifest_text.parse::<Value>().map_err(|error| {
+        TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
+    })?;
+    let branding = parse_workspace_branding_from_value(&manifest_value)?;
+
+    validate_branding(&branding)?;
+    validate_packaging_assets(workspace, &branding)?;
+    validate_package_versions(workspace, &branding)?;
+    validate_workspace_package_rust_version(&manifest_value)?;
+    validate_documentation(workspace, &branding)?;
+
+    println!(
+        "Preflight checks passed: branding, version, packaging metadata, documentation, and toolchain requirements validated."
+    );
+
+    Ok(())
+}
+
+fn validate_branding(branding: &WorkspaceBranding) -> Result<(), TaskError> {
+    ensure(
+        branding.brand == "oc",
+        format!("workspace brand must be 'oc', found {:?}", branding.brand),
+    )?;
+    ensure(
+        branding.upstream_version == "3.4.1",
+        format!(
+            "upstream_version must remain aligned with rsync 3.4.1; found {:?}",
+            branding.upstream_version
+        ),
+    )?;
+    ensure(
+        branding.rust_version.ends_with("-rust"),
+        format!(
+            "Rust-branded version should end with '-rust'; found {:?}",
+            branding.rust_version
+        ),
+    )?;
+    ensure(
+        branding.protocol == 32,
+        format!("Supported protocol must be 32; found {}", branding.protocol),
+    )?;
+    ensure(
+        branding.client_bin.starts_with("oc-"),
+        format!(
+            "client_bin must start with 'oc-'; found {:?}",
+            branding.client_bin
+        ),
+    )?;
+    ensure(
+        branding.daemon_bin.starts_with("oc-"),
+        format!(
+            "daemon_bin must start with 'oc-'; found {:?}",
+            branding.daemon_bin
+        ),
+    )?;
+
+    let config_dir = Path::new(&branding.daemon_config_dir);
+    ensure(
+        config_dir.is_absolute(),
+        format!(
+            "daemon_config_dir must be an absolute path; found {}",
+            branding.daemon_config_dir
+        ),
+    )?;
+
+    let config_path = Path::new(&branding.daemon_config);
+    let secrets_path = Path::new(&branding.daemon_secrets);
+    ensure(
+        config_path.is_absolute(),
+        format!(
+            "daemon_config must be an absolute path; found {}",
+            branding.daemon_config
+        ),
+    )?;
+    ensure(
+        secrets_path.is_absolute(),
+        format!(
+            "daemon_secrets must be an absolute path; found {}",
+            branding.daemon_secrets
+        ),
+    )?;
+
+    ensure(
+        config_path.parent() == Some(config_dir),
+        format!(
+            "daemon_config {} must reside within configured directory {}",
+            branding.daemon_config, branding.daemon_config_dir
+        ),
+    )?;
+    ensure(
+        secrets_path.parent() == Some(config_dir),
+        format!(
+            "daemon_secrets {} must reside within configured directory {}",
+            branding.daemon_secrets, branding.daemon_config_dir
+        ),
+    )?;
+
+    ensure(
+        config_path.file_name() != secrets_path.file_name(),
+        "daemon configuration and secrets paths must not collide",
+    )?;
+
+    Ok(())
+}
+
+fn validate_packaging_assets(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> Result<(), TaskError> {
+    let packaging_root = workspace.join("packaging").join("etc").join("oc-rsyncd");
+    let config_name = Path::new(&branding.daemon_config)
+        .file_name()
+        .ok_or_else(|| validation_error("daemon_config must include a file name"))?;
+    let secrets_name = Path::new(&branding.daemon_secrets)
+        .file_name()
+        .ok_or_else(|| validation_error("daemon_secrets must include a file name"))?;
+
+    let assets = [
+        (config_name, "daemon_config"),
+        (secrets_name, "daemon_secrets"),
+    ];
+
+    for (name, label) in assets {
+        let candidate = packaging_root.join(name);
+        ensure(
+            candidate.exists(),
+            format!(
+                "packaging assets missing for {} (expected {})",
+                label,
+                candidate.display()
+            ),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_package_versions(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> Result<(), TaskError> {
+    let metadata = cargo_metadata_json(workspace)?;
+    let packages = metadata
+        .get("packages")
+        .and_then(JsonValue::as_array)
+        .ok_or_else(|| validation_error("cargo metadata output missing packages array"))?;
+
+    let mut versions = HashMap::new();
+    for package in packages {
+        let Some(name) = package.get("name").and_then(JsonValue::as_str) else {
+            continue;
+        };
+        let Some(version) = package.get("version").and_then(JsonValue::as_str) else {
+            continue;
+        };
+        versions.insert(name.to_string(), version.to_string());
+    }
+
+    for crate_name in ["oc-rsync-bin", "oc-rsyncd-bin"] {
+        let version = versions.get(crate_name).ok_or_else(|| {
+            validation_error(format!("crate {crate_name} missing from cargo metadata"))
+        })?;
+        ensure(
+            version == &branding.rust_version,
+            format!(
+                "crate {crate_name} version {version} does not match {}",
+                branding.rust_version
+            ),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_workspace_package_rust_version(manifest: &Value) -> Result<(), TaskError> {
+    let workspace = manifest
+        .get("workspace")
+        .and_then(Value::as_table)
+        .ok_or_else(|| validation_error("missing [workspace] table in Cargo.toml"))?;
+    let package = workspace
+        .get("package")
+        .and_then(Value::as_table)
+        .ok_or_else(|| validation_error("missing [workspace.package] table in Cargo.toml"))?;
+    let rust_version = package
+        .get("rust-version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            validation_error("workspace.package.rust-version missing from Cargo.toml")
+        })?;
+
+    ensure(
+        rust_version == "1.87",
+        format!(
+            "workspace.package.rust-version must match CI toolchain 1.87; found {:?}",
+            rust_version
+        ),
+    )
+}
+
+fn validate_documentation(workspace: &Path, branding: &WorkspaceBranding) -> Result<(), TaskError> {
+    let readme_path = workspace.join("README.md");
+    let readme = fs::read_to_string(&readme_path).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read {}: {error}", readme_path.display()),
+        ))
+    })?;
+
+    let required_snippets = [
+        branding.client_bin.as_str(),
+        branding.daemon_bin.as_str(),
+        branding.rust_version.as_str(),
+        branding.daemon_config.as_str(),
+    ];
+
+    let missing: Vec<&str> = required_snippets
+        .iter()
+        .copied()
+        .filter(|snippet| !readme.contains(snippet))
+        .collect();
+
+    ensure(
+        missing.is_empty(),
+        format!(
+            "README.md missing required documentation snippets: {}",
+            missing
+                .iter()
+                .map(|snippet| format!("'{}'", snippet))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    )
+}
+
+fn cargo_metadata_json(workspace: &Path) -> Result<JsonValue, TaskError> {
+    let output = Command::new("cargo")
+        .current_dir(workspace)
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .map_err(|error| map_command_error(error, "cargo metadata", "ensure Cargo is installed"))?;
+
+    if !output.status.success() {
+        return Err(TaskError::CommandFailed {
+            program: String::from("cargo metadata"),
+            status: output.status,
+        });
+    }
+
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        TaskError::Metadata(format!("failed to parse cargo metadata output: {error}"))
+    })
+}
+
+fn ensure(condition: bool, message: impl Into<String>) -> Result<(), TaskError> {
+    if condition {
+        Ok(())
+    } else {
+        Err(validation_error(message))
+    }
+}
+
+fn validation_error(message: impl Into<String>) -> TaskError {
+    TaskError::Validation(message.into())
+}
+
 fn workspace_root() -> Result<PathBuf, TaskError> {
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").ok_or_else(|| {
         TaskError::Io(io::Error::new(
@@ -486,7 +788,7 @@ fn workspace_root() -> Result<PathBuf, TaskError> {
 
 fn top_level_usage() -> String {
     String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  branding Display workspace branding metadata\n  docs     Build API documentation and run doctests\n  package  Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom     Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help     Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
+        "Usage: cargo xtask <command>\n\nCommands:\n  branding Display workspace branding metadata\n  docs     Build API documentation and run doctests\n  preflight Validate branding, packaging, and documentation metadata\n  package  Build Debian and RPM packages (requires cargo-deb and cargo-rpm)\n  sbom     Generate a CycloneDX SBOM (requires cargo-cyclonedx)\n  help     Show this help message\n\nRun `cargo xtask <command> --help` for details about a specific command.",
     )
 }
 
@@ -499,6 +801,12 @@ fn docs_usage() -> String {
 fn branding_usage() -> String {
     String::from(
         "Usage: cargo xtask branding\n\nOptions:\n  -h, --help      Show this help message",
+    )
+}
+
+fn preflight_usage() -> String {
+    String::from(
+        "Usage: cargo xtask preflight\n\nOptions:\n  -h, --help      Show this help message",
     )
 }
 
@@ -521,13 +829,16 @@ enum TaskError {
     Io(io::Error),
     ToolMissing(String),
     Metadata(String),
+    Validation(String),
     CommandFailed { program: String, status: ExitStatus },
 }
 
 impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TaskError::Usage(message) | TaskError::Help(message) => f.write_str(message),
+            TaskError::Usage(message)
+            | TaskError::Help(message)
+            | TaskError::Validation(message) => f.write_str(message),
             TaskError::Io(error) => write!(f, "{error}"),
             TaskError::ToolMissing(message) => f.write_str(message),
             TaskError::Metadata(message) => f.write_str(message),
@@ -724,9 +1035,10 @@ fn execute_package(workspace: &Path, options: PackageOptions) -> Result<(), Task
 #[cfg(test)]
 mod tests {
     use super::{
-        BrandingOptions, DocsOptions, PackageOptions, SbomOptions, TaskError, WorkspaceBranding,
-        branding_usage, docs_usage, package_usage, parse_branding_args, parse_docs_args,
-        parse_package_args, parse_sbom_args, parse_workspace_branding, sbom_usage, top_level_usage,
+        BrandingOptions, DocsOptions, PackageOptions, PreflightOptions, SbomOptions, TaskError,
+        WorkspaceBranding, branding_usage, docs_usage, package_usage, parse_branding_args,
+        parse_docs_args, parse_package_args, parse_preflight_args, parse_sbom_args,
+        parse_workspace_branding, preflight_usage, sbom_usage, top_level_usage,
     };
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -790,6 +1102,30 @@ mod tests {
     fn top_level_usage_mentions_docs_command() {
         let usage = top_level_usage();
         assert!(usage.contains("docs"));
+    }
+
+    #[test]
+    fn parse_preflight_args_accepts_default_configuration() {
+        let options = parse_preflight_args(std::iter::empty()).expect("parse succeeds");
+        assert_eq!(options, PreflightOptions);
+    }
+
+    #[test]
+    fn parse_preflight_args_reports_help_request() {
+        let error = parse_preflight_args([OsString::from("--help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message == preflight_usage()));
+    }
+
+    #[test]
+    fn parse_preflight_args_rejects_unknown_argument() {
+        let error = parse_preflight_args([OsString::from("--unknown")]).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn top_level_usage_mentions_preflight_command() {
+        let usage = top_level_usage();
+        assert!(usage.contains("preflight"));
     }
 
     #[test]
