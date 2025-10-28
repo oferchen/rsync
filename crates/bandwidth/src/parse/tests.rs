@@ -200,6 +200,57 @@ fn components_into_limiter_respects_rate_and_burst() {
 }
 
 #[test]
+fn constrained_by_prefers_stricter_limit_and_preserves_burst() {
+    let client = parse_bandwidth_limit("8M:64K").expect("client components");
+    let module = parse_bandwidth_limit("2M").expect("module components");
+
+    let combined = client.constrained_by(&module);
+
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(2 * 1024 * 1024));
+    assert_eq!(combined.burst().map(NonZeroU64::get), Some(64 * 1024));
+    assert!(combined.burst_specified());
+    assert!(combined.limit_specified());
+}
+
+#[test]
+fn constrained_by_initialises_limiter_when_unlimited() {
+    let client = BandwidthLimitComponents::unlimited();
+    let module = parse_bandwidth_limit("1M:32K").expect("module components");
+
+    let combined = client.constrained_by(&module);
+
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(1 * 1024 * 1024));
+    assert_eq!(combined.burst().map(NonZeroU64::get), Some(32 * 1024));
+    assert!(combined.burst_specified());
+    assert!(combined.limit_specified());
+}
+
+#[test]
+fn constrained_by_respects_module_disable() {
+    let client = parse_bandwidth_limit("4M:48K").expect("client components");
+    let module = parse_bandwidth_limit("0").expect("module components");
+
+    let combined = client.constrained_by(&module);
+
+    assert!(combined.is_unlimited());
+    assert!(combined.limit_specified());
+    assert!(!combined.burst_specified());
+    assert!(combined.burst().is_none());
+}
+
+#[test]
+fn constrained_by_overrides_burst_when_specified() {
+    let client = parse_bandwidth_limit("3M:16K").expect("client components");
+    let module = parse_bandwidth_limit("5M:0").expect("module components");
+
+    let combined = client.constrained_by(&module);
+
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(3 * 1024 * 1024));
+    assert!(combined.burst().is_none());
+    assert!(combined.burst_specified());
+}
+
+#[test]
 fn components_into_limiter_returns_none_when_unlimited() {
     let components = BandwidthLimitComponents::new(None, NonZeroU64::new(4096));
     assert!(components.into_limiter().is_none());
