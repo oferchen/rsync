@@ -74,7 +74,8 @@ referenced functionality ships and parity is verified by tests or goldens.
 - **Interop harness and packaging automation incomplete**
   - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix.
     Packaging metadata for `cargo-deb`/`cargo-rpm` now installs both binaries, a
-    hardened systemd unit, and example configuration files. SBOM generation is
+    hardened `oc-rsyncd.service` systemd unit (with a compatibility alias for
+    `rsyncd.service`), and example configuration files. SBOM generation is
     covered by `cargo xtask sbom`, but CI validation and automated package
     checks remain pending.
   - *Removal plan*: Stand up the parity harness (`tests/goldens`), CI workflows,
