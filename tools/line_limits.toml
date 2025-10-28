@@ -48,14 +48,14 @@ max_lines = 2783
 warn_lines = 2683
 
 [[overrides]]
+path = "crates/protocol/src/multiplex/tests.rs"
+max_lines = 1338
+warn_lines = 1238
+
+[[overrides]]
 path = "xtask/src/main.rs"
 max_lines = 2850
 warn_lines = 2750
-
-[[overrides]]
-path = "crates/protocol/src/multiplex.rs"
-max_lines = 2169
-warn_lines = 2069
 
 [[overrides]]
 path = "crates/transport/src/session/tests.rs"
