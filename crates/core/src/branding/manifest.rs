@@ -4,7 +4,9 @@
 //!
 //! The [`manifest()`] accessor returns a [`BrandManifest`] struct that captures
 //! the canonical program names, configuration paths, and version metadata for
-//! the workspace. Higher layers use the manifest to render banners, build help
+//! the workspace. Callers can retrieve brand-specific program names or
+//! filesystem locations via [`BrandManifest::profile_for`] and its convenience
+//! accessors. Higher layers use the manifest to render banners, build help
 //! text, and locate configuration files without duplicating string literals or
 //! re-parsing the workspace manifest at runtime. The manifest is constructed on
 //! first use from [`crate::workspace::metadata()`] and cached for the lifetime of
@@ -35,6 +37,15 @@ impl BrandManifest {
         self.default_brand
     }
 
+    /// Returns the [`BrandProfile`] associated with `brand`.
+    #[must_use]
+    pub const fn profile_for(self, brand: Brand) -> BrandProfile {
+        match brand {
+            Brand::Oc => self.oc,
+            Brand::Upstream => self.upstream,
+        }
+    }
+
     /// Returns the branded [`BrandProfile`] used by the canonical binaries.
     #[must_use]
     pub const fn oc(self) -> BrandProfile {
@@ -45,6 +56,41 @@ impl BrandManifest {
     #[must_use]
     pub const fn upstream(self) -> BrandProfile {
         self.upstream
+    }
+
+    /// Returns the client program name for the requested `brand`.
+    #[must_use]
+    pub const fn client_program_name_for(self, brand: Brand) -> &'static str {
+        let profile = self.profile_for(brand);
+        profile.client_program_name()
+    }
+
+    /// Returns the daemon program name for the requested `brand`.
+    #[must_use]
+    pub const fn daemon_program_name_for(self, brand: Brand) -> &'static str {
+        let profile = self.profile_for(brand);
+        profile.daemon_program_name()
+    }
+
+    /// Returns the daemon configuration directory for the requested `brand`.
+    #[must_use]
+    pub const fn daemon_config_dir_for(self, brand: Brand) -> &'static str {
+        let profile = self.profile_for(brand);
+        profile.daemon_config_dir_str()
+    }
+
+    /// Returns the daemon configuration file path for the requested `brand`.
+    #[must_use]
+    pub const fn daemon_config_path_for(self, brand: Brand) -> &'static str {
+        let profile = self.profile_for(brand);
+        profile.daemon_config_path_str()
+    }
+
+    /// Returns the daemon secrets file path for the requested `brand`.
+    #[must_use]
+    pub const fn daemon_secrets_path_for(self, brand: Brand) -> &'static str {
+        let profile = self.profile_for(brand);
+        profile.daemon_secrets_path_str()
     }
 
     /// Returns the Rust-branded version string advertised by binaries.
@@ -102,6 +148,48 @@ mod tests {
         let manifest = manifest();
         let metadata = workspace::metadata();
 
+        assert_eq!(manifest.profile_for(Brand::Oc), manifest.oc());
+        assert_eq!(manifest.profile_for(Brand::Upstream), manifest.upstream());
+        assert_eq!(
+            manifest.client_program_name_for(Brand::Oc),
+            metadata.client_program_name()
+        );
+        assert_eq!(
+            manifest.client_program_name_for(Brand::Upstream),
+            metadata.legacy_client_program_name()
+        );
+        assert_eq!(
+            manifest.daemon_program_name_for(Brand::Oc),
+            metadata.daemon_program_name()
+        );
+        assert_eq!(
+            manifest.daemon_program_name_for(Brand::Upstream),
+            metadata.legacy_daemon_program_name()
+        );
+        assert_eq!(
+            manifest.daemon_config_dir_for(Brand::Oc),
+            metadata.daemon_config_dir()
+        );
+        assert_eq!(
+            manifest.daemon_config_dir_for(Brand::Upstream),
+            metadata.legacy_daemon_config_dir()
+        );
+        assert_eq!(
+            manifest.daemon_config_path_for(Brand::Oc),
+            metadata.daemon_config_path()
+        );
+        assert_eq!(
+            manifest.daemon_config_path_for(Brand::Upstream),
+            metadata.legacy_daemon_config_path()
+        );
+        assert_eq!(
+            manifest.daemon_secrets_path_for(Brand::Oc),
+            metadata.daemon_secrets_path()
+        );
+        assert_eq!(
+            manifest.daemon_secrets_path_for(Brand::Upstream),
+            metadata.legacy_daemon_secrets_path()
+        );
         assert_eq!(manifest.default_brand(), brand::default_brand());
         assert_eq!(manifest.oc(), oc_profile());
         assert_eq!(manifest.upstream(), upstream_profile());
