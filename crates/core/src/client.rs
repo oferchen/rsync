@@ -2256,6 +2256,32 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
     })
 }
 
+/// Parses the [`RSYNC_SKIP_COMPRESS`] environment variable into a [`SkipCompressList`].
+///
+/// Returning [`Ok(None)`] indicates that the variable was unset, allowing
+/// callers to retain their default skip-compress configuration. When the
+/// variable is present but empty the function returns an empty list, matching
+/// upstream rsync's semantics where an explicitly empty list disables the
+/// optimisation altogether.
+pub fn skip_compress_from_env(variable: &str) -> Result<Option<SkipCompressList>, Message> {
+    let Some(value) = env::var_os(variable) else {
+        return Ok(None);
+    };
+
+    let text = value.to_str().ok_or_else(|| {
+        rsync_error!(
+            1,
+            format!("{variable} accepts only UTF-8 patterns in this build")
+        )
+        .with_role(Role::Client)
+    })?;
+
+    SkipCompressList::parse(text).map(Some).map_err(|error| {
+        rsync_error!(1, format!("invalid {variable} specification: {error}"))
+            .with_role(Role::Client)
+    })
+}
+
 /// Classifies a filter rule as inclusive or exclusive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FilterRuleKind {
@@ -7107,6 +7133,54 @@ exit 42
         assert_eq!(fs::read(&destination).expect("read dest"), payload);
         assert!(!summary.compression_used());
         assert!(summary.compressed_bytes().is_none());
+    }
+
+    #[test]
+    fn skip_compress_from_env_parses_list() {
+        let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", "gz,zip");
+        let list = skip_compress_from_env("RSYNC_SKIP_COMPRESS")
+            .expect("parse env list")
+            .expect("list present");
+
+        assert!(list.matches_path(Path::new("file.gz")));
+        assert!(list.matches_path(Path::new("archive.zip")));
+        assert!(!list.matches_path(Path::new("note.txt")));
+    }
+
+    #[test]
+    fn skip_compress_from_env_absent_returns_none() {
+        let _guard = EnvGuard::remove("RSYNC_SKIP_COMPRESS");
+        assert!(
+            skip_compress_from_env("RSYNC_SKIP_COMPRESS")
+                .expect("absent env")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn skip_compress_from_env_reports_invalid_specification() {
+        let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", "[");
+        let error = skip_compress_from_env("RSYNC_SKIP_COMPRESS")
+            .expect_err("invalid specification should error");
+        let rendered = error.to_string();
+        assert!(rendered.contains("RSYNC_SKIP_COMPRESS"));
+        assert!(rendered.contains("invalid"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skip_compress_from_env_rejects_non_utf8_values() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = OsStr::from_bytes(&[0xFF]);
+        let _guard = EnvGuard::set_os("RSYNC_SKIP_COMPRESS", bytes);
+        let error = skip_compress_from_env("RSYNC_SKIP_COMPRESS")
+            .expect_err("non UTF-8 value should error");
+        assert!(
+            error
+                .to_string()
+                .contains("RSYNC_SKIP_COMPRESS accepts only UTF-8")
+        );
     }
 
     #[test]
