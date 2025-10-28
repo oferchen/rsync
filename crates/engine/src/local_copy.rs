@@ -798,6 +798,12 @@ impl FilterSegment {
             rsync_filters::FilterAction::Protect | rsync_filters::FilterAction::Risk => {
                 self.protect_risk.push(CompiledRule::new(rule)?);
             }
+            rsync_filters::FilterAction::Clear => {
+                debug_assert!(
+                    false,
+                    "clear directives should be converted into FilterProgramEntry::Clear before compilation",
+                );
+            }
         }
         Ok(())
     }
@@ -848,6 +854,10 @@ impl FilterSegment {
                         rsync_filters::FilterAction::Risk => outcome.unprotect(),
                         rsync_filters::FilterAction::Include
                         | rsync_filters::FilterAction::Exclude => {}
+                        rsync_filters::FilterAction::Clear => debug_assert!(
+                            false,
+                            "clear directives should be converted into FilterProgramEntry::Clear before compilation",
+                        ),
                     }
                 }
             }
