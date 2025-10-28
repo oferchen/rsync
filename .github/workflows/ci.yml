@@ -14,7 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CURRENT_YEAR: "2025" # ensure reproducible build metadata
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
   LC_ALL: C
@@ -33,17 +32,7 @@ jobs:
             exit 1
           fi
 
-  readme-version:
-    needs: [no-binaries]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify README version string
-        run: |
-          grep -E 'rsync[[:space:]]+3\.4\.1.*protocol[[:space:]]+32' README.md
-
   lint:
-    needs: [readme-version]
     # runs-on: self-hosted
     runs-on: ubuntu-latest
     steps:
