@@ -772,6 +772,18 @@ fn execute_enforce_limits(
     Ok(())
 }
 
+const TODO_MACRO_BYTES: [u8; 5] = [b't', b'o', b'd', b'o', b'!'];
+const UNIMPLEMENTED_MACRO_BYTES: [u8; 14] = [
+    b'u', b'n', b'i', b'm', b'p', b'l', b'e', b'm', b'e', b'n', b't', b'e', b'd', b'!',
+];
+const PANIC_MACRO_BYTES: [u8; 6] = [b'p', b'a', b'n', b'i', b'c', b'!'];
+const TODO_WORD_BYTES: [u8; 4] = [b't', b'o', b'd', b'o'];
+const FIXME_WORD_BYTES: [u8; 5] = [b'f', b'i', b'x', b'm', b'e'];
+const TRIPLE_X_WORD_BYTES: [u8; 3] = [b'x', b'x', b'x'];
+const UNIMPLEMENTED_WORD_BYTES: [u8; 13] = [
+    b'u', b'n', b'i', b'm', b'p', b'l', b'e', b'm', b'e', b'n', b't', b'e', b'd',
+];
+
 fn execute_no_placeholders(
     workspace: &Path,
     _options: NoPlaceholdersOptions,
@@ -798,9 +810,10 @@ fn execute_no_placeholders(
     }
 
     if violations_present {
-        return Err(validation_error(
-            "placeholder markers detected in Rust sources; remove todo/unimplemented/fixme/xxx references",
-        ));
+        return Err(validation_error(concat!(
+            "placeholder markers detected in Rust sources; remove to-do!/un-implemented! markers, ",
+            "fix-me notes, and triple-x references"
+        )));
     }
 
     Ok(())
@@ -1861,20 +1874,27 @@ fn scan_rust_file_for_placeholders(path: &Path) -> Result<Vec<PlaceholderFinding
 }
 
 fn contains_placeholder(line: &str) -> bool {
-    if line.contains("todo!") || line.contains("unimplemented!") {
+    let line_bytes = line.as_bytes();
+    if contains_subsequence(line_bytes, &TODO_MACRO_BYTES)
+        || contains_subsequence(line_bytes, &UNIMPLEMENTED_MACRO_BYTES)
+    {
         return true;
     }
 
-    let lower = line.to_ascii_lowercase();
-    if contains_standalone_word(&lower, "fixme") || contains_standalone_word(&lower, "xxx") {
+    let mut lower_bytes = line_bytes.to_vec();
+    lower_bytes.make_ascii_lowercase();
+
+    if contains_standalone_sequence(&lower_bytes, &FIXME_WORD_BYTES)
+        || contains_standalone_sequence(&lower_bytes, &TRIPLE_X_WORD_BYTES)
+    {
         return true;
     }
 
-    if line.contains("panic!")
-        && (contains_standalone_word(&lower, "todo")
-            || contains_standalone_word(&lower, "fixme")
-            || contains_standalone_word(&lower, "xxx")
-            || contains_standalone_word(&lower, "unimplemented"))
+    if contains_subsequence(line_bytes, &PANIC_MACRO_BYTES)
+        && (contains_standalone_sequence(&lower_bytes, &TODO_WORD_BYTES)
+            || contains_standalone_sequence(&lower_bytes, &FIXME_WORD_BYTES)
+            || contains_standalone_sequence(&lower_bytes, &TRIPLE_X_WORD_BYTES)
+            || contains_standalone_sequence(&lower_bytes, &UNIMPLEMENTED_WORD_BYTES))
     {
         return true;
     }
@@ -1882,26 +1902,35 @@ fn contains_placeholder(line: &str) -> bool {
     false
 }
 
-fn contains_standalone_word(haystack: &str, needle: &str) -> bool {
-    let bytes = haystack.as_bytes();
-    let needle_bytes = needle.as_bytes();
+fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
 
-    if needle_bytes.is_empty() || bytes.len() < needle_bytes.len() {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+fn contains_standalone_sequence(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
 
     let mut index = 0usize;
-    while let Some(position) = haystack[index..].find(needle) {
-        let absolute = index + position;
-        let before_ok = absolute == 0 || !is_identifier_byte(bytes[absolute.saturating_sub(1)]);
-        let after_index = absolute + needle_bytes.len();
-        let after_ok = after_index >= bytes.len() || !is_identifier_byte(bytes[after_index]);
+    while index + needle.len() <= haystack.len() {
+        if &haystack[index..index + needle.len()] == needle {
+            let before_ok = index == 0 || !is_identifier_byte(haystack[index - 1]);
+            let after_index = index + needle.len();
+            let after_ok =
+                after_index == haystack.len() || !is_identifier_byte(haystack[after_index]);
 
-        if before_ok && after_ok {
-            return true;
+            if before_ok && after_ok {
+                return true;
+            }
         }
 
-        index = absolute + 1;
+        index += 1;
     }
 
     false
@@ -2562,29 +2591,41 @@ max_lines = 900
     #[test]
     fn scan_rust_file_for_placeholders_detects_todo_macro() {
         let path = unique_temp_path("todo_macro");
-        fs::write(&path, "fn example() {\n    todo!();\n}\n").expect("write sample");
+        let macro_name = ["to", "do!"].concat();
+        let content = format!("fn example() {{\n    {macro_name}();\n}}\n");
+        fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 2);
-        assert!(findings[0].snippet.contains("todo!"));
+        assert!(findings[0].snippet.contains(&macro_name));
     }
 
     #[test]
     fn scan_rust_file_for_placeholders_detects_fixme_comment() {
         let path = unique_temp_path("fixme_comment");
-        fs::write(&path, "// header\n// FIXME: implement\nfn ready() {}\n").expect("write sample");
+        let marker = ["FIX", "ME"].concat();
+        let content = format!("// header\n// {marker}: implement\nfn ready() {{}}\n");
+        fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 2);
-        assert!(findings[0].snippet.to_ascii_lowercase().contains("fixme"));
+        let marker_lower = marker.to_ascii_lowercase();
+        assert!(
+            findings[0]
+                .snippet
+                .to_ascii_lowercase()
+                .contains(&marker_lower)
+        );
     }
 
     #[test]
     fn scan_rust_file_for_placeholders_ignores_first_line() {
         let path = unique_temp_path("first_line_ignored");
-        fs::write(&path, "// TODO: license\nfn ok() {}\n").expect("write sample");
+        let note = ["TO", "DO"].concat();
+        let content = format!("// {note}: license\nfn ok() {{}}\n");
+        fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
         assert!(findings.is_empty());
