@@ -2857,7 +2857,7 @@ where
 
     let upstream_program = Brand::Upstream.client_program_name();
     let upstream_program_os = OsStr::new(upstream_program);
-    let fallback = match fallback_override("OC_RSYNC_FALLBACK") {
+    let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
         Some(FallbackOverride::Disabled) => {
             let text = format!(
                 "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
