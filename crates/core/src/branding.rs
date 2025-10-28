@@ -78,34 +78,16 @@ pub const fn upstream_daemon_program_name() -> &'static str {
     UPSTREAM_DAEMON_PROGRAM_NAME
 }
 
-/// Returns the branded client program name (`oc-rsync`).
-#[must_use]
-pub const fn oc_client_program_name() -> &'static str {
-    OC_CLIENT_PROGRAM_NAME
-}
-
-/// Returns the branded daemon program name (`oc-rsyncd`).
-#[must_use]
-pub const fn oc_daemon_program_name() -> &'static str {
-    OC_DAEMON_PROGRAM_NAME
-}
-
-/// Returns the canonical configuration path used by `oc-rsyncd`.
-#[must_use]
-pub fn oc_daemon_config_path() -> &'static Path {
-    Path::new(OC_DAEMON_CONFIG_PATH)
-}
-
 /// Returns the canonical client program name for upstream-compatible binaries.
 #[must_use]
 pub const fn client_program_name() -> &'static str {
-    CLIENT_PROGRAM_NAME
+    upstream_client_program_name()
 }
 
 /// Returns the canonical daemon program name for upstream-compatible binaries.
 #[must_use]
 pub const fn daemon_program_name() -> &'static str {
-    DAEMON_PROGRAM_NAME
+    upstream_daemon_program_name()
 }
 
 /// Returns the branded client program name exposed as `oc-rsync`.
@@ -118,6 +100,12 @@ pub const fn oc_client_program_name() -> &'static str {
 #[must_use]
 pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
+}
+
+/// Returns the canonical configuration path used by `oc-rsyncd`.
+#[must_use]
+pub fn oc_daemon_config_path() -> &'static Path {
+    Path::new(OC_DAEMON_CONFIG_PATH)
 }
 
 /// Returns the canonical secrets path used by `oc-rsyncd`.
@@ -144,8 +132,8 @@ mod tests {
 
     #[test]
     fn program_names_are_consistent() {
-        assert_eq!(client_program_name(), CLIENT_PROGRAM_NAME);
-        assert_eq!(daemon_program_name(), DAEMON_PROGRAM_NAME);
+        assert_eq!(client_program_name(), upstream_client_program_name());
+        assert_eq!(daemon_program_name(), upstream_daemon_program_name());
         assert_eq!(oc_client_program_name(), OC_CLIENT_PROGRAM_NAME);
         assert_eq!(oc_daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
     }
