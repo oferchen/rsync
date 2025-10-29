@@ -111,6 +111,39 @@ fn version_info_report_with_daemon_brand_updates_banner() {
 }
 
 #[test]
+fn version_info_report_for_client_brand_matches_builder() {
+    let expected =
+        VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
+    let actual = VersionInfoReport::for_client_brand(Brand::Oc);
+
+    assert_eq!(actual.human_readable(), expected.human_readable());
+}
+
+#[test]
+fn version_info_report_for_daemon_brand_matches_builder() {
+    let expected =
+        VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
+    let actual = VersionInfoReport::for_daemon_brand(Brand::Oc);
+
+    assert_eq!(actual.human_readable(), expected.human_readable());
+}
+
+#[test]
+fn version_info_report_for_brand_with_config_matches_builder() {
+    let mut config = VersionInfoConfig::default();
+    config.supports_ipv6 = false;
+    config.supports_symlinks = false;
+    let expected = VersionInfoReport::new(config).with_client_brand(Brand::Upstream);
+
+    let mut alternate = VersionInfoConfig::default();
+    alternate.supports_ipv6 = false;
+    alternate.supports_symlinks = false;
+    let actual = VersionInfoReport::for_client_brand_with_config(alternate, Brand::Upstream);
+
+    assert_eq!(actual.human_readable(), expected.human_readable());
+}
+
+#[test]
 fn version_info_report_includes_compiled_feature_section() {
     let report = VersionInfoReport::new(VersionInfoConfig::default());
     let rendered = report.human_readable();

@@ -5284,7 +5284,7 @@ where
     }
 
     if parsed.show_version && parsed.remainder.is_empty() {
-        let report = VersionInfoReport::default().with_daemon_brand(parsed.program_name.brand());
+        let report = VersionInfoReport::for_daemon_brand(parsed.program_name.brand());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
             return 1;

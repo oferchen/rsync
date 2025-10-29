@@ -4386,9 +4386,7 @@ fn version_flag_renders_report() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
-    let expected = VersionInfoReport::default()
-        .with_daemon_brand(Brand::Upstream)
-        .human_readable();
+    let expected = VersionInfoReport::for_daemon_brand(Brand::Upstream).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
 
@@ -4399,9 +4397,7 @@ fn oc_version_flag_renders_report() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
-    let expected = VersionInfoReport::default()
-        .with_daemon_brand(Brand::Oc)
-        .human_readable();
+    let expected = VersionInfoReport::for_daemon_brand(Brand::Oc).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
 

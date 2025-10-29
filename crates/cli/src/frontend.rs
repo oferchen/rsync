@@ -2196,7 +2196,7 @@ where
     }
 
     if show_version {
-        let report = VersionInfoReport::default().with_client_brand(program_name.brand());
+        let report = VersionInfoReport::for_client_brand(program_name.brand());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
             return 1;
