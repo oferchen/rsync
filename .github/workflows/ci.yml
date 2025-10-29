@@ -167,38 +167,46 @@ jobs:
       - name: Run tests (all features)
         run: cargo --locked test --workspace --all-features
 
-  build-matrix:
+  cross-compile:
     needs: lint
     runs-on: ubuntu-latest
+    name: Cross-compile (${{ matrix.os }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
+          - os: linux
+            arch: x86_64
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-          - name: linux-aarch64
+          - os: linux
+            arch: aarch64
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-          - name: darwin-x86_64
+          - os: darwin
+            arch: x86_64
             target: x86_64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-          - name: darwin-aarch64
+          - os: darwin
+            arch: aarch64
             target: aarch64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-          - name: windows-x86_64
+          - os: windows
+            arch: x86_64
             target: x86_64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-          - name: windows-x86
+          - os: windows
+            arch: x86
             target: i686-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-          - name: windows-aarch64
+          - os: windows
+            arch: aarch64
             target: aarch64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
@@ -216,7 +224,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: build-${{ matrix.name }}
+          shared-key: cross-${{ matrix.os }}-${{ matrix.arch }}
           target: ${{ matrix.target }}
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
@@ -257,12 +265,12 @@ jobs:
 
       - name: Generate target SBOM
         if: ${{ !contains(matrix.target, 'windows') }}
-        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json
+        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.os }}-${{ matrix.arch }}-sbom.json
 
       - name: Upload oc-rsync artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.name }}
+          name: oc-rsync-${{ matrix.os }}-${{ matrix.arch }}
           path: target/${{ matrix.target }}/release/oc-rsync*
           if-no-files-found: error
 
@@ -270,12 +278,12 @@ jobs:
         if: matrix.build_daemon
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsyncd-${{ matrix.name }}
+          name: oc-rsyncd-${{ matrix.os }}-${{ matrix.arch }}
           path: target/${{ matrix.target }}/release/oc-rsyncd*
           if-no-files-found: error
 
   package-linux:
-    needs: [test-linux, build-matrix]
+    needs: [test-linux, cross-compile]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
