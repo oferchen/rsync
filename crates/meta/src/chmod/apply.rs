@@ -33,6 +33,7 @@ pub(crate) fn apply_clauses(
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs::FileType) -> u32 {
     mode
 }
