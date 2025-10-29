@@ -1,4 +1,6 @@
+use super::constants::UPSTREAM_PROTOCOL_RANGE;
 use super::*;
+use crate::error::NegotiationError;
 use core::convert::TryFrom;
 use core::iter::FusedIterator;
 use core::num::{
