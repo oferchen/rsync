@@ -73,11 +73,6 @@ max_lines = 1400
 warn_lines = 1350
 
 [[overrides]]
-path = "crates/protocol/src/compatibility.rs"
-max_lines = 1200
-warn_lines = 1150
-
-[[overrides]]
 path = "crates/protocol/src/envelope/tests.rs"
 max_lines = 600
 warn_lines = 580
