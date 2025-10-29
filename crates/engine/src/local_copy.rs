@@ -9509,6 +9509,54 @@ mod tests {
     #[cfg(feature = "xattr")]
     use xattr;
 
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))
+    ))]
+    fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::convert::TryInto;
+
+        let bits: u16 = (mode & 0o177_777)
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
+        let mode = Mode::from_bits_truncate(bits.into());
+        mknodat(CWD, path, FileType::Fifo, mode, makedev(0, 0)).map_err(io::Error::from)
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ))]
+    fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
+        use std::convert::TryInto;
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bits: libc::mode_t = (mode & 0o177_777)
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
+        let path_c = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL")
+        })?;
+        let result = unsafe { libc::mkfifo(path_c.as_ptr(), bits) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
     #[cfg(all(unix, feature = "acl"))]
     use std::os::unix::ffi::OsStrExt;
 
@@ -11913,19 +11961,11 @@ mod tests {
     #[test]
     fn execute_copies_fifo() {
         use filetime::{FileTime, set_file_times};
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("source.pipe");
-        mknodat(
-            CWD,
-            &source_fifo,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o640),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source_fifo, 0o640).expect("mkfifo");
 
         let atime = FileTime::from_unix_time(1_700_050_000, 123_000_000);
         let mtime = FileTime::from_unix_time(1_700_060_000, 456_000_000);
@@ -11972,7 +12012,6 @@ mod tests {
     #[test]
     fn execute_copies_fifo_within_directory() {
         use filetime::{FileTime, set_file_times};
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
         let temp = tempdir().expect("tempdir");
@@ -11981,14 +12020,7 @@ mod tests {
         fs::create_dir_all(&nested).expect("create nested");
 
         let source_fifo = nested.join("pipe");
-        mknodat(
-            CWD,
-            &source_fifo,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o620),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source_fifo, 0o620).expect("mkfifo");
 
         let atime = FileTime::from_unix_time(1_700_070_000, 111_000_000);
         let mtime = FileTime::from_unix_time(1_700_080_000, 222_000_000);
@@ -12034,18 +12066,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_skips_fifo() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
-
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("source.pipe");
-        mknodat(
-            CWD,
-            &source_fifo,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o600),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
         let destination_fifo = temp.path().join("dest.pipe");
         let operands = vec![
@@ -12065,18 +12088,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn execute_without_specials_records_skip_event() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
-
         let temp = tempdir().expect("tempdir");
         let source_fifo = temp.path().join("skip.pipe");
-        mknodat(
-            CWD,
-            &source_fifo,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o600),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
         let destination = temp.path().join("dest.pipe");
         let operands = vec![

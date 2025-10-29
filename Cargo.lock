@@ -636,6 +636,7 @@ dependencies = [
  "base64",
  "clap",
  "filetime",
+ "libc",
  "rsync-checksums",
  "rsync-compress",
  "rsync-core",
