@@ -63,11 +63,6 @@ max_lines = 3350
 warn_lines = 3330
 
 [[overrides]]
-path = "crates/transport/src/session/tests.rs"
-max_lines = 1700
-warn_lines = 1650
-
-[[overrides]]
 path = "crates/transport/src/binary.rs"
 max_lines = 1700
 warn_lines = 1650
