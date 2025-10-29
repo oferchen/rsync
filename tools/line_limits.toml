@@ -33,11 +33,6 @@ max_lines = 6400
 warn_lines = 6300
 
 [[overrides]]
-path = "crates/core/src/message.rs"
-max_lines = 5200
-warn_lines = 5100
-
-[[overrides]]
 path = "crates/protocol/src/negotiation/tests.rs"
 max_lines = 3600
 warn_lines = 3500
