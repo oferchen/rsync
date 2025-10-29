@@ -1,4 +1,7 @@
-use super::spec::{Clause, ClauseKind, Operation, PermSpec, SymbolicClause};
+use super::spec::Clause;
+
+#[cfg(unix)]
+use super::spec::{ClauseKind, Operation, PermSpec, SymbolicClause};
 
 #[cfg(unix)]
 pub(crate) fn apply_clauses(
@@ -26,6 +29,15 @@ pub(crate) fn apply_clauses(
         }
     }
 
+    mode
+}
+
+#[cfg(not(unix))]
+pub(crate) fn apply_clauses(
+    _clauses: &[Clause],
+    mode: u32,
+    _file_type: std::fs::FileType,
+) -> u32 {
     mode
 }
 

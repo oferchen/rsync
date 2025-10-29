@@ -136,6 +136,7 @@ fn set_owner_like(
 
     #[cfg(not(unix))]
     {
+        let _ = (metadata, follow_symlinks);
         if options.owner()
             || options.group()
             || options.owner_override().is_some()
