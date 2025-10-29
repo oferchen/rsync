@@ -505,7 +505,7 @@ fn deb_assets_include(table: &TomlTable, destination: &str) -> bool {
     table
         .get("assets")
         .and_then(Value::as_array)
-        .map_or(false, |assets| {
+        .is_some_and(|assets| {
             assets.iter().any(|entry| match entry {
                 Value::Array(items) if items.len() >= 2 => {
                     items.get(1).and_then(Value::as_str) == Some(destination)
@@ -523,16 +523,14 @@ fn deb_conf_files_include(table: &TomlTable, absolute_path: &str) -> bool {
     table
         .get("conf-files")
         .and_then(Value::as_array)
-        .map_or(false, |entries| {
-            entries.iter().any(|entry| entry.as_str() == Some(relative))
-        })
+        .is_some_and(|entries| entries.iter().any(|entry| entry.as_str() == Some(relative)))
 }
 
 fn rpm_assets_include(table: &TomlTable, destination: &str) -> bool {
     table
         .get("assets")
         .and_then(Value::as_array)
-        .map_or(false, |assets| {
+        .is_some_and(|assets| {
             assets.iter().any(|entry| match entry {
                 Value::Table(map) => {
                     map.get("dest").and_then(Value::as_str) == Some(destination)
