@@ -203,7 +203,6 @@ fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
     {
         use std::borrow::Cow;
         use std::hash::{Hash, Hasher};
-        use std::os::windows::fs::MetadataExt;
         use std::path::{Component, Prefix};
 
         fn normalize_path<'a>(path: &'a Path) -> Cow<'a, Path> {
