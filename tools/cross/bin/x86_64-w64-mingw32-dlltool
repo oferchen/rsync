@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+ZIG_BIN=${ZIG:-zig}
+if ! command -v "$ZIG_BIN" >/dev/null 2>&1; then
+    echo "error: zig is required to emulate x86_64-w64-mingw32-dlltool" >&2
+    exit 1
+fi
+exec "$ZIG_BIN" dlltool "$@"
