@@ -129,6 +129,12 @@ Rebuild the API documentation and run doctests via the workspace helper:
 cargo run -p xtask -- docs
 ```
 
+Run the aggregated release-readiness checks before cutting a build:
+
+```bash
+cargo run -p xtask -- release
+```
+
 Generate a CycloneDX SBOM for packaging via the workspace helper:
 
 ```bash

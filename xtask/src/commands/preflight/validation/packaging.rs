@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml::{Value, value::Table as TomlTable};
 
-pub(super) fn validate_packaging_assets(
+pub(crate) fn validate_packaging_assets(
     workspace: &Path,
     branding: &WorkspaceBranding,
 ) -> TaskResult<()> {
