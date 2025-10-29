@@ -69,7 +69,10 @@ pub struct MessageSink<W> {
     line_mode: LineMode,
 }
 
-mod methods;
+mod accessors;
+mod constructors;
+mod mapping;
+mod writing;
 
 impl<W> fmt::Debug for MessageSink<W>
 where
