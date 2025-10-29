@@ -73,11 +73,6 @@ max_lines = 1745
 warn_lines = 1645
 
 [[overrides]]
-path = "crates/checksums/src/rolling.rs"
-max_lines = 1689
-warn_lines = 1589
-
-[[overrides]]
 path = "crates/protocol/src/version.rs"
 max_lines = 1651
 warn_lines = 1551
