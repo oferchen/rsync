@@ -86,11 +86,8 @@ jobs:
       - name: Enforce line count limits
         run: cargo --locked run -p xtask -- enforce-limits
 
-      - name: Build documentation
-        run: cargo --locked doc --workspace --no-deps
-
-      - name: Run doctests
-        run: cargo --locked test --doc --workspace
+      - name: Build and validate documentation
+        run: cargo --locked run -p xtask -- docs --validate
 
       - name: Ensure no placeholders remain
         run: cargo --locked run -p xtask -- no-placeholders
