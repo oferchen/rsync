@@ -5,4 +5,5 @@ pub mod no_binaries;
 pub mod no_placeholders;
 pub mod package;
 pub mod preflight;
+pub mod readme_version;
 pub mod sbom;

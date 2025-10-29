@@ -56,7 +56,8 @@ mod util;
 mod workspace;
 
 use crate::commands::{
-    branding, docs, enforce_limits, no_binaries, no_placeholders, package, preflight, sbom,
+    branding, docs, enforce_limits, no_binaries, no_placeholders, package, preflight,
+    readme_version, sbom,
 };
 use crate::error::TaskError;
 use crate::util::is_help_flag;
@@ -135,6 +136,11 @@ where
             let workspace = workspace_root()?;
             sbom::execute(&workspace, options)
         }
+        "readme-version" => {
+            let options = readme_version::parse_args(args)?;
+            let workspace = workspace_root()?;
+            readme_version::execute(&workspace, options)
+        }
         "package" => {
             let options = package::parse_args(args)?;
             let workspace = workspace_root()?;
@@ -147,9 +153,20 @@ where
 }
 
 fn top_level_usage() -> String {
-    String::from(
-        "Usage: cargo xtask <command>\n\nCommands:\n  branding         Validate workspace branding metadata\n  docs             Build API docs and run doctests\n  enforce-limits   Enforce source line and comment hygiene limits\n  no-binaries      Assert the git index contains no binary artifacts\n  no-placeholders  Ensure Rust sources are free from placeholder code\n  package          Build distribution artifacts (deb/rpm)\n  preflight        Run packaging preflight validation\n  sbom             Generate a CycloneDX SBOM for the workspace\n  help             Show this help message\n\nRun `cargo xtask <command> --help` for command-specific options.",
-    )
+    String::from(concat!(
+        "Usage: cargo xtask <command>\n\nCommands:\n",
+        "  branding         Validate workspace branding metadata\n",
+        "  docs            Build API docs and run doctests\n",
+        "  enforce-limits   Enforce source line and comment hygiene limits\n",
+        "  no-binaries      Assert the git index contains no binary artifacts\n",
+        "  no-placeholders  Ensure Rust sources are free from placeholder code\n",
+        "  package         Build distribution artifacts (deb/rpm)\n",
+        "  preflight        Run packaging preflight validation\n",
+        "  readme-version   Ensure README versions match workspace metadata\n",
+        "  sbom             Generate a CycloneDX SBOM for the workspace\n",
+        "  help             Show this help message\n\n",
+        "Run `cargo xtask <command> --help` for command-specific options."
+    ))
 }
 #[cfg(test)]
 mod tests {
@@ -159,5 +176,6 @@ mod tests {
     fn top_level_usage_mentions_enforce_limits_command() {
         let usage = top_level_usage();
         assert!(usage.contains("enforce-limits"));
+        assert!(usage.contains("readme-version"));
     }
 }
