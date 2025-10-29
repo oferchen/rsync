@@ -9,10 +9,10 @@
 //!
 //! This crate exposes [`run`] as the primary entry point so both binaries can
 //! share the same parsing and dispatch logic. The actual implementation lives in
-//! the [`frontend`] module, which keeps the majority of the code organised away
-//! from the crate root. Only the surface API is re-exported here to keep the
-//! entry point concise while satisfying the repository's file-size hygiene
-//! policy.
+//! the internal `frontend` module, which keeps the majority of the code
+//! organised away from the crate root. Only the surface API is re-exported here
+//! to keep the entry point concise while satisfying the repository's file-size
+//! hygiene policy.
 
 mod frontend;
 
