@@ -6,7 +6,10 @@ use std::{
     io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write},
 };
 
-use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, ProtocolVersion};
+use rsync_protocol::{
+    LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, NegotiationPrologue, NegotiationPrologueSniffer,
+    ProtocolVersion,
+};
 
 #[test]
 fn map_line_reserve_error_for_io_marks_out_of_memory() {
