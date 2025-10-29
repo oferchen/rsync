@@ -11,6 +11,7 @@
 //! use [`crate::workspace::metadata`] to obtain a snapshot that mirrors the
 //! manifest entries.
 
+use std::num::NonZeroU8;
 use std::path::Path;
 
 /// Canonical brand identifier configured for this distribution.
@@ -363,6 +364,28 @@ pub const fn protocol_version_u8() -> u8 {
     value as u8
 }
 
+/// Returns the configured protocol version as a [`NonZeroU8`].
+///
+/// Upstream rsync has never advertised protocol version `0`. Encoding the value
+/// as [`NonZeroU8`] allows call sites to rely on this invariant without
+/// repeating ad-hoc checks. The helper reuses [`protocol_version_u8`] to
+/// preserve the compile-time bounds validation against the manifest metadata.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::workspace;
+///
+/// assert_eq!(workspace::protocol_version_nonzero_u8().get(), 32);
+/// ```
+#[must_use]
+pub const fn protocol_version_nonzero_u8() -> NonZeroU8 {
+    match NonZeroU8::new(protocol_version_u8()) {
+        Some(value) => value,
+        None => panic!("workspace protocol version must be non-zero"),
+    }
+}
+
 /// Returns the configured daemon configuration directory as a [`Path`].
 #[must_use]
 pub fn daemon_config_dir() -> &'static Path {
@@ -408,6 +431,7 @@ mod tests {
     fn parse_protocol_matches_env() {
         assert_eq!(metadata().protocol_version(), 32);
         assert_eq!(protocol_version_u8(), 32);
+        assert_eq!(protocol_version_nonzero_u8().get(), 32);
         assert_eq!(daemon_config_dir(), Path::new(DAEMON_CONFIG_DIR));
         assert_eq!(daemon_config_path(), Path::new(DAEMON_CONFIG_PATH));
         assert_eq!(daemon_secrets_path(), Path::new(DAEMON_SECRETS_PATH));
