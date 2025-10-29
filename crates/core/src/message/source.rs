@@ -53,7 +53,8 @@ impl SourceLocation {
         };
 
         let normalized = normalize_path(&absolute);
-        let repo_relative = strip_workspace_prefix_owned(normalized);
+        let repo_relative =
+            canonicalize_virtual_test_path(strip_workspace_prefix_owned(normalized));
 
         Self {
             path: Cow::Owned(repo_relative),
@@ -118,6 +119,41 @@ fn strip_workspace_prefix_owned(normalized_path: String) -> String {
     }
 
     normalized_path
+}
+
+fn canonicalize_virtual_test_path(path: String) -> String {
+    if let Some(rewritten) = rewrite_test_shard(&path) {
+        return rewritten;
+    }
+
+    path
+}
+
+fn rewrite_test_shard(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let last = segments[segments.len() - 1];
+    let Some(digits) = last.strip_prefix("part")?.strip_suffix(".rs") else {
+        return None;
+    };
+
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    if segments[segments.len() - 2] != "tests" {
+        return None;
+    }
+
+    let mut rewritten = segments[..segments.len() - 2].join("/");
+    if !rewritten.is_empty() {
+        rewritten.push('/');
+    }
+    rewritten.push_str("tests.rs");
+    Some(rewritten)
 }
 
 /// Returns the workspace-relative representation of `path` when it shares the provided root.
