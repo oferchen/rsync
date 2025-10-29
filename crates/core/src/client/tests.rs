@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use crate::client::fallback::write_daemon_password;
 use crate::fallback::CLIENT_FALLBACK_ENV;
