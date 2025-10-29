@@ -200,10 +200,9 @@ impl PosixAcl {
             0 => Ok(true),
             1 => Ok(false),
             -1 => Err(io::Error::last_os_error()),
-            value => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("unexpected acl_get_entry result {value}"),
-            )),
+            value => Err(io::Error::other(format!(
+                "unexpected acl_get_entry result {value}"
+            ))),
         }
     }
 }
