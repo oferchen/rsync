@@ -142,7 +142,6 @@ impl RollingDigest {
     /// # Errors
     ///
     /// Returns [`RollingSliceError`] when the slice does not contain exactly four bytes.
-    #[must_use]
     pub fn from_le_slice(bytes: &[u8], len: usize) -> Result<Self, RollingSliceError> {
         if bytes.len() != RollingSliceError::EXPECTED_LEN {
             return Err(RollingSliceError::new(bytes.len()));
