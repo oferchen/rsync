@@ -1,6 +1,4 @@
 use super::*;
-use crate::branding::Brand;
-
 pub(super) const ACL_FROM_LABEL: Option<CompiledFeature> = CompiledFeature::from_label("ACLs");
 pub(super) const UNKNOWN_FROM_LABEL: Option<CompiledFeature> =
     CompiledFeature::from_label("unknown");
