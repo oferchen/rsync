@@ -68,8 +68,9 @@ where
     })
 }
 
-/// Ensures compile-time guards stay aligned with the advertised protocol list.
-pub(crate) const fn validate_protocol_tables() {
+// Evaluate the validation routine at compile time to guard against drift between
+// the advertised protocol list and the supporting constants.
+const _: () = {
     let protocols = super::SUPPORTED_PROTOCOLS;
     let Some(&declared_newest) = protocols.first() else {
         panic!("supported protocol list must not be empty");
@@ -192,10 +193,4 @@ pub(crate) const fn validate_protocol_tables() {
         range_oldest == upstream_oldest && range_newest == upstream_newest,
         "supported protocol range must match upstream rsync's protocol span",
     );
-}
-
-// Evaluate the validation routine at compile time to guard against drift between
-// the advertised protocol list and the supporting constants.
-const _: () = {
-    validate_protocol_tables();
 };
