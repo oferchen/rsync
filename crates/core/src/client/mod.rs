@@ -2885,6 +2885,13 @@ impl ClientSummary {
         self.stats.total_elapsed()
     }
 
+    /// Returns the cumulative duration spent sleeping due to bandwidth throttling.
+    #[must_use]
+    #[doc(alias = "--bwlimit")]
+    pub fn bandwidth_sleep(&self) -> Duration {
+        self.stats.bandwidth_sleep()
+    }
+
     /// Returns the number of bytes that would be transmitted for the file list.
     #[must_use]
     pub fn file_list_size(&self) -> u64 {

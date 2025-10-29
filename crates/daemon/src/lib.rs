@@ -3653,7 +3653,7 @@ fn write_limited(
         while !remaining.is_empty() {
             let chunk_len = limiter.recommended_read_size(remaining.len());
             stream.write_all(&remaining[..chunk_len])?;
-            limiter.register(chunk_len);
+            let _ = limiter.register(chunk_len);
             remaining = &remaining[chunk_len..];
         }
         Ok(())

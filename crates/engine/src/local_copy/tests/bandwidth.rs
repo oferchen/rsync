@@ -38,6 +38,14 @@ fn execute_with_bandwidth_limit_records_sleep() {
         expected,
         total
     );
+    let summary_sleep = summary.bandwidth_sleep();
+    let summary_diff = summary_sleep.abs_diff(total);
+    assert!(
+        summary_diff <= Duration::from_millis(50),
+        "summary recorded {:?} of throttling while sleeps totalled {:?}",
+        summary_sleep,
+        total
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -132,6 +140,7 @@ fn execute_without_bandwidth_limit_does_not_sleep() {
         "unexpected sleep durations recorded"
     );
     assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.bandwidth_sleep(), Duration::ZERO);
 }
 
 #[test]
@@ -162,6 +171,7 @@ fn execute_with_compression_records_compressed_bytes() {
     assert!(compressed <= summary.bytes_copied());
     assert_eq!(summary.bytes_sent(), summary.bytes_received());
     assert_eq!(summary.bytes_sent(), compressed);
+    assert_eq!(summary.bandwidth_sleep(), Duration::ZERO);
 }
 
 #[test]
@@ -230,6 +240,10 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
     );
     let total_sleep_secs: f64 = sleeps.iter().map(|duration| duration.as_secs_f64()).sum();
 
+    let summary_sleep = summary.bandwidth_sleep();
+    assert!(summary_sleep > Duration::ZERO);
+    let summary_secs = summary_sleep.as_secs_f64();
+
     let expected_compressed = compressed as f64 / limit.get() as f64;
     let expected_uncompressed = transferred as f64 / limit.get() as f64;
 
@@ -239,6 +253,12 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
         "sleep {:?}s deviates too far from compressed expectation {:?}s",
         total_sleep_secs,
         expected_compressed,
+    );
+    assert!(
+        (summary_secs - total_sleep_secs).abs() <= tolerance,
+        "summary tracked {:?}s while recordings totalled {:?}s",
+        summary_secs,
+        total_sleep_secs,
     );
     assert!(
         (total_sleep_secs - expected_compressed).abs()

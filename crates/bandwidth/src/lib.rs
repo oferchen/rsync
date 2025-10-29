@@ -7,7 +7,7 @@
 mod limiter;
 mod parse;
 
-pub use crate::limiter::{BandwidthLimiter, LimiterChange, apply_effective_limit};
+pub use crate::limiter::{BandwidthLimiter, LimiterChange, LimiterSleep, apply_effective_limit};
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
 pub use crate::limiter::{RecordedSleepIter, RecordedSleepSession, recorded_sleep_session};

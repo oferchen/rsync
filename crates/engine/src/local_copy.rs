@@ -3000,6 +3000,7 @@ pub struct LocalCopySummary {
     compression_used: bool,
     total_source_bytes: u64,
     total_elapsed: Duration,
+    bandwidth_sleep: Duration,
     file_list_size: u64,
     file_list_generation: Duration,
     file_list_transfer: Duration,
@@ -3157,6 +3158,13 @@ impl LocalCopySummary {
         self.total_elapsed
     }
 
+    /// Returns the cumulative duration spent sleeping due to `--bwlimit` pacing.
+    #[must_use]
+    #[doc(alias = "--bwlimit")]
+    pub const fn bandwidth_sleep(&self) -> Duration {
+        self.bandwidth_sleep
+    }
+
     /// Returns the number of bytes that would be transmitted for the file list.
     #[must_use]
     pub const fn file_list_size(&self) -> u64 {
@@ -3212,6 +3220,10 @@ impl LocalCopySummary {
 
     fn record_elapsed(&mut self, elapsed: Duration) {
         self.total_elapsed = self.total_elapsed.saturating_add(elapsed);
+    }
+
+    fn record_bandwidth_sleep(&mut self, duration: Duration) {
+        self.bandwidth_sleep = self.bandwidth_sleep.saturating_add(duration);
     }
 
     fn record_file_list_generation(&mut self, elapsed: Duration) {
@@ -4335,15 +4347,21 @@ impl<'a> CopyContext<'a> {
                 compressed_delta = Some(delta);
             }
 
-            if let Some(limiter) = self.limiter.as_mut() {
+            if let Some(sleep) = if let Some(limiter) = self.limiter.as_mut() {
                 if let Some(delta) = compressed_delta {
                     if delta > 0 {
                         let bounded = delta.min(usize::MAX as u64) as usize;
-                        limiter.register(bounded);
+                        Some(limiter.register(bounded))
+                    } else {
+                        None
                     }
                 } else {
-                    limiter.register(read);
+                    Some(limiter.register(read))
                 }
+            } else {
+                None
+            } {
+                self.summary.record_bandwidth_sleep(sleep.requested());
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
@@ -4369,12 +4387,18 @@ impl<'a> CopyContext<'a> {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
             self.register_progress();
-            if let Some(limiter) = self.limiter.as_mut() {
+            if let Some(sleep) = if let Some(limiter) = self.limiter.as_mut() {
                 let delta = compressed_total.saturating_sub(compressed_progress);
                 if delta > 0 {
                     let bounded = delta.min(usize::MAX as u64) as usize;
-                    limiter.register(bounded);
+                    Some(limiter.register(bounded))
+                } else {
+                    None
                 }
+            } else {
+                None
+            } {
+                self.summary.record_bandwidth_sleep(sleep.requested());
             }
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
@@ -4540,7 +4564,8 @@ impl<'a> CopyContext<'a> {
                 let delta = compressed_total.saturating_sub(compressed_progress);
                 if delta > 0 {
                     let bounded = delta.min(usize::MAX as u64) as usize;
-                    limiter.register(bounded);
+                    let sleep = limiter.register(bounded);
+                    self.summary.record_bandwidth_sleep(sleep.requested());
                 }
             }
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
@@ -4575,6 +4600,7 @@ impl<'a> CopyContext<'a> {
             chunk.len()
         };
 
+        let mut sleep_recorded = None;
         if let Some(encoder) = compressor {
             encoder.write(chunk).map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
@@ -4585,11 +4611,15 @@ impl<'a> CopyContext<'a> {
             if let Some(limiter) = self.limiter.as_mut() {
                 if delta > 0 {
                     let bounded = delta.min(usize::MAX as u64) as usize;
-                    limiter.register(bounded);
+                    sleep_recorded = Some(limiter.register(bounded));
                 }
             }
         } else if let Some(limiter) = self.limiter.as_mut() {
-            limiter.register(chunk.len());
+            sleep_recorded = Some(limiter.register(chunk.len()));
+        }
+
+        if let Some(sleep) = sleep_recorded {
+            self.summary.record_bandwidth_sleep(sleep.requested());
         }
 
         Ok(written)
