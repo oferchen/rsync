@@ -112,7 +112,8 @@ impl BufferedCopyTooSmall {
     /// Returns how many additional bytes would have been required for the copy to succeed.
     ///
     /// The difference is calculated with saturation to guard against inconsistent inputs. When the
-    /// error originates from helpers such as [`super::NegotiatedStream::copy_buffered_into_slice`], the
+    /// error originates from helpers such as
+    /// [`crate::negotiation::NegotiatedStream::copy_buffered_into_slice`], the
     /// return value matches `required - provided`, mirroring the missing capacity reported by
     /// upstream rsync diagnostics.
     ///

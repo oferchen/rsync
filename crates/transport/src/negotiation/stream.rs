@@ -262,7 +262,8 @@ impl<R> NegotiatedStream<R> {
 
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
-    /// The tuple mirrors the view exposed by [`NegotiationPrologueSniffer::buffered_split`],
+    /// The tuple mirrors the view exposed by
+    /// [`rsync_protocol::NegotiationPrologueSniffer::buffered_split`],
     /// allowing higher layers to borrow both slices simultaneously when staging replay
     /// buffers. The first element contains the portion of the canonical prefix that has not
     /// yet been replayed, while the second slice exposes any additional payload that
@@ -729,7 +730,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// Reads the legacy daemon greeting line after the negotiation prefix has been sniffed.
     ///
     /// The method mirrors [`rsync_protocol::read_legacy_daemon_line`] but operates on the
-    /// replaying stream wrapper instead of a [`NegotiationPrologueSniffer`]. It expects the
+    /// replaying stream wrapper instead of a [`rsync_protocol::NegotiationPrologueSniffer`]. It expects the
     /// negotiation to have been classified as legacy ASCII and the canonical `@RSYNCD:` prefix
     /// to remain fully buffered. Consuming any of the replay bytes before invoking the helper
     /// results in an [`io::ErrorKind::InvalidInput`] error so higher layers cannot accidentally
