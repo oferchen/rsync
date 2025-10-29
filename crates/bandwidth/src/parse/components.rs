@@ -48,7 +48,11 @@ impl BandwidthLimitComponents {
         let has_rate = rate.is_some();
         let effective_limit_specified = if has_rate { true } else { limit_specified };
         let effective_burst = if burst_specified { burst } else { None };
-        let effective_burst_specified = effective_burst.is_some() && burst_specified;
+        let effective_burst_specified = if has_rate {
+            burst_specified
+        } else {
+            effective_burst.is_some() && burst_specified
+        };
 
         Self {
             rate,
