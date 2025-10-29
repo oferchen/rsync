@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use filetime::{FileTime, set_file_mtime, set_file_times};
 use std::ffi::OsString;
