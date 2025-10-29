@@ -8,7 +8,7 @@ use super::known::KnownCompatibilityFlag;
 /// [`Iterator::next`] yields flags in ascending bit order (lowest bit first) so
 /// callers observe the same ordering exposed by [`CompatibilityFlags::iter_known`].
 /// The iterator also implements [`DoubleEndedIterator`], allowing reverse
-/// traversal via [`Iterator::next_back`] without allocating intermediate
+/// traversal via [`DoubleEndedIterator::next_back`] without allocating intermediate
 /// collections.
 #[derive(Clone, Debug)]
 pub struct KnownCompatibilityFlagsIter {
