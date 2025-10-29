@@ -1332,6 +1332,7 @@ dependencies = [
  "cargo_metadata",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
 ]
 
