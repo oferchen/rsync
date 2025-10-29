@@ -136,6 +136,7 @@ impl FallbackOverride {
 /// - `0`, `false`, `no`, and `off` (case-insensitive) disable delegation.
 /// - `1`, `true`, `yes`, and `on` (case-insensitive) select the caller-provided default executable.
 /// - `auto` selects the caller-provided default executable.
+/// - `default` selects the caller-provided default executable.
 /// - Any other value is treated as an explicit binary path.
 #[must_use]
 pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
@@ -156,7 +157,10 @@ pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
             return Some(FallbackOverride::Disabled);
         }
 
-        if matches!(lowered.as_str(), "1" | "true" | "yes" | "on" | "auto") {
+        if matches!(
+            lowered.as_str(),
+            "1" | "true" | "yes" | "on" | "auto" | "default"
+        ) {
             return Some(FallbackOverride::Default);
         }
     }
@@ -276,6 +280,20 @@ mod tests {
         let key = "RSYNC_FALLBACK_TEST_AUTO_CASE";
         let _reset = EnvVarGuard::remove(key);
         for value in ["AUTO", " Auto", "auto  ", "  aUtO  "] {
+            let _guard = EnvVarGuard::set(key, value);
+            let override_value = fallback_override(key).expect("override present");
+            assert_eq!(
+                override_value.resolve_or_default(OsStr::new("rsync")),
+                Some(OsString::from("rsync"))
+            );
+        }
+    }
+
+    #[test]
+    fn default_value_behaves_like_auto() {
+        let key = "RSYNC_FALLBACK_TEST_DEFAULT";
+        let _reset = EnvVarGuard::remove(key);
+        for value in ["default", "DEFAULT", " Default "] {
             let _guard = EnvVarGuard::set(key, value);
             let override_value = fallback_override(key).expect("override present");
             assert_eq!(
