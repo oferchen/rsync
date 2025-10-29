@@ -203,6 +203,7 @@ fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
     {
         use std::borrow::Cow;
         use std::hash::{Hash, Hasher};
+        use std::os::windows::fs::MetadataExt;
         use std::path::{Component, Prefix};
 
         fn normalize_path<'a>(path: &'a Path) -> Cow<'a, Path> {
@@ -233,7 +234,13 @@ fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
         }
 
         let absolute = normalize_path(path);
-        device_from_components(&absolute)
+        let device_from_metadata = metadata.volume_serial_number() as u64;
+
+        if device_from_metadata != 0 {
+            Some(device_from_metadata)
+        } else {
+            device_from_components(absolute.as_ref())
+        }
     }
 
     #[cfg(not(any(unix, windows)))]
