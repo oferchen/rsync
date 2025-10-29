@@ -273,12 +273,7 @@ fn version_suffix_is_allowed(suffix: &str) -> bool {
 
     const WINDOWS_EXECUTABLE_EXTENSIONS: [&[u8]; 4] = [b".exe", b".com", b".bat", b".cmd"];
     WINDOWS_EXECUTABLE_EXTENSIONS.iter().any(|ext| {
-        bytes.len() >= ext.len()
-            && bytes[bytes.len() - ext.len()..].iter().zip(ext.iter()).all(
-                |(candidate, expected)| {
-                    candidate.to_ascii_lowercase() == expected.to_ascii_lowercase()
-                },
-            )
+        bytes.len() >= ext.len() && bytes[bytes.len() - ext.len()..].eq_ignore_ascii_case(ext)
     })
 }
 
