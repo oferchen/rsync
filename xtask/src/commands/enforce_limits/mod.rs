@@ -266,6 +266,69 @@ pub fn usage() -> String {
 mod tests {
     use super::config::parse_line_limits_config;
     use super::*;
+    use std::env;
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        previous: Vec<(&'static str, Option<OsString>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        #[allow(unsafe_code)]
+        fn remove_many<const N: usize>(keys: [&'static str; N]) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let mut previous = Vec::with_capacity(N);
+            for key in keys {
+                previous.push((key, env::var_os(key)));
+                unsafe { env::remove_var(key) };
+            }
+            Self {
+                previous,
+                _lock: guard,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            while let Some((key, value)) = self.previous.pop() {
+                if let Some(value) = value {
+                    unsafe { env::set_var(key, value) };
+                } else {
+                    unsafe { env::remove_var(key) };
+                }
+            }
+        }
+    }
+
+    fn write_lines(path: &Path, lines: usize) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directories");
+        }
+        let mut file = fs::File::create(path).expect("create file");
+        for index in 0..lines {
+            writeln!(file, "// line {index}").expect("write line");
+        }
+    }
+
+    fn create_workspace_with_sources() -> tempfile::TempDir {
+        let dir = tempdir().expect("create workspace");
+        write_lines(&dir.path().join("src/lib.rs"), 8);
+        write_lines(&dir.path().join("src/bin/tool.rs"), 3);
+        let target_dir = dir.path().join("target/debug");
+        fs::create_dir_all(&target_dir).expect("create target directory");
+        write_lines(&target_dir.join("ignored.rs"), 120);
+        dir
+    }
 
     #[test]
     fn parse_args_accepts_default_configuration() {
@@ -385,5 +448,91 @@ max_lines = 900
         ])
         .unwrap_err();
         assert!(matches!(error, TaskError::Usage(message) if message.contains("warn line limit")));
+    }
+
+    #[test]
+    fn execute_succeeds_with_cli_limits() {
+        let workspace = create_workspace_with_sources();
+        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+
+        execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: Some(20),
+                warn_lines: Some(10),
+                config_path: None,
+            },
+        )
+        .expect("execution succeeds");
+    }
+
+    #[test]
+    fn execute_warns_without_failing_when_above_warn_threshold() {
+        let workspace = create_workspace_with_sources();
+        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+
+        execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: Some(12),
+                warn_lines: Some(5),
+                config_path: None,
+            },
+        )
+        .expect("warnings do not fail execution");
+    }
+
+    #[test]
+    fn execute_reports_error_when_exceeding_max_lines() {
+        let workspace = create_workspace_with_sources();
+        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+
+        let error = execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: Some(4),
+                warn_lines: Some(3),
+                config_path: None,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, TaskError::Validation(message) if message.contains("maximum line count"))
+        );
+    }
+
+    #[test]
+    fn execute_applies_config_overrides() {
+        let workspace = create_workspace_with_sources();
+        let config_path = workspace.path().join("tools/line_limits.toml");
+        fs::create_dir_all(config_path.parent().unwrap()).expect("create config dir");
+        fs::write(
+            &config_path,
+            r#"
+default_max_lines = 100
+default_warn_lines = 50
+
+[[overrides]]
+path = "src/bin/tool.rs"
+max_lines = 2
+warn_lines = 1
+"#,
+        )
+        .expect("write config");
+
+        let error = execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: None,
+                warn_lines: None,
+                config_path: Some(config_path.clone()),
+            },
+        )
+        .unwrap_err();
+        let message = match error {
+            TaskError::Validation(message) => message,
+            other => panic!("expected validation error, got {other:?}"),
+        };
+        assert!(message.contains("maximum line count"));
     }
 }

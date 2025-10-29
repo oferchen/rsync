@@ -237,6 +237,8 @@ fn bom_reference(package: &Package) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use tempfile::tempdir;
 
     #[test]
     fn parse_args_accepts_default_configuration() {
@@ -277,5 +279,47 @@ mod tests {
     fn parse_args_rejects_unknown_argument() {
         let error = parse_args([OsString::from("--unknown")]).unwrap_err();
         assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    fn workspace_root() -> &'static Path {
+        static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        ROOT.get_or_init(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        })
+    }
+
+    #[test]
+    fn execute_generates_sbom_document() {
+        let temp = tempdir().expect("create temp dir");
+        let output = temp.path().join("sbom.json");
+        execute(
+            workspace_root(),
+            SbomOptions {
+                output: Some(output.clone()),
+            },
+        )
+        .expect("sbom execution succeeds");
+
+        let data = fs::read(&output).expect("read sbom output");
+        let value: serde_json::Value = serde_json::from_slice(&data).expect("parse sbom json");
+        assert_eq!(value.get("bomFormat").unwrap(), "CycloneDX");
+        assert!(value.get("components").is_some());
+    }
+
+    #[test]
+    fn build_bom_reports_missing_root_component() {
+        let mut metadata = load_metadata(&workspace_root().join("Cargo.toml"))
+            .expect("load metadata for mutation");
+        metadata.resolve = None;
+        metadata.workspace_members.clear();
+
+        let error = match build_bom(&metadata) {
+            Ok(_) => panic!("expected build_bom to fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, TaskError::Metadata(message) if message.contains("missing root")));
     }
 }

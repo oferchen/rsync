@@ -163,6 +163,7 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parse_args_accepts_default_configuration() {
@@ -207,5 +208,58 @@ mod tests {
     fn parse_args_rejects_unknown_argument() {
         let error = parse_args([OsString::from("--unknown")]).unwrap_err();
         assert!(matches!(error, TaskError::Usage(message) if message.contains("package")));
+    }
+
+    fn workspace_root() -> &'static Path {
+        static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        ROOT.get_or_init(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        })
+    }
+
+    #[test]
+    fn execute_with_no_targets_returns_success() {
+        execute(
+            workspace_root(),
+            PackageOptions {
+                build_deb: false,
+                build_rpm: false,
+                profile: None,
+            },
+        )
+        .expect("execution succeeds when nothing to build");
+    }
+
+    #[test]
+    fn execute_reports_missing_cargo_deb_tool() {
+        let error = execute(
+            workspace_root(),
+            PackageOptions {
+                build_deb: true,
+                build_rpm: false,
+                profile: Some(OsString::from("release")),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, TaskError::ToolMissing(message) if message.contains("cargo deb")));
+    }
+
+    #[test]
+    fn execute_reports_missing_cargo_rpm_tool() {
+        let error = execute(
+            workspace_root(),
+            PackageOptions {
+                build_deb: false,
+                build_rpm: true,
+                profile: Some(OsString::from("debug")),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, TaskError::ToolMissing(message) if message.contains("cargo rpm build"))
+        );
     }
 }
