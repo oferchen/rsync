@@ -71,20 +71,20 @@ where
 /// Ensures compile-time guards stay aligned with the advertised protocol list.
 pub(crate) const fn validate_protocol_tables() {
     let protocols = super::SUPPORTED_PROTOCOLS;
-    assert!(
-        !protocols.is_empty(),
-        "supported protocol list must not be empty"
-    );
+    let Some(&declared_newest) = protocols.first() else {
+        panic!("supported protocol list must not be empty");
+    };
     assert!(
         protocols.len() == SUPPORTED_PROTOCOL_COUNT,
         "supported protocol count must match list length",
     );
     assert!(
-        protocols[0] == ProtocolVersion::NEWEST.as_u8(),
+        declared_newest == ProtocolVersion::NEWEST.as_u8(),
         "newest supported protocol must lead the list",
     );
+    let declared_oldest = protocols[protocols.len() - 1];
     assert!(
-        protocols[protocols.len() - 1] == ProtocolVersion::OLDEST.as_u8(),
+        declared_oldest == ProtocolVersion::OLDEST.as_u8(),
         "oldest supported protocol must terminate the list",
     );
 
