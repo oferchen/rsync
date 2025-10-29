@@ -111,8 +111,13 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
 
     let readme_path = workspace.join("README.md");
     let readme = read_file(&readme_path)?;
-    let production_scope_path = workspace.join("docs").join("production_scope_p1.md");
+    let docs_dir = workspace.join("docs");
+    let production_scope_path = docs_dir.join("production_scope_p1.md");
     let production_scope = read_file(&production_scope_path)?;
+    let feature_matrix_path = docs_dir.join("feature_matrix.md");
+    let feature_matrix = read_file(&feature_matrix_path)?;
+    let differences_path = docs_dir.join("differences.md");
+    let differences = read_file(&differences_path)?;
 
     let mut failures = Vec::new();
     ensure_contains(
@@ -177,6 +182,70 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
         &mut failures,
         &production_scope_path,
         &production_scope,
+        &branding.daemon_secrets,
+        "daemon secrets path",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &feature_matrix_path,
+        &feature_matrix,
+        &branding.client_bin,
+        "client binary name",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &feature_matrix_path,
+        &feature_matrix,
+        &branding.daemon_bin,
+        "daemon binary name",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &feature_matrix_path,
+        &feature_matrix,
+        &branding.daemon_config,
+        "daemon configuration path",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &feature_matrix_path,
+        &feature_matrix,
+        &branding.daemon_secrets,
+        "daemon secrets path",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &differences_path,
+        &differences,
+        &branding.client_bin,
+        "client binary name",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &differences_path,
+        &differences,
+        &branding.daemon_bin,
+        "daemon binary name",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &differences_path,
+        &differences,
+        &branding.daemon_config,
+        "daemon configuration path",
+    );
+    ensure_contains(
+        workspace,
+        &mut failures,
+        &differences_path,
+        &differences,
         &branding.daemon_secrets,
         "daemon secrets path",
     );
@@ -308,12 +377,21 @@ source = "https://github.com/oferchen/rsync"
             "placeholder",
         )
         .expect("write production scope");
+        fs::write(
+            workspace.join("docs").join("feature_matrix.md"),
+            "placeholder",
+        )
+        .expect("write feature matrix");
+        fs::write(workspace.join("docs").join("differences.md"), "placeholder")
+            .expect("write differences");
 
         let error = validate_documents(&workspace).expect_err("validation should fail");
         match error {
             TaskError::Validation(message) => {
                 assert!(message.contains("README.md"), "{message}");
                 assert!(message.contains("production_scope_p1.md"), "{message}");
+                assert!(message.contains("feature_matrix.md"), "{message}");
+                assert!(message.contains("differences.md"), "{message}");
             }
             other => panic!("unexpected error: {other}"),
         }
