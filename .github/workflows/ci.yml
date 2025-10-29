@@ -228,11 +228,11 @@ jobs:
         with:
           tool: cargo-zigbuild
 
-      - name: Install cyclonedx-rust-cargo
+      - name: Install cargo-cyclonedx
         if: ${{ !contains(matrix.target, 'windows') }}
         uses: taiki-e/install-action@v2
         with:
-          tool: cyclonedx-rust-cargo
+          tool: cargo-cyclonedx
 
       - name: Build oc-rsync
         run: cargo ${{ matrix.build_command }} --release --target ${{ matrix.target }} --bin oc-rsync
@@ -291,10 +291,10 @@ jobs:
         with:
           tool: cargo-rpm
 
-      - name: Install cyclonedx-rust-cargo
+      - name: Install cargo-cyclonedx
         uses: taiki-e/install-action@v2
         with:
-          tool: cyclonedx-rust-cargo
+          tool: cargo-cyclonedx
 
       - name: Display workspace metadata
         run: cargo run -p xtask -- branding
