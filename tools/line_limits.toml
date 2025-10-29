@@ -53,9 +53,34 @@ max_lines = 6400
 warn_lines = 6300
 
 [[overrides]]
-path = "crates/protocol/src/negotiation/tests.rs"
-max_lines = 3600
-warn_lines = 3500
+path = "crates/protocol/src/negotiation/tests/buffered_prefix.rs"
+max_lines = 580
+warn_lines = 540
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/detector.rs"
+max_lines = 480
+warn_lines = 440
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/detector_sniffer.rs"
+max_lines = 530
+warn_lines = 500
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_read.rs"
+max_lines = 580
+warn_lines = 550
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_reset.rs"
+max_lines = 585
+warn_lines = 550
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_take.rs"
+max_lines = 570
+warn_lines = 530
 
 [[overrides]]
 path = "crates/transport/src/negotiation/tests.rs"
