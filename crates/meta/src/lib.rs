@@ -82,6 +82,7 @@ use std::os::unix::fs::MetadataExt;
 
 #[cfg(unix)]
 use std::{
+    convert::TryInto,
     ffi::{CStr, CString},
     mem::MaybeUninit,
 };
@@ -429,23 +430,56 @@ pub fn create_device_node(
     create_device_node_inner(destination, metadata)
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "vita",
+        target_os = "wasi",
+        target_os = "watchos",
+    ))
+))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
     use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
     use std::os::unix::fs::PermissionsExt;
 
-    let mode = Mode::from_bits_truncate(metadata.permissions().mode());
+    let mode =
+        Mode::from_bits_truncate(metadata.permissions().mode().try_into().map_err(|_| {
+            MetadataError::new(
+                "create fifo",
+                destination,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "permissions value does not fit platform mode type",
+                ),
+            )
+        })?);
+
     mknodat(CWD, destination, FileType::Fifo, mode, makedev(0, 0))
         .map_err(|error| MetadataError::new("create fifo", destination, io::Error::from(error)))?;
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "vita",
+        target_os = "wasi",
+        target_os = "watchos",
+    ))
+))]
 fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    use rustix::fs::{CWD, FileType, Mode, major, makedev, minor, mknodat};
+    use rustix::fs::{CWD, Dev, FileType, Mode, major, makedev, minor, mknodat};
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
@@ -464,10 +498,31 @@ fn create_device_node_inner(
         ));
     };
 
-    let mode_bits = metadata.permissions().mode() & 0o777;
-    let mode = Mode::from_bits_truncate(mode_bits);
-    let raw = metadata.rdev();
-    let device = makedev(major(raw), minor(raw));
+    let mode =
+        Mode::from_bits_truncate((metadata.permissions().mode() & 0o777).try_into().map_err(
+            |_| {
+                MetadataError::new(
+                    "create device",
+                    destination,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "permissions value does not fit platform mode type",
+                    ),
+                )
+            },
+        )?);
+
+    let raw_device: Dev = metadata.rdev().try_into().map_err(|_| {
+        MetadataError::new(
+            "create device",
+            destination,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "device number does not fit platform type",
+            ),
+        )
+    })?;
+    let device = makedev(major(raw_device), minor(raw_device));
 
     mknodat(CWD, destination, node_type, mode, device).map_err(|error| {
         MetadataError::new("create device", destination, io::Error::from(error))
@@ -476,7 +531,18 @@ fn create_device_node_inner(
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "vita",
+        target_os = "wasi",
+        target_os = "watchos",
+    ))
+)))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
     Err(MetadataError::new(
         "create fifo",
@@ -488,7 +554,18 @@ fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(),
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "vita",
+        target_os = "wasi",
+        target_os = "watchos",
+    ))
+)))]
 fn create_device_node_inner(
     destination: &Path,
     _metadata: &fs::Metadata,

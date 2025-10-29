@@ -11909,7 +11909,18 @@ mod tests {
         assert_eq!(summary.files_copied(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn execute_copies_fifo() {
         use filetime::{FileTime, set_file_times};
@@ -11968,7 +11979,18 @@ mod tests {
         assert_eq!(summary.fifos_created(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn execute_copies_fifo_within_directory() {
         use filetime::{FileTime, set_file_times};
@@ -12031,7 +12053,18 @@ mod tests {
         assert_eq!(summary.fifos_created(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn execute_without_specials_skips_fifo() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
@@ -12062,7 +12095,18 @@ mod tests {
         assert!(fs::symlink_metadata(&destination_fifo).is_err());
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn execute_without_specials_records_skip_event() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};

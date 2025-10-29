@@ -8389,7 +8389,18 @@ mod tests {
         assert!(rendered.contains("Total bytes sent: 1.54K (1,536)"));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
@@ -8642,7 +8653,18 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn progress_reports_unknown_totals_with_placeholder() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
@@ -8680,7 +8702,18 @@ mod tests {
         assert!(metadata.file_type().is_fifo());
     }
 
-    #[cfg(unix)]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "espidf",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "vita",
+            target_os = "wasi",
+            target_os = "watchos",
+        ))
+    ))]
     #[test]
     fn info_progress2_enables_progress_output() {
         use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
