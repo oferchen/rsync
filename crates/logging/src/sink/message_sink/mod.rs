@@ -3,7 +3,8 @@ use std::fmt;
 use crate::line_mode::LineMode;
 use rsync_core::message::MessageScratch;
 
-/// Streaming sink that renders [`Message`] values into an [`io::Write`] target.
+/// Streaming sink that renders [`rsync_core::message::Message`] values into an
+/// [`std::io::Write`] target.
 ///
 /// The sink owns the underlying writer together with a reusable
 /// [`MessageScratch`] buffer. Each call to [`write`](Self::write) renders the
