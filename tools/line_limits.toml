@@ -9,106 +9,81 @@ default_warn_lines = 400
 
 [[overrides]]
 path = "crates/cli/src/lib.rs"
-max_lines = 17652
-warn_lines = 17552
+max_lines = 5900
+warn_lines = 5800
 
 [[overrides]]
 path = "crates/engine/src/local_copy.rs"
-max_lines = 14073
-warn_lines = 13973
+max_lines = 9600
+warn_lines = 9500
 
 [[overrides]]
 path = "crates/core/src/client/mod.rs"
-max_lines = 11320
-warn_lines = 11220
+max_lines = 10100
+warn_lines = 10000
 
 [[overrides]]
 path = "crates/daemon/src/lib.rs"
-max_lines = 10203
-warn_lines = 10103
+max_lines = 10100
+warn_lines = 10000
 
 [[overrides]]
 path = "crates/transport/src/negotiation.rs"
-max_lines = 6497
-warn_lines = 6397
+max_lines = 6400
+warn_lines = 6300
 
 [[overrides]]
 path = "crates/core/src/message.rs"
-max_lines = 5268
-warn_lines = 5168
+max_lines = 5200
+warn_lines = 5100
 
 [[overrides]]
 path = "crates/protocol/src/negotiation/tests.rs"
-max_lines = 3659
-warn_lines = 3559
-
-[[overrides]]
-path = "crates/core/src/version/mod.rs"
-max_lines = 2783
-warn_lines = 2683
+max_lines = 3600
+warn_lines = 3500
 
 [[overrides]]
 path = "crates/transport/src/session/tests.rs"
-max_lines = 1831
-warn_lines = 1731
+max_lines = 1700
+warn_lines = 1650
 
 [[overrides]]
 path = "crates/transport/src/binary.rs"
-max_lines = 1827
-warn_lines = 1727
+max_lines = 1700
+warn_lines = 1650
 
 [[overrides]]
 path = "crates/logging/src/lib.rs"
-max_lines = 1817
-warn_lines = 1717
+max_lines = 1700
+warn_lines = 1650
 
 [[overrides]]
 path = "crates/transport/src/daemon.rs"
-max_lines = 1745
-warn_lines = 1645
-
-[[overrides]]
-path = "crates/protocol/src/version.rs"
-max_lines = 1651
-warn_lines = 1551
+max_lines = 1600
+warn_lines = 1550
 
 [[overrides]]
 path = "crates/protocol/src/negotiation/sniffer.rs"
-max_lines = 1596
-warn_lines = 1496
-
-[[overrides]]
-path = "crates/protocol/src/envelope.rs"
-max_lines = 1592
-warn_lines = 1492
+max_lines = 1450
+warn_lines = 1400
 
 [[overrides]]
 path = "crates/protocol/src/version/tests.rs"
-max_lines = 1524
-warn_lines = 1424
-
-[[overrides]]
-path = "crates/meta/src/lib.rs"
-max_lines = 1429
-warn_lines = 1329
+max_lines = 1400
+warn_lines = 1350
 
 [[overrides]]
 path = "crates/protocol/src/compatibility.rs"
-max_lines = 1303
-warn_lines = 1203
+max_lines = 1200
+warn_lines = 1150
 
 [[overrides]]
-path = "crates/cli/src/out_format/mod.rs"
-max_lines = 650
-warn_lines = 600
+path = "crates/protocol/src/envelope/tests.rs"
+max_lines = 600
+warn_lines = 580
 
 [[overrides]]
 path = "crates/cli/src/tests.rs"
 max_lines = 9800
 warn_lines = 9700
-
-[[overrides]]
-path = "crates/core/src/version/report/mod.rs"
-max_lines = 650
-warn_lines = 600
 
