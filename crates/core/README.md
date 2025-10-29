@@ -15,7 +15,7 @@ at the Rust implementation.
   consistent.
 - [`branding`](src/branding.rs) centralises branded program names alongside the
   default configuration and secrets paths installed by the packaging tooling.
-- [`version`](src/version.rs) holds the canonical `3.4.1-rust` identifier and the
+- [`version`](src/version/mod.rs) holds the canonical `3.4.1-rust` identifier and the
   compiled feature set consumed by the CLI when rendering `--version` output.
 - [`client`](src/client.rs) defines configuration builders and entry points used
   by the CLI wrapper. Today the facade orchestrates the local copy pipeline and
