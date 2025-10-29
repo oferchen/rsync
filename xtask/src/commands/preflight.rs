@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
-use toml::Value;
+use toml::{Value, value::Table as TomlTable};
 
 /// Options accepted by the `preflight` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -168,6 +168,7 @@ fn validate_packaging_assets(workspace: &Path, branding: &WorkspaceBranding) -> 
         )?;
     }
 
+    validate_bin_manifest_packaging(workspace, branding)?;
     let systemd_unit = workspace
         .join("packaging")
         .join("systemd")
@@ -390,6 +391,158 @@ fn validate_documentation(workspace: &Path, branding: &WorkspaceBranding) -> Tas
     Ok(())
 }
 
+fn validate_bin_manifest_packaging(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> TaskResult<()> {
+    let manifest_path = workspace.join("bin").join("oc-rsync").join("Cargo.toml");
+    let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| {
+        TaskError::Io(std::io::Error::new(
+            error.kind(),
+            format!("failed to read {}: {error}", manifest_path.display()),
+        ))
+    })?;
+
+    let manifest_value = manifest_text.parse::<Value>().map_err(|error| {
+        TaskError::Metadata(format!(
+            "failed to parse {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+
+    let package = manifest_value
+        .get("package")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            validation_error(format!(
+                "{} missing [package] table",
+                manifest_path.display()
+            ))
+        })?;
+    let metadata = package
+        .get("metadata")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            validation_error(format!(
+                "{} missing [package.metadata] table",
+                manifest_path.display()
+            ))
+        })?;
+
+    let deb = metadata
+        .get("deb")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            validation_error(format!(
+                "{} missing [package.metadata.deb] table",
+                manifest_path.display()
+            ))
+        })?;
+    ensure(
+        deb_assets_include(deb, branding.daemon_config.as_str()),
+        format!(
+            "{} package.metadata.deb.assets must install {}",
+            manifest_path.display(),
+            branding.daemon_config
+        ),
+    )?;
+    ensure(
+        deb_assets_include(deb, branding.daemon_secrets.as_str()),
+        format!(
+            "{} package.metadata.deb.assets must install {}",
+            manifest_path.display(),
+            branding.daemon_secrets
+        ),
+    )?;
+
+    ensure(
+        deb_conf_files_include(deb, branding.daemon_config.as_str()),
+        format!(
+            "{} package.metadata.deb.conf-files must reference {}",
+            manifest_path.display(),
+            branding.daemon_config
+        ),
+    )?;
+    ensure(
+        deb_conf_files_include(deb, branding.daemon_secrets.as_str()),
+        format!(
+            "{} package.metadata.deb.conf-files must reference {}",
+            manifest_path.display(),
+            branding.daemon_secrets
+        ),
+    )?;
+
+    let rpm = metadata
+        .get("rpm")
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            validation_error(format!(
+                "{} missing [package.metadata.rpm] table",
+                manifest_path.display()
+            ))
+        })?;
+    ensure(
+        rpm_assets_include(rpm, branding.daemon_config.as_str()),
+        format!(
+            "{} package.metadata.rpm.assets must install {} with config=true",
+            manifest_path.display(),
+            branding.daemon_config
+        ),
+    )?;
+    ensure(
+        rpm_assets_include(rpm, branding.daemon_secrets.as_str()),
+        format!(
+            "{} package.metadata.rpm.assets must install {} with config=true",
+            manifest_path.display(),
+            branding.daemon_secrets
+        ),
+    )?;
+
+    Ok(())
+}
+
+fn deb_assets_include(table: &TomlTable, destination: &str) -> bool {
+    table
+        .get("assets")
+        .and_then(Value::as_array)
+        .map_or(false, |assets| {
+            assets.iter().any(|entry| match entry {
+                Value::Array(items) if items.len() >= 2 => {
+                    items.get(1).and_then(Value::as_str) == Some(destination)
+                }
+                _ => false,
+            })
+        })
+}
+
+fn deb_conf_files_include(table: &TomlTable, absolute_path: &str) -> bool {
+    let Some(relative) = absolute_path.strip_prefix('/') else {
+        return false;
+    };
+
+    table
+        .get("conf-files")
+        .and_then(Value::as_array)
+        .map_or(false, |entries| {
+            entries.iter().any(|entry| entry.as_str() == Some(relative))
+        })
+}
+
+fn rpm_assets_include(table: &TomlTable, destination: &str) -> bool {
+    table
+        .get("assets")
+        .and_then(Value::as_array)
+        .map_or(false, |assets| {
+            assets.iter().any(|entry| match entry {
+                Value::Table(map) => {
+                    map.get("dest").and_then(Value::as_str) == Some(destination)
+                        && map.get("config").and_then(Value::as_bool).unwrap_or(false)
+                }
+                _ => false,
+            })
+        })
+}
+
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
@@ -400,6 +553,72 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deb_asset_helpers_match_expected_entries() {
+        let manifest = r#"
+            [package.metadata.deb]
+            assets = [["source", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"], ["source2", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"]]
+            conf-files = ["etc/oc-rsyncd/oc-rsyncd.conf", "etc/oc-rsyncd/oc-rsyncd.secrets"]
+        "#;
+        let value: Value = manifest.parse().expect("parse succeeds");
+        let deb = value
+            .get("package")
+            .and_then(Value::as_table)
+            .and_then(|package| package.get("metadata"))
+            .and_then(Value::as_table)
+            .and_then(|metadata| metadata.get("deb"))
+            .and_then(Value::as_table)
+            .expect("deb table present");
+
+        assert!(deb_assets_include(deb, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+        assert!(deb_assets_include(deb, "/etc/oc-rsyncd/oc-rsyncd.secrets"));
+        assert!(deb_conf_files_include(deb, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+        assert!(deb_conf_files_include(
+            deb,
+            "/etc/oc-rsyncd/oc-rsyncd.secrets"
+        ));
+    }
+
+    #[test]
+    fn rpm_asset_helper_requires_config_flag() {
+        let manifest = r#"
+            [package.metadata.rpm]
+            assets = [
+                { path = "src", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
+                { path = "src2", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true }
+            ]
+        "#;
+        let value: Value = manifest.parse().expect("parse succeeds");
+        let rpm = value
+            .get("package")
+            .and_then(Value::as_table)
+            .and_then(|package| package.get("metadata"))
+            .and_then(Value::as_table)
+            .and_then(|metadata| metadata.get("rpm"))
+            .and_then(Value::as_table)
+            .expect("rpm table present");
+
+        assert!(rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+        assert!(rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.secrets"));
+
+        let manifest_missing_flag = r#"
+            [package.metadata.rpm]
+            assets = [
+                { path = "src", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644" }
+            ]
+        "#;
+        let value: Value = manifest_missing_flag.parse().expect("parse succeeds");
+        let rpm = value
+            .get("package")
+            .and_then(Value::as_table)
+            .and_then(|package| package.get("metadata"))
+            .and_then(Value::as_table)
+            .and_then(|metadata| metadata.get("rpm"))
+            .and_then(Value::as_table)
+            .expect("rpm table present");
+        assert!(!rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+    }
 
     #[test]
     fn parse_args_accepts_default_configuration() {
