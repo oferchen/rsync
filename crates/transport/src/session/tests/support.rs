@@ -43,6 +43,41 @@ impl Write for MemoryTransport {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct InstrumentedTransport {
+    inner: MemoryTransport,
+}
+
+impl InstrumentedTransport {
+    pub(crate) fn new(inner: MemoryTransport) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn writes(&self) -> &[u8] {
+        self.inner.writes()
+    }
+
+    pub(crate) fn flushes(&self) -> usize {
+        self.inner.flushes()
+    }
+}
+
+impl Read for InstrumentedTransport {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl Write for InstrumentedTransport {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 pub(crate) fn binary_handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
     u32::from(version.as_u8()).to_be_bytes()
 }

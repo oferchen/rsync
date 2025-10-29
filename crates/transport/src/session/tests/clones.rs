@@ -459,37 +459,4 @@ fn session_handshake_parts_from_legacy_components_round_trips() {
     assert_eq!(transport.flushes(), 1);
 }
 
-#[derive(Debug)]
-struct InstrumentedTransport {
-    inner: MemoryTransport,
-}
-
-impl InstrumentedTransport {
-    fn new(inner: MemoryTransport) -> Self {
-        Self { inner }
-    }
-
-    fn writes(&self) -> &[u8] {
-        self.inner.writes()
-    }
-
-    fn flushes(&self) -> usize {
-        self.inner.flushes()
-    }
-}
-
-impl Read for InstrumentedTransport {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-impl Write for InstrumentedTransport {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
+// InstrumentedTransport is provided by the support module.
