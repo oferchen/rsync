@@ -265,6 +265,15 @@ fn normalizes_redundant_segments() {
 }
 
 #[test]
+fn include_shards_map_to_virtual_tests_entry_point() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let source = SourceLocation::from_parts(manifest_dir, "src/message/tests/part3.rs", 11);
+
+    assert_eq!(source.path(), "crates/core/src/message/tests.rs");
+    assert_eq!(source.line(), 11);
+}
+
+#[test]
 fn retains_absolute_paths_outside_workspace() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let source = SourceLocation::from_parts(manifest_dir, "/tmp/outside.rs", 42);
