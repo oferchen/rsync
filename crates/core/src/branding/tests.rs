@@ -1,3 +1,4 @@
+use super::brand::matches_program_alias;
 use super::*;
 use core::str::FromStr;
 use std::env;
@@ -146,6 +147,29 @@ fn detect_brand_matches_invocation_argument() {
         detect_brand(Some(OsStr::new("/usr/local/bin/rsync-3.4.1"))),
         Brand::Upstream
     );
+}
+
+#[test]
+fn detect_brand_supports_windows_extensions() {
+    let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
+    assert_eq!(detect_brand(Some(OsStr::new("oc-rsync.exe"))), Brand::Oc);
+    let upstream = detect_brand(Some(OsStr::new("RSYNCD.EXE")));
+    assert_eq!(upstream, Brand::Upstream);
+    assert_eq!(
+        detect_brand(Some(OsStr::new("/opt/tools/oc-rsync-3.4.1.EXE"))),
+        Brand::Oc
+    );
+    let debug = detect_brand(Some(OsStr::new("C:/rsync/bin/rsync-debug.COM")));
+    assert_eq!(debug, Brand::Upstream);
+}
+
+#[test]
+fn matches_program_alias_accepts_windows_extensions() {
+    assert!(matches_program_alias("rsync.exe", "rsync"));
+    assert!(matches_program_alias("RSYNCD.EXE", "rsyncd"));
+    assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
+    assert!(matches_program_alias("OC-RSYNCD.EXE", "oc-rsyncd"));
+    assert!(!matches_program_alias("rsyncd.exe", "oc-rsyncd"));
 }
 
 #[test]
