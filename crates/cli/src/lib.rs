@@ -6749,7 +6749,7 @@ mod tests {
     use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
     use std::collections::HashSet;
     use std::ffi::{OsStr, OsString};
-    use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+    use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
     use std::sync::Mutex;
@@ -6765,6 +6765,54 @@ mod tests {
     const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
 
     const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))
+    ))]
+    fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
+        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
+        use std::convert::TryInto;
+
+        let bits: u16 = (mode & 0o177_777)
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
+        let mode = Mode::from_bits_truncate(bits.into());
+        mknodat(CWD, path, FileType::Fifo, mode, makedev(0, 0)).map_err(io::Error::from)
+    }
+
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ))]
+    fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
+        use std::convert::TryInto;
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bits: libc::mode_t = (mode & 0o177_777)
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
+        let path_c = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL")
+        })?;
+        let result = unsafe { libc::mkfifo(path_c.as_ptr(), bits) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
 
     fn assert_contains_client_trailer(rendered: &str) {
         let expected = format!("[client={}]", manifest().rust_version());
@@ -7378,19 +7426,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn verbose_transfer_reports_skipped_specials() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
         let source_fifo = tmp.path().join("skip.pipe");
-        mknodat(
-            CWD,
-            &source_fifo,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o600),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
         let destination = tmp.path().join("dest.pipe");
         let (code, stdout, stderr) = run_with_args([
@@ -7631,20 +7671,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn progress_reports_unknown_totals_with_placeholder() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("fifo.in");
-        mknodat(
-            CWD,
-            &source,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o600),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source, 0o600).expect("mkfifo");
 
         let destination = tmp.path().join("fifo.out");
         let (code, stdout, stderr) = run_with_args([
@@ -7669,20 +7701,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn info_progress2_enables_progress_output() {
-        use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
         use std::os::unix::fs::FileTypeExt;
         use tempfile::tempdir;
 
         let tmp = tempdir().expect("tempdir");
         let source = tmp.path().join("info-fifo.in");
-        mknodat(
-            CWD,
-            &source,
-            FileType::Fifo,
-            Mode::from_bits_truncate(0o600),
-            makedev(0, 0),
-        )
-        .expect("mkfifo");
+        mkfifo_for_tests(&source, 0o600).expect("mkfifo");
 
         let destination = tmp.path().join("info-fifo.out");
         let (code, stdout, stderr) = run_with_args([

@@ -35,3 +35,4 @@ filetime = "0.2"
 tempfile = "3.10"
 xattr = "1.3"
 rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
+libc = "0.2"
