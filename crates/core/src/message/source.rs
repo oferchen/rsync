@@ -136,9 +136,7 @@ fn rewrite_test_shard(path: &str) -> Option<String> {
     }
 
     let last = segments[segments.len() - 1];
-    let Some(digits) = last.strip_prefix("part")?.strip_suffix(".rs") else {
-        return None;
-    };
+    let digits = last.strip_prefix("part")?.strip_suffix(".rs")?;
 
     if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
