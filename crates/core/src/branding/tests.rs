@@ -164,12 +164,34 @@ fn detect_brand_supports_windows_extensions() {
 }
 
 #[test]
+fn detect_brand_recognises_debug_suffixes_without_digits() {
+    let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
+
+    assert_eq!(detect_brand(Some(OsStr::new("oc-rsync-debug"))), Brand::Oc);
+    assert_eq!(
+        detect_brand(Some(OsStr::new("rsync-debug"))),
+        Brand::Upstream
+    );
+    assert_eq!(detect_brand(Some(OsStr::new("oc-rsync_dbg"))), Brand::Oc);
+    assert_eq!(
+        detect_brand(Some(OsStr::new("rsync.devel"))),
+        Brand::Upstream
+    );
+}
+
+#[test]
 fn matches_program_alias_accepts_windows_extensions() {
     assert!(matches_program_alias("rsync.exe", "rsync"));
     assert!(matches_program_alias("RSYNCD.EXE", "rsyncd"));
     assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
     assert!(matches_program_alias("OC-RSYNCD.EXE", "oc-rsyncd"));
     assert!(!matches_program_alias("rsyncd.exe", "oc-rsyncd"));
+}
+
+#[test]
+fn program_alias_rejects_unrecognised_alpha_suffix() {
+    assert!(!matches_program_alias("oc-rsync-malicious", "oc-rsync"));
+    assert!(!matches_program_alias("rsync-preview", "rsync"));
 }
 
 #[test]
