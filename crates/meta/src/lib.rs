@@ -429,23 +429,80 @@ pub fn create_device_node(
     create_device_node_inner(destination, metadata)
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
     use rustix::fs::{CWD, FileType, Mode, makedev, mknodat};
     use std::os::unix::fs::PermissionsExt;
 
-    let mode = Mode::from_bits_truncate(metadata.permissions().mode());
+    let mode_bits = permissions_mode("create fifo", destination, metadata.permissions().mode())?;
+    let mode = Mode::from_bits_truncate(mode_bits.into());
     mknodat(CWD, destination, FileType::Fifo, mode, makedev(0, 0))
         .map_err(|error| MetadataError::new("create fifo", destination, io::Error::from(error)))?;
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
+    use std::convert::TryInto;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode_bits = permissions_mode("create fifo", destination, metadata.permissions().mode())?;
+    let mode: libc::mode_t = mode_bits
+        .try_into()
+        .map_err(|_| invalid_mode_error("create fifo", destination))?;
+    let path = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        MetadataError::new(
+            "create fifo",
+            destination,
+            io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL"),
+        )
+    })?;
+
+    let result = unsafe { libc::mkfifo(path.as_ptr(), mode) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(MetadataError::new(
+            "create fifo",
+            destination,
+            io::Error::last_os_error(),
+        ))
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
 fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    use rustix::fs::{CWD, FileType, Mode, major, makedev, minor, mknodat};
+    use rustix::fs::{CWD, Dev, FileType, Mode, major, makedev, minor, mknodat};
+    use std::convert::TryInto;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
@@ -464,9 +521,16 @@ fn create_device_node_inner(
         ));
     };
 
-    let mode_bits = metadata.permissions().mode() & 0o777;
-    let mode = Mode::from_bits_truncate(mode_bits);
+    let mode_bits = permissions_mode(
+        "create device",
+        destination,
+        metadata.permissions().mode() & 0o777,
+    )?;
+    let mode = Mode::from_bits_truncate(mode_bits.into());
     let raw = metadata.rdev();
+    let raw: Dev = raw
+        .try_into()
+        .map_err(|_| invalid_device_error(destination))?;
     let device = makedev(major(raw), minor(raw));
 
     mknodat(CWD, destination, node_type, mode, device).map_err(|error| {
@@ -474,6 +538,73 @@ fn create_device_node_inner(
     })?;
 
     Ok(())
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn create_device_node_inner(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), MetadataError> {
+    use std::convert::TryInto;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
+    let file_type = metadata.file_type();
+    let type_bits: libc::mode_t = if file_type.is_char_device() {
+        libc::S_IFCHR
+    } else if file_type.is_block_device() {
+        libc::S_IFBLK
+    } else {
+        return Err(MetadataError::new(
+            "create device",
+            destination,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "metadata does not describe a device node",
+            ),
+        ));
+    };
+
+    let perm_bits = permissions_mode(
+        "create device",
+        destination,
+        metadata.permissions().mode() & 0o777,
+    )?;
+    let permissions: libc::mode_t = perm_bits
+        .try_into()
+        .map_err(|_| invalid_mode_error("create device", destination))?;
+    let device: libc::dev_t = metadata
+        .rdev()
+        .try_into()
+        .map_err(|_| invalid_device_error(destination))?;
+    let path = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        MetadataError::new(
+            "create device",
+            destination,
+            io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL"),
+        )
+    })?;
+
+    let mode = type_bits | permissions;
+    let result = unsafe { libc::mknod(path.as_ptr(), mode, device) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(MetadataError::new(
+            "create device",
+            destination,
+            io::Error::last_os_error(),
+        ))
+    }
 }
 
 #[cfg(not(unix))]
@@ -486,6 +617,42 @@ fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(),
             "FIFO creation is not supported on this platform",
         ),
     ))
+}
+
+#[cfg(unix)]
+fn permissions_mode(
+    context: &'static str,
+    destination: &Path,
+    raw_mode: u32,
+) -> Result<u16, MetadataError> {
+    use std::convert::TryFrom;
+
+    let masked = raw_mode & 0o177_777;
+    u16::try_from(masked).map_err(|_| invalid_mode_error(context, destination))
+}
+
+#[cfg(unix)]
+fn invalid_mode_error(context: &'static str, destination: &Path) -> MetadataError {
+    MetadataError::new(
+        context,
+        destination,
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "mode value exceeds platform limits",
+        ),
+    )
+}
+
+#[cfg(unix)]
+fn invalid_device_error(destination: &Path) -> MetadataError {
+    MetadataError::new(
+        "create device",
+        destination,
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "device identifier exceeds platform limits",
+        ),
+    )
 }
 
 #[cfg(not(unix))]
