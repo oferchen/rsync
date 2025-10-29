@@ -11,17 +11,15 @@
 //! workspace branding, documentation, packaging assets, and hygiene policies.
 //!
 //! Invocations follow the conventional `cargo xtask <command>` pattern. The
-//! `sbom` command executes the installed `cargo-cyclonedx` plugin with the
-//! workspace manifest and writes the resulting JSON document to
-//! `target/sbom/rsync.cdx.json` unless an explicit output path is provided.
+//! `sbom` command analyses workspace metadata directly and writes a CycloneDX
+//! JSON document to `target/sbom/rsync.cdx.json` unless an explicit output path
+//! is provided.
 //!
 //! # Examples
 //!
-//! Generate the default SBOM. The example is marked `no_run` because the host
-//! environment must have the `cargo-cyclonedx` plugin installed for the command
-//! to succeed.
+//! Generate the default SBOM:
 //!
-//! ```no_run
+//! ```
 //! std::process::Command::new("cargo")
 //!     .args(["run", "-p", "xtask", "--", "sbom"])
 //!     .status()
@@ -47,8 +45,8 @@
 //!
 //! # See also
 //!
-//! - [`cargo-cyclonedx`](https://github.com/CycloneDX/cyclonedx-rust-cargo) —
-//!   upstream documentation for the SBOM generator invoked by this task.
+//! - [CycloneDX Specification](https://cyclonedx.org/specification/) — format
+//!   reference for the generated Software Bill of Materials.
 
 mod commands;
 mod error;
