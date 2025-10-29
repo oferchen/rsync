@@ -16,6 +16,7 @@ impl TargetSelector {
     }
 
     #[cfg(not(unix))]
+    #[allow(dead_code)]
     pub(crate) fn matches(self, _file_type: std::fs::FileType) -> bool {
         matches!(self, TargetSelector::All | TargetSelector::Files)
     }
@@ -40,18 +41,22 @@ impl WhoMask {
         Self { user, group, other }
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn includes_user(self) -> bool {
         self.user
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn includes_group(self) -> bool {
         self.group
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn includes_other(self) -> bool {
         self.other
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn covers_all(self) -> bool {
         self.user && self.group && self.other
     }
