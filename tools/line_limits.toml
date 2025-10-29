@@ -23,11 +23,6 @@ max_lines = 11320
 warn_lines = 11220
 
 [[overrides]]
-path = "crates/core/src/client/fallback/mod.rs"
-max_lines = 1200
-warn_lines = 1100
-
-[[overrides]]
 path = "crates/daemon/src/lib.rs"
 max_lines = 10203
 warn_lines = 10103
@@ -56,11 +51,6 @@ warn_lines = 2683
 path = "crates/protocol/src/multiplex/tests.rs"
 max_lines = 1338
 warn_lines = 1238
-
-[[overrides]]
-path = "xtask/src/main.rs"
-max_lines = 2850
-warn_lines = 2750
 
 [[overrides]]
 path = "crates/transport/src/session/tests.rs"
@@ -116,23 +106,3 @@ warn_lines = 1329
 path = "crates/protocol/src/compatibility.rs"
 max_lines = 1303
 warn_lines = 1203
-
-[[overrides]]
-path = "crates/bandwidth/src/limiter.rs"
-max_lines = 1100
-warn_lines = 1000
-
-[[overrides]]
-path = "crates/filters/src/lib.rs"
-max_lines = 1075
-warn_lines = 975
-
-[[overrides]]
-path = "crates/walk/src/lib.rs"
-max_lines = 1017
-warn_lines = 917
-
-[[overrides]]
-path = "crates/protocol/src/legacy/lines.rs"
-max_lines = 827
-warn_lines = 727
