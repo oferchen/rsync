@@ -14,7 +14,7 @@ use crate::util::is_help_flag;
 use crate::workspace::load_workspace_branding;
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Options accepted by the `readme-version` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +87,7 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_args_accepts_default_configuration() {
