@@ -71,6 +71,48 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         ),
     )?;
 
+    let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
+    ensure(
+        config_dir.file_name().and_then(|name| name.to_str()) == Some(expected_dir_suffix.as_str()),
+        format!(
+            "daemon_config_dir must end with '{}'; found {}",
+            expected_dir_suffix, branding.daemon_config_dir
+        ),
+    )?;
+
+    ensure(
+        file_name(&branding.daemon_config, "daemon_config")?
+            == PathBuf::from(format!("{}-rsyncd.conf", branding.brand)),
+        format!(
+            "daemon_config {} must be named {}-rsyncd.conf",
+            branding.daemon_config, branding.brand
+        ),
+    )?;
+    ensure(
+        file_name(&branding.daemon_secrets, "daemon_secrets")?
+            == PathBuf::from(format!("{}-rsyncd.secrets", branding.brand)),
+        format!(
+            "daemon_secrets {} must be named {}-rsyncd.secrets",
+            branding.daemon_secrets, branding.brand
+        ),
+    )?;
+    ensure(
+        file_name(&branding.legacy_daemon_config, "legacy_daemon_config")?
+            == PathBuf::from("rsyncd.conf"),
+        format!(
+            "legacy_daemon_config {} must be named rsyncd.conf",
+            branding.legacy_daemon_config
+        ),
+    )?;
+    ensure(
+        file_name(&branding.legacy_daemon_secrets, "legacy_daemon_secrets")?
+            == PathBuf::from("rsyncd.secrets"),
+        format!(
+            "legacy_daemon_secrets {} must be named rsyncd.secrets",
+            branding.legacy_daemon_secrets
+        ),
+    )?;
+
     ensure(
         config_path.parent() == Some(config_dir),
         format!(
