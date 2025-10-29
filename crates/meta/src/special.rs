@@ -101,13 +101,37 @@ fn create_device_node_inner(
         target_os = "watchos"
     )
 ))]
+fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
+    use std::convert::TryInto;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode_bits = permissions_mode(
+        "create fifo",
+        destination,
+        metadata.permissions().mode() & 0o777,
+    )?;
+    let mode: libc::mode_t = mode_bits
+        .try_into()
+        .map_err(|_| invalid_mode_error("create fifo", destination))?;
+
+    rsync_apple_fs::mkfifo(destination, mode)
+        .map_err(|error| MetadataError::new("create fifo", destination, error))
+}
+
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
 fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
     use std::convert::TryInto;
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
@@ -138,25 +162,10 @@ fn create_device_node_inner(
         .rdev()
         .try_into()
         .map_err(|_| invalid_device_error(destination))?;
-    let path = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
-        MetadataError::new(
-            "create device",
-            destination,
-            io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL"),
-        )
-    })?;
-
     let mode = type_bits | permissions;
-    let result = unsafe { libc::mknod(path.as_ptr(), mode, device) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(MetadataError::new(
-            "create device",
-            destination,
-            io::Error::last_os_error(),
-        ))
-    }
+
+    rsync_apple_fs::mknod(destination, mode, device)
+        .map_err(|error| MetadataError::new("create device", destination, error))
 }
 
 #[cfg(not(unix))]

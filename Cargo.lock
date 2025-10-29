@@ -644,6 +644,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "rsync-apple-fs"
+version = "3.4.1-rust"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rsync-bandwidth"
 version = "3.4.1-rust"
 dependencies = [
@@ -766,6 +773,7 @@ version = "3.4.1-rust"
 dependencies = [
  "filetime",
  "libc",
+ "rsync-apple-fs",
  "rustix 0.38.44",
  "tempfile",
  "xattr",

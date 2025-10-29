@@ -16,6 +16,7 @@ members = [
     "crates/walk",
     "crates/transport",
     "xtask",
+    "crates/apple-fs",
 ]
 resolver = "2"
 
