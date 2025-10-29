@@ -97,7 +97,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// session.clear();
     ///
     /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    /// limiter.register(2048);
+    /// let _ = limiter.register(2048);
     ///
     /// let snapshot = session.snapshot();
     /// assert!(!snapshot.is_empty());
@@ -129,7 +129,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// session.clear();
     ///
     /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    /// limiter.register(2048);
+    /// let _ = limiter.register(2048);
     ///
     /// assert!(session.last_duration().is_some());
     /// assert_eq!(session.last_duration(), session.snapshot().last().copied());
@@ -162,7 +162,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// session.clear();
     ///
     /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    /// limiter.register(2048);
+    /// let _ = limiter.register(2048);
     ///
     /// assert_eq!(session.total_duration(), Duration::from_secs(2));
     /// assert_eq!(session.total_duration(), Duration::from_secs(2));
@@ -221,7 +221,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// session.clear();
     ///
     /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    /// limiter.register(2048);
+    /// let _ = limiter.register(2048);
     ///
     /// let durations: Vec<_> = session.iter().collect();
     /// assert_eq!(durations, session.take());
@@ -260,7 +260,7 @@ impl<'a> RecordedSleepSession<'a> {
 /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
 /// let mut session = recorded_sleep_session();
 /// session.clear();
-/// limiter.register(1024);
+/// let _ = limiter.register(1024);
 ///
 /// let durations: Vec<_> = session.into_iter().collect();
 /// assert_eq!(durations.len(), 1);

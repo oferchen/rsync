@@ -1,5 +1,6 @@
 use super::{BandwidthLimiter, LimiterChange, MINIMUM_SLEEP_MICROS, recorded_sleep_session};
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 #[test]
 fn limiter_update_limit_resets_internal_state() {
@@ -8,22 +9,27 @@ fn limiter_update_limit_resets_internal_state() {
 
     let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
     let mut baseline = BandwidthLimiter::new(new_limit);
-    baseline.register(4096);
+    let _ = baseline.register(4096);
     let baseline_sleeps = session.take();
 
     session.clear();
 
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    limiter.register(4096);
+    let _ = limiter.register(4096);
     session.clear();
 
     limiter.update_limit(new_limit);
-    limiter.register(4096);
+    let sleep = limiter.register(4096);
     assert_eq!(limiter.limit_bytes(), new_limit);
     assert_eq!(limiter.recommended_read_size(1 << 20), 1 << 20);
 
     let updated_sleeps = session.take();
     assert_eq!(updated_sleeps, baseline_sleeps);
+    let expected_requested = baseline_sleeps
+        .iter()
+        .copied()
+        .fold(Duration::ZERO, |acc, chunk| acc.saturating_add(chunk));
+    assert_eq!(sleep.requested(), expected_requested);
 }
 
 #[test]
@@ -34,7 +40,7 @@ fn limiter_update_configuration_resets_state_and_updates_burst() {
     let initial_limit = NonZeroU64::new(1024).unwrap();
     let initial_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = BandwidthLimiter::with_burst(initial_limit, Some(initial_burst));
-    limiter.register(8192);
+    let _ = limiter.register(8192);
     assert!(limiter.accumulated_debt_for_testing() > 0);
 
     let new_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
@@ -46,7 +52,7 @@ fn limiter_update_configuration_resets_state_and_updates_burst() {
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 
     session.clear();
-    limiter.register(1024);
+    let sleep = limiter.register(1024);
     let recorded = session.take();
     assert!(
         recorded.is_empty()
@@ -54,6 +60,7 @@ fn limiter_update_configuration_resets_state_and_updates_burst() {
                 .iter()
                 .all(|duration| duration.as_micros() <= MINIMUM_SLEEP_MICROS)
     );
+    assert!(sleep.requested() <= Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
 }
 
 #[test]
@@ -63,13 +70,13 @@ fn limiter_reset_clears_state_and_preserves_configuration() {
 
     let limit = NonZeroU64::new(1024).unwrap();
     let mut baseline = BandwidthLimiter::new(limit);
-    baseline.register(4096);
+    let _ = baseline.register(4096);
     let baseline_sleeps = session.take();
 
     session.clear();
 
     let mut limiter = BandwidthLimiter::new(limit);
-    limiter.register(4096);
+    let _ = limiter.register(4096);
     assert!(limiter.accumulated_debt_for_testing() > 0);
 
     session.clear();
@@ -79,9 +86,14 @@ fn limiter_reset_clears_state_and_preserves_configuration() {
     assert_eq!(limiter.burst_bytes(), None);
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 
-    limiter.register(4096);
+    let sleep = limiter.register(4096);
     let reset_sleeps = session.take();
     assert_eq!(reset_sleeps, baseline_sleeps);
+    let expected_requested = baseline_sleeps
+        .iter()
+        .copied()
+        .fold(Duration::ZERO, |acc, chunk| acc.saturating_add(chunk));
+    assert_eq!(sleep.requested(), expected_requested);
 }
 
 #[test]

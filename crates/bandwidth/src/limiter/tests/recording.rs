@@ -12,7 +12,7 @@ fn recorded_sleep_session_into_vec_consumes_guard() {
     session.clear();
 
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    limiter.register(2048);
+    let _ = limiter.register(2048);
 
     let recorded = session.into_vec();
     assert!(!recorded.is_empty());
