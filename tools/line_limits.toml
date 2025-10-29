@@ -143,11 +143,6 @@ max_lines = 1010
 warn_lines = 910
 
 [[overrides]]
-path = "crates/transport/src/session/handshake.rs"
-max_lines = 897
-warn_lines = 797
-
-[[overrides]]
 path = "crates/protocol/src/legacy/lines.rs"
 max_lines = 827
 warn_lines = 727
