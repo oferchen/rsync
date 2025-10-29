@@ -112,7 +112,3 @@ path = "crates/core/src/version/report/mod.rs"
 max_lines = 650
 warn_lines = 600
 
-[[overrides]]
-path = "crates/engine/src/local_copy/tests.rs"
-max_lines = 4400
-warn_lines = 4300
