@@ -37,8 +37,9 @@
 //! # Errors
 //!
 //! Traversal emits [`WalkError`] when filesystem metadata cannot be queried or
-//! when reading directory contents fails. Callers can downcast to [`io::Error`]
-//! using [`WalkError::source`] to inspect the original failure.
+//! when reading directory contents fails. Callers can downcast to
+//! [`std::io::Error`] using [`std::error::Error::source`] to inspect the original
+//! failure.
 //!
 //! # Examples
 //!
