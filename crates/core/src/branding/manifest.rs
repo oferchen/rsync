@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 
 use super::brand::{self, Brand};
 use super::profile::{BrandProfile, oc_profile, upstream_profile};
+use crate::version::{self, BUILD_TOOLCHAIN};
 use crate::workspace;
 
 /// Cached branding snapshot derived from the workspace manifest.
@@ -28,6 +29,8 @@ pub struct BrandManifest {
     upstream_version: &'static str,
     protocol_version: u32,
     source_url: &'static str,
+    build_revision: &'static str,
+    build_toolchain: &'static str,
 }
 
 impl BrandManifest {
@@ -116,6 +119,18 @@ impl BrandManifest {
     pub const fn source_url(self) -> &'static str {
         self.source_url
     }
+
+    /// Returns the sanitized build revision embedded in the binaries.
+    #[must_use]
+    pub const fn build_revision(self) -> &'static str {
+        self.build_revision
+    }
+
+    /// Returns the human-readable toolchain description rendered by banners.
+    #[must_use]
+    pub const fn build_toolchain(self) -> &'static str {
+        self.build_toolchain
+    }
 }
 
 fn build_manifest() -> BrandManifest {
@@ -129,6 +144,8 @@ fn build_manifest() -> BrandManifest {
         upstream_version: metadata.upstream_version(),
         protocol_version: metadata.protocol_version(),
         source_url: metadata.source_url(),
+        build_revision: version::build_revision(),
+        build_toolchain: BUILD_TOOLCHAIN,
     }
 }
 
@@ -197,5 +214,7 @@ mod tests {
         assert_eq!(manifest.upstream_version(), metadata.upstream_version());
         assert_eq!(manifest.protocol_version(), metadata.protocol_version());
         assert_eq!(manifest.source_url(), metadata.source_url());
+        assert_eq!(manifest.build_revision(), version::build_revision());
+        assert_eq!(manifest.build_toolchain(), BUILD_TOOLCHAIN);
     }
 }
