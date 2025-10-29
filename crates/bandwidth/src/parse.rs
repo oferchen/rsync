@@ -1,9 +1,8 @@
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
-use std::str::FromStr;
 
-use crate::limiter::{BandwidthLimiter, LimiterChange, apply_effective_limit};
+mod components;
 
 /// Parsed `--bwlimit` components consisting of an optional rate and burst size.
 ///
@@ -503,19 +502,19 @@ pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, Ban
     if let Some((rate_text, burst_text)) = trimmed.split_once(':') {
         let rate = parse_bandwidth_argument(rate_text)?;
         if rate.is_none() {
-            return Ok(BandwidthLimitComponents::new_internal(
+            return Ok(BandwidthLimitComponents::with_internal_flags(
                 None, None, true, false,
             ));
         }
 
         let burst = parse_bandwidth_argument(burst_text)?;
-        Ok(BandwidthLimitComponents::new_internal(
+        Ok(BandwidthLimitComponents::with_internal_flags(
             rate, burst, true, true,
         ))
     } else {
         parse_bandwidth_argument(trimmed).map(|rate| match rate {
             Some(rate) => BandwidthLimitComponents::new(Some(rate), None),
-            None => BandwidthLimitComponents::new_internal(None, None, true, false),
+            None => BandwidthLimitComponents::with_internal_flags(None, None, true, false),
         })
     }
 }
