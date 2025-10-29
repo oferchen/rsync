@@ -6,10 +6,11 @@ use std::slice;
 
 use super::{MAX_MESSAGE_SEGMENTS, OVERREPORTED_BYTES_ERROR, errors::map_message_reserve_error};
 
-/// Collection of slices that jointly render an [`Message`].
+/// Collection of slices that jointly render a [`Message`](crate::message::Message).
 ///
 /// The segments reference the message payload together with optional exit codes, source
-/// locations, and role trailers. Callers obtain the structure through [`Message::as_segments`]
+/// locations, and role trailers. Callers obtain the structure through
+/// [`Message::as_segments`](crate::message::Message::as_segments)
 /// and can then stream the slices into vectored writers, aggregate statistics, or reuse the
 /// layout when constructing custom buffers. `MessageSegments` implements [`AsRef`] so the
 /// collected [`IoSlice`] values can be passed directly to APIs such as

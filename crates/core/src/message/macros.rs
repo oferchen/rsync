@@ -6,7 +6,8 @@ macro_rules! message_source {
     };
 }
 
-/// Builds a [`SourceLocation`] from an explicit [`std::panic::Location`].
+/// Builds a [`SourceLocation`](crate::message::SourceLocation) from an explicit
+/// [`std::panic::Location`].
 ///
 /// This macro is useful when the caller already captured a location through
 /// `#[track_caller]` and wishes to convert it into the repo-relative form used
@@ -33,7 +34,8 @@ macro_rules! message_source_from {
     }};
 }
 
-/// Captures a [`SourceLocation`] that honours `#[track_caller]` propagation.
+/// Captures a [`SourceLocation`](crate::message::SourceLocation) that honours
+/// `#[track_caller]` propagation.
 ///
 /// Unlike [`macro@message_source`], this macro calls [`std::panic::Location::caller`]
 /// so that helper functions annotated with `#[track_caller]` report the
@@ -57,14 +59,17 @@ macro_rules! tracked_message_source {
     () => {{ $crate::message_source_from!(::std::panic::Location::caller()) }};
 }
 
-/// Constructs an error [`Message`] with the provided exit code and payload.
+/// Constructs an error [`Message`](crate::message::Message) with the provided
+/// exit code and payload.
 ///
 /// The macro mirrors upstream diagnostics by automatically attaching the
-/// call-site [`SourceLocation`] using [`macro@crate::tracked_message_source`]. It
+/// call-site [`SourceLocation`](crate::message::SourceLocation) using
+/// [`macro@crate::tracked_message_source`]. It
 /// accepts either a
 /// string literal/`Cow<'static, str>` payload or a [`format!`] style template.
-/// Callers can further customise the returned [`Message`] by chaining helpers
-/// such as [`Message::with_role`].
+/// Callers can further customise the returned
+/// [`Message`](crate::message::Message) by chaining helpers such as
+/// [`Message::with_role`](crate::message::Message::with_role).
 ///
 /// # Examples
 ///
@@ -104,13 +109,15 @@ macro_rules! rsync_error {
     }};
 }
 
-/// Constructs a warning [`Message`] from the provided payload.
+/// Constructs a warning [`Message`](crate::message::Message) from the provided
+/// payload.
 ///
 /// Like [`macro@rsync_error`], the macro records the call-site source location so
 /// diagnostics include repo-relative paths. The macro relies on
 /// [`macro@crate::tracked_message_source`], meaning callers annotated with
 /// `#[track_caller]` automatically propagate their invocation site. Additional
-/// context, such as exit codes, can be attached using [`Message::with_code`].
+/// context, such as exit codes, can be attached using
+/// [`Message::with_code`](crate::message::Message::with_code).
 ///
 /// # Examples
 ///
@@ -136,9 +143,11 @@ macro_rules! rsync_warning {
     }};
 }
 
-/// Constructs an informational [`Message`] from the provided payload.
+/// Constructs an informational [`Message`](crate::message::Message) from the
+/// provided payload.
 ///
-/// The macro is a convenience wrapper around [`Message::info`] that automatically
+/// The macro is a convenience wrapper around
+/// [`Message::info`](crate::message::Message::info) that automatically
 /// attaches the call-site source location. Upstream rsync typically omits source
 /// locations for informational output, but retaining the metadata simplifies
 /// debugging and keeps the API consistent across severities. As with the other
@@ -167,9 +176,12 @@ macro_rules! rsync_info {
     }};
 }
 
-/// Constructs a [`Message`] using the canonical wording for a known exit code.
+/// Constructs a [`Message`](crate::message::Message) using the canonical
+/// wording for a known exit code.
 ///
-/// The macro delegates to [`Message::from_exit_code`] and attaches the caller's
+/// The macro delegates to
+/// [`Message::from_exit_code`](crate::message::Message::from_exit_code) and
+/// attaches the caller's
 /// source location via [`macro@crate::tracked_message_source`]. Returning an
 /// [`Option`] mirrors the underlying helper:
 /// upstream rsync only assigns stock diagnostics to a fixed set of exit codes. Callers can use

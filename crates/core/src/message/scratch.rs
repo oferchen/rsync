@@ -2,7 +2,8 @@ use std::cell::RefCell;
 
 /// Scratch buffers used when producing vectored message segments.
 ///
-/// Instances of this type are supplied to [`Message::as_segments`] so the helper can encode
+/// Instances of this type are supplied to [`Message::as_segments`](crate::message::Message::as_segments)
+/// so the helper can encode
 /// decimal exit codes and line numbers without allocating temporary [`String`] values. The
 /// buffers are stack-allocated and reusable, making it cheap for higher layers to render
 /// multiple messages in succession without paying repeated allocation costs. Because
@@ -10,7 +11,8 @@ use std::cell::RefCell;
 /// thread caches or passing scratch buffers between helper functions without incurring
 /// additional allocations. When managing scratch storage manually is inconvenient, use
 /// [`MessageScratch::with_thread_local`] to borrow the thread-local buffer that backs
-/// [`Message::to_bytes`], [`Message::render_to`], and related helpers.
+/// [`Message::to_bytes`](crate::message::Message::to_bytes),
+/// [`Message::render_to`](crate::message::Message::render_to), and related helpers.
 ///
 /// # Examples
 ///
@@ -49,7 +51,9 @@ impl MessageScratch {
     /// multiple messages without explicitly storing a [`MessageScratch`]. When the thread-local
     /// instance is temporarily unavailable—such as when the current thread already borrowed it—the
     /// function transparently falls back to a fresh buffer. This mirrors the strategy used by
-    /// [`Message::render_to`] and [`Message::to_bytes`], ensuring consistent performance semantics
+    /// [`Message::render_to`](crate::message::Message::render_to) and
+    /// [`Message::to_bytes`](crate::message::Message::to_bytes), ensuring consistent performance
+    /// semantics
     /// across the workspace.
     ///
     /// # Examples
