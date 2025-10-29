@@ -59,8 +59,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_advertised, reference_negotiation, NegotiationError};
     use super::super::ProtocolVersion;
+    use super::{NegotiationError, collect_advertised, reference_negotiation};
 
     #[test]
     fn reference_negotiation_prefers_highest_supported_version() {
