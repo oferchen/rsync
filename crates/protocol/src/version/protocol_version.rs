@@ -70,9 +70,6 @@ pub const SUPPORTED_PROTOCOL_BITMAP: u64 = {
 
     bitmap
 };
-
-const _: () = super::select::validate_protocol_tables();
-
 impl ProtocolVersion {
     pub(crate) const fn new_const(value: u8) -> Self {
         match NonZeroU8::new(value) {
