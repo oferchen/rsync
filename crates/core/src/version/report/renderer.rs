@@ -87,6 +87,60 @@ impl VersionInfoReport {
         self.with_program_name(brand.daemon_program_name())
     }
 
+    /// Creates a report for the client binary associated with `brand` using the
+    /// default [`VersionInfoConfig`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rsync_core::branding::Brand;
+    /// use rsync_core::version::VersionInfoReport;
+    ///
+    /// let report = VersionInfoReport::for_client_brand(Brand::Oc);
+    /// assert!(report
+    ///     .metadata()
+    ///     .standard_banner()
+    ///     .starts_with("oc-rsync  version"));
+    /// ```
+    #[must_use]
+    pub fn for_client_brand(brand: Brand) -> Self {
+        Self::default().with_client_brand(brand)
+    }
+
+    /// Creates a report for the daemon binary associated with `brand` using the
+    /// default [`VersionInfoConfig`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rsync_core::branding::Brand;
+    /// use rsync_core::version::VersionInfoReport;
+    ///
+    /// let report = VersionInfoReport::for_daemon_brand(Brand::Oc);
+    /// assert!(report
+    ///     .metadata()
+    ///     .standard_banner()
+    ///     .starts_with("oc-rsyncd  version"));
+    /// ```
+    #[must_use]
+    pub fn for_daemon_brand(brand: Brand) -> Self {
+        Self::default().with_daemon_brand(brand)
+    }
+
+    /// Creates a report for the client binary associated with `brand` using an
+    /// explicit [`VersionInfoConfig`].
+    #[must_use]
+    pub fn for_client_brand_with_config(config: VersionInfoConfig, brand: Brand) -> Self {
+        Self::new(config).with_client_brand(brand)
+    }
+
+    /// Creates a report for the daemon binary associated with `brand` using an
+    /// explicit [`VersionInfoConfig`].
+    #[must_use]
+    pub fn for_daemon_brand_with_config(config: VersionInfoConfig, brand: Brand) -> Self {
+        Self::new(config).with_daemon_brand(brand)
+    }
+
     /// Replaces the checksum algorithm list used in the rendered report.
     #[must_use]
     pub fn with_checksum_algorithms<I, S>(mut self, algorithms: I) -> Self
