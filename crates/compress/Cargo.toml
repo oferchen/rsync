@@ -15,4 +15,4 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
