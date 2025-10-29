@@ -49,6 +49,6 @@ pub(super) const CVS_EXCLUDE_PATTERNS: &[&str] = &[
 ];
 
 /// Timestamp format used for `--list-only` and `--out-format` placeholders.
-pub(super) const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
+pub(crate) const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
     "[year]/[month padding:zero]/[day padding:zero] [hour padding:zero]:[minute padding:zero]:[second padding:zero]"
 );
