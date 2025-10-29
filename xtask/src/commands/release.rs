@@ -95,8 +95,10 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
     if options.skip_docs {
         skipped_steps.push("docs");
     } else {
-        let mut docs_options = DocsOptions::default();
-        docs_options.validate = true;
+        let docs_options = DocsOptions {
+            validate: true,
+            ..DocsOptions::default()
+        };
         docs::execute(workspace, docs_options)?;
         executed_steps.push("docs");
     }
