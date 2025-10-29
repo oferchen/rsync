@@ -1,6 +1,6 @@
+use super::argument::pow_u128;
 use super::{
     BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit,
-    pow_u128,
 };
 use crate::limiter::{BandwidthLimiter, LimiterChange};
 use proptest::prelude::*;
