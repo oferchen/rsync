@@ -93,11 +93,6 @@ max_lines = 570
 warn_lines = 530
 
 [[overrides]]
-path = "crates/transport/src/negotiation/tests.rs"
-max_lines = 3350
-warn_lines = 3330
-
-[[overrides]]
 path = "crates/transport/src/binary.rs"
 max_lines = 1700
 warn_lines = 1650
@@ -106,11 +101,6 @@ warn_lines = 1650
 path = "crates/transport/src/daemon.rs"
 max_lines = 1600
 warn_lines = 1550
-
-[[overrides]]
-path = "crates/protocol/src/negotiation/sniffer.rs"
-max_lines = 1450
-warn_lines = 1400
 
 [[overrides]]
 path = "crates/protocol/src/version/tests/mod.rs"
