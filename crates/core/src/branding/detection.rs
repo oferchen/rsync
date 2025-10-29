@@ -13,11 +13,15 @@ use super::profile::BrandProfile;
 /// Returns the branding profile that matches the provided program name.
 #[must_use]
 pub fn brand_for_program_name(program: &str) -> Brand {
+    classify_program_name(program).unwrap_or_else(default_brand)
+}
+
+fn classify_program_name(program: &str) -> Option<Brand> {
     let manifest = manifest();
     let oc_client = manifest.client_program_name_for(Brand::Oc);
     let oc_daemon = manifest.daemon_program_name_for(Brand::Oc);
     if matches_program_alias(program, oc_client) || matches_program_alias(program, oc_daemon) {
-        return Brand::Oc;
+        return Some(Brand::Oc);
     }
 
     let upstream_client = manifest.client_program_name_for(Brand::Upstream);
@@ -25,16 +29,22 @@ pub fn brand_for_program_name(program: &str) -> Brand {
     if matches_program_alias(program, upstream_client)
         || matches_program_alias(program, upstream_daemon)
     {
-        return Brand::Upstream;
+        return Some(Brand::Upstream);
     }
 
-    default_brand()
+    None
 }
 
 fn brand_for_program_path(path: &Path) -> Option<Brand> {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        if let Some(brand) = classify_program_name(name) {
+            return Some(brand);
+        }
+    }
+
     path.file_stem()
         .and_then(|stem| stem.to_str())
-        .map(brand_for_program_name)
+        .and_then(classify_program_name)
 }
 
 fn brand_for_program_os_str(program: &OsStr) -> Option<Brand> {

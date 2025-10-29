@@ -246,28 +246,40 @@ fn version_suffix_is_allowed(suffix: &str) -> bool {
         return true;
     }
 
-    let mut chars = suffix.chars();
-    let Some(first) = chars.next() else {
+    let bytes = suffix.as_bytes();
+    let Some((&first, rest)) = bytes.split_first() else {
         return true;
     };
 
-    if !matches!(first, '-' | '_' | '.') {
+    if !matches!(first, b'-' | b'_' | b'.') {
         return false;
     }
 
     let mut has_digit = false;
 
-    for ch in chars {
-        if !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.' {
+    for &byte in rest {
+        if !byte.is_ascii_alphanumeric() && byte != b'-' && byte != b'_' && byte != b'.' {
             return false;
         }
 
-        if ch.is_ascii_digit() {
+        if byte.is_ascii_digit() {
             has_digit = true;
         }
     }
 
-    has_digit
+    if has_digit {
+        return true;
+    }
+
+    const WINDOWS_EXECUTABLE_EXTENSIONS: [&[u8]; 4] = [b".exe", b".com", b".bat", b".cmd"];
+    WINDOWS_EXECUTABLE_EXTENSIONS.iter().any(|ext| {
+        bytes.len() >= ext.len()
+            && bytes[bytes.len() - ext.len()..].iter().zip(ext.iter()).all(
+                |(candidate, expected)| {
+                    candidate.to_ascii_lowercase() == expected.to_ascii_lowercase()
+                },
+            )
+    })
 }
 
 fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
