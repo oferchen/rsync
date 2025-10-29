@@ -103,11 +103,6 @@ max_lines = 1600
 warn_lines = 1550
 
 [[overrides]]
-path = "crates/protocol/src/negotiation/sniffer.rs"
-max_lines = 1450
-warn_lines = 1400
-
-[[overrides]]
 path = "crates/protocol/src/version/tests/mod.rs"
 max_lines = 1400
 warn_lines = 1350
