@@ -1,0 +1,10 @@
+[package]
+name = "rsync-apple-fs"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+libc = "0.2"
