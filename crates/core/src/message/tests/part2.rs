@@ -180,7 +180,17 @@ fn tracked_message_source_propagates_caller_location() {
 
     let helper_location = untracked_source();
     assert_ne!(helper_location.line(), expected_line);
-    assert_eq!(helper_location.path(), location.path());
+    let helper_path = normalize_tests_module_path(helper_location.path());
+    let tracked_path = normalize_tests_module_path(location.path());
+    assert_eq!(helper_path, tracked_path);
+}
+
+fn normalize_tests_module_path(path: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(stripped) = path.strip_suffix("tests.rs") {
+        std::borrow::Cow::Owned(format!("{stripped}tests/mod.rs"))
+    } else {
+        std::borrow::Cow::Borrowed(path)
+    }
 }
 
 #[test]
