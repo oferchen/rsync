@@ -209,7 +209,7 @@ use rsync_checksums::strong::Md5;
 use rsync_core::{
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
-        apply_effective_limit, parse_bandwidth_limit,
+        parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
     fallback::{

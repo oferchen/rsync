@@ -302,6 +302,16 @@ fn new_with_flags_forces_limit_specified_when_rate_present() {
 }
 
 #[test]
+fn new_with_flags_tracks_explicit_burst_clearing_with_rate() {
+    let limit = NonZeroU64::new(4096).expect("limit");
+    let components = BandwidthLimitComponents::new_with_flags(Some(limit), None, false, true);
+
+    assert!(components.limit_specified());
+    assert!(components.burst_specified());
+    assert!(components.burst().is_none());
+}
+
+#[test]
 fn components_into_limiter_returns_none_when_unlimited() {
     let components = BandwidthLimitComponents::new(None, NonZeroU64::new(4096));
     assert!(components.into_limiter().is_none());
