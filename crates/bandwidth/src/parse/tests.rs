@@ -2,6 +2,7 @@ use super::{
     BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit,
     pow_u128,
 };
+use crate::limiter::{BandwidthLimiter, LimiterChange};
 use proptest::prelude::*;
 use std::num::NonZeroU64;
 
@@ -248,6 +249,56 @@ fn constrained_by_overrides_burst_when_specified() {
     assert_eq!(combined.rate().map(NonZeroU64::get), Some(3 * 1024 * 1024));
     assert!(combined.burst().is_none());
     assert!(combined.burst_specified());
+}
+
+#[test]
+fn components_apply_to_limiter_disables_when_explicitly_unlimited() {
+    let mut limiter = Some(BandwidthLimiter::new(
+        NonZeroU64::new(8 * 1024).expect("limit"),
+    ));
+
+    let components = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+    let change = components.apply_to_limiter(&mut limiter);
+
+    assert_eq!(change, LimiterChange::Disabled);
+    assert!(limiter.is_none());
+}
+
+#[test]
+fn components_apply_to_limiter_updates_burst_with_unlimited_override() {
+    let limit = NonZeroU64::new(4 * 1024 * 1024).expect("limit");
+    let mut limiter = Some(BandwidthLimiter::new(limit));
+    let burst = NonZeroU64::new(256 * 1024).expect("burst");
+
+    let components = BandwidthLimitComponents::new_with_flags(None, Some(burst), false, true);
+    let change = components.apply_to_limiter(&mut limiter);
+
+    assert_eq!(change, LimiterChange::Updated);
+
+    let limiter = limiter.expect("limiter should remain active");
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert_eq!(limiter.burst_bytes(), Some(burst));
+}
+
+#[test]
+fn new_with_flags_retains_unlimited_burst_specification() {
+    let burst = NonZeroU64::new(128 * 1024).expect("burst");
+    let components = BandwidthLimitComponents::new_with_flags(None, Some(burst), false, true);
+
+    assert!(!components.limit_specified());
+    assert!(components.burst_specified());
+    assert_eq!(components.burst(), Some(burst));
+    assert!(components.is_unlimited());
+}
+
+#[test]
+fn new_with_flags_forces_limit_specified_when_rate_present() {
+    let limit = NonZeroU64::new(2048).expect("limit");
+    let components = BandwidthLimitComponents::new_with_flags(Some(limit), None, false, false);
+
+    assert!(components.limit_specified());
+    assert_eq!(components.rate(), Some(limit));
+    assert!(components.burst().is_none());
 }
 
 #[test]
