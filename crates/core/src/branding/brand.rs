@@ -272,9 +272,37 @@ fn version_suffix_is_allowed(suffix: &str) -> bool {
     }
 
     const WINDOWS_EXECUTABLE_EXTENSIONS: [&[u8]; 4] = [b".exe", b".com", b".bat", b".cmd"];
-    WINDOWS_EXECUTABLE_EXTENSIONS.iter().any(|ext| {
+    if WINDOWS_EXECUTABLE_EXTENSIONS.iter().any(|ext| {
         bytes.len() >= ext.len() && bytes[bytes.len() - ext.len()..].eq_ignore_ascii_case(ext)
-    })
+    }) {
+        return true;
+    }
+
+    let mut start = 0;
+    while let Some(&byte) = rest.get(start) {
+        if matches!(byte, b'-' | b'_' | b'.') {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+
+    let trimmed = &rest[start..];
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if trimmed.iter().all(u8::is_ascii_alphabetic) {
+        const ALLOWED_ALPHA_SUFFIXES: [&[u8]; 4] = [b"debug", b"dbg", b"devel", b"dev"];
+        if ALLOWED_ALPHA_SUFFIXES
+            .iter()
+            .any(|suffix| trimmed.eq_ignore_ascii_case(suffix))
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
