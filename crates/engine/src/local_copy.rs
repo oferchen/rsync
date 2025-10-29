@@ -234,13 +234,12 @@ fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
         }
 
         let absolute = normalize_path(path);
-        let device_from_metadata = metadata.volume_serial_number() as u64;
+        // The standard library's `MetadataExt::volume_serial_number` accessor is currently
+        // unstable on Windows, so fall back to deriving the device identifier from the path
+        // components instead.
+        let _ = metadata;
 
-        if device_from_metadata != 0 {
-            Some(device_from_metadata)
-        } else {
-            device_from_components(absolute.as_ref())
-        }
+        device_from_components(absolute.as_ref())
     }
 
     #[cfg(not(any(unix, windows)))]
