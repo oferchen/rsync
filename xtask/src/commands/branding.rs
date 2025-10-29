@@ -63,8 +63,35 @@ where
 /// Executes the `branding` command.
 pub fn execute(workspace: &Path, options: BrandingOptions) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
+    validate_branding(&branding)?;
     let output = render_branding(&branding, options.format)?;
     println!("{output}");
+    Ok(())
+}
+
+fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
+    if branding.brand.trim().is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "workspace brand label must not be empty",
+        )));
+    }
+
+    let expected_prefix = format!("{}-", branding.brand);
+
+    if !branding.client_bin.starts_with(&expected_prefix) {
+        return Err(TaskError::Validation(format!(
+            "client binary '{}' must use '{}' prefix",
+            branding.client_bin, expected_prefix
+        )));
+    }
+
+    if !branding.daemon_bin.starts_with(&expected_prefix) {
+        return Err(TaskError::Validation(format!(
+            "daemon binary '{}' must use '{}' prefix",
+            branding.daemon_bin, expected_prefix
+        )));
+    }
+
     Ok(())
 }
 
@@ -250,5 +277,39 @@ mod tests {
         let json = render_branding(&branding, BrandingOutputFormat::Json).expect("json");
         let expected = render_branding_json(&branding).expect("json");
         assert_eq!(json, expected);
+    }
+
+    #[test]
+    fn validate_branding_accepts_prefixed_binaries() {
+        let branding = sample_branding();
+        validate_branding(&branding).expect("validation succeeds");
+    }
+
+    #[test]
+    fn validate_branding_rejects_missing_client_prefix() {
+        let mut branding = sample_branding();
+        branding.client_bin = String::from("rsync");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(
+            matches!(error, TaskError::Validation(message) if message.contains("client binary"))
+        );
+    }
+
+    #[test]
+    fn validate_branding_rejects_missing_daemon_prefix() {
+        let mut branding = sample_branding();
+        branding.daemon_bin = String::from("rsyncd");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(
+            matches!(error, TaskError::Validation(message) if message.contains("daemon binary"))
+        );
+    }
+
+    #[test]
+    fn validate_branding_rejects_empty_brand() {
+        let mut branding = sample_branding();
+        branding.brand.clear();
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(error, TaskError::Validation(message) if message.contains("brand label")));
     }
 }
