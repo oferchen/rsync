@@ -92,6 +92,81 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
+    if branding.legacy_client_bin.trim().is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "legacy client binary name must not be empty",
+        )));
+    }
+
+    if branding.legacy_daemon_bin.trim().is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "legacy daemon binary name must not be empty",
+        )));
+    }
+
+    if !branding.rust_version.starts_with(&branding.upstream_version) {
+        return Err(TaskError::Validation(format!(
+            "rust_version '{}' must include upstream_version '{}' prefix",
+            branding.rust_version, branding.upstream_version
+        )));
+    }
+
+    if !branding.rust_version.ends_with("-rust") {
+        return Err(TaskError::Validation(format!(
+            "rust_version '{}' must end with '-rust' suffix",
+            branding.rust_version
+        )));
+    }
+
+    ensure_under_dir(
+        &branding.daemon_config,
+        &branding.daemon_config_dir,
+        "daemon_config",
+        "daemon_config_dir",
+    )?;
+    ensure_under_dir(
+        &branding.daemon_secrets,
+        &branding.daemon_config_dir,
+        "daemon_secrets",
+        "daemon_config_dir",
+    )?;
+    ensure_under_dir(
+        &branding.legacy_daemon_config,
+        &branding.legacy_daemon_config_dir,
+        "legacy_daemon_config",
+        "legacy_daemon_config_dir",
+    )?;
+    ensure_under_dir(
+        &branding.legacy_daemon_secrets,
+        &branding.legacy_daemon_config_dir,
+        "legacy_daemon_secrets",
+        "legacy_daemon_config_dir",
+    )?;
+
+    Ok(())
+}
+
+fn ensure_under_dir(
+    path: &str,
+    expected_dir: &str,
+    path_label: &str,
+    dir_label: &str,
+) -> TaskResult<()> {
+    let candidate = std::path::Path::new(path);
+    let expected = std::path::Path::new(expected_dir);
+
+    let parent = candidate.parent().ok_or_else(|| {
+        TaskError::Validation(format!(
+            "{path_label} '{path}' must reside under {dir_label} '{expected_dir}'",
+        ))
+    })?;
+
+    if parent != expected {
+        return Err(TaskError::Validation(format!(
+            "{path_label} '{path}' must reside under {dir_label} '{expected_dir}'",
+        )));
+    }
+
     Ok(())
 }
 
@@ -311,5 +386,62 @@ mod tests {
         branding.brand.clear();
         let error = validate_branding(&branding).unwrap_err();
         assert!(matches!(error, TaskError::Validation(message) if message.contains("brand label")));
+    }
+
+    #[test]
+    fn validate_branding_rejects_empty_legacy_names() {
+        let mut branding = sample_branding();
+        branding.legacy_client_bin.clear();
+        let client_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            client_error,
+            TaskError::Validation(message) if message.contains("legacy client binary")
+        ));
+
+        let mut branding = sample_branding();
+        branding.legacy_daemon_bin.clear();
+        let daemon_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            daemon_error,
+            TaskError::Validation(message) if message.contains("legacy daemon binary")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_requires_rust_version_prefix_and_suffix() {
+        let mut branding = sample_branding();
+        branding.rust_version = String::from("4.0.0-rust");
+        let prefix_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            prefix_error,
+            TaskError::Validation(message) if message.contains("must include upstream_version")
+        ));
+
+        let mut branding = sample_branding();
+        branding.rust_version = String::from("3.4.1-custom");
+        let suffix_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            suffix_error,
+            TaskError::Validation(message) if message.contains("must end with")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_requires_paths_to_match_directories() {
+        let mut branding = sample_branding();
+        branding.daemon_config = String::from("/etc/oc-rsyncd.conf");
+        let daemon_config_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            daemon_config_error,
+            TaskError::Validation(message) if message.contains("daemon_config")
+        ));
+
+        let mut branding = sample_branding();
+        branding.legacy_daemon_secrets = String::from("/var/lib/rsyncd.secrets");
+        let legacy_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            legacy_error,
+            TaskError::Validation(message) if message.contains("legacy_daemon_secrets")
+        ));
     }
 }
