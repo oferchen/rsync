@@ -193,3 +193,9 @@ pub(crate) const fn validate_protocol_tables() {
         "supported protocol range must match upstream rsync's protocol span",
     );
 }
+
+// Evaluate the validation routine at compile time to guard against drift between
+// the advertised protocol list and the supporting constants.
+const _: () = {
+    validate_protocol_tables();
+};
