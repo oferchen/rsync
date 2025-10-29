@@ -1,277 +1,32 @@
-//! `--out-format` parsing and rendering helpers.
+#![deny(unsafe_code)]
 
-use std::ffi::OsStr;
+//! Rendering helpers for parsed `--out-format` specifications.
+
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::time::SystemTime;
 
 use rsync_checksums::strong::Md5;
 use rsync_core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
-use rsync_core::message::{Message, Role};
-use rsync_core::rsync_error;
 use time::OffsetDateTime;
 use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
-use super::defaults::LIST_TIMESTAMP_FORMAT;
-use super::{describe_event_kind, format_list_permissions};
+use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions};
 
-/// Parsed representation of an `--out-format` specification.
-#[derive(Clone, Debug)]
-pub(super) struct OutFormat {
-    tokens: Vec<OutFormatToken>,
-}
-
-#[derive(Clone, Debug)]
-enum OutFormatToken {
-    Literal(String),
-    Placeholder(OutFormatPlaceholder),
-}
-
-#[derive(Clone, Copy, Debug)]
-enum OutFormatPlaceholder {
-    FileName,
-    FileNameWithSymlinkTarget,
-    FullPath,
-    ItemizedChanges,
-    FileLength,
-    BytesTransferred,
-    ChecksumBytes,
-    Operation,
-    ModifyTime,
-    PermissionString,
-    CurrentTime,
-    SymlinkTarget,
-    OwnerName,
-    GroupName,
-    OwnerUid,
-    OwnerGid,
-    ProcessId,
-    RemoteHost,
-    RemoteAddress,
-    ModuleName,
-    ModulePath,
-    FullChecksum,
-}
-
-/// Context values used when rendering `--out-format` placeholders.
-#[derive(Clone, Debug, Default)]
-pub(super) struct OutFormatContext {
-    pub(super) remote_host: Option<String>,
-    pub(super) remote_address: Option<String>,
-    pub(super) module_name: Option<String>,
-    pub(super) module_path: Option<String>,
-}
-
-/// Parses a command-line supplied `--out-format` specification into tokens.
-pub(super) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
-    let text = value.to_string_lossy();
-    if text.is_empty() {
-        return Err(rsync_error!(1, "--out-format value must not be empty").with_role(Role::Client));
-    }
-
-    let mut tokens = Vec::new();
-    let mut literal = String::new();
-    let mut chars = text.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '%' => {
-                let Some(next) = chars.next() else {
-                    return Err(rsync_error!(1, "--out-format value may not end with '%'")
-                        .with_role(Role::Client));
-                };
-                match next {
-                    '%' => literal.push('%'),
-                    'n' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FileName));
-                    }
-                    'N' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::FileNameWithSymlinkTarget,
-                        ));
-                    }
-                    'f' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::FullPath));
-                    }
-                    'i' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::ItemizedChanges,
-                        ));
-                    }
-                    'l' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::FileLength,
-                        ));
-                    }
-                    'b' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::BytesTransferred,
-                        ));
-                    }
-                    'c' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::ChecksumBytes,
-                        ));
-                    }
-                    'o' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::Operation));
-                    }
-                    'M' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::ModifyTime,
-                        ));
-                    }
-                    'B' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::PermissionString,
-                        ));
-                    }
-                    'L' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::SymlinkTarget,
-                        ));
-                    }
-                    't' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::CurrentTime,
-                        ));
-                    }
-                    'u' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerName));
-                    }
-                    'g' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::GroupName));
-                    }
-                    'U' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerUid));
-                    }
-                    'G' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::OwnerGid));
-                    }
-                    'p' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(OutFormatPlaceholder::ProcessId));
-                    }
-                    'h' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::RemoteHost,
-                        ));
-                    }
-                    'a' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::RemoteAddress,
-                        ));
-                    }
-                    'm' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::ModuleName,
-                        ));
-                    }
-                    'P' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::ModulePath,
-                        ));
-                    }
-                    'C' => {
-                        if !literal.is_empty() {
-                            tokens.push(OutFormatToken::Literal(std::mem::take(&mut literal)));
-                        }
-                        tokens.push(OutFormatToken::Placeholder(
-                            OutFormatPlaceholder::FullChecksum,
-                        ));
-                    }
-                    other => {
-                        return Err(rsync_error!(
-                            1,
-                            format!("unsupported --out-format placeholder '%{other}'")
-                        )
-                        .with_role(Role::Client));
-                    }
-                }
-            }
-            _ => literal.push(ch),
-        }
-    }
-
-    if !literal.is_empty() {
-        tokens.push(OutFormatToken::Literal(literal));
-    }
-
-    Ok(OutFormat { tokens })
-}
+use super::tokens::{OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken};
 
 impl OutFormat {
     /// Renders an event according to the parsed `--out-format` tokens.
-    pub(super) fn render<W: Write + ?Sized>(
+    pub(crate) fn render<W: Write + ?Sized>(
         &self,
         event: &ClientEvent,
         context: &OutFormatContext,
         writer: &mut W,
     ) -> io::Result<()> {
         use std::fmt::Write as _;
+
         let mut buffer = String::new();
-        for token in &self.tokens {
+        for token in self.tokens() {
             match token {
                 OutFormatToken::Literal(text) => buffer.push_str(text),
                 OutFormatToken::Placeholder(placeholder) => match placeholder {
@@ -284,7 +39,7 @@ impl OutFormat {
                             matches!(
                                 placeholder,
                                 OutFormatPlaceholder::FileName
-                                    | OutFormatPlaceholder::FileNameWithSymlinkTarget
+                                    | OutFormatPlaceholder::FileNameWithSymlinkTarget,
                             ),
                         );
                         if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget) {
@@ -394,16 +149,10 @@ impl OutFormat {
             writer.write_all(b"\n")
         }
     }
-
-    /// Returns `true` when no tokens were parsed from the format string.
-    #[cfg(test)]
-    pub(super) fn is_empty(&self) -> bool {
-        self.tokens.is_empty()
-    }
 }
 
 /// Emits each event using the supplied `--out-format` specification.
-pub(super) fn emit_out_format<W: Write + ?Sized>(
+pub(crate) fn emit_out_format<W: Write + ?Sized>(
     events: &[ClientEvent],
     format: &OutFormat,
     context: &OutFormatContext,
@@ -572,7 +321,7 @@ fn format_full_checksum(event: &ClientEvent) -> String {
 
     if !matches!(
         event.kind(),
-        ClientEventKind::DataCopied | ClientEventKind::MetadataReused | ClientEventKind::HardLink
+        ClientEventKind::DataCopied | ClientEventKind::MetadataReused | ClientEventKind::HardLink,
     ) {
         return EMPTY_CHECKSUM.to_string();
     }
