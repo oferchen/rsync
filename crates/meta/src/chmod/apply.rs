@@ -30,6 +30,15 @@ pub(crate) fn apply_clauses(
     mode
 }
 
+#[cfg(not(unix))]
+pub(crate) fn apply_clauses(
+    _clauses: &[Clause],
+    mode: u32,
+    _file_type: std::fs::FileType,
+) -> u32 {
+    mode
+}
+
 #[cfg(unix)]
 fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -> u32 {
     let before = mode;
