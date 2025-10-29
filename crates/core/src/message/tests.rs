@@ -906,7 +906,14 @@ fn message_segments_copy_to_slice_accepts_empty_inputs() {
 
 #[test]
 fn message_copy_to_slice_error_converts_into_io_error() {
-    let err = CopyToSliceError::new(16, 8);
+    let message = Message::info("ready");
+    let mut scratch = MessageScratch::new();
+    let segments = message.as_segments(&mut scratch, false);
+
+    let mut undersized = vec![0u8; segments.len().saturating_sub(1)];
+    let err = segments
+        .copy_to_slice(&mut undersized)
+        .expect_err("buffer is intentionally undersized");
     let io_err: io::Error = err.into();
 
     assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
