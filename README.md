@@ -141,6 +141,16 @@ Generate a CycloneDX SBOM for packaging via the workspace helper:
 cargo run -p xtask -- sbom
 ```
 
+Collect code coverage reports (enforced at ≥95% line coverage in CI) by first
+installing the `cargo-llvm-cov` subcommand and the LLVM tooling component. The
+binary name is **`cargo-llvm-cov`**, not `llvm-cov`:
+
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+cargo llvm-cov --workspace --lcov --output-path coverage.lcov --fail-under-lines 95
+```
+
 The top-level documents provide additional context:
 
 - `docs/production_scope_p1.md` freezes the scope that must be green before the
