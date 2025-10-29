@@ -8,7 +8,8 @@
 //! keeps the binary front-ends and supporting crates free from duplicated string
 //! literals. Callers should prefer these helpers instead of hard-coding program
 //! names or configuration paths. Consumers that need the entire metadata set can
-//! use [`metadata()`] to obtain a snapshot that mirrors the manifest entries.
+//! use [`metadata()`](crate::workspace::metadata) to obtain a snapshot that mirrors
+//! the manifest entries.
 
 mod constants;
 mod metadata;
