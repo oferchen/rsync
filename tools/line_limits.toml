@@ -33,11 +33,6 @@ max_lines = 4400
 warn_lines = 4380
 
 [[overrides]]
-path = "crates/core/src/message/tests.rs"
-max_lines = 2300
-warn_lines = 2280
-
-[[overrides]]
 path = "crates/daemon/src/lib.rs"
 max_lines = 10100
 warn_lines = 10000
