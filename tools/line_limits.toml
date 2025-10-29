@@ -18,9 +18,19 @@ max_lines = 14073
 warn_lines = 13973
 
 [[overrides]]
-path = "crates/core/src/client.rs"
+path = "crates/core/src/client/mod.rs"
 max_lines = 11320
 warn_lines = 11220
+
+[[overrides]]
+path = "crates/core/src/client/fallback/mod.rs"
+max_lines = 1200
+warn_lines = 1100
+
+[[overrides]]
+path = "crates/core/src/client/fallback/runner/mod.rs"
+max_lines = 800
+warn_lines = 700
 
 [[overrides]]
 path = "crates/daemon/src/lib.rs"
