@@ -19,14 +19,9 @@ mod frontend;
 pub use frontend::{exit_code_from, run};
 
 #[allow(unused_imports)]
-pub(crate) use frontend::{
-    describe_event_kind,
-    emit_out_format,
-    format_list_permissions,
-    parse_out_format,
-    OutFormat,
-    OutFormatContext,
-    LIST_TIMESTAMP_FORMAT,
-};
-#[allow(unused_imports)]
 pub(crate) use frontend::password;
+#[allow(unused_imports)]
+pub(crate) use frontend::{
+    LIST_TIMESTAMP_FORMAT, OutFormat, OutFormatContext, describe_event_kind, emit_out_format,
+    format_list_permissions, parse_out_format,
+};
