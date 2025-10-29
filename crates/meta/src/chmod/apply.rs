@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use super::spec::{Clause, ClauseKind, Operation, PermSpec, SymbolicClause};
 
 #[cfg(unix)]

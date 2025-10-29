@@ -16,6 +16,7 @@ mod spec;
 
 use std::fmt;
 
+#[cfg(unix)]
 use apply::apply_clauses;
 use parse::parse_spec;
 use spec::Clause;
