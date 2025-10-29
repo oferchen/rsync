@@ -36,10 +36,10 @@ fn classify_program_name(program: &str) -> Option<Brand> {
 }
 
 fn brand_for_program_path(path: &Path) -> Option<Brand> {
-    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-        if let Some(brand) = classify_program_name(name) {
-            return Some(brand);
-        }
+    if let Some(name) = path.file_name().and_then(|name| name.to_str())
+        && let Some(brand) = classify_program_name(name)
+    {
+        return Some(brand);
     }
 
     path.file_stem()
