@@ -138,11 +138,6 @@ max_lines = 1017
 warn_lines = 917
 
 [[overrides]]
-path = "crates/bandwidth/src/limiter/tests.rs"
-max_lines = 1010
-warn_lines = 910
-
-[[overrides]]
 path = "crates/protocol/src/legacy/lines.rs"
 max_lines = 827
 warn_lines = 727
