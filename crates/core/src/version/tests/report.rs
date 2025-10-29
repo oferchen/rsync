@@ -130,14 +130,18 @@ fn version_info_report_for_daemon_brand_matches_builder() {
 
 #[test]
 fn version_info_report_for_brand_with_config_matches_builder() {
-    let mut config = VersionInfoConfig::default();
-    config.supports_ipv6 = false;
-    config.supports_symlinks = false;
+    let config = VersionInfoConfig {
+        supports_ipv6: false,
+        supports_symlinks: false,
+        ..VersionInfoConfig::default()
+    };
     let expected = VersionInfoReport::new(config).with_client_brand(Brand::Upstream);
 
-    let mut alternate = VersionInfoConfig::default();
-    alternate.supports_ipv6 = false;
-    alternate.supports_symlinks = false;
+    let alternate = VersionInfoConfig {
+        supports_ipv6: false,
+        supports_symlinks: false,
+        ..VersionInfoConfig::default()
+    };
     let actual = VersionInfoReport::for_client_brand_with_config(alternate, Brand::Upstream);
 
     assert_eq!(actual.human_readable(), expected.human_readable());
