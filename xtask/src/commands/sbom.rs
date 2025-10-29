@@ -1,5 +1,8 @@
 use crate::error::{TaskError, TaskResult};
-use crate::util::{is_help_flag, run_cargo_tool};
+use crate::util::is_help_flag;
+use cargo_metadata::{CargoOpt, Metadata, MetadataCommand, Package};
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -67,25 +70,12 @@ pub fn execute(workspace: &Path, options: SbomOptions) -> TaskResult<()> {
     println!("Generating SBOM at {}", output_path.display());
 
     let manifest_path = workspace.join("Cargo.toml");
-    let args = vec![
-        OsString::from("cyclonedx"),
-        OsString::from("--manifest-path"),
-        manifest_path.into_os_string(),
-        OsString::from("--workspace"),
-        OsString::from("--format"),
-        OsString::from("json"),
-        OsString::from("--output"),
-        output_path.into_os_string(),
-        OsString::from("--all-features"),
-        OsString::from("--locked"),
-    ];
-
-    run_cargo_tool(
-        workspace,
-        args,
-        "cargo cyclonedx",
-        "install the cargo-cyclonedx subcommand (cargo install cargo-cyclonedx)",
-    )
+    let metadata = load_metadata(&manifest_path)?;
+    let bom = build_bom(&metadata)?;
+    let document = serde_json::to_vec_pretty(&bom)
+        .map_err(|error| TaskError::Metadata(format!("failed to encode SBOM JSON: {error}")))?;
+    fs::write(output_path, document)?;
+    Ok(())
 }
 
 /// Returns usage text for the command.
@@ -93,6 +83,155 @@ pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask sbom [--output PATH]\n\nOptions:\n  --output PATH    Override the SBOM output path (relative to the workspace root unless absolute)\n  -h, --help       Show this help message",
     )
+}
+
+fn load_metadata(manifest_path: &Path) -> TaskResult<Metadata> {
+    let mut command = MetadataCommand::new();
+    command
+        .manifest_path(manifest_path)
+        .features(CargoOpt::AllFeatures)
+        .other_options(vec![String::from("--locked")]);
+
+    command
+        .exec()
+        .map_err(|error| TaskError::Metadata(format!("failed to load cargo metadata: {error}")))
+}
+
+fn build_bom(metadata: &Metadata) -> TaskResult<Bom> {
+    let workspace_members: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
+    let mut components_by_id = HashMap::new();
+
+    for package in &metadata.packages {
+        let component = Component::from_package(package, workspace_members.contains(&package.id));
+        components_by_id.insert(package.id.clone(), component);
+    }
+
+    let root_id = metadata
+        .resolve
+        .as_ref()
+        .and_then(|resolve| resolve.root.clone())
+        .or_else(|| metadata.workspace_members.first().cloned())
+        .ok_or_else(|| {
+            TaskError::Metadata(String::from("workspace metadata missing root package"))
+        })?;
+
+    let root_component = components_by_id
+        .get(&root_id)
+        .cloned()
+        .ok_or_else(|| TaskError::Metadata(String::from("failed to identify root component")))?;
+
+    let mut components: Vec<_> = components_by_id.values().cloned().collect();
+    components.sort_by(|lhs, rhs| lhs.bom_ref.cmp(&rhs.bom_ref));
+
+    let mut dependencies = Vec::new();
+    if let Some(resolve) = &metadata.resolve {
+        for node in &resolve.nodes {
+            let Some(component) = components_by_id.get(&node.id) else {
+                continue;
+            };
+
+            let mut depends_on = node
+                .deps
+                .iter()
+                .filter_map(|dep| components_by_id.get(&dep.pkg))
+                .map(|dependency| dependency.bom_ref.clone())
+                .collect::<Vec<_>>();
+            depends_on.sort();
+            depends_on.dedup();
+
+            dependencies.push(Dependency {
+                reference: component.bom_ref.clone(),
+                depends_on,
+            });
+        }
+    }
+
+    dependencies.sort_by(|lhs, rhs| lhs.reference.cmp(&rhs.reference));
+
+    Ok(Bom {
+        bom_format: String::from("CycloneDX"),
+        spec_version: String::from("1.5"),
+        version: 1,
+        metadata: MetadataSection {
+            component: root_component.clone(),
+            tools: vec![Tool {
+                vendor: Some(String::from("oc-rsync")),
+                name: String::from("xtask sbom"),
+                version: Some(String::from(env!("CARGO_PKG_VERSION"))),
+            }],
+        },
+        components,
+        dependencies,
+    })
+}
+
+#[derive(Clone, Serialize)]
+struct Bom {
+    #[serde(rename = "bomFormat")]
+    bom_format: String,
+    #[serde(rename = "specVersion")]
+    spec_version: String,
+    version: u32,
+    metadata: MetadataSection,
+    components: Vec<Component>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    dependencies: Vec<Dependency>,
+}
+
+#[derive(Clone, Serialize)]
+struct MetadataSection {
+    component: Component,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Tool>,
+}
+
+#[derive(Clone, Serialize)]
+struct Tool {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vendor: Option<String>,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct Component {
+    #[serde(rename = "bom-ref")]
+    bom_ref: String,
+    #[serde(rename = "type")]
+    component_type: String,
+    name: String,
+    version: String,
+    purl: String,
+}
+
+impl Component {
+    fn from_package(package: &Package, is_workspace_member: bool) -> Self {
+        let reference = bom_reference(package);
+        Self {
+            bom_ref: reference.clone(),
+            component_type: if is_workspace_member {
+                String::from("application")
+            } else {
+                String::from("library")
+            },
+            name: package.name.clone(),
+            version: package.version.to_string(),
+            purl: reference,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct Dependency {
+    #[serde(rename = "ref")]
+    reference: String,
+    #[serde(rename = "dependsOn", skip_serializing_if = "Vec::is_empty")]
+    depends_on: Vec<String>,
+}
+
+fn bom_reference(package: &Package) -> String {
+    format!("pkg:cargo/{}@{}", package.name, package.version)
 }
 
 #[cfg(test)]
