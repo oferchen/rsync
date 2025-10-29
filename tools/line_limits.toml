@@ -98,7 +98,7 @@ max_lines = 1303
 warn_lines = 1203
 
 [[overrides]]
-path = "crates/cli/src/out_format.rs"
+path = "crates/cli/src/out_format/mod.rs"
 max_lines = 650
 warn_lines = 600
 
@@ -108,7 +108,7 @@ max_lines = 9800
 warn_lines = 9700
 
 [[overrides]]
-path = "crates/core/src/version/report.rs"
+path = "crates/core/src/version/report/mod.rs"
 max_lines = 650
 warn_lines = 600
 
