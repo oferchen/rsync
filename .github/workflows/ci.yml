@@ -205,11 +205,6 @@ jobs:
             target: i686-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-          - os: windows
-            arch: aarch64
-            target: aarch64-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
     env:
       CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
