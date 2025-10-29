@@ -69,13 +69,14 @@ fn limiter_records_sleep_for_large_writes() {
     let mut session = recorded_sleep_session();
     session.clear();
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    limiter.register(4096);
+    let sleep = limiter.register(4096);
     let recorded = session.take();
     assert!(
         recorded
             .iter()
             .any(|duration| duration >= &Duration::from_micros(MINIMUM_SLEEP_MICROS as u64))
     );
+    assert!(sleep.requested() >= Duration::from_micros(MINIMUM_SLEEP_MICROS as u64));
 }
 
 #[test]
@@ -84,10 +85,11 @@ fn limiter_records_precise_sleep_for_single_second() {
     session.clear();
 
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
-    limiter.register(1024);
+    let sleep = limiter.register(1024);
 
     let recorded = session.take();
     assert_eq!(recorded, [Duration::from_secs(1)]);
+    assert_eq!(sleep.requested(), Duration::from_secs(1));
 }
 
 #[test]
@@ -98,7 +100,7 @@ fn limiter_accumulates_debt_across_small_writes() {
     let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
 
     for _ in 0..16 {
-        limiter.register(64);
+        let _ = limiter.register(64);
     }
 
     let recorded = session.take();
@@ -131,10 +133,11 @@ fn limiter_clamps_debt_to_configured_burst() {
         Some(burst),
     );
 
-    limiter.register(1 << 20);
+    let sleep = limiter.register(1 << 20);
 
     assert!(
         limiter.accumulated_debt_for_testing() <= u128::from(burst.get()),
         "debt exceeds configured burst"
     );
+    assert!(sleep.requested() <= Duration::from_millis(1));
 }

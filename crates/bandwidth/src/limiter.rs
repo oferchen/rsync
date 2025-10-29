@@ -20,6 +20,39 @@ const MAX_REPRESENTABLE_MICROSECONDS: u128 =
 /// Maximum duration supported by [`std::thread::sleep`] without panicking on the current platform.
 const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
 
+/// Result returned by [`BandwidthLimiter::register`] describing how long the limiter slept.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[must_use]
+pub struct LimiterSleep {
+    requested: Duration,
+    actual: Duration,
+}
+
+impl LimiterSleep {
+    /// Constructs a new [`LimiterSleep`] record from the requested and actual durations.
+    pub const fn new(requested: Duration, actual: Duration) -> Self {
+        Self { requested, actual }
+    }
+
+    /// Returns the amount of time the limiter attempted to sleep.
+    #[must_use]
+    pub const fn requested(&self) -> Duration {
+        self.requested
+    }
+
+    /// Returns the time actually observed by the limiter.
+    #[must_use]
+    pub const fn actual(&self) -> Duration {
+        self.actual
+    }
+
+    /// Returns `true` when the limiter skipped sleeping altogether.
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        self.requested.is_zero() && self.actual.is_zero()
+    }
+}
+
 fn duration_from_microseconds(us: u128) -> Duration {
     if us == 0 {
         return Duration::ZERO;
@@ -426,10 +459,13 @@ impl BandwidthLimiter {
     /// defers the pause and tracks the deficit so subsequent writes aggregate the
     /// debt until the threshold is crossed. This mirrors upstream rsync, where
     /// bursts of small writes eventually trigger a sleep that covers the accrued
-    /// cost instead of waking the scheduler for every sub-interval chunk.
-    pub fn register(&mut self, bytes: usize) {
+    /// cost instead of waking the scheduler for every sub-interval chunk. The
+    /// method returns a [`LimiterSleep`] value that captures both the requested
+    /// throttling interval and the actual time observed, allowing callers to
+    /// surface pacing statistics.
+    pub fn register(&mut self, bytes: usize) -> LimiterSleep {
         if bytes == 0 {
-            return;
+            return LimiterSleep::default();
         }
 
         self.total_written = self.total_written.saturating_add(bytes as u128);
@@ -460,7 +496,7 @@ impl BandwidthLimiter {
 
         if sleep_us < MINIMUM_SLEEP_MICROS {
             self.last_instant = Some(start);
-            return;
+            return LimiterSleep::default();
         }
 
         let requested = duration_from_microseconds(sleep_us);
@@ -482,6 +518,8 @@ impl BandwidthLimiter {
         self.total_written = leftover;
         self.clamp_debt_to_burst();
         self.last_instant = Some(end);
+        let actual = Duration::from_micros(elapsed_us as u64);
+        LimiterSleep::new(requested, actual)
     }
 
     /// Returns the outstanding byte debt accumulated by the limiter.

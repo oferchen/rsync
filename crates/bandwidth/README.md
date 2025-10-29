@@ -67,7 +67,7 @@ let limit = parse_bandwidth_argument("8M").expect("valid limit")
 let mut limiter = BandwidthLimiter::new(limit);
 let chunk = limiter.recommended_read_size(1 << 20);
 assert!(chunk <= 1 << 20);
-limiter.register(chunk);
+let _sleep = limiter.register(chunk);
 ```
 
 The example mirrors how higher layers throttle outgoing writes. The limiter
