@@ -345,6 +345,16 @@ fn validate_documentation(workspace: &Path, branding: &WorkspaceBranding) -> Tas
                 branding.daemon_config.as_str(),
             ],
         },
+        DocumentationCheck {
+            relative_path: "docs/feature_matrix.md",
+            required_snippets: vec![
+                branding.client_bin.as_str(),
+                branding.daemon_bin.as_str(),
+                branding.rust_version.as_str(),
+                branding.daemon_config.as_str(),
+                branding.daemon_secrets.as_str(),
+            ],
+        },
     ];
 
     for check in checks {
