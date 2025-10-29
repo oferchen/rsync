@@ -502,7 +502,6 @@ fn create_device_node_inner(
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
     use rustix::fs::{CWD, Dev, FileType, Mode, major, makedev, minor, mknodat};
-    use std::convert::TryInto;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
@@ -527,10 +526,7 @@ fn create_device_node_inner(
         metadata.permissions().mode() & 0o777,
     )?;
     let mode = Mode::from_bits_truncate(mode_bits.into());
-    let raw = metadata.rdev();
-    let raw: Dev = raw
-        .try_into()
-        .map_err(|_| invalid_device_error(destination))?;
+    let raw: Dev = metadata.rdev();
     let device = makedev(major(raw), minor(raw));
 
     mknodat(CWD, destination, node_type, mode, device).map_err(|error| {
@@ -643,7 +639,15 @@ fn invalid_mode_error(context: &'static str, destination: &Path) -> MetadataErro
     )
 }
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
 fn invalid_device_error(destination: &Path) -> MetadataError {
     MetadataError::new(
         "create device",
