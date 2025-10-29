@@ -4255,13 +4255,13 @@ fn apply_module_bandwidth_limit(
     let burst_specified =
         module_burst_specified && (module_limit_configured || module_limit_specified);
 
-    apply_effective_limit(
-        limiter,
+    BandwidthLimitComponents::new_with_flags(
         module_limit,
-        limit_specified,
         module_burst,
+        limit_specified,
         burst_specified,
     )
+    .apply_to_limiter(limiter)
 }
 
 #[allow(clippy::too_many_arguments)]

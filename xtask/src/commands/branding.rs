@@ -104,7 +104,10 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    if !branding.rust_version.starts_with(&branding.upstream_version) {
+    if !branding
+        .rust_version
+        .starts_with(&branding.upstream_version)
+    {
         return Err(TaskError::Validation(format!(
             "rust_version '{}' must include upstream_version '{}' prefix",
             branding.rust_version, branding.upstream_version

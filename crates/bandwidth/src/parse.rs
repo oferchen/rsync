@@ -3,7 +3,7 @@ use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 
-use crate::limiter::BandwidthLimiter;
+use crate::limiter::{BandwidthLimiter, LimiterChange, apply_effective_limit};
 
 /// Parsed `--bwlimit` components consisting of an optional rate and burst size.
 ///
@@ -28,6 +28,34 @@ impl BandwidthLimitComponents {
     #[must_use]
     pub const fn new(rate: Option<NonZeroU64>, burst: Option<NonZeroU64>) -> Self {
         Self::new_internal(rate, burst, rate.is_some(), burst.is_some())
+    }
+
+    /// Constructs a component set while explicitly controlling the specification flags.
+    ///
+    /// The helper mirrors upstream precedence rules where callers may need to
+    /// distinguish between inherited defaults and user-supplied overrides.  It
+    /// preserves explicit burst components even when the limit is unlimited so
+    /// daemon modules can override the negotiated burst while keeping the
+    /// existing limiter active.  When a rate is provided, the combination always
+    /// records that a limit was specified to reflect the caller's intent.
+    #[must_use]
+    pub const fn new_with_flags(
+        rate: Option<NonZeroU64>,
+        burst: Option<NonZeroU64>,
+        limit_specified: bool,
+        burst_specified: bool,
+    ) -> Self {
+        let has_rate = rate.is_some();
+        let effective_limit_specified = if has_rate { true } else { limit_specified };
+        let effective_burst = if burst_specified { burst } else { None };
+        let effective_burst_specified = effective_burst.is_some() && burst_specified;
+
+        Self {
+            rate,
+            burst: effective_burst,
+            limit_specified: effective_limit_specified,
+            burst_specified: effective_burst_specified,
+        }
     }
 
     /// Returns a component set that disables throttling.
@@ -122,6 +150,22 @@ impl BandwidthLimitComponents {
     pub fn into_limiter(self) -> Option<BandwidthLimiter> {
         self.rate
             .map(|rate| BandwidthLimiter::with_burst(rate, self.burst))
+    }
+
+    /// Applies the component set to an existing limiter, mirroring rsync's precedence rules.
+    ///
+    /// The helper forwards to [`apply_effective_limit`] so higher layers do not
+    /// have to thread individual specification flags through their call sites.
+    /// It returns the resulting [`LimiterChange`], allowing callers to surface
+    /// diagnostics or skip follow-up work when no adjustments were required.
+    pub fn apply_to_limiter(&self, limiter: &mut Option<BandwidthLimiter>) -> LimiterChange {
+        apply_effective_limit(
+            limiter,
+            self.rate,
+            self.limit_specified,
+            self.burst,
+            self.burst_specified,
+        )
     }
 
     /// Returns a new component set that applies an overriding cap to the current configuration.
