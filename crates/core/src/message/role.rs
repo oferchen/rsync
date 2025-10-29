@@ -51,7 +51,8 @@ impl Role {
     ///
     /// The returned string matches the suffix rendered by upstream rsync. Keeping the
     /// mapping here allows higher layers to reuse the canonical spelling when
-    /// constructing out-of-band logs or telemetry derived from [`Message`] instances.
+    /// constructing out-of-band logs or telemetry derived from
+    /// [`Message`](crate::message::Message) instances.
     ///
     /// # Examples
     ///

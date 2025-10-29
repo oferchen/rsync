@@ -16,7 +16,7 @@ impl Severity {
     /// Returns the lowercase label used when rendering the severity.
     ///
     /// The strings mirror upstream rsync's diagnostics and therefore feed directly into
-    /// the formatting helpers implemented by [`Message`]. Exposing the label keeps
+    /// the formatting helpers implemented by [`Message`](crate::message::Message). Exposing the label keeps
     /// external crates from duplicating the canonical wording while still allowing
     /// call sites to branch on the textual representation when building structured
     /// logs or integration tests.
@@ -43,7 +43,8 @@ impl Severity {
     ///
     /// The string mirrors upstream rsync's output, combining the constant
     /// `"rsync"` banner with the lowercase severity label and trailing
-    /// colon. Centralising the prefix ensures [`Message::as_segments`]
+    /// colon. Centralising the prefix ensures
+    /// [`Message::as_segments`](crate::message::Message::as_segments)
     /// doesn't need to assemble the pieces manually, which avoids
     /// additional vectored segments and keeps rendering logic in sync with
     /// upstream expectations.
