@@ -293,3 +293,202 @@ fn parse_positive_usize_from_env(name: &str, value: &str) -> TaskResult<usize> {
 
     Ok(parsed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::TaskError;
+    use std::io::Write;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn workspace_root() -> &'static Path {
+        static ROOT: OnceLock<PathBuf> = OnceLock::new();
+        ROOT.get_or_init(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        })
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        #[allow(unsafe_code)]
+        fn set(key: &'static str, value: &str) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let previous = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self {
+                key,
+                previous,
+                _lock: guard,
+            }
+        }
+
+        #[allow(unsafe_code)]
+        fn remove(key: &'static str) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let previous = env::var_os(key);
+            unsafe { env::remove_var(key) };
+            Self {
+                key,
+                previous,
+                _lock: guard,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                unsafe { env::set_var(self.key, previous) };
+            } else {
+                unsafe { env::remove_var(self.key) };
+            }
+        }
+    }
+
+    #[test]
+    fn help_flag_detection_matches_short_and_long_forms() {
+        assert!(is_help_flag(&OsString::from("--help")));
+        assert!(is_help_flag(&OsString::from("-h")));
+        assert!(!is_help_flag(&OsString::from("--HELP")));
+    }
+
+    #[test]
+    fn ensure_reports_validation_failure() {
+        ensure(true, "unused message").expect("true condition succeeds");
+        let error = ensure(false, "failure").unwrap_err();
+        assert!(matches!(error, TaskError::Validation(message) if message == "failure"));
+    }
+
+    #[test]
+    fn run_cargo_tool_maps_missing_subcommand_to_tool_missing() {
+        let err = run_cargo_tool(
+            workspace_root(),
+            vec![OsString::from("nonexistent-subcommand")],
+            "cargo nonexistent-subcommand",
+            "install the missing tool",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, TaskError::ToolMissing(message) if message.contains("nonexistent-subcommand"))
+        );
+    }
+
+    #[test]
+    fn list_tracked_files_includes_manifest() {
+        let files = list_tracked_files(workspace_root()).expect("git ls-files succeeds");
+        assert!(files.iter().any(|path| path == Path::new("Cargo.toml")));
+    }
+
+    #[test]
+    fn list_rust_sources_includes_xtask_main() {
+        let files = list_rust_sources_via_git(workspace_root()).expect("git ls-files succeeds");
+        assert!(
+            files
+                .iter()
+                .any(|path| path == Path::new("xtask/src/main.rs"))
+        );
+    }
+
+    #[test]
+    fn binary_detection_flags_control_bytes() {
+        let dir = tempdir().expect("create temp dir");
+        let text_path = dir.path().join("text.rs");
+        fs::write(&text_path, b"fn main() {}\n").expect("write text file");
+        assert!(!is_probably_binary(&text_path).expect("check succeeds"));
+
+        let binary_path = dir.path().join("binary.bin");
+        let mut file = fs::File::create(&binary_path).expect("create binary file");
+        file.write_all(b"\x00\x01\x02not ascii")
+            .expect("write binary");
+        drop(file);
+        assert!(is_probably_binary(&binary_path).expect("check succeeds"));
+    }
+
+    #[test]
+    fn cargo_metadata_json_loads_workspace_metadata() {
+        let metadata = cargo_metadata_json(workspace_root()).expect("metadata loads");
+        assert!(metadata.get("packages").is_some());
+    }
+
+    #[test]
+    fn cargo_metadata_json_reports_failure() {
+        let dir = tempdir().expect("create temp dir");
+        let err = cargo_metadata_json(dir.path()).unwrap_err();
+        assert!(
+            matches!(err, TaskError::CommandFailed { program, .. } if program == "cargo metadata")
+        );
+    }
+
+    #[test]
+    fn count_file_lines_handles_various_lengths() {
+        let dir = tempdir().expect("create temp dir");
+        let file_path = dir.path().join("source.rs");
+        fs::write(&file_path, "line one\nline two\nline three").expect("write file");
+        assert_eq!(count_file_lines(&file_path).expect("count succeeds"), 3);
+    }
+
+    #[test]
+    fn read_limit_env_var_parses_positive_values() {
+        let _guard = EnvGuard::set("TEST_LIMIT", "42");
+        assert_eq!(
+            read_limit_env_var("TEST_LIMIT").expect("read succeeds"),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn read_limit_env_var_handles_missing_and_invalid_values() {
+        {
+            let _guard = EnvGuard::remove("MISSING_LIMIT");
+            assert!(
+                read_limit_env_var("MISSING_LIMIT")
+                    .expect("missing is ok")
+                    .is_none()
+            );
+        }
+
+        {
+            let _zero = EnvGuard::set("ZERO_LIMIT", "0");
+            let zero_err = read_limit_env_var("ZERO_LIMIT").unwrap_err();
+            assert!(
+                matches!(zero_err, TaskError::Validation(message) if message.contains("ZERO_LIMIT"))
+            );
+        }
+
+        let _invalid = EnvGuard::set("BAD_LIMIT", "not-a-number");
+        let invalid_err = read_limit_env_var("BAD_LIMIT").unwrap_err();
+        assert!(
+            matches!(invalid_err, TaskError::Validation(message) if message.contains("BAD_LIMIT"))
+        );
+    }
+
+    #[test]
+    fn parse_positive_usize_from_env_rejects_zero_and_negative() {
+        let err = parse_positive_usize_from_env("VALUE", "0").unwrap_err();
+        assert!(matches!(err, TaskError::Validation(message) if message.contains("VALUE")));
+
+        let err = parse_positive_usize_from_env("VALUE", "-1").unwrap_err();
+        assert!(matches!(err, TaskError::Validation(message) if message.contains("VALUE")));
+
+        assert_eq!(
+            parse_positive_usize_from_env("VALUE", "7").expect("parse succeeds"),
+            7
+        );
+    }
+}

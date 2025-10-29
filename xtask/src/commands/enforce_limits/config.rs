@@ -239,3 +239,87 @@ fn parse_positive_usize_value(value: &Value, field: &str, origin: &Path) -> Task
         ))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn write_config(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create config directory");
+        }
+        fs::write(path, contents).expect("write config file");
+    }
+
+    fn create_workspace() -> tempfile::TempDir {
+        let dir = tempdir().expect("create workspace");
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&src_dir).expect("create src directory");
+        fs::write(src_dir.join("lib.rs"), "fn main() {}\n").expect("write source file");
+        dir
+    }
+
+    #[test]
+    fn resolve_config_path_prefers_override_and_detects_default() {
+        let workspace = create_workspace();
+        let override_path = workspace.path().join("custom.toml");
+        write_config(&override_path, "{}");
+
+        let resolved = resolve_config_path(workspace.path(), Some(PathBuf::from("custom.toml")))
+            .expect("resolve succeeds")
+            .expect("path present");
+        assert_eq!(resolved, override_path);
+
+        let default_path = workspace.path().join("tools/line_limits.toml");
+        write_config(&default_path, "{}");
+        let resolved_default = resolve_config_path(workspace.path(), None)
+            .expect("resolve succeeds")
+            .expect("default present");
+        assert_eq!(resolved_default, default_path);
+
+        fs::remove_file(&default_path).expect("remove default");
+        let missing = resolve_config_path(workspace.path(), None).expect("resolve succeeds");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn load_line_limits_config_accepts_existing_overrides() {
+        let workspace = create_workspace();
+        let config_path = workspace.path().join("tools/line_limits.toml");
+        write_config(
+            &config_path,
+            r#"
+default_max_lines = 600
+
+[[overrides]]
+path = "src/lib.rs"
+warn_lines = 10
+"#,
+        );
+
+        let config = load_line_limits_config(workspace.path(), &config_path).expect("config loads");
+        assert_eq!(config.default_max_lines, Some(600));
+        let override_entry = config
+            .override_for(Path::new("src/lib.rs"))
+            .expect("override present");
+        assert_eq!(override_entry.warn_lines, Some(10));
+    }
+
+    #[test]
+    fn load_line_limits_config_rejects_missing_overrides() {
+        let workspace = create_workspace();
+        let config_path = workspace.path().join("line_limits.toml");
+        write_config(
+            &config_path,
+            r#"
+[[overrides]]
+path = "src/missing.rs"
+max_lines = 5
+"#,
+        );
+
+        let error = load_line_limits_config(workspace.path(), &config_path).unwrap_err();
+        assert!(matches!(error, TaskError::Validation(message) if message.contains("missing.rs")));
+    }
+}

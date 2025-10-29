@@ -175,6 +175,7 @@ fn top_level_usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn top_level_usage_mentions_enforce_limits_command() {
@@ -182,5 +183,38 @@ mod tests {
         assert!(usage.contains("enforce-limits"));
         assert!(usage.contains("readme-version"));
         assert!(usage.contains("release"));
+    }
+
+    #[test]
+    fn run_with_args_requires_command() {
+        let error = run_with_args(std::iter::empty()).unwrap_err();
+        assert!(matches!(error, TaskError::Usage(message) if message.contains("missing command")));
+    }
+
+    #[test]
+    fn run_with_args_reports_help_for_help_command() {
+        let error = run_with_args([OsString::from("help")]).unwrap_err();
+        assert!(matches!(error, TaskError::Help(message) if message.contains("Usage")));
+    }
+
+    #[test]
+    fn run_with_args_reports_unknown_command() {
+        let error = run_with_args([OsString::from("unknown")]).unwrap_err();
+        assert!(
+            matches!(error, TaskError::Usage(message) if message.contains("unrecognised command"))
+        );
+    }
+
+    #[test]
+    fn run_with_args_executes_sbom_command() {
+        let temp = tempdir().expect("create temp dir");
+        let output = temp.path().join("cmd-sbom.json");
+        run_with_args([
+            OsString::from("sbom"),
+            OsString::from("--output"),
+            output.clone().into_os_string(),
+        ])
+        .expect("sbom command succeeds");
+        assert!(output.exists());
     }
 }
