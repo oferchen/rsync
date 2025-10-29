@@ -48,11 +48,6 @@ max_lines = 2783
 warn_lines = 2683
 
 [[overrides]]
-path = "crates/protocol/src/multiplex/tests.rs"
-max_lines = 1338
-warn_lines = 1238
-
-[[overrides]]
 path = "crates/transport/src/session/tests.rs"
 max_lines = 1831
 warn_lines = 1731
