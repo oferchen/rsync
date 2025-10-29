@@ -6,4 +6,5 @@ pub mod no_placeholders;
 pub mod package;
 pub mod preflight;
 pub mod readme_version;
+pub mod release;
 pub mod sbom;

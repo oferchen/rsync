@@ -5,6 +5,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use toml::Value;
 
 mod packaging;
 

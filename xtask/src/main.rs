@@ -55,7 +55,7 @@ mod workspace;
 
 use crate::commands::{
     branding, docs, enforce_limits, no_binaries, no_placeholders, package, preflight,
-    readme_version, sbom,
+    readme_version, release, sbom,
 };
 use crate::error::TaskError;
 use crate::util::is_help_flag;
@@ -129,6 +129,11 @@ where
             let workspace = workspace_root()?;
             preflight::execute(&workspace, options)
         }
+        "release" => {
+            let options = release::parse_args(args)?;
+            let workspace = workspace_root()?;
+            release::execute(&workspace, options)
+        }
         "sbom" => {
             let options = sbom::parse_args(args)?;
             let workspace = workspace_root()?;
@@ -160,6 +165,7 @@ fn top_level_usage() -> String {
         "  no-placeholders  Ensure Rust sources are free from placeholder code\n",
         "  package         Build distribution artifacts (deb/rpm)\n",
         "  preflight        Run packaging preflight validation\n",
+        "  release         Run aggregated release-readiness checks\n",
         "  readme-version   Ensure README versions match workspace metadata\n",
         "  sbom             Generate a CycloneDX SBOM for the workspace\n",
         "  help             Show this help message\n\n",
@@ -175,5 +181,6 @@ mod tests {
         let usage = top_level_usage();
         assert!(usage.contains("enforce-limits"));
         assert!(usage.contains("readme-version"));
+        assert!(usage.contains("release"));
     }
 }
