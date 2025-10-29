@@ -4,7 +4,7 @@ use crate::workspace::load_workspace_branding;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Options accepted by the `docs` command.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -108,147 +108,72 @@ pub fn usage() -> String {
 
 fn validate_documents(workspace: &Path) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
-
-    let readme_path = workspace.join("README.md");
-    let readme = read_file(&readme_path)?;
     let docs_dir = workspace.join("docs");
-    let production_scope_path = docs_dir.join("production_scope_p1.md");
-    let production_scope = read_file(&production_scope_path)?;
-    let feature_matrix_path = docs_dir.join("feature_matrix.md");
-    let feature_matrix = read_file(&feature_matrix_path)?;
-    let differences_path = docs_dir.join("differences.md");
-    let differences = read_file(&differences_path)?;
+
+    let checks = [
+        DocumentCheck::new(
+            workspace.join("README.md"),
+            [
+                (
+                    branding.rust_version.as_str(),
+                    "Rust-branded version string",
+                ),
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+                (branding.source.as_str(), "source repository URL"),
+            ],
+        ),
+        DocumentCheck::new(
+            docs_dir.join("production_scope_p1.md"),
+            [
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+                (branding.daemon_config.as_str(), "daemon configuration path"),
+                (branding.daemon_secrets.as_str(), "daemon secrets path"),
+            ],
+        ),
+        DocumentCheck::new(
+            docs_dir.join("feature_matrix.md"),
+            [(branding.client_bin.as_str(), "client binary name")],
+        ),
+        DocumentCheck::new(
+            docs_dir.join("differences.md"),
+            [(branding.daemon_bin.as_str(), "daemon binary name")],
+        ),
+        DocumentCheck::new(
+            docs_dir.join("gaps.md"),
+            [
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+            ],
+        ),
+        DocumentCheck::new(
+            docs_dir.join("resume_note.md"),
+            [
+                (
+                    branding.rust_version.as_str(),
+                    "Rust-branded version string",
+                ),
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+            ],
+        ),
+    ];
 
     let mut failures = Vec::new();
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &readme_path,
-        &readme,
-        &branding.rust_version,
-        "Rust-branded version string",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &readme_path,
-        &readme,
-        &branding.client_bin,
-        "client binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &readme_path,
-        &readme,
-        &branding.daemon_bin,
-        "daemon binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &readme_path,
-        &readme,
-        &branding.source,
-        "source repository URL",
-    );
-
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &production_scope_path,
-        &production_scope,
-        &branding.client_bin,
-        "client binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &production_scope_path,
-        &production_scope,
-        &branding.daemon_bin,
-        "daemon binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &production_scope_path,
-        &production_scope,
-        &branding.daemon_config,
-        "daemon configuration path",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &production_scope_path,
-        &production_scope,
-        &branding.daemon_secrets,
-        "daemon secrets path",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &feature_matrix_path,
-        &feature_matrix,
-        &branding.client_bin,
-        "client binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &feature_matrix_path,
-        &feature_matrix,
-        &branding.daemon_bin,
-        "daemon binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &feature_matrix_path,
-        &feature_matrix,
-        &branding.daemon_config,
-        "daemon configuration path",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &feature_matrix_path,
-        &feature_matrix,
-        &branding.daemon_secrets,
-        "daemon secrets path",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &differences_path,
-        &differences,
-        &branding.client_bin,
-        "client binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &differences_path,
-        &differences,
-        &branding.daemon_bin,
-        "daemon binary name",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &differences_path,
-        &differences,
-        &branding.daemon_config,
-        "daemon configuration path",
-    );
-    ensure_contains(
-        workspace,
-        &mut failures,
-        &differences_path,
-        &differences,
-        &branding.daemon_secrets,
-        "daemon secrets path",
-    );
+    for check in &checks {
+        let contents = read_file(&check.path)?;
+        for requirement in &check.requirements {
+            ensure_contains(
+                workspace,
+                &mut failures,
+                &check.path,
+                &contents,
+                requirement.fragment,
+                requirement.description,
+            );
+        }
+    }
 
     if failures.is_empty() {
         Ok(())
@@ -258,6 +183,31 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
             failures.join("\n")
         )))
     }
+}
+
+struct DocumentCheck<'a> {
+    path: PathBuf,
+    requirements: Vec<DocumentRequirement<'a>>,
+}
+
+impl<'a> DocumentCheck<'a> {
+    fn new(path: PathBuf, requirements: impl IntoIterator<Item = (&'a str, &'static str)>) -> Self {
+        Self {
+            path,
+            requirements: requirements
+                .into_iter()
+                .map(|(fragment, description)| DocumentRequirement {
+                    fragment,
+                    description,
+                })
+                .collect(),
+        }
+    }
+}
+
+struct DocumentRequirement<'a> {
+    fragment: &'a str,
+    description: &'static str,
 }
 
 fn read_file(path: &Path) -> TaskResult<String> {
@@ -384,6 +334,9 @@ source = "https://github.com/oferchen/rsync"
         .expect("write feature matrix");
         fs::write(workspace.join("docs").join("differences.md"), "placeholder")
             .expect("write differences");
+        fs::write(workspace.join("docs").join("gaps.md"), "placeholder").expect("write gaps");
+        fs::write(workspace.join("docs").join("resume_note.md"), "placeholder")
+            .expect("write resume note");
 
         let error = validate_documents(&workspace).expect_err("validation should fail");
         match error {
@@ -392,6 +345,8 @@ source = "https://github.com/oferchen/rsync"
                 assert!(message.contains("production_scope_p1.md"), "{message}");
                 assert!(message.contains("feature_matrix.md"), "{message}");
                 assert!(message.contains("differences.md"), "{message}");
+                assert!(message.contains("gaps.md"), "{message}");
+                assert!(message.contains("resume_note.md"), "{message}");
             }
             other => panic!("unexpected error: {other}"),
         }
