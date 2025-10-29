@@ -1,6 +1,8 @@
+use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
 use rsync_checksums::strong::Md5;
+use rsync_core::fallback::CLIENT_FALLBACK_ENV;
 use rsync_core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
@@ -348,7 +350,7 @@ fn daemon_mode_arguments_ignore_operands_after_double_dash() {
         OsString::from("dest"),
     ];
 
-    assert!(daemon_mode_arguments(&args).is_none());
+    assert!(server::daemon_mode_arguments(&args).is_none());
 }
 
 #[test]
