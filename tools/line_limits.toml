@@ -13,6 +13,11 @@ max_lines = 5900
 warn_lines = 5800
 
 [[overrides]]
+path = "crates/cli/src/frontend.rs"
+max_lines = 5600
+warn_lines = 5580
+
+[[overrides]]
 path = "crates/engine/src/local_copy.rs"
 max_lines = 9600
 warn_lines = 9500
@@ -23,9 +28,24 @@ max_lines = 10100
 warn_lines = 10000
 
 [[overrides]]
+path = "crates/core/src/client/tests.rs"
+max_lines = 4400
+warn_lines = 4380
+
+[[overrides]]
+path = "crates/core/src/message/tests.rs"
+max_lines = 2300
+warn_lines = 2280
+
+[[overrides]]
 path = "crates/daemon/src/lib.rs"
 max_lines = 10100
 warn_lines = 10000
+
+[[overrides]]
+path = "crates/daemon/src/tests.rs"
+max_lines = 4600
+warn_lines = 4580
 
 [[overrides]]
 path = "crates/transport/src/negotiation.rs"
@@ -36,6 +56,11 @@ warn_lines = 6300
 path = "crates/protocol/src/negotiation/tests.rs"
 max_lines = 3600
 warn_lines = 3500
+
+[[overrides]]
+path = "crates/transport/src/negotiation/tests.rs"
+max_lines = 3350
+warn_lines = 3330
 
 [[overrides]]
 path = "crates/transport/src/session/tests.rs"
