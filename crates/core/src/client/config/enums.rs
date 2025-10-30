@@ -245,7 +245,7 @@ impl Default for AddressMode {
 pub enum CompressionSetting {
     /// Compression has been explicitly disabled (e.g. `--compress-level=0`).
     ///
-    /// This is also the default when building a [`ClientConfig`], matching
+    /// This is also the default when building a [`ClientConfig`](super::ClientConfig), matching
     /// upstream rsync's behaviour of leaving compression off unless the caller
     /// explicitly enables it.
     Disabled,
