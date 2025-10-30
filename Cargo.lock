@@ -679,6 +679,8 @@ dependencies = [
  "rsync-meta",
  "rsync-protocol",
  "rsync-transport",
+ "serde",
+ "serde_json",
  "socket2",
  "tempfile",
  "toml",
