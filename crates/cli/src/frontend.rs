@@ -91,7 +91,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crate::platform::{self, gid_t, uid_t};
+use crate::platform::{gid_t, uid_t};
 use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
@@ -5527,68 +5527,56 @@ fn parse_chown_argument(value: &OsStr) -> Result<ParsedChown, Message> {
     })
 }
 
-#[cfg(unix)]
 fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
     if let Ok(id) = input.parse::<uid_t>() {
         return Ok(id);
     }
 
-    if let Some(uid) = platform::lookup_user_by_name(input) {
+    if let Some(uid) = crate::platform::lookup_user_by_name(input) {
         return Ok(uid);
     }
 
-    if !platform::SUPPORTS_USER_NAME_LOOKUP {
-        return Err(
-            rsync_error!(1, "--chown requires numeric user IDs on this platform")
+    if crate::platform::supports_user_name_lookup() {
+        Err(
+            rsync_error!(1, "unknown user '{}' specified for --chown", input)
                 .with_role(Role::Client),
-        );
-    }
-
-    Err(rsync_error!(1, "unknown user '{}' specified for --chown", input).with_role(Role::Client))
-}
-
-#[cfg(not(unix))]
-fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
-    input.parse::<uid_t>().map_err(|_| {
-        rsync_error!(
-            1,
-            "user name '{}' specified for --chown requires a numeric ID on this platform",
-            input
         )
-        .with_role(Role::Client)
-    })
+    } else {
+        Err(
+            rsync_error!(
+                1,
+                "user name '{}' specified for --chown requires a numeric ID on this platform",
+                input
+            )
+            .with_role(Role::Client),
+        )
+    }
 }
 
-#[cfg(unix)]
 fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
     if let Ok(id) = input.parse::<gid_t>() {
         return Ok(id);
     }
 
-    if let Some(gid) = platform::lookup_group_by_name(input) {
+    if let Some(gid) = crate::platform::lookup_group_by_name(input) {
         return Ok(gid);
     }
 
-    if !platform::SUPPORTS_GROUP_NAME_LOOKUP {
-        return Err(
-            rsync_error!(1, "--chown requires numeric group IDs on this platform")
+    if crate::platform::supports_group_name_lookup() {
+        Err(
+            rsync_error!(1, "unknown group '{}' specified for --chown", input)
                 .with_role(Role::Client),
-        );
-    }
-
-    Err(rsync_error!(1, "unknown group '{}' specified for --chown", input).with_role(Role::Client))
-}
-
-#[cfg(not(unix))]
-fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
-    input.parse::<gid_t>().map_err(|_| {
-        rsync_error!(
-            1,
-            "group name '{}' specified for --chown requires a numeric ID on this platform",
-            input
         )
-        .with_role(Role::Client)
-    })
+    } else {
+        Err(
+            rsync_error!(
+                1,
+                "group name '{}' specified for --chown requires a numeric ID on this platform",
+                input
+            )
+            .with_role(Role::Client),
+        )
+    }
 }
 
 fn render_module_list<W: Write, E: Write>(
