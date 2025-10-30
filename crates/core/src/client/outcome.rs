@@ -34,7 +34,9 @@ mod tests {
         let summary = empty_summary();
         let outcome = ClientOutcome::Local(Box::new(summary));
 
-        let extracted = outcome.into_local().expect("local outcome should yield a summary");
+        let extracted = outcome
+            .into_local()
+            .expect("local outcome should yield a summary");
 
         assert_eq!(extracted.files_copied(), 0);
         assert!(extracted.events().is_empty());
