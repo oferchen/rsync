@@ -415,7 +415,12 @@ impl ClientEvent {
         self.destination_path.clone()
     }
 
-    pub(crate) fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
+    /// Resolves a destination path for the provided relative component under the supplied root.
+    ///
+    /// Exposed for testing so unit suites can assert how the summary logic expands candidate
+    /// destinations without executing a full transfer.
+    #[doc(hidden)]
+    pub fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
         let candidate = destination_root.join(relative);
         if candidate.exists() {
             return candidate;
