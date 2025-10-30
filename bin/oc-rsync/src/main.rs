@@ -26,6 +26,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::run_with;
+    use std::ffi::OsString;
     use std::process::ExitCode;
 
     #[test]
@@ -36,5 +37,26 @@ mod tests {
         assert_eq!(exit, ExitCode::SUCCESS);
         assert!(!stdout.is_empty(), "version output should not be empty");
         assert!(stderr.is_empty(), "version flag should not write to stderr");
+    }
+
+    #[test]
+    fn unknown_flag_reports_failure() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with(
+            [
+                OsString::from("oc-rsync"),
+                OsString::from("--definitely-invalid-option"),
+            ],
+            &mut stdout,
+            &mut stderr,
+        );
+
+        assert_eq!(exit, ExitCode::FAILURE);
+        assert!(stdout.is_empty(), "unexpected stdout for invalid flag: {:?}", stdout);
+        assert!(
+            !stderr.is_empty(),
+            "invalid flag should emit diagnostics to stderr"
+        );
     }
 }
