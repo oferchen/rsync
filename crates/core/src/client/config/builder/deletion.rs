@@ -99,7 +99,11 @@ mod tests {
         assert!(config.delete_before());
         assert_eq!(config.delete_mode(), DeleteMode::Before);
 
-        let config = build(ClientConfigBuilder::default().delete_before(true).delete_before(false));
+        let config = build(
+            ClientConfigBuilder::default()
+                .delete_before(true)
+                .delete_before(false),
+        );
         assert!(!config.delete_before());
         assert_eq!(config.delete_mode(), DeleteMode::Disabled);
     }
@@ -110,7 +114,11 @@ mod tests {
         assert!(config.delete_after());
         assert_eq!(config.delete_mode(), DeleteMode::After);
 
-        let config = build(ClientConfigBuilder::default().delete_after(true).delete_after(false));
+        let config = build(
+            ClientConfigBuilder::default()
+                .delete_after(true)
+                .delete_after(false),
+        );
         assert!(!config.delete_after());
         assert_eq!(config.delete_mode(), DeleteMode::Disabled);
     }
@@ -121,7 +129,11 @@ mod tests {
         assert!(config.delete_delay());
         assert_eq!(config.delete_mode(), DeleteMode::Delay);
 
-        let config = build(ClientConfigBuilder::default().delete_delay(true).delete_delay(false));
+        let config = build(
+            ClientConfigBuilder::default()
+                .delete_delay(true)
+                .delete_delay(false),
+        );
         assert!(!config.delete_delay());
         assert_eq!(config.delete_mode(), DeleteMode::Disabled);
     }

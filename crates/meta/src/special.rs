@@ -264,9 +264,7 @@ mod tests {
         let source_path = temp.path().join("source");
         fs::File::create(&source_path).expect("create metadata source");
 
-        let mut permissions = fs::metadata(&source_path)
-            .expect("metadata")
-            .permissions();
+        let mut permissions = fs::metadata(&source_path).expect("metadata").permissions();
         permissions.set_mode(0o640);
         fs::set_permissions(&source_path, permissions).expect("set permissions");
         let metadata = fs::metadata(&source_path).expect("metadata after permissions");
@@ -280,7 +278,11 @@ mod tests {
         let requested = metadata.permissions().mode() & 0o777;
         let created = fifo_metadata.permissions().mode() & 0o777;
         assert_ne!(created, 0, "fifo permissions should preserve some bits");
-        assert_eq!(created & requested, created, "created permissions must not exceed requested");
+        assert_eq!(
+            created & requested,
+            created,
+            "created permissions must not exceed requested"
+        );
     }
 
     #[cfg(unix)]
@@ -292,15 +294,14 @@ mod tests {
         let source_path = temp.path().join("regular");
         fs::File::create(&source_path).expect("create regular file");
 
-        let mut permissions = fs::metadata(&source_path)
-            .expect("metadata")
-            .permissions();
+        let mut permissions = fs::metadata(&source_path).expect("metadata").permissions();
         permissions.set_mode(0o600);
         fs::set_permissions(&source_path, permissions).expect("set permissions");
         let metadata = fs::metadata(&source_path).expect("metadata after permissions");
 
         let device_path = temp.path().join("device");
-        let error = create_device_node(&device_path, &metadata).expect_err("non-device metadata should fail");
+        let error = create_device_node(&device_path, &metadata)
+            .expect_err("non-device metadata should fail");
 
         assert_eq!(error.context(), "create device");
         assert_eq!(error.path(), device_path.as_path());
@@ -324,9 +325,11 @@ mod tests {
         assert_eq!(error.context(), "example");
         assert_eq!(error.path(), path);
         assert_eq!(error.source_error().kind(), io::ErrorKind::InvalidInput);
-        assert!(error
-            .source_error()
-            .to_string()
-            .contains("mode value exceeds platform limits"));
+        assert!(
+            error
+                .source_error()
+                .to_string()
+                .contains("mode value exceeds platform limits")
+        );
     }
 }
