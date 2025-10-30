@@ -6,7 +6,7 @@ use rsync_protocol::NegotiationPrologue;
 
 use super::super::{NegotiationBuffer, NegotiationBufferAccess};
 
-/// Components extracted from a [`NegotiatedStream`].
+/// Components extracted from a [`crate::negotiation::NegotiatedStream`].
 ///
 /// # Examples
 ///
@@ -72,7 +72,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Reports whether the decomposed stream originated from a binary negotiation.
     ///
-    /// This mirrors [`NegotiatedStream::is_binary`], allowing callers that work
+    /// This mirrors [`crate::negotiation::NegotiatedStream::is_binary`], allowing callers that work
     /// with [`NegotiatedStreamParts`] to branch on the handshake style without
     /// reconstructing the wrapper or inspecting [`Self::decision`] manually.
     #[must_use]
@@ -82,7 +82,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Reports whether the decomposed stream originated from the legacy ASCII negotiation.
     ///
-    /// The helper mirrors [`NegotiatedStream::is_legacy`], exposing the same
+    /// The helper mirrors [`crate::negotiation::NegotiatedStream::is_legacy`], exposing the same
     /// convenience for code that operates on [`NegotiatedStreamParts`]. It
     /// returns `true` when the captured negotiation began with the canonical
     /// `@RSYNCD:` prefix.

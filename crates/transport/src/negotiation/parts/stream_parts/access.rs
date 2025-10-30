@@ -38,7 +38,7 @@ impl<R> NegotiatedStreamParts<R> {
     ///
     /// The helper mirrors [`Self::buffered`] but allocates a new vector sized for the captured
     /// transcript. Allocation failures propagate as [`TryReserveError`], matching the semantics of
-    /// [`NegotiatedStream::buffered_to_vec`].
+    /// [`crate::negotiation::NegotiatedStream::buffered_to_vec`].
     #[must_use = "the owned buffer contains the negotiation transcript"]
     pub fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         NegotiationBufferAccess::buffered_to_vec(self)
@@ -70,7 +70,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
-    /// The tuple mirrors [`NegotiatedStream::buffered_split`], giving callers convenient access
+    /// The tuple mirrors [`crate::negotiation::NegotiatedStream::buffered_split`], giving callers convenient access
     /// to both slices when rebuilding replay buffers without cloning the stored negotiation
     /// bytes.
     #[must_use]
@@ -86,7 +86,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Returns how many buffered bytes had already been replayed when the stream was decomposed.
     ///
-    /// The counter mirrors [`NegotiatedStream::buffered_consumed`], allowing callers to observe the
+    /// The counter mirrors [`crate::negotiation::NegotiatedStream::buffered_consumed`], allowing callers to observe the
     /// replay position without reconstructing the wrapper. It is useful when higher layers need to
     /// resume consumption from the point where the stream was split into parts.
     ///
@@ -112,7 +112,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Returns the portion of the buffered negotiation transcript that had already been replayed.
     ///
-    /// This mirrors [`NegotiatedStream::buffered_consumed_slice`] but operates on the decomposed
+    /// This mirrors [`crate::negotiation::NegotiatedStream::buffered_consumed_slice`] but operates on the decomposed
     /// parts, allowing diagnostics to print the consumed prefix without rebuilding the stream.
     #[must_use]
     pub fn buffered_consumed_slice(&self) -> &[u8] {
@@ -128,7 +128,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// Returns the portion of the buffered negotiation data that has not been consumed yet.
     ///
     /// The slice starts at the current replay cursor and mirrors what would be produced next if the
-    /// parts were turned back into a [`NegotiatedStream`] and read from. This is useful when the
+    /// parts were turned back into a [`crate::negotiation::NegotiatedStream`] and read from. This is useful when the
     /// parts are temporarily inspected for diagnostics without rebuilding the wrapper.
     #[must_use]
     pub fn buffered_remaining_slice(&self) -> &[u8] {
@@ -149,9 +149,9 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Returns how many bytes from the sniffed negotiation prefix remain buffered.
     ///
-    /// This mirrors [`NegotiatedStream::sniffed_prefix_remaining`], giving callers
+    /// This mirrors [`crate::negotiation::NegotiatedStream::sniffed_prefix_remaining`], giving callers
     /// access to the replay position after extracting the parts without
-    /// reconstructing a [`NegotiatedStream`].
+    /// reconstructing a [`crate::negotiation::NegotiatedStream`].
     #[must_use]
     pub fn sniffed_prefix_remaining(&self) -> usize {
         NegotiationBufferAccess::sniffed_prefix_remaining(self)
@@ -159,7 +159,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Reports whether the canonical legacy negotiation prefix has been fully buffered.
     ///
-    /// The method mirrors [`NegotiatedStream::legacy_prefix_complete`], making it possible to query
+    /// The method mirrors [`crate::negotiation::NegotiatedStream::legacy_prefix_complete`], making it possible to query
     /// the sniffed prefix state even after the stream has been decomposed into parts. It is `true`
     /// for legacy ASCII negotiations once the entire `@RSYNCD:` marker has been captured and `false`
     /// otherwise (including for binary sessions).
