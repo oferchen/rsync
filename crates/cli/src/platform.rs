@@ -21,9 +21,15 @@ pub(crate) type gid_t = u32;
 pub(crate) type uid_t = u32;
 
 /// Indicates whether the platform supports resolving user names.
-pub(crate) const SUPPORTS_USER_NAME_LOOKUP: bool = cfg!(unix);
+#[inline]
+pub(crate) fn supports_user_name_lookup() -> bool {
+    cfg!(unix)
+}
 /// Indicates whether the platform supports resolving group names.
-pub(crate) const SUPPORTS_GROUP_NAME_LOOKUP: bool = cfg!(unix);
+#[inline]
+pub(crate) fn supports_group_name_lookup() -> bool {
+    cfg!(unix)
+}
 
 #[cfg(unix)]
 fn to_owned<C>(value: C) -> Option<String>
