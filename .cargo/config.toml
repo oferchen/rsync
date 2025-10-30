@@ -1,2 +1,5 @@
 [build]
 rustc-wrapper = "tools/cross/rustc-with-zig.sh"
+
+[target.i686-pc-windows-gnu]
+rustflags = ["-C", "panic=abort"]
