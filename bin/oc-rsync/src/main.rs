@@ -53,7 +53,11 @@ mod tests {
         );
 
         assert_eq!(exit, ExitCode::FAILURE);
-        assert!(stdout.is_empty(), "unexpected stdout for invalid flag: {:?}", stdout);
+        assert!(
+            stdout.is_empty(),
+            "unexpected stdout for invalid flag: {:?}",
+            stdout
+        );
         assert!(
             !stderr.is_empty(),
             "invalid flag should emit diagnostics to stderr"
