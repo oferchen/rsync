@@ -178,7 +178,7 @@ mod tests {
     use super::*;
 
     fn io_failure() -> io::Error {
-        io::Error::new(io::ErrorKind::Other, "synthetic failure")
+        io::Error::other("synthetic failure")
     }
 
     #[test]
