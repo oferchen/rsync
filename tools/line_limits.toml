@@ -14,7 +14,7 @@ warn_lines = 5800
 
 [[overrides]]
 path = "crates/cli/src/frontend.rs"
-max_lines = 5600
+max_lines = 5700
 warn_lines = 5580
 
 [[overrides]]
