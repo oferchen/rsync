@@ -62,3 +62,28 @@ impl std::error::Error for MetadataError {
         Some(&self.source)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MetadataError;
+    use std::io;
+    use std::path::Path;
+    use std::error::Error as _;
+
+    #[test]
+    fn metadata_error_exposes_contextual_information() {
+        let source = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        let error = MetadataError::new("set xattr", Path::new("/tmp/file"), source);
+
+        assert_eq!(error.context(), "set xattr");
+        assert_eq!(error.path(), Path::new("/tmp/file"));
+        assert_eq!(error.source_error().kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("set xattr"));
+        assert!(error.source().is_some());
+
+        let (context, path, inner) = error.into_parts();
+        assert_eq!(context, "set xattr");
+        assert_eq!(path, Path::new("/tmp/file"));
+        assert_eq!(inner.kind(), io::ErrorKind::PermissionDenied);
+    }
+}

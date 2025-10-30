@@ -35,3 +35,21 @@ impl std::error::Error for FilterError {
         Some(&self.source)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FilterError;
+    use globset::GlobBuilder;
+    use std::error::Error as _;
+
+    #[test]
+    fn filter_error_preserves_pattern_and_source() {
+        let glob_err = GlobBuilder::new("[").build().unwrap_err();
+        let error = FilterError::new("[".into(), glob_err.clone());
+
+        assert_eq!(error.pattern(), "[");
+        assert!(error.to_string().contains("failed to compile"));
+        assert!(error.source().is_some());
+        assert_eq!(error.source().unwrap().to_string(), glob_err.to_string());
+    }
+}
