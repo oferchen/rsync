@@ -97,12 +97,19 @@ pub use self::config::{
 };
 pub use self::fallback::{RemoteFallbackArgs, RemoteFallbackContext, run_remote_transfer_fallback};
 #[cfg(test)]
-pub(crate) use self::module_list::set_test_daemon_password;
+pub(crate) use self::module_list::{
+    ConnectProgramConfig, DaemonAuthContext, ProxyConfig, SensitiveBytes,
+    compute_daemon_auth_response, connect_direct, connect_via_proxy, establish_proxy_tunnel,
+    map_daemon_handshake_error, parse_proxy_spec, resolve_connect_timeout,
+    resolve_daemon_addresses, set_test_daemon_password,
+};
 pub use self::module_list::{
     DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest,
     run_module_list, run_module_list_with_options, run_module_list_with_password,
     run_module_list_with_password_and_options,
 };
+#[cfg(test)]
+pub(crate) use rsync_protocol::{NegotiationError, ProtocolVersion};
 
 use std::collections::HashMap;
 use std::ffi::OsStr;

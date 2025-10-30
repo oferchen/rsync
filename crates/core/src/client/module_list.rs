@@ -202,6 +202,19 @@ impl ModuleListRequest {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_components(
+        address: DaemonAddress,
+        username: Option<String>,
+        protocol: ProtocolVersion,
+    ) -> Self {
+        Self {
+            address,
+            username,
+            protocol,
+        }
+    }
+
     /// Returns the parsed daemon address.
     #[must_use]
     pub fn address(&self) -> &DaemonAddress {
@@ -1228,7 +1241,7 @@ impl ProxyCredentials {
     }
 }
 
-fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
+pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     match env::var("RSYNC_PROXY") {
         Ok(value) => {
             let trimmed = value.trim();
@@ -1833,6 +1846,9 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::cell::RefCell;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
