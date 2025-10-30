@@ -39,7 +39,7 @@ mod windows_gnu {
     const SYM_DEREGISTER: &[u8] = b"__deregister_frame_info\0";
 
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetModuleHandleA(lpModuleName: *const c_char) -> *mut c_void;
         fn LoadLibraryA(lpLibFileName: *const c_char) -> *mut c_void;
         fn GetProcAddress(hModule: *mut c_void, lpProcName: *const c_char) -> *mut c_void;
@@ -51,7 +51,7 @@ mod windows_gnu {
         loop {
             match state {
                 UNRESOLVED => {
-                    let resolved = resolve_symbol(symbol) as usize;
+                    let resolved = unsafe { resolve_symbol(symbol) } as usize;
                     let new_state = if resolved == 0 { MISSING } else { resolved };
                     match cache.compare_exchange(
                         UNRESOLVED,
@@ -83,7 +83,7 @@ mod windows_gnu {
         debug_assert!(!symbol.is_empty() && symbol[symbol.len() - 1] == 0);
 
         for &lib in &LIBCANDIDATES {
-            let ptr = load_from_library(lib, symbol);
+            let ptr = unsafe { load_from_library(lib, symbol) };
             if !ptr.is_null() {
                 return ptr;
             }
@@ -96,7 +96,7 @@ mod windows_gnu {
     unsafe fn load_from_library(library: &[u8], symbol: &[u8]) -> *mut c_void {
         debug_assert!(!library.is_empty() && library[library.len() - 1] == 0);
 
-        let module = {
+        let module = unsafe {
             let handle = GetModuleHandleA(library.as_ptr() as *const c_char);
             if !handle.is_null() {
                 handle
@@ -109,19 +109,19 @@ mod windows_gnu {
             return ptr::null_mut();
         }
 
-        GetProcAddress(module, symbol.as_ptr() as *const c_char)
+        unsafe { GetProcAddress(module, symbol.as_ptr() as *const c_char) }
     }
 
     #[inline(always)]
     unsafe fn resolve_register() -> Option<RegisterFrameInfo> {
-        let ptr = ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER)?;
-        Some(transmute::<*mut (), RegisterFrameInfo>(ptr))
+        let ptr = unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) }?;
+        Some(unsafe { transmute::<*mut (), RegisterFrameInfo>(ptr) })
     }
 
     #[inline(always)]
     unsafe fn resolve_deregister() -> Option<DeregisterFrameInfo> {
-        let ptr = ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER)?;
-        Some(transmute::<*mut (), DeregisterFrameInfo>(ptr))
+        let ptr = unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) }?;
+        Some(unsafe { transmute::<*mut (), DeregisterFrameInfo>(ptr) })
     }
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
