@@ -73,3 +73,74 @@ impl ClientConfigBuilder {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build(builder: ClientConfigBuilder) -> ClientConfig {
+        builder.build()
+    }
+
+    #[test]
+    fn delete_sets_during_and_resets_to_disabled() {
+        let config = build(ClientConfigBuilder::default().delete(true));
+        assert_eq!(config.delete_mode(), DeleteMode::During);
+        assert!(config.delete());
+
+        let config = build(ClientConfigBuilder::default().delete(true).delete(false));
+        assert_eq!(config.delete_mode(), DeleteMode::Disabled);
+        assert!(!config.delete());
+    }
+
+    #[test]
+    fn delete_before_toggles_mode() {
+        let config = build(ClientConfigBuilder::default().delete_before(true));
+        assert!(config.delete_before());
+        assert_eq!(config.delete_mode(), DeleteMode::Before);
+
+        let config = build(ClientConfigBuilder::default().delete_before(true).delete_before(false));
+        assert!(!config.delete_before());
+        assert_eq!(config.delete_mode(), DeleteMode::Disabled);
+    }
+
+    #[test]
+    fn delete_after_toggles_mode() {
+        let config = build(ClientConfigBuilder::default().delete_after(true));
+        assert!(config.delete_after());
+        assert_eq!(config.delete_mode(), DeleteMode::After);
+
+        let config = build(ClientConfigBuilder::default().delete_after(true).delete_after(false));
+        assert!(!config.delete_after());
+        assert_eq!(config.delete_mode(), DeleteMode::Disabled);
+    }
+
+    #[test]
+    fn delete_delay_toggles_mode() {
+        let config = build(ClientConfigBuilder::default().delete_delay(true));
+        assert!(config.delete_delay());
+        assert_eq!(config.delete_mode(), DeleteMode::Delay);
+
+        let config = build(ClientConfigBuilder::default().delete_delay(true).delete_delay(false));
+        assert!(!config.delete_delay());
+        assert_eq!(config.delete_mode(), DeleteMode::Disabled);
+    }
+
+    #[test]
+    fn delete_excluded_mirrors_builder_setting() {
+        let config = build(ClientConfigBuilder::default().delete_excluded(true));
+        assert!(config.delete_excluded());
+
+        let config = build(ClientConfigBuilder::default().delete_excluded(false));
+        assert!(!config.delete_excluded());
+    }
+
+    #[test]
+    fn max_delete_propagates_limit() {
+        let config = build(ClientConfigBuilder::default().max_delete(Some(128)));
+        assert_eq!(config.max_delete(), Some(128));
+
+        let config = build(ClientConfigBuilder::default().max_delete(None));
+        assert_eq!(config.max_delete(), None);
+    }
+}
