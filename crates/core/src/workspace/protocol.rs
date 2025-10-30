@@ -73,3 +73,38 @@ const fn parse_u32(input: &str) -> u32 {
     }
     value
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic;
+
+    #[test]
+    fn parse_u32_accepts_decimal_digits() {
+        assert_eq!(parse_u32("0"), 0);
+        assert_eq!(parse_u32("32"), 32);
+        assert_eq!(parse_u32("0010"), 10);
+    }
+
+    #[test]
+    fn parse_u32_rejects_empty_strings() {
+        let result = panic::catch_unwind(|| parse_u32(""));
+        assert!(result.is_err(), "empty input must trigger a panic");
+    }
+
+    #[test]
+    fn parse_u32_rejects_non_ascii_digits() {
+        let result = panic::catch_unwind(|| parse_u32("3a"));
+        assert!(result.is_err(), "non-digit input must trigger a panic");
+    }
+
+    #[test]
+    fn protocol_accessors_match_metadata_protocol() {
+        let snapshot = metadata();
+        assert_eq!(protocol_version_u8() as u32, snapshot.protocol_version());
+        assert_eq!(
+            protocol_version_nonzero_u8().get() as u32,
+            snapshot.protocol_version()
+        );
+    }
+}
