@@ -48,11 +48,6 @@ max_lines = 6400
 warn_lines = 6300
 
 [[overrides]]
-path = "crates/transport/src/negotiation/parts.rs"
-max_lines = 1100
-warn_lines = 1000
-
-[[overrides]]
 path = "crates/transport/src/negotiation/stream.rs"
 max_lines = 1100
 warn_lines = 1000
