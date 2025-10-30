@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.check_coverage import enforce_thresholds, load_metrics
+from tools.check_coverage import CoverageMetric, enforce_thresholds, load_metrics
 
 
 class CheckCoverageTests(unittest.TestCase):
@@ -45,6 +45,26 @@ class CheckCoverageTests(unittest.TestCase):
         self.assertEqual(0, enforce_thresholds(metrics, {"lines": 90.0, "functions": 95.0}))
         self.assertEqual(1, enforce_thresholds(metrics, {"branches": 10.0}))
         self.assertEqual(1, enforce_thresholds(metrics, {"regions": 85.0}))
+
+    def test_enforce_thresholds_reports_missing_metric(self) -> None:
+        metrics = load_metrics(self.summary_path)
+        status = enforce_thresholds(metrics, {"branches": 75.0, "lines": 92.0})
+        self.assertEqual(1, status)
+
+    def test_load_metrics_requires_data_and_totals_sections(self) -> None:
+        missing_data = self.summary_path.parent / "missing_data.json"
+        missing_data.write_text(json.dumps({}))
+        with self.assertRaisesRegex(ValueError, "missing `data`"):
+            load_metrics(missing_data)
+
+        missing_totals = self.summary_path.parent / "missing_totals.json"
+        missing_totals.write_text(json.dumps({"data": [{}]}))
+        with self.assertRaisesRegex(ValueError, "missing `totals`"):
+            load_metrics(missing_totals)
+
+    def test_metric_format_line_reports_untracked_items(self) -> None:
+        metric = CoverageMetric(name="branches", covered=0.0, total=0.0, percent=100.0)
+        self.assertIn("no tracked items", metric.format_line())
 
 
 if __name__ == "__main__":
