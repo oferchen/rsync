@@ -62,7 +62,7 @@ The workspace currently contains the following published crates:
 The project ships branded binaries (`oc-rsync` and `oc-rsyncd`). Branding
 details—including the program names rendered in `--version` output and the
 filesystem locations for packaged configuration—are centralised in
-[`rsync_core::branding`](crates/core/src/branding.rs). Consumers can query the
+[`rsync_core::branding`](crates/core/src/branding/mod.rs). Consumers can query the
 module directly to discover the canonical installation paths:
 
 ```rust
