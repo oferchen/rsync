@@ -49,9 +49,10 @@ jobs:
         run: scripts/check-run-matrix-docs.sh
       - name: Cross-compile check
         run: |
-          rustup target add x86_64-apple-darwin x86_64-pc-windows-msvc
+          rustup target add x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc
           cargo check --workspace --target x86_64-apple-darwin
           cargo check --workspace --target x86_64-pc-windows-msvc
+          cargo check --workspace --target aarch64-pc-windows-msvc
 
   build:
     needs: lint-test
@@ -67,6 +68,8 @@ jobs:
             target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
