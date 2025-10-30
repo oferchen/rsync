@@ -172,3 +172,66 @@ impl WalkErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn io_failure() -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "synthetic failure")
+    }
+
+    #[test]
+    fn constructors_capture_paths_and_sources() {
+        let root_path = PathBuf::from("/tmp/root");
+        let read_dir_path = PathBuf::from("/tmp/read_dir");
+        let entry_path = PathBuf::from("/tmp/entry");
+        let metadata_path = PathBuf::from("/tmp/metadata");
+        let canonicalize_path = PathBuf::from("/tmp/canonicalize");
+
+        let root = WalkError::root_metadata(root_path.clone(), io_failure());
+        let read_dir = WalkError::read_dir(read_dir_path.clone(), io_failure());
+        let entry = WalkError::read_dir_entry(entry_path.clone(), io_failure());
+        let metadata = WalkError::metadata(metadata_path.clone(), io_failure());
+        let canonicalize = WalkError::canonicalize(canonicalize_path.clone(), io_failure());
+
+        assert!(matches!(
+            root.kind(),
+            WalkErrorKind::RootMetadata { path, .. } if path == &root_path
+        ));
+        assert!(matches!(
+            read_dir.kind(),
+            WalkErrorKind::ReadDir { path, .. } if path == &read_dir_path
+        ));
+        assert!(matches!(
+            entry.kind(),
+            WalkErrorKind::ReadDirEntry { path, .. } if path == &entry_path
+        ));
+        assert!(matches!(
+            metadata.kind(),
+            WalkErrorKind::Metadata { path, .. } if path == &metadata_path
+        ));
+        assert!(matches!(
+            canonicalize.kind(),
+            WalkErrorKind::Canonicalize { path, .. } if path == &canonicalize_path
+        ));
+
+        for (error, path_fragment, message_fragment) in [
+            (root, "root", "inspect traversal root"),
+            (read_dir, "read_dir", "read directory"),
+            (entry, "entry", "read entry"),
+            (metadata, "metadata", "inspect metadata"),
+            (canonicalize, "canonicalize", "canonicalize"),
+        ] {
+            let display = error.to_string();
+            assert!(display.contains(message_fragment));
+            assert!(display.contains(path_fragment));
+
+            let source = error.source().expect("io::Error should be preserved");
+            assert_eq!(source.to_string(), "synthetic failure");
+
+            let path = error.path();
+            assert!(path.to_string_lossy().contains(path_fragment));
+        }
+    }
+}

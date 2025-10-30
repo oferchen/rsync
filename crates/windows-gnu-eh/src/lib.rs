@@ -167,3 +167,18 @@ pub use windows_gnu::force_link;
 
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub use not_windows_gnu::force_link;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_link_is_a_no_op() {
+        // The helper intentionally performs no work on non-Windows targets and
+        // exists purely to keep linkage symmetric across platforms. Exercising
+        // the function ensures its signature remains callable from dependants
+        // and guards against accidental regressions that would introduce side
+        // effects.
+        force_link();
+    }
+}
