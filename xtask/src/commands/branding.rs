@@ -388,6 +388,19 @@ mod tests {
         parse_workspace_branding(manifest).expect("manifest parses")
     }
 
+    fn expect_validation_error(mutate: impl FnOnce(&mut WorkspaceBranding), needle: &str) {
+        let mut branding = sample_branding();
+        mutate(&mut branding);
+        match validate_branding(&branding) {
+            Err(TaskError::Validation(message)) => assert!(
+                message.contains(needle),
+                "expected '{needle}' in '{message}'",
+            ),
+            Err(other) => panic!("expected validation error, got {other:?}"),
+            Ok(_) => panic!("expected validation error"),
+        }
+    }
+
     #[test]
     fn parse_args_accepts_default_configuration() {
         let options = parse_args(std::iter::empty()).expect("parse succeeds");
@@ -481,188 +494,123 @@ mod tests {
 
     #[test]
     fn validate_branding_rejects_protocol_outside_supported_range() {
-        let mut branding = sample_branding();
-        branding.protocol = 40;
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("protocol version")
-        ));
+        expect_validation_error(|branding| branding.protocol = 40, "protocol version");
     }
 
     #[test]
     fn validate_branding_rejects_missing_client_prefix() {
-        let mut branding = sample_branding();
-        branding.client_bin = String::from("rsync");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(
-            matches!(error, TaskError::Validation(message) if message.contains("client binary"))
+        expect_validation_error(
+            |branding| branding.client_bin = String::from("rsync"),
+            "client binary",
         );
     }
 
     #[test]
     fn validate_branding_rejects_missing_daemon_prefix() {
-        let mut branding = sample_branding();
-        branding.daemon_bin = String::from("rsyncd");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(
-            matches!(error, TaskError::Validation(message) if message.contains("daemon binary"))
+        expect_validation_error(
+            |branding| branding.daemon_bin = String::from("rsyncd"),
+            "daemon binary",
         );
     }
 
     #[test]
     fn validate_branding_rejects_empty_brand() {
-        let mut branding = sample_branding();
-        branding.brand.clear();
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(error, TaskError::Validation(message) if message.contains("brand label")));
+        expect_validation_error(|branding| branding.brand.clear(), "brand label");
     }
 
     #[test]
     fn validate_branding_rejects_non_absolute_paths() {
-        let mut branding = sample_branding();
-        branding.daemon_config_dir = Path::new("relative").into();
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("daemon_config_dir")
-        ));
+        expect_validation_error(
+            |branding| branding.daemon_config_dir = Path::new("relative").into(),
+            "daemon_config_dir",
+        );
     }
 
     #[test]
     fn validate_branding_rejects_empty_legacy_names() {
-        let mut branding = sample_branding();
-        branding.legacy_client_bin.clear();
-        let client_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            client_error,
-            TaskError::Validation(message) if message.contains("legacy client binary")
-        ));
-
-        let mut branding = sample_branding();
-        branding.legacy_daemon_bin.clear();
-        let daemon_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            daemon_error,
-            TaskError::Validation(message) if message.contains("legacy daemon binary")
-        ));
+        expect_validation_error(
+            |branding| branding.legacy_client_bin.clear(),
+            "legacy client binary",
+        );
+        expect_validation_error(
+            |branding| branding.legacy_daemon_bin.clear(),
+            "legacy daemon binary",
+        );
     }
 
     #[test]
     fn validate_branding_rejects_incorrect_legacy_names() {
-        let mut branding = sample_branding();
-        branding.legacy_client_bin = String::from("legacy-rsync");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("legacy client binary")
-        ));
-
-        let mut branding = sample_branding();
-        branding.legacy_daemon_bin = String::from("legacy-rsyncd");
-        let daemon_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            daemon_error,
-            TaskError::Validation(message) if message.contains("legacy daemon binary")
-        ));
+        expect_validation_error(
+            |branding| branding.legacy_client_bin = String::from("legacy-rsync"),
+            "legacy client binary",
+        );
+        expect_validation_error(
+            |branding| branding.legacy_daemon_bin = String::from("legacy-rsyncd"),
+            "legacy daemon binary",
+        );
     }
 
     #[test]
     fn validate_branding_requires_legacy_directory() {
-        let mut branding = sample_branding();
-        branding.legacy_daemon_config_dir = PathBuf::from("/opt");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("legacy_daemon_config_dir")
-        ));
+        expect_validation_error(
+            |branding| branding.legacy_daemon_config_dir = PathBuf::from("/opt"),
+            "legacy_daemon_config_dir",
+        );
     }
 
     #[test]
     fn validate_branding_requires_rust_version_prefix_and_suffix() {
-        let mut branding = sample_branding();
-        branding.rust_version = String::from("4.0.0-rust");
-        let prefix_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            prefix_error,
-            TaskError::Validation(message) if message.contains("must include upstream_version")
-        ));
-
-        let mut branding = sample_branding();
-        branding.rust_version = String::from("3.4.1-custom");
-        let suffix_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            suffix_error,
-            TaskError::Validation(message) if message.contains("must end with")
-        ));
+        expect_validation_error(
+            |branding| branding.rust_version = String::from("4.0.0-rust"),
+            "must include upstream_version",
+        );
+        expect_validation_error(
+            |branding| branding.rust_version = String::from("3.4.1-custom"),
+            "must end with",
+        );
     }
 
     #[test]
     fn validate_branding_requires_paths_to_match_directories() {
-        let mut branding = sample_branding();
-        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd.conf");
-        let daemon_config_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            daemon_config_error,
-            TaskError::Validation(message) if message.contains("daemon_config")
-        ));
-
-        let mut branding = sample_branding();
-        branding.legacy_daemon_secrets = PathBuf::from("/var/lib/rsyncd.secrets");
-        let legacy_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            legacy_error,
-            TaskError::Validation(message) if message.contains("legacy_daemon_secrets")
-        ));
+        expect_validation_error(
+            |branding| branding.daemon_config = PathBuf::from("/etc/oc-rsyncd.conf"),
+            "daemon_config",
+        );
+        expect_validation_error(
+            |branding| branding.legacy_daemon_secrets = PathBuf::from("/var/lib/rsyncd.secrets"),
+            "legacy_daemon_secrets",
+        );
     }
 
     #[test]
     fn validate_branding_requires_daemon_directory_suffix() {
-        let mut branding = sample_branding();
-        branding.daemon_config_dir = PathBuf::from("/etc/oc-rsync");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("daemon_config_dir")
-        ));
+        expect_validation_error(
+            |branding| branding.daemon_config_dir = PathBuf::from("/etc/oc-rsync"),
+            "daemon_config_dir",
+        );
     }
 
     #[test]
     fn validate_branding_requires_daemon_file_names() {
-        let mut branding = sample_branding();
-        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd/custom.conf");
-        let config_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            config_error,
-            TaskError::Validation(message)
-                if message.contains("daemon_config '/etc/oc-rsyncd/custom.conf' must be named")
-        ));
-
-        let mut branding = sample_branding();
-        branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd/rsyncd.secret");
-        let secrets_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            secrets_error,
-            TaskError::Validation(message) if message.contains("daemon_secrets")
-        ));
+        expect_validation_error(
+            |branding| branding.daemon_config = PathBuf::from("/etc/oc-rsyncd/custom.conf"),
+            "daemon_config",
+        );
+        expect_validation_error(
+            |branding| branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd/rsyncd.secret"),
+            "daemon_secrets",
+        );
     }
 
     #[test]
     fn validate_branding_requires_legacy_file_names() {
-        let mut branding = sample_branding();
-        branding.legacy_daemon_config = PathBuf::from("/etc/rsync.conf");
-        let config_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            config_error,
-            TaskError::Validation(message) if message.contains("legacy_daemon_config")
-        ));
-
-        let mut branding = sample_branding();
-        branding.legacy_daemon_secrets = PathBuf::from("/etc/rsync.secret");
-        let secrets_error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            secrets_error,
-            TaskError::Validation(message) if message.contains("legacy_daemon_secrets")
-        ));
+        expect_validation_error(
+            |branding| branding.legacy_daemon_config = PathBuf::from("/etc/rsync.conf"),
+            "legacy_daemon_config",
+        );
+        expect_validation_error(
+            |branding| branding.legacy_daemon_secrets = PathBuf::from("/etc/rsync.secret"),
+            "legacy_daemon_secrets",
+        );
     }
 }
