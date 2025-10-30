@@ -24,17 +24,17 @@ pub struct WorkspaceBranding {
     /// Legacy upstream-compatible daemon name.
     pub legacy_daemon_bin: String,
     /// Directory that houses daemon configuration files.
-    pub daemon_config_dir: String,
+    pub daemon_config_dir: PathBuf,
     /// Primary daemon configuration file path.
-    pub daemon_config: String,
+    pub daemon_config: PathBuf,
     /// Primary daemon secrets file path.
-    pub daemon_secrets: String,
+    pub daemon_secrets: PathBuf,
     /// Legacy daemon configuration directory used by upstream-compatible installations.
-    pub legacy_daemon_config_dir: String,
+    pub legacy_daemon_config_dir: PathBuf,
     /// Legacy daemon configuration file path used by upstream-compatible installations.
-    pub legacy_daemon_config: String,
+    pub legacy_daemon_config: PathBuf,
     /// Legacy daemon secrets file path used by upstream-compatible installations.
-    pub legacy_daemon_secrets: String,
+    pub legacy_daemon_secrets: PathBuf,
     /// Project source URL advertised in documentation and banners.
     pub source: String,
 }
@@ -43,8 +43,15 @@ impl WorkspaceBranding {
     /// Returns a concise human-readable summary.
     pub fn summary(&self) -> String {
         format!(
-            "brand={} rust_version={} protocol={} client={} daemon={}",
-            self.brand, self.rust_version, self.protocol, self.client_bin, self.daemon_bin
+            "brand={} rust_version={} protocol={} client={} daemon={} config_dir={} config={} secrets={}",
+            self.brand,
+            self.rust_version,
+            self.protocol,
+            self.client_bin,
+            self.daemon_bin,
+            self.daemon_config_dir.display(),
+            self.daemon_config.display(),
+            self.daemon_secrets.display()
         )
     }
 }
@@ -120,12 +127,12 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         daemon_bin: metadata_str(oc, "daemon_bin")?,
         legacy_client_bin: metadata_str(oc, "legacy_client_bin")?,
         legacy_daemon_bin: metadata_str(oc, "legacy_daemon_bin")?,
-        daemon_config_dir: metadata_str(oc, "daemon_config_dir")?,
-        daemon_config: metadata_str(oc, "daemon_config")?,
-        daemon_secrets: metadata_str(oc, "daemon_secrets")?,
-        legacy_daemon_config_dir: metadata_str(oc, "legacy_daemon_config_dir")?,
-        legacy_daemon_config: metadata_str(oc, "legacy_daemon_config")?,
-        legacy_daemon_secrets: metadata_str(oc, "legacy_daemon_secrets")?,
+        daemon_config_dir: metadata_path(oc, "daemon_config_dir")?,
+        daemon_config: metadata_path(oc, "daemon_config")?,
+        daemon_secrets: metadata_path(oc, "daemon_secrets")?,
+        legacy_daemon_config_dir: metadata_path(oc, "legacy_daemon_config_dir")?,
+        legacy_daemon_config: metadata_path(oc, "legacy_daemon_config")?,
+        legacy_daemon_secrets: metadata_path(oc, "legacy_daemon_secrets")?,
         source: metadata_str(oc, "source")?,
     })
 }
@@ -136,6 +143,10 @@ fn metadata_str(table: &Value, key: &str) -> TaskResult<String> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| metadata_error(format!("missing or non-string metadata field '{key}'")))
+}
+
+fn metadata_path(table: &Value, key: &str) -> TaskResult<PathBuf> {
+    Ok(PathBuf::from(metadata_str(table, key)?))
 }
 
 fn metadata_protocol(table: &Value) -> TaskResult<u16> {
@@ -167,12 +178,12 @@ mod tests {
             daemon_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: String::from("/etc/oc-rsyncd"),
-            daemon_config: String::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: String::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: String::from("/etc"),
-            legacy_daemon_config: String::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: String::from("/etc/rsyncd.secrets"),
+            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
+            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
+            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
+            legacy_daemon_config_dir: PathBuf::from("/etc"),
+            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
+            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://github.com/oferchen/rsync"),
         };
         assert_eq!(branding, expected);

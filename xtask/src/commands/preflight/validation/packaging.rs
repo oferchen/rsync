@@ -10,8 +10,8 @@ pub(crate) fn validate_packaging_assets(
     branding: &WorkspaceBranding,
 ) -> TaskResult<()> {
     let packaging_root = workspace.join("packaging").join("etc").join("oc-rsyncd");
-    let config_name = file_name(&branding.daemon_config, "daemon_config")?;
-    let secrets_name = file_name(&branding.daemon_secrets, "daemon_secrets")?;
+    let config_name = file_name(branding.daemon_config.as_path(), "daemon_config")?;
+    let secrets_name = file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?;
 
     for (name, label) in [
         (config_name, "daemon_config"),
@@ -35,8 +35,8 @@ pub(crate) fn validate_packaging_assets(
     Ok(())
 }
 
-pub(super) fn file_name(path: &str, label: &str) -> TaskResult<PathBuf> {
-    let name = Path::new(path)
+pub(super) fn file_name(path: &Path, label: &str) -> TaskResult<PathBuf> {
+    let name = path
         .file_name()
         .ok_or_else(|| validation_error(format!("{label} must include a file name")))?;
     Ok(PathBuf::from(name))
@@ -60,6 +60,9 @@ fn validate_bin_manifest_packaging(
             manifest_path.display()
         ))
     })?;
+
+    let daemon_config = branding.daemon_config.display().to_string();
+    let daemon_secrets = branding.daemon_secrets.display().to_string();
 
     let package = manifest_value
         .get("package")
@@ -90,36 +93,36 @@ fn validate_bin_manifest_packaging(
             ))
         })?;
     ensure(
-        deb_assets_include(deb, branding.daemon_config.as_str()),
+        deb_assets_include(deb, daemon_config.as_str()),
         format!(
             "{} package.metadata.deb.assets must install {}",
             manifest_path.display(),
-            branding.daemon_config
+            branding.daemon_config.display()
         ),
     )?;
     ensure(
-        deb_assets_include(deb, branding.daemon_secrets.as_str()),
+        deb_assets_include(deb, daemon_secrets.as_str()),
         format!(
             "{} package.metadata.deb.assets must install {}",
             manifest_path.display(),
-            branding.daemon_secrets
+            branding.daemon_secrets.display()
         ),
     )?;
 
     ensure(
-        deb_conf_files_include(deb, branding.daemon_config.as_str()),
+        deb_conf_files_include(deb, daemon_config.as_str()),
         format!(
             "{} package.metadata.deb.conf-files must reference {}",
             manifest_path.display(),
-            branding.daemon_config
+            branding.daemon_config.display()
         ),
     )?;
     ensure(
-        deb_conf_files_include(deb, branding.daemon_secrets.as_str()),
+        deb_conf_files_include(deb, daemon_secrets.as_str()),
         format!(
             "{} package.metadata.deb.conf-files must reference {}",
             manifest_path.display(),
-            branding.daemon_secrets
+            branding.daemon_secrets.display()
         ),
     )?;
 
@@ -133,19 +136,19 @@ fn validate_bin_manifest_packaging(
             ))
         })?;
     ensure(
-        rpm_assets_include(rpm, branding.daemon_config.as_str()),
+        rpm_assets_include(rpm, daemon_config.as_str()),
         format!(
             "{} package.metadata.rpm.assets must install {} with config=true",
             manifest_path.display(),
-            branding.daemon_config
+            branding.daemon_config.display()
         ),
     )?;
     ensure(
-        rpm_assets_include(rpm, branding.daemon_secrets.as_str()),
+        rpm_assets_include(rpm, daemon_secrets.as_str()),
         format!(
             "{} package.metadata.rpm.assets must install {} with config=true",
             manifest_path.display(),
-            branding.daemon_secrets
+            branding.daemon_secrets.display()
         ),
     )?;
 
@@ -164,10 +167,12 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
         ))
     })?;
 
+    let unit_daemon_config = branding.daemon_config.display().to_string();
+    let unit_daemon_secrets = branding.daemon_secrets.display().to_string();
     let unit_snippets = [
         branding.daemon_bin.as_str(),
-        branding.daemon_config.as_str(),
-        branding.daemon_secrets.as_str(),
+        unit_daemon_config.as_str(),
+        unit_daemon_secrets.as_str(),
         "Description=oc-rsyncd",
         "Alias=rsyncd.service",
         "OC_RSYNC_CONFIG",
