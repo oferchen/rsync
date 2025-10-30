@@ -29,8 +29,8 @@ warn_lines = 5400
 
 [[overrides]]
 path = "crates/daemon/src/tests.rs"
-max_lines = 4600
-warn_lines = 4580
+max_lines = 600
+warn_lines = 500
 
 [[overrides]]
 path = "crates/transport/src/negotiation/mod.rs"
