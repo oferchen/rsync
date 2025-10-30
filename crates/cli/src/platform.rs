@@ -91,3 +91,45 @@ pub(crate) fn display_group_name(gid: u32) -> Option<String> {
 pub(crate) fn display_group_name(_gid: u32) -> Option<String> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    use users::{get_current_gid, get_current_uid, get_group_by_gid, get_user_by_uid};
+
+    #[test]
+    fn support_flags_match_platform() {
+        assert_eq!(supports_user_name_lookup(), cfg!(unix));
+        assert_eq!(supports_group_name_lookup(), cfg!(unix));
+    }
+
+    #[test]
+    fn user_lookup_round_trip_matches_current_identity() {
+        if cfg!(unix) {
+            let uid = get_current_uid();
+            let user = get_user_by_uid(uid).expect("current user should exist");
+            let name = user.name().to_string_lossy().into_owned();
+            assert_eq!(lookup_user_by_name(&name), Some(uid));
+            assert_eq!(display_user_name(uid), Some(name));
+        } else {
+            assert_eq!(lookup_user_by_name("any"), None);
+            assert_eq!(display_user_name(0), None);
+        }
+    }
+
+    #[test]
+    fn group_lookup_round_trip_matches_current_identity() {
+        if cfg!(unix) {
+            let gid = get_current_gid();
+            let group = get_group_by_gid(gid).expect("current group should exist");
+            let name = group.name().to_string_lossy().into_owned();
+            assert_eq!(lookup_group_by_name(&name), Some(gid));
+            assert_eq!(display_group_name(gid), Some(name));
+        } else {
+            assert_eq!(lookup_group_by_name("any"), None);
+            assert_eq!(display_group_name(0), None);
+        }
+    }
+}
