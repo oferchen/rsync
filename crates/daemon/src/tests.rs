@@ -12,8 +12,6 @@ use std::sync::Mutex;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
-use rsync_core::fallback::DAEMON_AUTO_DELEGATE_ENV;
-use rsync_core::version::VersionInfoReport;
 use tempfile::{NamedTempFile, tempdir};
 
 #[cfg(unix)]
