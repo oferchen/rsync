@@ -350,3 +350,75 @@ pub(super) fn append_normalized_os_str(target: &mut String, value: &OsStr) {
         target.push_str(text);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    #[test]
+    fn source_location_normalises_workspace_paths() {
+        let location = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 123);
+
+        assert!(location.is_workspace_relative());
+        assert!(location.path().ends_with(file!()));
+        assert_eq!(location.line(), 123);
+        assert_eq!(location.to_string(), format!("{}:{}", location.path(), 123));
+    }
+
+    #[test]
+    fn source_location_preserves_absolute_paths_outside_workspace() {
+        #[cfg(windows)]
+        const OUTSIDE: &str = "C:/outside/example.rs";
+        #[cfg(not(windows))]
+        const OUTSIDE: &str = "/tmp/outside/example.rs";
+
+        let location = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), OUTSIDE, 7);
+        let expected = normalize_path(Path::new(OUTSIDE));
+
+        assert!(!location.is_workspace_relative());
+        assert_eq!(location.path(), expected);
+        assert_eq!(location.line(), 7);
+    }
+
+    #[test]
+    fn canonicalize_virtual_test_path_rewrites_test_shards() {
+        let rewritten = canonicalize_virtual_test_path("module/tests/part2.rs".to_owned());
+        assert_eq!(rewritten, "module/tests.rs");
+
+        let untouched = canonicalize_virtual_test_path("module/tests.rs".to_owned());
+        assert_eq!(untouched, "module/tests.rs");
+    }
+
+    #[test]
+    fn rewrite_test_shard_rejects_unexpected_patterns() {
+        assert_eq!(rewrite_test_shard("tests/helper.rs"), None);
+        assert_eq!(rewrite_test_shard("tests/partX.rs"), None);
+        assert_eq!(rewrite_test_shard("other/part1.rs"), None);
+    }
+
+    #[test]
+    fn strip_normalized_workspace_prefix_handles_exact_and_nested_matches() {
+        let (root, path) = if cfg!(windows) {
+            ("C:/workspace", "C:/workspace/crates/core/src/lib.rs")
+        } else {
+            ("/workspace", "/workspace/crates/core/src/lib.rs")
+        };
+
+        let stripped = strip_normalized_workspace_prefix(path, root).expect("path shares root");
+        assert_eq!(stripped, "crates/core/src/lib.rs");
+
+        let self_root = strip_normalized_workspace_prefix(root, root).expect("root maps to dot");
+        assert_eq!(self_root, ".");
+
+        assert_eq!(strip_normalized_workspace_prefix(path, "other/root"), None);
+    }
+
+    #[test]
+    fn append_normalized_os_str_replaces_backslashes() {
+        let mut buffer = String::new();
+        append_normalized_os_str(&mut buffer, OsStr::new("dir\\nested\\file"));
+        assert_eq!(buffer, "dir/nested/file");
+    }
+}
