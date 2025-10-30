@@ -38,6 +38,11 @@ max_lines = 4600
 warn_lines = 4580
 
 [[overrides]]
+path = "crates/transport/src/negotiation/mod.rs"
+max_lines = 6400
+warn_lines = 6300
+
+[[overrides]]
 path = "crates/protocol/src/negotiation/tests/buffered_prefix.rs"
 max_lines = 580
 warn_lines = 540
