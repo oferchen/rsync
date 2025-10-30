@@ -261,7 +261,8 @@ pub enum ClientEventKind {
 }
 
 impl ClientEventKind {
-    pub(crate) const fn is_progress(&self) -> bool {
+    /// Returns whether the event kind represents progress-worthy activity.
+    pub const fn is_progress(&self) -> bool {
         matches!(
             self,
             Self::DataCopied
@@ -414,7 +415,7 @@ impl ClientEvent {
         self.destination_path.clone()
     }
 
-    fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
+    pub(crate) fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
         let candidate = destination_root.join(relative);
         if candidate.exists() {
             return candidate;

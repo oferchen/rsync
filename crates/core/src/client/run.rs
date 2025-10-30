@@ -143,7 +143,7 @@ where
         .map_err(map_local_copy_error)
 }
 
-fn build_local_copy_options(
+pub(crate) fn build_local_copy_options(
     config: &ClientConfig,
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {

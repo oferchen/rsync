@@ -5,15 +5,17 @@ use super::module_list::{
     map_daemon_handshake_error, parse_proxy_spec, resolve_connect_timeout,
     resolve_daemon_addresses, set_test_daemon_password,
 };
+use super::run::build_local_copy_options;
 use super::*;
 use crate::bandwidth;
 use crate::client::fallback::write_daemon_password;
 use crate::fallback::CLIENT_FALLBACK_ENV;
 use crate::version::RUST_VERSION;
 use rsync_compress::zlib::CompressionLevel;
-use rsync_engine::{SkipCompressList, signature::SignatureAlgorithm};
+use rsync_engine::{LocalCopyError, SkipCompressList, signature::SignatureAlgorithm};
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{NegotiationError, ProtocolVersion};
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
