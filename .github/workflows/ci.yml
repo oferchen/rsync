@@ -357,10 +357,10 @@ jobs:
         run: cargo --locked run -p xtask -- branding
 
       - name: Build Debian package
-        run: cargo --locked deb -p oc-rsync-bin
+        run: cargo --locked deb -v
 
       - name: Build RPM package
-        run: cargo --locked rpm build -p oc-rsync-bin -v
+        run: cargo --locked rpm build -v
 
       - name: Generate SBOM
         run: cargo --locked run -p xtask -- sbom
