@@ -175,57 +175,70 @@ jobs:
   cross-compile:
     needs: lint
     runs-on: ubuntu-latest
-    name: Cross-compile (${{ matrix.os }}-${{ matrix.arch }})
+    name: Cross-compile (${{ matrix.platform.name }})
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
-        include:
-          - os: linux
-            arch: x86_64
+        platform:
+          - name: linux-x86_64
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-          - os: linux
-            arch: aarch64
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
-          - os: darwin
-            arch: x86_64
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
             target: x86_64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-          - os: darwin
-            arch: aarch64
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
             target: aarch64-apple-darwin
             build_command: zigbuild
             build_daemon: true
-          - os: windows
-            arch: x86_64
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
             target: x86_64-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
-          - os: windows
-            arch: x86
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
             target: i686-pc-windows-gnu
             build_command: zigbuild
             build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
     env:
-      CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+      CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
-          target: ${{ matrix.target }}
+          target: ${{ matrix.platform.target }}
           cache: true
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: cross-${{ matrix.os }}-${{ matrix.arch }}
-          target: ${{ matrix.target }}
+          shared-key: cross-${{ matrix.platform.name }}
+          target: ${{ matrix.platform.target }}
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
@@ -233,53 +246,53 @@ jobs:
           version: 1
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.platform.needs_cross_gcc
         with:
           packages: gcc-aarch64-linux-gnu
           version: 1
 
       - name: Install Zig toolchain
-        if: matrix.build_command == 'zigbuild'
+        if: matrix.platform.uses_zig
         uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
 
       - name: Install cargo-zigbuild
-        if: matrix.build_command == 'zigbuild'
+        if: matrix.platform.uses_zig
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
 
       - name: Install cargo-cyclonedx
-        if: ${{ !contains(matrix.target, 'windows') }}
+        if: matrix.platform.generate_sbom
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-cyclonedx
 
       - name: Build oc-rsync
-        run: cargo --locked ${{ matrix.build_command }} --release --target ${{ matrix.target }} --bin oc-rsync
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
 
       - name: Build oc-rsyncd
-        if: matrix.build_daemon
-        run: cargo --locked ${{ matrix.build_command }} --release --target ${{ matrix.target }} --bin oc-rsyncd
+        if: matrix.platform.build_daemon
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
 
       - name: Generate target SBOM
-        if: ${{ !contains(matrix.target, 'windows') }}
-        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.os }}-${{ matrix.arch }}-sbom.json
+        if: matrix.platform.generate_sbom
+        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.platform.target }}/release/oc-rsync-${{ matrix.platform.name }}-sbom.json
 
       - name: Upload oc-rsync artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.os }}-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/oc-rsync*
+          name: oc-rsync-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/release/oc-rsync*
           if-no-files-found: error
 
       - name: Upload oc-rsyncd artifact
-        if: matrix.build_daemon
+        if: matrix.platform.build_daemon
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsyncd-${{ matrix.os }}-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/oc-rsyncd*
+          name: oc-rsyncd-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/release/oc-rsyncd*
           if-no-files-found: error
 
   package-linux:
