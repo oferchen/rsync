@@ -16,6 +16,7 @@
 mod brand;
 mod constants;
 mod detection;
+mod json;
 mod manifest;
 mod override_env;
 mod profile;
@@ -31,6 +32,7 @@ pub use constants::{
     UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME, brand_override_env_var,
 };
 pub use detection::{brand_for_program_name, detect_brand, resolve_brand_profile};
+pub use json::{manifest_json, manifest_json_pretty};
 pub use manifest::{BrandManifest, manifest};
 pub use profile::{
     BrandProfile, client_program_name, client_program_name_os_str, daemon_program_name,

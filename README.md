@@ -97,6 +97,19 @@ shared branding facade, ensuring help text, diagnostics, and configuration
 searches remain consistent across entry points regardless of the executable
 name that launched the process.
 
+Automation can serialise the same snapshot without reimplementing parsing
+logic by calling [`rsync_core::branding::manifest_json`] or the pretty-printed
+variant [`rsync_core::branding::manifest_json_pretty`]:
+
+```rust
+let json = rsync_core::branding::manifest_json_pretty();
+assert!(json.contains("\"rust_version\": \"3.4.1-rust\""));
+```
+
+Both helpers cache their output for the lifetime of the process, keeping
+command-line tooling lightweight while guaranteeing that downstream consumers
+observe the same metadata as the binaries themselves.
+
 Workspace automation consumes the same identifiers via the
 `[workspace.metadata.oc_rsync]` section in the top-level `Cargo.toml`. The
 metadata records the canonical program names, configuration locations, source

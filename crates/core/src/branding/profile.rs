@@ -1,5 +1,6 @@
 //! Branding profiles encapsulating canonical program names and filesystem paths.
 
+use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -19,7 +20,7 @@ use super::constants::{
 /// codebase. The profiles are intentionally lightweight and `Copy` so they can
 /// be used in constant contexts such as rustdoc examples and compile-time
 /// assertions.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BrandProfile {
     client_program_name: &'static str,
     daemon_program_name: &'static str,
