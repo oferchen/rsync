@@ -186,8 +186,9 @@ impl<R> NegotiatedStream<R> {
 
     /// Returns how many buffered bytes have already been replayed.
     ///
-    /// The counter starts at zero and increases as callers consume data through [`Read::read`],
-    /// [`Read::read_vectored`], or [`BufRead::consume`]. Once it matches [`Self::buffered_len`], the
+    /// The counter starts at zero and increases as callers consume data through
+    /// [`std::io::Read::read`], [`std::io::Read::read_vectored`], or
+    /// [`std::io::BufRead::consume`]. Once it matches [`Self::buffered_len`], the
     /// replay buffer has been exhausted and subsequent reads operate on the inner transport.
     ///
     /// # Examples
@@ -236,7 +237,7 @@ impl<R> NegotiatedStream<R> {
     /// Returns how many bytes from the sniffed negotiation prefix remain buffered.
     ///
     /// The value decreases as callers consume the replay data (for example via
-    /// [`Read::read`] or [`BufRead::consume`]). A return value of zero indicates that
+    /// [`std::io::Read::read`] or [`std::io::BufRead::consume`]). A return value of zero indicates that
     /// the entire detection prefix has been drained and subsequent reads operate
     /// directly on the inner transport.
     #[must_use]
@@ -266,7 +267,8 @@ impl<R> NegotiatedStream<R> {
     ///
     /// The slice begins at the current replay cursor and includes any unread bytes from the
     /// sniffed negotiation prefix followed by buffered payload that arrived alongside the
-    /// detection prologue. It mirrors [`BufRead::fill_buf`] behaviour without requiring a mutable
+    /// detection prologue. It mirrors [`std::io::BufRead::fill_buf`] behaviour without requiring a
+    /// mutable
     /// reference, which is useful when callers only need to inspect the remaining transcript for
     /// logging or diagnostics.
     ///
@@ -308,7 +310,8 @@ impl<R> NegotiatedStream<R> {
     ///
     /// The helper provides read-only access to the bytes that were observed while detecting the
     /// negotiation style without consuming them. Callers can therefore inspect, log, or cache the
-    /// handshake transcript while continuing to rely on the replaying [`Read`] implementation for
+    /// handshake transcript while continuing to rely on the replaying [`std::io::Read`] implementation
+    /// for
     /// subsequent parsing. The destination vector is cleared before new data is written; its
     /// capacity is grown as needed and the resulting length is returned for convenience.
     ///
