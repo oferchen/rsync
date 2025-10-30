@@ -239,6 +239,9 @@ jobs:
           targets: ${{ matrix.platform.target }}
           cache: true
 
+      - name: Ensure target std is installed
+        run: rustup target add ${{ matrix.platform.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: cross-${{ matrix.platform.name }}
