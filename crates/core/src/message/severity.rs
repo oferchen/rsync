@@ -145,3 +145,51 @@ impl FromStr for Severity {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+    use std::str::FromStr;
+
+    #[test]
+    fn severity_labels_and_prefixes_match_variants() {
+        let cases = [
+            (Severity::Info, "info", "rsync info: "),
+            (Severity::Warning, "warning", "rsync warning: "),
+            (Severity::Error, "error", "rsync error: "),
+        ];
+
+        for (variant, label, prefix) in cases {
+            assert_eq!(variant.as_str(), label);
+            assert_eq!(variant.to_string(), label);
+            assert_eq!(variant.prefix(), prefix);
+        }
+    }
+
+    #[test]
+    fn predicate_helpers_reflect_variant_kind() {
+        assert!(Severity::Info.is_info());
+        assert!(!Severity::Info.is_warning());
+        assert!(!Severity::Info.is_error());
+
+        assert!(Severity::Warning.is_warning());
+        assert!(!Severity::Warning.is_info());
+        assert!(!Severity::Warning.is_error());
+
+        assert!(Severity::Error.is_error());
+        assert!(!Severity::Error.is_info());
+        assert!(!Severity::Error.is_warning());
+    }
+
+    #[test]
+    fn from_str_parses_known_labels_and_rejects_unknown_values() {
+        assert_eq!(Severity::from_str("info").unwrap(), Severity::Info);
+        assert_eq!(Severity::from_str("warning").unwrap(), Severity::Warning);
+        assert_eq!(Severity::from_str("error").unwrap(), Severity::Error);
+
+        let err = Severity::from_str("fatal").unwrap_err();
+        assert_eq!(err.to_string(), "unrecognised rsync message severity");
+        assert!(err.source().is_none());
+    }
+}
