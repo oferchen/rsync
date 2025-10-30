@@ -22,8 +22,8 @@ maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of oc-rsync-compatible client and daemon binaries."
 assets = [
-    ["../../target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
-    ["../../target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
+    ["target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
+    ["target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["../../packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["../../packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
@@ -40,8 +40,8 @@ package = "oc-rsync"
 summary = "Rust implementation of oc-rsync-compatible client and daemon"
 requires = ["glibc", "libgcc"]
 assets = [
-    { path = "../../target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
-    { path = "../../target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
+    { path = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
+    { path = "target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
     { path = "../../packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { path = "../../packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { path = "../../packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
