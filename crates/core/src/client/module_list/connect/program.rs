@@ -142,7 +142,7 @@ impl ConnectProgramConfig {
                 }
             }
 
-            return Ok(OsString::from_vec(rendered));
+            Ok(OsString::from_vec(rendered))
         }
 
         #[cfg(not(unix))]
