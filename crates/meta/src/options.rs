@@ -156,3 +156,76 @@ impl Default for MetadataOptions {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chmod::ChmodModifiers;
+
+    #[test]
+    fn defaults_match_expected_configuration() {
+        let options = MetadataOptions::new();
+
+        assert!(!options.owner());
+        assert!(!options.group());
+        assert!(options.permissions());
+        assert!(options.times());
+        assert!(!options.numeric_ids_enabled());
+        assert!(options.owner_override().is_none());
+        assert!(options.group_override().is_none());
+        assert!(options.chmod().is_none());
+
+        assert_eq!(MetadataOptions::default(), options);
+    }
+
+    #[test]
+    fn builder_methods_apply_requested_flags() {
+        let modifiers = ChmodModifiers::parse("u=rw").expect("parse modifiers");
+
+        let options = MetadataOptions::new()
+            .preserve_owner(true)
+            .preserve_group(true)
+            .preserve_permissions(false)
+            .preserve_times(false)
+            .numeric_ids(true)
+            .with_owner_override(Some(42))
+            .with_group_override(Some(7))
+            .with_chmod(Some(modifiers.clone()));
+
+        assert!(options.owner());
+        assert!(options.group());
+        assert!(!options.permissions());
+        assert!(!options.times());
+        assert!(options.numeric_ids_enabled());
+        assert_eq!(options.owner_override(), Some(42));
+        assert_eq!(options.group_override(), Some(7));
+        assert_eq!(options.chmod(), Some(&modifiers));
+    }
+
+    #[test]
+    fn overrides_and_chmod_can_be_cleared() {
+        let base = MetadataOptions::new()
+            .with_owner_override(Some(13))
+            .with_group_override(Some(24))
+            .with_chmod(Some(ChmodModifiers::parse("g+x").expect("parse modifiers")));
+
+        let cleared = base
+            .with_owner_override(None)
+            .with_group_override(None)
+            .with_chmod(None)
+            .preserve_owner(false)
+            .preserve_group(false)
+            .preserve_permissions(true)
+            .preserve_times(true)
+            .numeric_ids(false);
+
+        assert!(!cleared.owner());
+        assert!(!cleared.group());
+        assert!(cleared.permissions());
+        assert!(cleared.times());
+        assert!(!cleared.numeric_ids_enabled());
+        assert!(cleared.owner_override().is_none());
+        assert!(cleared.group_override().is_none());
+        assert!(cleared.chmod().is_none());
+    }
+}
