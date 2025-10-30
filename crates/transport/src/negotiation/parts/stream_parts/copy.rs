@@ -44,7 +44,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Appends the buffered negotiation data to a caller-provided vector without consuming it.
     ///
-    /// The helper mirrors [`NegotiatedStream::extend_buffered_into_vec`] but operates on decomposed
+    /// The helper mirrors [`crate::negotiation::NegotiatedStream::extend_buffered_into_vec`] but operates on decomposed
     /// stream parts. Callers that temporarily separate the components can therefore continue to
     /// accumulate handshake transcripts inside pre-existing log buffers. Additional capacity is
     /// reserved via [`Vec::try_reserve`]; on success the appended length matches the buffered
@@ -65,7 +65,7 @@ impl<R> NegotiatedStreamParts<R> {
 
     /// Copies the buffered negotiation bytes into the destination vector without consuming them.
     ///
-    /// This mirrors [`NegotiatedStream::copy_buffered_into`], allowing callers that temporarily
+    /// This mirrors [`crate::negotiation::NegotiatedStream::copy_buffered_into`], allowing callers that temporarily
     /// decompose the stream into parts to observe the sniffed prefix and remainder while preserving
     /// the replay state. The destination is cleared before data is appended; if additional capacity
     /// is required a [`TryReserveError`] is returned and the original contents remain untouched.
