@@ -261,7 +261,8 @@ pub enum ClientEventKind {
 }
 
 impl ClientEventKind {
-    pub(crate) const fn is_progress(&self) -> bool {
+    /// Returns whether the event should contribute to progress reporting output.
+    pub const fn is_progress(&self) -> bool {
         matches!(
             self,
             Self::DataCopied
@@ -414,7 +415,13 @@ impl ClientEvent {
         self.destination_path.clone()
     }
 
-    fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
+    /// Computes the canonical absolute destination path for a transfer summary.
+    ///
+    /// The helper mirrors upstream `rsync` by favouring an existing path in the
+    /// destination tree when possible, falling back to interpreting the
+    /// destination root as the target for single-file transfers, and otherwise
+    /// appending the relative path to the root.
+    pub(crate) fn resolve_destination_path(destination_root: &Path, relative: &Path) -> PathBuf {
         let candidate = destination_root.join(relative);
         if candidate.exists() {
             return candidate;

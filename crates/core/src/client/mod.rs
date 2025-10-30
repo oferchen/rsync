@@ -115,6 +115,8 @@ pub use self::run::{run_client, run_client_or_fallback, run_client_with_observer
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };
+#[cfg(test)]
+pub(crate) use self::run::build_local_copy_options;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 
 use std::time::Duration;
