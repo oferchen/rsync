@@ -9,9 +9,6 @@ use std::time::SystemTime;
 use rsync_checksums::strong::Md5;
 use rsync_core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use time::OffsetDateTime;
-#[cfg(unix)]
-use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
-
 use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken};
