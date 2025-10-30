@@ -211,12 +211,9 @@ use rsync_core::{
         parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
-    fallback::{
-        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, fallback_override,
-    },
+    fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, fallback_override},
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
-    version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::{
