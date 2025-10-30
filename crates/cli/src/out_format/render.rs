@@ -12,7 +12,7 @@ use time::OffsetDateTime;
 #[cfg(unix)]
 use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
-use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions};
+use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken};
 
@@ -229,10 +229,7 @@ fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
 
 #[cfg(unix)]
 fn resolve_user_name(uid: u32) -> String {
-    get_user_by_uid(uid as uid_t)
-        .map(|user| user.name().to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| uid.to_string())
+    platform::display_user_name(uid).unwrap_or_else(|| uid.to_string())
 }
 
 #[cfg(not(unix))]
@@ -242,10 +239,7 @@ fn resolve_user_name(uid: u32) -> String {
 
 #[cfg(unix)]
 fn resolve_group_name(gid: u32) -> String {
-    get_group_by_gid(gid as gid_t)
-        .map(|group| group.name().to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| gid.to_string())
+    platform::display_group_name(gid).unwrap_or_else(|| gid.to_string())
 }
 
 #[cfg(not(unix))]

@@ -1,6 +1,11 @@
 use std::io;
 use std::path::Path;
 
+#[cfg(not(unix))]
+type ModeType = libc::c_uint;
+#[cfg(not(unix))]
+type DeviceType = libc::c_uint;
+
 #[cfg(unix)]
 mod unix {
     use super::{Path, io};
@@ -37,7 +42,7 @@ mod unix {
 pub use unix::{mkfifo, mknod};
 
 #[cfg(not(unix))]
-pub fn mkfifo(_path: &Path, _mode: libc::mode_t) -> io::Result<()> {
+pub fn mkfifo(_path: &Path, _mode: ModeType) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "mkfifo is only implemented on Unix platforms",
@@ -45,7 +50,7 @@ pub fn mkfifo(_path: &Path, _mode: libc::mode_t) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-pub fn mknod(_path: &Path, _mode: libc::mode_t, _device: libc::dev_t) -> io::Result<()> {
+pub fn mknod(_path: &Path, _mode: ModeType, _device: DeviceType) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "mknod is only implemented on Unix platforms",

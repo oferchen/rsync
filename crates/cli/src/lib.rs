@@ -15,6 +15,7 @@
 //! hygiene policy.
 
 mod frontend;
+mod platform;
 
 pub use frontend::{exit_code_from, run};
 
