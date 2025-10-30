@@ -5542,14 +5542,12 @@ fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
                 .with_role(Role::Client),
         )
     } else {
-        Err(
-            rsync_error!(
-                1,
-                "user name '{}' specified for --chown requires a numeric ID on this platform",
-                input
-            )
-            .with_role(Role::Client),
+        Err(rsync_error!(
+            1,
+            "user name '{}' specified for --chown requires a numeric ID on this platform",
+            input
         )
+        .with_role(Role::Client))
     }
 }
 
@@ -5568,14 +5566,12 @@ fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
                 .with_role(Role::Client),
         )
     } else {
-        Err(
-            rsync_error!(
-                1,
-                "group name '{}' specified for --chown requires a numeric ID on this platform",
-                input
-            )
-            .with_role(Role::Client),
+        Err(rsync_error!(
+            1,
+            "group name '{}' specified for --chown requires a numeric ID on this platform",
+            input
         )
+        .with_role(Role::Client))
     }
 }
 
