@@ -126,8 +126,8 @@ fn allocate_test_port() -> u16 {
 
 #[test]
 fn parse_auth_user_list_trims_and_deduplicates_case_insensitively() {
-    let users = parse_auth_user_list(" alice,BOB, alice ,  Carol ")
-        .expect("parse non-empty user list");
+    let users =
+        parse_auth_user_list(" alice,BOB, alice ,  Carol ").expect("parse non-empty user list");
     assert_eq!(users, ["alice", "BOB", "Carol"]);
 
     let err = parse_auth_user_list(" , ,  ").expect_err("blank list rejected");
@@ -182,10 +182,7 @@ fn parse_max_connections_directive_handles_zero_and_positive() {
     assert_eq!(parse_max_connections_directive("0"), Some(None));
 
     let expected = NonZeroU32::new(25).expect("non-zero");
-    assert_eq!(
-        parse_max_connections_directive("25"),
-        Some(Some(expected))
-    );
+    assert_eq!(parse_max_connections_directive("25"), Some(Some(expected)));
 
     assert_eq!(parse_max_connections_directive("-1"), None);
     assert_eq!(parse_max_connections_directive("invalid"), None);
