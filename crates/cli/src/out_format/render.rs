@@ -6,10 +6,10 @@ use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::time::SystemTime;
 
+use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 use rsync_checksums::strong::Md5;
 use rsync_core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use time::OffsetDateTime;
-use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken};
 
