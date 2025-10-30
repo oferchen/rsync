@@ -76,6 +76,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-functions", type=float, default=95.0, help="Minimum function coverage percentage"
     )
+    parser.add_argument(
+        "--min-regions",
+        type=float,
+        default=None,
+        help="Minimum region coverage percentage (if provided)",
+    )
+    parser.add_argument(
+        "--min-branches",
+        type=float,
+        default=None,
+        help="Minimum branch coverage percentage (if provided)",
+    )
     return parser.parse_args()
 
 
@@ -83,7 +95,11 @@ def main() -> int:
     args = parse_args()
     metrics = load_metrics(args.summary)
     print_metrics(metrics.values())
-    requirements = {"lines": args.min_lines, "functions": args.min_functions}
+    requirements: dict[str, float] = {"lines": args.min_lines, "functions": args.min_functions}
+    if args.min_regions is not None:
+        requirements["regions"] = args.min_regions
+    if args.min_branches is not None:
+        requirements["branches"] = args.min_branches
     return enforce_thresholds(metrics, requirements)
 
 
