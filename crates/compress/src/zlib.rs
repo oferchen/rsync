@@ -411,7 +411,7 @@ pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use flate2::Compression;
-    use std::io::{Cursor, IoSliceMut, Read};
+    use std::io::{Cursor, IoSliceMut, Read, Write};
 
     #[test]
     fn counting_encoder_tracks_bytes() {
@@ -535,6 +535,81 @@ mod tests {
     }
 
     #[test]
+    fn counting_encoder_exposes_sink_references() {
+        #[derive(Default)]
+        struct MarkerSink {
+            touched: bool,
+            data: Vec<u8>,
+        }
+
+        impl Write for MarkerSink {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.data.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut encoder = CountingZlibEncoder::with_sink(MarkerSink::default(), CompressionLevel::Default);
+        let ref_ptr = std::ptr::from_ref(encoder.get_ref());
+        {
+            let sink_mut = encoder.get_mut();
+            let mut_ptr = std::ptr::from_mut(sink_mut);
+            assert_eq!(ref_ptr, mut_ptr.cast_const());
+            sink_mut.touched = true;
+        }
+
+        encoder
+            .write_all(b"payload")
+            .expect("compress payload");
+        let (sink, bytes) = encoder
+            .finish_into_inner()
+            .expect("finish compression stream");
+
+        assert!(bytes > 0);
+        assert!(sink.touched);
+        assert_eq!(sink.data.len(), bytes as usize);
+        let decoded = decompress_to_vec(&sink.data).expect("decompress");
+        assert_eq!(decoded, b"payload");
+    }
+
+    #[test]
+    fn counting_decoder_accessors_preserve_reader_state() {
+        let payload = b"decoder accessor payload".repeat(3);
+        let compressed = compress_to_vec(&payload, CompressionLevel::Default).expect("compress");
+        let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed.clone()));
+
+        assert_eq!(decoder.get_ref().position(), 0);
+
+        {
+            let cursor = decoder.get_mut();
+            cursor.set_position(0);
+        }
+
+        let mut prefix = [0u8; 7];
+        let read = decoder.read(&mut prefix).expect("read prefix");
+        assert!(read > 0);
+        assert_eq!(decoder.bytes_read(), read as u64);
+
+        let mut remainder = Vec::new();
+        decoder
+            .read_to_end(&mut remainder)
+            .expect("read remainder");
+
+        let mut decoded = prefix[..read].to_vec();
+        decoded.extend(remainder);
+        assert_eq!(decoded, payload);
+        assert_eq!(decoder.get_ref().position() as usize, compressed.len());
+
+        let inner = decoder.into_inner();
+        assert_eq!(inner.position() as usize, compressed.len());
+        assert_eq!(*inner.get_ref(), compressed);
+    }
+
+    #[test]
     fn precise_level_converts_to_requested_value() {
         let level = NonZeroU8::new(7).expect("non-zero");
         let compression = Compression::from(CompressionLevel::precise(level));
@@ -554,5 +629,20 @@ mod tests {
     fn numeric_level_constructor_rejects_out_of_range() {
         let err = CompressionLevel::from_numeric(10).expect_err("level above 9 rejected");
         assert_eq!(err.level(), 10);
+    }
+
+    #[test]
+    fn numeric_level_constructor_rejects_zero() {
+        let err = CompressionLevel::from_numeric(0).expect_err("level zero rejected");
+        assert_eq!(err.level(), 0);
+    }
+
+    #[test]
+    fn compression_level_error_display_reports_range() {
+        let err = CompressionLevelError::new(42);
+        assert_eq!(
+            err.to_string(),
+            "compression level 42 is outside the supported range 1-9"
+        );
     }
 }
