@@ -15,6 +15,7 @@ members = [
     "crates/protocol",
     "crates/walk",
     "crates/transport",
+    "crates/windows-gnu-eh",
     "xtask",
     "crates/apple-fs",
 ]

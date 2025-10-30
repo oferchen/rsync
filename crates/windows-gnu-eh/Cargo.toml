@@ -1,0 +1,11 @@
+[package]
+name = "rsync-windows-gnu-eh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Compatibility shims for Windows GNU unwinding symbols required by rustc rsbegin"
+
+[lib]
+path = "src/lib.rs"
