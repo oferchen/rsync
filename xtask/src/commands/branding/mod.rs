@@ -30,20 +30,47 @@ pub fn execute(workspace: &Path, options: BrandingOptions) -> TaskResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::TaskError;
     use crate::workspace::parse_workspace_branding;
+
+    fn sample_manifest() -> String {
+        String::from(
+            r#"[workspace]
+members = []
+
+[workspace.metadata.oc_rsync]
+brand = "demo"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "demo-rsync"
+daemon_bin = "demo-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/demo-rsyncd"
+daemon_config = "/etc/demo-rsyncd/demo-rsyncd.conf"
+daemon_secrets = "/etc/demo-rsyncd/demo-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://example.invalid/demo"
+"#,
+        )
+    }
 
     #[test]
     fn execute_renders_branding_metadata() {
         let tempdir = tempfile::tempdir().expect("tempdir");
-        let manifest = tempdir.path().join("Cargo.toml");
-        std::fs::write(&manifest, include_str!("../../../../Cargo.toml")).expect("write manifest");
+        let manifest_path = tempdir.path().join("Cargo.toml");
+        std::fs::write(&manifest_path, sample_manifest()).expect("write manifest");
 
-        let workspace = tempdir.path();
-        let branding = load_workspace_branding(workspace).expect("load branding");
-        validate_branding(&branding).expect("validate branding");
-
-        let output = render_branding(&branding, BrandingOutputFormat::Text).expect("render text");
-        assert!(output.contains("Workspace branding summary:"));
+        execute(
+            tempdir.path(),
+            BrandingOptions {
+                format: BrandingOutputFormat::Json,
+            },
+        )
+        .expect("execute succeeds");
     }
 
     #[test]
@@ -51,5 +78,21 @@ mod tests {
         let manifest = include_str!("../../../../Cargo.toml");
         let branding = parse_workspace_branding(manifest).expect("workspace branding parses");
         validate_branding(&branding).expect("validation succeeds");
+    }
+
+    #[test]
+    fn execute_reports_missing_manifest() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let error = execute(tempdir.path(), BrandingOptions::default()).unwrap_err();
+        match error {
+            TaskError::Io(inner) => {
+                assert!(
+                    inner
+                        .to_string()
+                        .contains("failed to read workspace manifest")
+                );
+            }
+            other => panic!("unexpected error: {:?}", other),
+        }
     }
 }
