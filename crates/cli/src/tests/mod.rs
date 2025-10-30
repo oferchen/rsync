@@ -206,6 +206,8 @@ mod password_tests;
 mod pow_tests;
 #[path = "process.rs"]
 mod process_tests;
+#[path = "progress_render.rs"]
+mod progress_render_tests;
 #[path = "progress.rs"]
 mod progress_tests;
 #[path = "protocol.rs"]
