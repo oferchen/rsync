@@ -117,10 +117,10 @@ jobs:
       - name: Pre-flight check
         run: cargo --locked run -p xtask -- preflight
 
-      - name: Install cargo-zig
+      - name: Install cargo-zigbuild
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zig
+          tool: cargo-zigbuild
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
