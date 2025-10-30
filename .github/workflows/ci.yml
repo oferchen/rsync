@@ -74,7 +74,7 @@ jobs:
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev zig
           version: 1
 
       - name: Check formatting
