@@ -7,3 +7,4 @@ include!("client_transfer.rs");
 include!("module_list_request.rs");
 include!("module_list_proxy.rs");
 include!("module_list_auth.rs");
+include!("error_helpers.rs");
