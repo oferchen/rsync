@@ -26,3 +26,24 @@ pub(crate) use frontend::{
     LIST_TIMESTAMP_FORMAT, OutFormat, OutFormatContext, describe_event_kind, emit_out_format,
     format_list_permissions, parse_out_format,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::exit_code_from;
+    use std::process::ExitCode;
+
+    #[test]
+    fn exit_code_from_clamps_negative_values() {
+        assert_eq!(exit_code_from(-5), ExitCode::from(0));
+    }
+
+    #[test]
+    fn exit_code_from_clamps_large_values() {
+        assert_eq!(exit_code_from(1_000), ExitCode::from(u8::MAX));
+    }
+
+    #[test]
+    fn exit_code_from_preserves_valid_values() {
+        assert_eq!(exit_code_from(42), ExitCode::from(42));
+    }
+}
