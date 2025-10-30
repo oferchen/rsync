@@ -37,7 +37,7 @@ fn legacy_daemon_error_payload(line: &str) -> Option<String> {
     Some(payload.to_string())
 }
 
-pub(crate) fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
+pub(super) fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
     if let Some(mapped) = handshake_error_to_client_error(&error) {
         mapped
     } else {
@@ -119,7 +119,7 @@ impl DaemonAddress {
         self.port
     }
 
-    pub(crate) fn socket_addr_display(&self) -> SocketAddrDisplay<'_> {
+    pub(super) fn socket_addr_display(&self) -> SocketAddrDisplay<'_> {
         SocketAddrDisplay {
             host: &self.host,
             port: self.port,
@@ -127,7 +127,7 @@ impl DaemonAddress {
     }
 }
 
-pub(crate) struct SocketAddrDisplay<'a> {
+pub(super) struct SocketAddrDisplay<'a> {
     host: &'a str,
     port: u16,
 }
@@ -149,9 +149,9 @@ impl fmt::Display for SocketAddrDisplay<'_> {
 /// current module listing implementation performs anonymous queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleListRequest {
-    address: DaemonAddress,
-    username: Option<String>,
-    protocol: ProtocolVersion,
+    pub(super) address: DaemonAddress,
+    pub(super) username: Option<String>,
+    pub(super) protocol: ProtocolVersion,
 }
 
 impl ModuleListRequest {
@@ -708,7 +708,7 @@ fn open_daemon_stream(
     Ok(DaemonStream::tcp(stream))
 }
 
-pub(crate) fn connect_direct(
+pub(super) fn connect_direct(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
@@ -740,7 +740,7 @@ pub(crate) fn connect_direct(
     Err(socket_error("connect to", candidate, error))
 }
 
-pub(crate) fn resolve_daemon_addresses(
+pub(super) fn resolve_daemon_addresses(
     addr: &DaemonAddress,
     mode: AddressMode,
 ) -> Result<Vec<SocketAddr>, ClientError> {
@@ -841,7 +841,7 @@ fn connect_with_optional_bind(
     }
 }
 
-pub(crate) fn connect_via_proxy(
+pub(super) fn connect_via_proxy(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
     connect_timeout: Option<Duration>,
@@ -895,7 +895,7 @@ pub(crate) fn connect_via_proxy(
     Ok(stream)
 }
 
-pub(crate) fn establish_proxy_tunnel(
+pub(super) fn establish_proxy_tunnel(
     stream: &mut TcpStream,
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
@@ -1077,13 +1077,13 @@ impl Write for DaemonStream {
     }
 }
 
-pub(crate) struct ConnectProgramConfig {
-    pub(crate) template: OsString,
-    pub(crate) shell: Option<OsString>,
+pub(super) struct ConnectProgramConfig {
+    template: OsString,
+    shell: Option<OsString>,
 }
 
 impl ConnectProgramConfig {
-    pub(crate) fn new(template: OsString, shell: Option<OsString>) -> Result<Self, String> {
+    pub(super) fn new(template: OsString, shell: Option<OsString>) -> Result<Self, String> {
         if template.is_empty() {
             return Err("RSYNC_CONNECT_PROG must not be empty".to_string());
         }
@@ -1095,7 +1095,7 @@ impl ConnectProgramConfig {
         Ok(Self { template, shell })
     }
 
-    pub(crate) fn shell(&self) -> Option<&OsString> {
+    pub(super) fn shell(&self) -> Option<&OsString> {
         self.shell.as_ref()
     }
 
@@ -1103,7 +1103,7 @@ impl ConnectProgramConfig {
     ///
     /// `%H` is replaced with the daemon host, `%P` with the decimal TCP port, and `%%`
     /// yields a literal percent sign.
-    pub(crate) fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
+    pub(super) fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
         #[cfg(unix)]
         {
             let template = self.template.as_bytes();
@@ -1201,10 +1201,10 @@ impl Drop for ConnectProgramStream {
     }
 }
 
-pub(crate) struct ProxyConfig {
-    pub(crate) host: String,
-    pub(crate) port: u16,
-    pub(crate) credentials: Option<ProxyCredentials>,
+pub(super) struct ProxyConfig {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) credentials: Option<ProxyCredentials>,
 }
 
 impl ProxyConfig {
@@ -1215,16 +1215,16 @@ impl ProxyConfig {
         }
     }
 
-    pub(crate) fn authorization_header(&self) -> Option<String> {
+    pub(super) fn authorization_header(&self) -> Option<String> {
         self.credentials
             .as_ref()
             .map(ProxyCredentials::authorization_value)
     }
 }
 
-pub(crate) struct ProxyCredentials {
-    pub(crate) username: String,
-    pub(crate) password: String,
+pub(super) struct ProxyCredentials {
+    username: String,
+    password: String,
 }
 
 impl ProxyCredentials {
@@ -1257,7 +1257,7 @@ pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     }
 }
 
-pub(crate) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
+pub(super) fn parse_proxy_spec(spec: &str) -> Result<ProxyConfig, ClientError> {
     let trimmed = spec.trim();
     if trimmed.is_empty() {
         return Err(proxy_configuration_error(
@@ -1668,7 +1668,7 @@ pub fn run_module_list_with_password_and_options(
 
 /// Derives the socket connect timeout from the explicit connection setting and
 /// the general transfer timeout.
-pub(crate) fn resolve_connect_timeout(
+pub(super) fn resolve_connect_timeout(
     connect_timeout: TransferTimeout,
     fallback: TransferTimeout,
     default: Duration,
@@ -1684,50 +1684,50 @@ pub(crate) fn resolve_connect_timeout(
     }
 }
 
-pub(crate) struct DaemonAuthContext {
+pub(super) struct DaemonAuthContext {
     username: String,
     secret: SensitiveBytes,
 }
 
 impl DaemonAuthContext {
-    pub(crate) fn new(username: String, secret: Vec<u8>) -> Self {
+    pub(super) fn new(username: String, secret: Vec<u8>) -> Self {
         Self {
             username,
             secret: SensitiveBytes::new(secret),
         }
     }
 
-    fn secret(&self) -> &[u8] {
+    pub(super) fn secret(&self) -> &[u8] {
         self.secret.as_slice()
     }
 }
 
 #[cfg(test)]
 impl DaemonAuthContext {
-    pub(crate) fn into_zeroized_secret(self) -> Vec<u8> {
+    pub(super) fn into_zeroized_secret(self) -> Vec<u8> {
         self.secret.into_zeroized_vec()
     }
 }
 
-pub(crate) struct SensitiveBytes(Vec<u8>);
+pub(super) struct SensitiveBytes(Vec<u8>);
 
 impl SensitiveBytes {
-    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+    pub(super) fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
 
-    pub(crate) fn to_vec(&self) -> Vec<u8> {
+    pub(super) fn to_vec(&self) -> Vec<u8> {
         self.0.clone()
     }
 
-    pub(crate) fn as_slice(&self) -> &[u8] {
+    pub(super) fn as_slice(&self) -> &[u8] {
         &self.0
     }
 }
 
 #[cfg(test)]
 impl SensitiveBytes {
-    pub(crate) fn into_zeroized_vec(mut self) -> Vec<u8> {
+    pub(super) fn into_zeroized_vec(mut self) -> Vec<u8> {
         for byte in &mut self.0 {
             *byte = 0;
         }
@@ -1802,7 +1802,7 @@ fn load_daemon_password() -> Option<Vec<u8>> {
     })
 }
 
-pub(crate) fn compute_daemon_auth_response(secret: &[u8], challenge: &str) -> String {
+pub(super) fn compute_daemon_auth_response(secret: &[u8], challenge: &str) -> String {
     let mut hasher = Md5::new();
     hasher.update(secret);
     hasher.update(challenge.as_bytes());
@@ -1836,6 +1836,8 @@ fn is_motd_payload(payload: &str) -> bool {
 
     matches!(bytes[4], b' ' | b'\t' | b'\r' | b'\n' | b':')
 }
+#[cfg(test)]
+use std::cell::RefCell;
 use std::env::{self, VarError};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
