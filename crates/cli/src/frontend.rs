@@ -112,14 +112,6 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-#[cfg(unix)]
-use users::{get_group_by_name, get_user_by_name, gid_t, uid_t};
-
-#[cfg(not(unix))]
-type uid_t = u32;
-#[cfg(not(unix))]
-type gid_t = u32;
-
 #[path = "defaults.rs"]
 mod defaults;
 #[path = "help.rs"]
