@@ -111,7 +111,13 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
+#[cfg(unix)]
 use users::{get_group_by_name, get_user_by_name, gid_t, uid_t};
+
+#[cfg(not(unix))]
+type uid_t = u32;
+#[cfg(not(unix))]
+type gid_t = u32;
 
 #[path = "defaults.rs"]
 mod defaults;
@@ -5528,6 +5534,7 @@ fn parse_chown_argument(value: &OsStr) -> Result<ParsedChown, Message> {
     })
 }
 
+#[cfg(unix)]
 fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
     if let Ok(id) = input.parse::<uid_t>() {
         return Ok(id);
@@ -5540,6 +5547,19 @@ fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
     Err(rsync_error!(1, "unknown user '{}' specified for --chown", input).with_role(Role::Client))
 }
 
+#[cfg(not(unix))]
+fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
+    input.parse::<uid_t>().map_err(|_| {
+        rsync_error!(
+            1,
+            "user name '{}' specified for --chown requires a numeric ID on this platform",
+            input
+        )
+        .with_role(Role::Client)
+    })
+}
+
+#[cfg(unix)]
 fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
     if let Ok(id) = input.parse::<gid_t>() {
         return Ok(id);
@@ -5550,6 +5570,18 @@ fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
     }
 
     Err(rsync_error!(1, "unknown group '{}' specified for --chown", input).with_role(Role::Client))
+}
+
+#[cfg(not(unix))]
+fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
+    input.parse::<gid_t>().map_err(|_| {
+        rsync_error!(
+            1,
+            "group name '{}' specified for --chown requires a numeric ID on this platform",
+            input
+        )
+        .with_role(Role::Client)
+    })
 }
 
 fn render_module_list<W: Write, E: Write>(
