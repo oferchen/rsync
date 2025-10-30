@@ -13,6 +13,7 @@
 //! the process so callers can obtain references to the data at negligible cost.
 
 use serde::Serialize;
+use std::fmt;
 use std::sync::OnceLock;
 
 use super::brand::{self, Brand};
@@ -26,6 +27,36 @@ pub struct BrandManifest {
     default_brand: Brand,
     oc: BrandProfile,
     upstream: BrandProfile,
+    rust_version: &'static str,
+    upstream_version: &'static str,
+    protocol_version: u32,
+    source_url: &'static str,
+    build_revision: &'static str,
+    build_toolchain: &'static str,
+}
+
+/// Concise, brand-specific view of the workspace metadata.
+///
+/// Instances of this structure are produced via
+/// [`BrandManifest::summary_for`] and expose the canonical program names,
+/// configuration paths, and version metadata associated with a given brand.
+/// The summary keeps branding details and release identifiers in one place so
+/// packaging automation, documentation generators, and entry points can surface
+/// consistent human-readable descriptions without duplicating string literals.
+///
+/// ```
+/// use rsync_core::branding::{manifest, Brand};
+///
+/// let manifest = manifest();
+/// let oc = manifest.summary_for(Brand::Oc);
+/// assert_eq!(oc.client_program_name(), "oc-rsync");
+/// assert_eq!(oc.daemon_config_path(), "/etc/oc-rsyncd/oc-rsyncd.conf");
+/// assert!(oc.to_string().contains("3.4.1-rust"));
+/// ```
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrandSummary {
+    brand: Brand,
+    profile: BrandProfile,
     rust_version: &'static str,
     upstream_version: &'static str,
     protocol_version: u32,
@@ -132,6 +163,22 @@ impl BrandManifest {
     pub const fn build_toolchain(self) -> &'static str {
         self.build_toolchain
     }
+
+    /// Returns a [`BrandSummary`] describing the metadata associated with
+    /// `brand`.
+    #[must_use]
+    pub const fn summary_for(self, brand: Brand) -> BrandSummary {
+        BrandSummary {
+            brand,
+            profile: self.profile_for(brand),
+            rust_version: self.rust_version,
+            upstream_version: self.upstream_version,
+            protocol_version: self.protocol_version,
+            source_url: self.source_url,
+            build_revision: self.build_revision,
+            build_toolchain: self.build_toolchain,
+        }
+    }
 }
 
 fn build_manifest() -> BrandManifest {
@@ -155,6 +202,100 @@ fn build_manifest() -> BrandManifest {
 pub fn manifest() -> &'static BrandManifest {
     static MANIFEST: OnceLock<BrandManifest> = OnceLock::new();
     MANIFEST.get_or_init(build_manifest)
+}
+
+impl BrandSummary {
+    /// Returns the [`Brand`] covered by the summary.
+    #[must_use]
+    pub const fn brand(self) -> Brand {
+        self.brand
+    }
+
+    /// Returns the canonical client program name for the brand.
+    #[must_use]
+    pub const fn client_program_name(self) -> &'static str {
+        self.profile.client_program_name()
+    }
+
+    /// Returns the canonical daemon program name for the brand.
+    #[must_use]
+    pub const fn daemon_program_name(self) -> &'static str {
+        self.profile.daemon_program_name()
+    }
+
+    /// Returns the canonical daemon configuration directory for the brand.
+    #[must_use]
+    pub const fn daemon_config_dir(self) -> &'static str {
+        self.profile.daemon_config_dir_str()
+    }
+
+    /// Returns the canonical daemon configuration file path for the brand.
+    #[must_use]
+    pub const fn daemon_config_path(self) -> &'static str {
+        self.profile.daemon_config_path_str()
+    }
+
+    /// Returns the canonical daemon secrets file path for the brand.
+    #[must_use]
+    pub const fn daemon_secrets_path(self) -> &'static str {
+        self.profile.daemon_secrets_path_str()
+    }
+
+    /// Returns the Rust-branded version string advertised by binaries.
+    #[must_use]
+    pub const fn rust_version(self) -> &'static str {
+        self.rust_version
+    }
+
+    /// Returns the upstream base version targeted by this build.
+    #[must_use]
+    pub const fn upstream_version(self) -> &'static str {
+        self.upstream_version
+    }
+
+    /// Returns the highest rsync protocol version supported by the workspace.
+    #[must_use]
+    pub const fn protocol_version(self) -> u32 {
+        self.protocol_version
+    }
+
+    /// Returns the source repository URL advertised in version banners.
+    #[must_use]
+    pub const fn source_url(self) -> &'static str {
+        self.source_url
+    }
+
+    /// Returns the sanitized build revision embedded in binaries.
+    #[must_use]
+    pub const fn build_revision(self) -> &'static str {
+        self.build_revision
+    }
+
+    /// Returns the human-readable toolchain description rendered by banners.
+    #[must_use]
+    pub const fn build_toolchain(self) -> &'static str {
+        self.build_toolchain
+    }
+}
+
+impl fmt::Display for BrandSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "brand={} client={} daemon={} config={} secrets={} version={} (upstream {}) protocol={} source={} revision={} toolchain={}",
+            self.brand.label(),
+            self.client_program_name(),
+            self.daemon_program_name(),
+            self.daemon_config_path(),
+            self.daemon_secrets_path(),
+            self.rust_version(),
+            self.upstream_version(),
+            self.protocol_version(),
+            self.source_url(),
+            self.build_revision(),
+            self.build_toolchain(),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -217,5 +358,48 @@ mod tests {
         assert_eq!(manifest.source_url(), metadata.source_url());
         assert_eq!(manifest.build_revision(), version::build_revision());
         assert_eq!(manifest.build_toolchain(), BUILD_TOOLCHAIN);
+    }
+
+    #[test]
+    fn summary_for_oc_brand_exposes_expected_metadata() {
+        let manifest = manifest();
+        let summary = manifest.summary_for(Brand::Oc);
+
+        assert_eq!(summary.brand(), Brand::Oc);
+        assert_eq!(summary.client_program_name(), "oc-rsync");
+        assert_eq!(summary.daemon_program_name(), "oc-rsyncd");
+        assert_eq!(
+            summary.daemon_config_path(),
+            "/etc/oc-rsyncd/oc-rsyncd.conf"
+        );
+        assert_eq!(
+            summary.daemon_secrets_path(),
+            "/etc/oc-rsyncd/oc-rsyncd.secrets"
+        );
+        assert_eq!(summary.rust_version(), manifest.rust_version());
+        assert_eq!(summary.upstream_version(), manifest.upstream_version());
+        assert_eq!(summary.protocol_version(), manifest.protocol_version());
+        assert_eq!(summary.source_url(), manifest.source_url());
+        assert_eq!(summary.build_revision(), manifest.build_revision());
+        assert_eq!(summary.build_toolchain(), manifest.build_toolchain());
+
+        let rendered = summary.to_string();
+        assert!(rendered.contains("brand=oc"));
+        assert!(rendered.contains("client=oc-rsync"));
+        assert!(rendered.contains("version=3.4.1-rust"));
+    }
+
+    #[test]
+    fn summary_for_upstream_brand_reflects_legacy_names() {
+        let manifest = manifest();
+        let summary = manifest.summary_for(Brand::Upstream);
+
+        assert_eq!(summary.brand(), Brand::Upstream);
+        assert_eq!(summary.client_program_name(), "rsync");
+        assert_eq!(summary.daemon_program_name(), "rsyncd");
+        assert_eq!(summary.daemon_config_path(), "/etc/rsyncd.conf");
+        assert_eq!(summary.daemon_secrets_path(), "/etc/rsyncd.secrets");
+        assert_eq!(summary.rust_version(), manifest.rust_version());
+        assert_eq!(summary.upstream_version(), manifest.upstream_version());
     }
 }

@@ -33,7 +33,7 @@ pub use constants::{
 };
 pub use detection::{brand_for_program_name, detect_brand, resolve_brand_profile};
 pub use json::{manifest_json, manifest_json_pretty};
-pub use manifest::{BrandManifest, manifest};
+pub use manifest::{BrandManifest, BrandSummary, manifest};
 pub use profile::{
     BrandProfile, client_program_name, client_program_name_os_str, daemon_program_name,
     daemon_program_name_os_str, legacy_daemon_config_dir, legacy_daemon_config_path,
