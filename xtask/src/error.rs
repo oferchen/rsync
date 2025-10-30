@@ -86,7 +86,7 @@ mod tests {
         );
         assert_eq!(TaskError::ToolMissing("tool".into()).to_string(), "tool");
 
-        let io_error = TaskError::from(io::Error::new(io::ErrorKind::Other, "io"));
+        let io_error = TaskError::from(io::Error::other("io"));
         assert_eq!(io_error.to_string(), "io");
 
         let binary = TaskError::BinaryFiles(vec![PathBuf::from("bin/artifact")]).to_string();
