@@ -143,7 +143,13 @@ where
         .map_err(map_local_copy_error)
 }
 
-pub(crate) fn build_local_copy_options(
+/// Builds [`LocalCopyOptions`] reflecting the provided client configuration and optional filter
+/// program.
+///
+/// This helper mirrors the internal wiring used by [`run_client`](super::run_client) so that unit
+/// tests can validate the translation layer without re-invoking the entire transfer engine.
+#[doc(hidden)]
+pub fn build_local_copy_options(
     config: &ClientConfig,
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
