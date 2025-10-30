@@ -45,7 +45,7 @@ pub(super) fn map_message_reserve_error(err: TryReserveError) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_message_reserve_error, MessageBufferReserveError};
+    use super::{MessageBufferReserveError, map_message_reserve_error};
     use std::error::Error as _;
 
     #[test]

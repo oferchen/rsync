@@ -66,9 +66,9 @@ impl std::error::Error for MetadataError {
 #[cfg(test)]
 mod tests {
     use super::MetadataError;
+    use std::error::Error as _;
     use std::io;
     use std::path::Path;
-    use std::error::Error as _;
 
     #[test]
     fn metadata_error_exposes_contextual_information() {
