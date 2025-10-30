@@ -145,6 +145,9 @@ pub(crate) fn set_password_stdin_input(data: Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn trims_trailing_newlines() {
@@ -158,5 +161,67 @@ mod tests {
         set_password_stdin_input(b"stdin-secret\n".to_vec());
         let password = read_password_from_stdin().expect("stdin override");
         assert_eq!(password, b"stdin-secret");
+    }
+
+    #[test]
+    fn load_optional_password_absent_returns_none() {
+        assert_eq!(load_optional_password(None).expect("optional load"), None);
+    }
+
+    #[test]
+    fn load_optional_password_reads_file_contents() {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(b"from-file\n").expect("write secret");
+        let path = file.into_temp_path();
+
+        let loaded = load_optional_password(Some(path.as_ref())).expect("load password");
+
+        assert_eq!(loaded, Some(b"from-file".to_vec()));
+    }
+
+    #[test]
+    fn load_password_file_reads_from_standard_input() {
+        set_password_stdin_input(b"stdin-file\n".to_vec());
+        let password = load_password_file(Path::new("-")).expect("stdin password");
+
+        assert_eq!(password, b"stdin-file".to_vec());
+    }
+
+    #[test]
+    fn load_password_file_rejects_non_file_paths() {
+        let dir = tempdir().expect("temporary directory");
+        let error = load_password_file(dir.path()).expect_err("directories rejected");
+
+        assert_eq!(error.code(), Some(1));
+        assert_eq!(error.role(), Some(Role::Client));
+        assert!(
+            error.text().contains("must be a regular file"),
+            "unexpected diagnostic: {}",
+            error.text()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_password_file_rejects_group_or_world_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(b"perms").expect("write secret");
+
+        let permissions = std::fs::Permissions::from_mode(0o644);
+        std::fs::set_permissions(file.path(), permissions).expect("set permissions");
+
+        let error = load_password_file(file.path()).expect_err("insecure permissions");
+
+        assert_eq!(error.code(), Some(1));
+        assert_eq!(error.role(), Some(Role::Client));
+        assert!(
+            error
+                .text()
+                .contains("must not be accessible to group or others"),
+            "unexpected diagnostic: {}",
+            error.text()
+        );
     }
 }
