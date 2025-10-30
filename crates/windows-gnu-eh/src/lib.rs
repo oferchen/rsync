@@ -21,10 +21,7 @@ mod windows_gnu {
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
     #[no_mangle]
-    pub unsafe extern "C" fn ___register_frame_info(
-        eh_frame: *const u8,
-        object: *mut c_void,
-    ) {
+    pub unsafe extern "C" fn ___register_frame_info(eh_frame: *const u8, object: *mut c_void) {
         __register_frame_info(eh_frame, object);
     }
 
