@@ -1,4 +1,4 @@
-use super::helpers::{handshake_bytes, MemoryTransport};
+use super::helpers::{MemoryTransport, handshake_bytes};
 use crate::RemoteProtocolAdvertisement;
 use rsync_protocol::ProtocolVersion;
 use std::io::Write;
