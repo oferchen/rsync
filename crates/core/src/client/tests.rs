@@ -1,3 +1,4 @@
+use super::error::{MAX_DELETE_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE, map_local_copy_error};
 use super::module_list::{
     ConnectProgramConfig, DaemonAuthContext, ProxyConfig, SensitiveBytes,
     compute_daemon_auth_response, connect_direct, connect_via_proxy, establish_proxy_tunnel,
