@@ -357,10 +357,10 @@ jobs:
         run: cargo --locked run -p xtask -- branding
 
       - name: Build Debian package
-        run: cd ${{ github.workspace }}/bin/oc-rsync/ && cargo --locked deb -v
+        run: cd bin/oc-rsync/ && cargo --locked deb -v
 
       - name: Build RPM package
-        run: cd ${{ github.workspace }}/bin/oc-rsync/ && cargo --locked rpm build -v
+        run: cd bin/oc-rsync/ && cargo --locked rpm build -v
 
       - name: Generate SBOM
         run: cargo --locked run -p xtask -- sbom
