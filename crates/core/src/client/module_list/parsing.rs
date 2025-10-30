@@ -76,16 +76,35 @@ pub(crate) fn decode_percent_component(
 
     while index < bytes.len() {
         if bytes[index] == b'%' {
+            let zone_fallback = input[..index].contains(':');
+
             if index + 2 >= bytes.len() {
+                if zone_fallback {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                    continue;
+                }
                 return Err(invalid_percent());
             }
 
-            let hi = hex_value(bytes[index + 1]).ok_or_else(invalid_percent)?;
-            let lo = hex_value(bytes[index + 2]).ok_or_else(invalid_percent)?;
+            let hi = hex_value(bytes[index + 1]);
+            let lo = hex_value(bytes[index + 2]);
 
-            decoded.push((hi << 4) | lo);
-            index += 3;
-            continue;
+            match (hi, lo) {
+                (Some(hi), Some(lo)) => {
+                    decoded.push((hi << 4) | lo);
+                    index += 3;
+                    continue;
+                }
+                _ if zone_fallback => {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                    continue;
+                }
+                _ => {
+                    return Err(invalid_percent());
+                }
+            }
         }
 
         decoded.push(bytes[index]);
@@ -106,7 +125,7 @@ pub(crate) fn hex_value(byte: u8) -> Option<u8> {
 
 pub(crate) fn invalid_percent_encoding_error() -> ClientError {
     daemon_error(
-        "invalid percent-encoding in daemon URL",
+        "invalid percent-encoding in daemon host",
         FEATURE_UNAVAILABLE_EXIT_CODE,
     )
 }
@@ -227,12 +246,31 @@ pub(crate) fn parse_host_port(
     }
 
     if let Some((host, port)) = split_host_port(input) {
-        let port = port
-            .parse::<u16>()
-            .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
-        let host = decode_host_component(host)?;
-        let address = DaemonAddress::new(host, port)?;
-        return Ok(ParsedDaemonTarget { address, username });
+        let host_contains_colon = host.contains(':');
+        let port_is_digits = !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit());
+
+        if port_is_digits {
+            if host_contains_colon {
+                return Err(daemon_error(
+                    "IPv6 daemon addresses must be enclosed in brackets",
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                ));
+            }
+
+            let port = port.parse::<u16>().map_err(|_| {
+                daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE)
+            })?;
+            let host = decode_host_component(host)?;
+            let address = DaemonAddress::new(host, port)?;
+            return Ok(ParsedDaemonTarget { address, username });
+        }
+
+        if !host_contains_colon {
+            return Err(daemon_error(
+                "invalid daemon port",
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+            ));
+        }
     }
 
     let host = decode_host_component(input)?;
