@@ -2,7 +2,7 @@ use super::module_list::{
     ConnectProgramConfig, DaemonAuthContext, ProxyConfig, SensitiveBytes,
     compute_daemon_auth_response, connect_direct, connect_via_proxy, establish_proxy_tunnel,
     map_daemon_handshake_error, parse_proxy_spec, resolve_connect_timeout,
-    resolve_daemon_addresses,
+    resolve_daemon_addresses, set_test_daemon_password,
 };
 use super::*;
 use crate::bandwidth;
@@ -3869,7 +3869,7 @@ fn run_module_list_requires_password_for_authentication() {
     );
 
     let _guard = env_lock().lock().unwrap();
-    super::set_test_daemon_password(None);
+    set_test_daemon_password(None);
 
     let error = run_module_list(request).expect_err("missing password should fail");
     assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
@@ -3936,9 +3936,9 @@ fn run_module_list_authenticates_with_credentials() {
     );
 
     let _guard = env_lock().lock().unwrap();
-    super::set_test_daemon_password(Some(b"secret".to_vec()));
+    set_test_daemon_password(Some(b"secret".to_vec()));
     let list = run_module_list(request).expect("module list succeeds");
-    super::set_test_daemon_password(None);
+    set_test_daemon_password(None);
 
     assert_eq!(list.entries().len(), 1);
     assert_eq!(list.entries()[0].name(), "secured");
@@ -4004,14 +4004,14 @@ fn run_module_list_authenticates_with_password_override() {
     );
 
     let _guard = env_lock().lock().unwrap();
-    super::set_test_daemon_password(Some(b"wrong".to_vec()));
+    set_test_daemon_password(Some(b"wrong".to_vec()));
     let list = run_module_list_with_password(
         request,
         Some(b"override-secret".to_vec()),
         TransferTimeout::Default,
     )
     .expect("module list succeeds");
-    super::set_test_daemon_password(None);
+    set_test_daemon_password(None);
 
     assert_eq!(list.entries().len(), 1);
     assert_eq!(list.entries()[0].name(), "override");
@@ -4083,9 +4083,9 @@ fn run_module_list_authenticates_with_split_challenge() {
     );
 
     let _guard = env_lock().lock().unwrap();
-    super::set_test_daemon_password(Some(b"secret".to_vec()));
+    set_test_daemon_password(Some(b"secret".to_vec()));
     let list = run_module_list(request).expect("module list succeeds");
-    super::set_test_daemon_password(None);
+    set_test_daemon_password(None);
 
     assert_eq!(list.entries().len(), 1);
     assert_eq!(list.entries()[0].name(), "protected");
@@ -4153,9 +4153,9 @@ fn run_module_list_reports_authentication_failure() {
     );
 
     let _guard = env_lock().lock().unwrap();
-    super::set_test_daemon_password(Some(b"secret".to_vec()));
+    set_test_daemon_password(Some(b"secret".to_vec()));
     let error = run_module_list(request).expect_err("auth failure surfaces");
-    super::set_test_daemon_password(None);
+    set_test_daemon_password(None);
 
     assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
     assert!(

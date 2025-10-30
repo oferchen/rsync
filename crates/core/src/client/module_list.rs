@@ -1847,9 +1847,6 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
-#[cfg(test)]
-use std::cell::RefCell;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use rsync_checksums::strong::Md5;
