@@ -261,8 +261,8 @@ mod tests {
 
     #[test]
     fn parser_retains_backslash_inside_single_quotes() {
-        let parsed = parse_remote_shell(OsStr::new("ssh -o'Proxy\\Command'"))
-            .expect("parse succeeds");
+        let parsed =
+            parse_remote_shell(OsStr::new("ssh -o'Proxy\\Command'")).expect("parse succeeds");
 
         assert_eq!(parsed[0], OsString::from("ssh"));
         assert_eq!(parsed[1], OsString::from("-oProxy\\Command"));
@@ -270,10 +270,8 @@ mod tests {
 
     #[test]
     fn parser_honours_double_quote_escape_rules() {
-        let parsed = parse_remote_shell(OsStr::new(
-            r#"ssh -o"ProxyCommand=echo \$HOME \a""#,
-        ))
-        .expect("parse succeeds");
+        let parsed = parse_remote_shell(OsStr::new(r#"ssh -o"ProxyCommand=echo \$HOME \a""#))
+            .expect("parse succeeds");
 
         assert_eq!(parsed[0], OsString::from("ssh"));
         assert_eq!(parsed[1], OsString::from("-oProxyCommand=echo $HOME \\a"));
@@ -281,10 +279,8 @@ mod tests {
 
     #[test]
     fn parser_strips_newline_after_escape_sequence() {
-        let parsed = parse_remote_shell(OsStr::new(
-            "ssh -oProxyCommand=echo\\\nbar",
-        ))
-        .expect("parse succeeds");
+        let parsed = parse_remote_shell(OsStr::new("ssh -oProxyCommand=echo\\\nbar"))
+            .expect("parse succeeds");
 
         assert_eq!(parsed[1], OsString::from("-oProxyCommand=echobar"));
     }
