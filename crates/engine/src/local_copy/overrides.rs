@@ -18,7 +18,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(super) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+pub(crate) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
     F: Fn(&Path, &Path) -> io::Result<()> + 'static,
 {
@@ -61,7 +61,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(super) fn with_device_id_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+pub(crate) fn with_device_id_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
     F: Fn(&Path, &fs::Metadata) -> Option<u64> + 'static,
 {
