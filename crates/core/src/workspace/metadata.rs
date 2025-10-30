@@ -5,9 +5,10 @@ use super::constants::{
     RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION,
 };
 use super::protocol::PROTOCOL_VERSION;
+use serde::Serialize;
 
 /// Immutable snapshot of workspace metadata loaded from `Cargo.toml`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct Metadata {
     brand: &'static str,
     upstream_version: &'static str,

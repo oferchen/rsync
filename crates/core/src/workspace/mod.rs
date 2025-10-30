@@ -12,6 +12,7 @@
 //! the manifest entries.
 
 mod constants;
+mod json;
 mod metadata;
 mod paths;
 mod protocol;
@@ -24,6 +25,7 @@ pub use constants::{
     legacy_client_program_name, legacy_daemon_program_name, rust_version, source_url,
     upstream_version,
 };
+pub use json::{metadata_json, metadata_json_pretty};
 pub use metadata::{Metadata, metadata};
 pub use paths::{
     daemon_config_dir, daemon_config_path, daemon_secrets_path, legacy_daemon_config_dir,
