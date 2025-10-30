@@ -74,7 +74,7 @@ mod error_helper_tests {
         let source = LocalCopyError::io(
             "copy file",
             PathBuf::from("dest"),
-            io::Error::new(io::ErrorKind::Other, "disk full"),
+            io::Error::other("disk full"),
         );
         let mapped = map_local_copy_error(source);
         let rendered = render(&mapped);
@@ -114,7 +114,7 @@ mod error_helper_tests {
         let error = io_error(
             "write file",
             Path::new("/tmp/data"),
-            io::Error::new(io::ErrorKind::Other, "access denied"),
+            io::Error::other("access denied"),
         );
         let rendered = render(&error);
 
