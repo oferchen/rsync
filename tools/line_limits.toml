@@ -67,8 +67,3 @@ path = "crates/protocol/src/negotiation/tests/sniffer_take.rs"
 max_lines = 570
 warn_lines = 530
 
-[[overrides]]
-path = "crates/cli/src/tests.rs"
-max_lines = 9800
-warn_lines = 9700
-
