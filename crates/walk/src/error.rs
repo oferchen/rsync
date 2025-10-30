@@ -172,3 +172,82 @@ impl WalkErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn io_error(message: &'static str) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, message)
+    }
+
+    #[test]
+    fn walk_error_path_matches_variant_path() {
+        let root = WalkError::root_metadata(PathBuf::from("root"), io_error("root"));
+        assert_eq!(Path::new("root"), root.path());
+
+        let read_dir = WalkError::read_dir(PathBuf::from("dir"), io_error("dir"));
+        assert_eq!(Path::new("dir"), read_dir.path());
+
+        let read_dir_entry = WalkError::read_dir_entry(PathBuf::from("entry"), io_error("entry"));
+        assert_eq!(Path::new("entry"), read_dir_entry.path());
+
+        let metadata = WalkError::metadata(PathBuf::from("meta"), io_error("meta"));
+        assert_eq!(Path::new("meta"), metadata.path());
+
+        let canonicalize = WalkError::canonicalize(PathBuf::from("canon"), io_error("canon"));
+        assert_eq!(Path::new("canon"), canonicalize.path());
+    }
+
+    #[test]
+    fn walk_error_display_is_specific_per_variant() {
+        let root = WalkError::root_metadata(PathBuf::from("root"), io_error("boom"));
+        assert_eq!(
+            "failed to inspect traversal root 'root': boom",
+            root.to_string()
+        );
+
+        let read_dir = WalkError::read_dir(PathBuf::from("dir"), io_error("boom"));
+        assert_eq!(
+            "failed to read directory 'dir': boom",
+            read_dir.to_string()
+        );
+
+        let read_dir_entry = WalkError::read_dir_entry(PathBuf::from("entry"), io_error("boom"));
+        assert_eq!(
+            "failed to read entry in 'entry': boom",
+            read_dir_entry.to_string()
+        );
+
+        let metadata = WalkError::metadata(PathBuf::from("meta"), io_error("boom"));
+        assert_eq!(
+            "failed to inspect metadata for 'meta': boom",
+            metadata.to_string()
+        );
+
+        let canonicalize = WalkError::canonicalize(PathBuf::from("canon"), io_error("boom"));
+        assert_eq!(
+            "failed to canonicalize 'canon': boom",
+            canonicalize.to_string()
+        );
+    }
+
+    #[test]
+    fn walk_error_kind_accessor_reveals_inner_variant() {
+        let metadata = WalkError::metadata(PathBuf::from("meta"), io_error("meta"));
+        match metadata.kind() {
+            WalkErrorKind::Metadata { path, .. } => assert_eq!(Path::new("meta"), path),
+            other => panic!("unexpected error kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn walk_error_source_refers_to_underlying_io_error() {
+        let error = WalkError::read_dir(PathBuf::from("dir"), io_error("source"));
+        let source_ref = error
+            .source()
+            .and_then(|err| err.downcast_ref::<io::Error>())
+            .expect("walk error should expose the underlying io::Error");
+        assert_eq!(source_ref.to_string(), "source");
+    }
+}
