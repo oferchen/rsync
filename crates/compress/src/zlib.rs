@@ -503,14 +503,10 @@ mod tests {
         let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
         assert!(encoder.get_ref().is_empty());
 
-        encoder
-            .get_mut()
-            .extend_from_slice(b"prefix");
+        encoder.get_mut().extend_from_slice(b"prefix");
         assert_eq!(encoder.get_ref(), b"prefix");
 
-        encoder
-            .write_all(b"payload")
-            .expect("compress payload");
+        encoder.write_all(b"payload").expect("compress payload");
         let (sink, bytes) = encoder
             .finish_into_inner()
             .expect("finish compression stream");
