@@ -1,6 +1,7 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::{is_help_flag, run_cargo_tool};
 use crate::workspace::load_workspace_branding;
+use std::env;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -120,6 +121,10 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
     println!("Preparing {}", branding.summary());
 
+    if options.build_deb || options.build_rpm {
+        build_workspace_binaries(workspace, &options.profile)?;
+    }
+
     if options.build_deb {
         println!("Building Debian package with cargo deb");
         let mut deb_args = vec![OsString::from("deb"), OsString::from("--locked")];
@@ -160,9 +165,37 @@ pub fn usage() -> String {
     )
 }
 
+fn build_workspace_binaries(workspace: &Path, profile: &Option<OsString>) -> TaskResult<()> {
+    if env::var_os("OC_RSYNC_PACKAGE_SKIP_BUILD").is_some() {
+        println!("Skipping workspace binary build because OC_RSYNC_PACKAGE_SKIP_BUILD is set");
+        return Ok(());
+    }
+
+    println!("Ensuring workspace binaries are built with cargo build");
+    let mut args = vec![
+        OsString::from("build"),
+        OsString::from("--workspace"),
+        OsString::from("--bins"),
+        OsString::from("--locked"),
+    ];
+
+    if let Some(profile) = profile {
+        args.push(OsString::from("--profile"));
+        args.push(profile.clone());
+    }
+
+    run_cargo_tool(
+        workspace,
+        args,
+        "cargo build",
+        "use `cargo build` to compile the workspace binaries",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -220,6 +253,42 @@ mod tests {
         })
     }
 
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        #[allow(unsafe_code)]
+        fn set(key: &'static str, value: &str) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let previous = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self {
+                key,
+                previous,
+                _lock: guard,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                unsafe { env::set_var(self.key, previous) };
+            } else {
+                unsafe { env::remove_var(self.key) };
+            }
+        }
+    }
+
     #[test]
     fn execute_with_no_targets_returns_success() {
         execute(
@@ -235,6 +304,7 @@ mod tests {
 
     #[test]
     fn execute_reports_missing_cargo_deb_tool() {
+        let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
         let error = execute(
             workspace_root(),
             PackageOptions {
@@ -249,6 +319,7 @@ mod tests {
 
     #[test]
     fn execute_reports_missing_cargo_rpm_tool() {
+        let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
         let error = execute(
             workspace_root(),
             PackageOptions {
