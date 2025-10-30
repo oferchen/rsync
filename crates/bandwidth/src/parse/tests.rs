@@ -1,6 +1,6 @@
 use super::{
     BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit,
-    pow_u128,
+    parse_decimal_with_exponent, pow_u128,
 };
 use crate::limiter::{BandwidthLimiter, LimiterChange};
 use proptest::prelude::*;
@@ -46,6 +46,18 @@ fn parse_bandwidth_accepts_iec_suffixes() {
 fn parse_bandwidth_accepts_trailing_decimal_point() {
     let limit = parse_bandwidth_argument("1.").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1024));
+}
+
+#[test]
+fn parse_bandwidth_accepts_large_unit_suffixes() {
+    let gibibytes = parse_bandwidth_argument("1G").expect("parse succeeds");
+    assert_eq!(gibibytes, NonZeroU64::new(1_024u64.pow(3)));
+
+    let tebibytes = parse_bandwidth_argument("2TiB").expect("parse succeeds");
+    assert_eq!(tebibytes, NonZeroU64::new(2 * 1_024u64.pow(4)));
+
+    let pebibytes = parse_bandwidth_argument("3P").expect("parse succeeds");
+    assert_eq!(pebibytes, NonZeroU64::new(3 * 1_024u64.pow(5)));
 }
 
 #[test]
@@ -436,6 +448,22 @@ fn parse_bandwidth_rejects_negative_values() {
 }
 
 #[test]
+fn bandwidth_parse_error_display_matches_expected_messages() {
+    assert_eq!(
+        BandwidthParseError::Invalid.to_string(),
+        "invalid bandwidth limit syntax"
+    );
+    assert_eq!(
+        BandwidthParseError::TooSmall.to_string(),
+        "bandwidth limit is below the minimum of 512 bytes per second"
+    );
+    assert_eq!(
+        BandwidthParseError::TooLarge.to_string(),
+        "bandwidth limit exceeds the supported range"
+    );
+}
+
+#[test]
 fn parse_bandwidth_rejects_overflow() {
     let error = parse_bandwidth_argument("999999999999999999999999999999P").unwrap_err();
     assert_eq!(error, BandwidthParseError::TooLarge);
@@ -473,4 +501,46 @@ fn pow_u128_matches_checked_pow_for_supported_inputs() {
 fn pow_u128_reports_overflow() {
     let overflow = pow_u128(u32::MAX, 5);
     assert_eq!(overflow, Err(BandwidthParseError::TooLarge));
+}
+
+#[test]
+fn parse_decimal_with_exponent_parses_integer_and_fraction_components() {
+    let (integer, fraction, denominator, exponent) =
+        parse_decimal_with_exponent("123.45").expect("parse succeeds");
+
+    assert_eq!(integer, 123);
+    assert_eq!(fraction, 45);
+    assert_eq!(denominator, 100);
+    assert_eq!(exponent, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_accepts_comma_separator_and_scientific_notation() {
+    let (integer, fraction, denominator, exponent) =
+        parse_decimal_with_exponent("7,89e3").expect("parse succeeds");
+
+    assert_eq!(integer, 7);
+    assert_eq!(fraction, 89);
+    assert_eq!(denominator, 100);
+    assert_eq!(exponent, 3);
+}
+
+#[test]
+fn parse_decimal_with_exponent_supports_negative_exponents() {
+    let (_, _, _, exponent) = parse_decimal_with_exponent("10E-2").expect("parse succeeds");
+    assert_eq!(exponent, -2);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_repeated_decimal_markers() {
+    let error = parse_decimal_with_exponent("1.2.3").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_missing_exponent_digits() {
+    for text in ["10e", "5E+", "2e-"] {
+        let error = parse_decimal_with_exponent(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
 }
