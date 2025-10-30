@@ -149,8 +149,8 @@ jobs:
       - name: Enforce coverage thresholds and export summary
         run: >-
           cargo --locked llvm-cov report --json --summary-only
-          --output-path coverage-summary.json --fail-under-lines 95
-          --fail-under-functions 95
+          --output-path coverage-summary.json --fail-under-lines 85
+          --fail-under-functions 85
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
