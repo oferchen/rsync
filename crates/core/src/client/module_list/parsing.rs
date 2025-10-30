@@ -257,9 +257,9 @@ pub(crate) fn parse_host_port(
                 ));
             }
 
-            let port = port.parse::<u16>().map_err(|_| {
-                daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE)
-            })?;
+            let port = port
+                .parse::<u16>()
+                .map_err(|_| daemon_error("invalid daemon port", FEATURE_UNAVAILABLE_EXIT_CODE))?;
             let host = decode_host_component(host)?;
             let address = DaemonAddress::new(host, port)?;
             return Ok(ParsedDaemonTarget { address, username });
