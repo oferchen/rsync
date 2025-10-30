@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use rsync_checksums::strong::Md5;
 use rsync_core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use time::OffsetDateTime;
+#[cfg(unix)]
 use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
 use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions};
@@ -226,6 +227,7 @@ fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
         .unwrap_or_else(|| "0".to_string())
 }
 
+#[cfg(unix)]
 fn resolve_user_name(uid: u32) -> String {
     get_user_by_uid(uid as uid_t)
         .map(|user| user.name().to_string_lossy().into_owned())
@@ -233,11 +235,22 @@ fn resolve_user_name(uid: u32) -> String {
         .unwrap_or_else(|| uid.to_string())
 }
 
+#[cfg(not(unix))]
+fn resolve_user_name(uid: u32) -> String {
+    uid.to_string()
+}
+
+#[cfg(unix)]
 fn resolve_group_name(gid: u32) -> String {
     get_group_by_gid(gid as gid_t)
         .map(|group| group.name().to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| gid.to_string())
+}
+
+#[cfg(not(unix))]
+fn resolve_group_name(gid: u32) -> String {
+    gid.to_string()
 }
 
 fn format_current_timestamp() -> String {
