@@ -18,8 +18,8 @@ impl ClientConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
     use crate::client::config::filters::FilterRuleKind;
+    use std::ffi::OsString;
 
     #[test]
     fn filter_rules_preserve_builder_order() {
