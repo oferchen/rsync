@@ -100,6 +100,47 @@ fn preserves_explicit_bracketed_ipv6_literals() {
     );
 }
 
+#[test]
+fn command_parts_skip_target_when_host_and_user_missing() {
+    let mut command = SshCommand::new("");
+    command.set_remote_command([OsString::from("rsync")]);
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec!["-oBatchMode=yes".to_string(), "rsync".to_string()]
+    );
+}
+
+#[test]
+fn target_override_supersedes_computed_target() {
+    let mut command = SshCommand::new("example.com");
+    command.set_user("backup");
+    command.set_target_override(Some("custom-target"));
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec!["-oBatchMode=yes".to_string(), "custom-target".to_string()]
+    );
+}
+
+#[test]
+fn empty_target_override_suppresses_target_argument() {
+    let mut command = SshCommand::new("example.com");
+    command.set_target_override(Some(OsString::new()));
+    command.push_remote_arg("rsync");
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec!["-oBatchMode=yes".to_string(), "rsync".to_string()]
+    );
+}
+
 #[cfg(unix)]
 fn spawn_echo_process() -> SshConnection {
     let mut command = SshCommand::new("ignored");
