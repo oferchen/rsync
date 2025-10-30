@@ -41,8 +41,7 @@ mod tests {
     fn trigger_try_reserve_error() -> TryReserveError {
         Vec::<u8>::new()
             .try_reserve(usize::MAX)
-            .err()
-            .expect("overflow should produce a TryReserveError")
+            .expect_err("overflow should produce a TryReserveError")
     }
 
     #[test]
