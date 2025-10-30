@@ -127,9 +127,6 @@ use rsync_engine::local_copy::{
     ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use rsync_filters::FilterRule as EngineFilterRule;
-#[cfg(test)]
-use std::cell::RefCell;
-
 /// Exit code returned when client functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// Exit code used when a copy partially or wholly fails.

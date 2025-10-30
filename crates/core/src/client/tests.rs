@@ -1,3 +1,9 @@
+use super::module_list::{
+    ConnectProgramConfig, DaemonAuthContext, ProxyConfig, SensitiveBytes,
+    compute_daemon_auth_response, connect_direct, connect_via_proxy, establish_proxy_tunnel,
+    map_daemon_handshake_error, parse_proxy_spec, resolve_connect_timeout,
+    resolve_daemon_addresses,
+};
 use super::*;
 use crate::bandwidth;
 use crate::client::fallback::write_daemon_password;
@@ -6,9 +12,10 @@ use crate::version::RUST_VERSION;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::{SkipCompressList, signature::SignatureAlgorithm};
 use rsync_meta::ChmodModifiers;
+use rsync_protocol::{NegotiationError, ProtocolVersion};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::num::{NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
