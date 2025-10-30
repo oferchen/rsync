@@ -238,6 +238,11 @@ jobs:
           targets: ${{ matrix.platform.target }}
           cache: true
 
+      - name: Install Rust target support
+        run: |
+          rustup target add ${{ matrix.platform.target }}
+          rustup component add rust-src
+
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: cross-${{ matrix.platform.name }}
