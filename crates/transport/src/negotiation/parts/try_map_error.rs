@@ -8,7 +8,7 @@ use std::fmt;
 /// negotiation bytes are not lost when a transformation cannot be completed. The type implements
 /// [`Clone`] when both captured components support it and provides [`From`] conversions for
 /// `(error, original)` tuples, making it straightforward to shuttle the preserved pieces of state
-/// between APIs without spelling out [`TryMapInnerError::new`].
+/// between APIs without spelling out `TryMapInnerError::new`.
 ///
 /// # Examples
 ///
@@ -233,7 +233,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// Maps the preserved error into another type while retaining the original value.
     ///
     /// This mirrors [`Self::map_original`] but transforms the stored error instead. It is useful when
-    /// callers need to downgrade rich error types (for example to [`io::ErrorKind`]) without losing the
+    /// callers need to downgrade rich error types (for example to [`std::io::ErrorKind`]) without losing the
     /// buffered transport state captured by [`TryMapInnerError`].
     #[must_use]
     pub fn map_error<E2, F>(self, map: F) -> TryMapInnerError<T, E2>
