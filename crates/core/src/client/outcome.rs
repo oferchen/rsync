@@ -20,6 +20,41 @@ impl ClientOutcome {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rsync_engine::LocalCopySummary;
+
+    fn empty_summary() -> ClientSummary {
+        ClientSummary::from_summary(LocalCopySummary::default())
+    }
+
+    #[test]
+    fn into_local_returns_summary_for_local_execution() {
+        let summary = empty_summary();
+        let outcome = ClientOutcome::Local(Box::new(summary));
+
+        let extracted = outcome.into_local().expect("local outcome should yield a summary");
+
+        assert_eq!(extracted.files_copied(), 0);
+        assert!(extracted.events().is_empty());
+    }
+
+    #[test]
+    fn into_local_returns_none_for_fallback_execution() {
+        let outcome = ClientOutcome::Fallback(FallbackSummary::new(23));
+
+        assert!(outcome.into_local().is_none());
+    }
+
+    #[test]
+    fn fallback_summary_reports_exit_code() {
+        let summary = FallbackSummary::new(42);
+
+        assert_eq!(summary.exit_code(), 42);
+    }
+}
+
 /// Summary describing the result of a fallback invocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FallbackSummary {
