@@ -96,12 +96,12 @@ mod windows_gnu {
     unsafe fn load_from_library(library: &[u8], symbol: &[u8]) -> *mut c_void {
         debug_assert!(!library.is_empty() && library[library.len() - 1] == 0);
 
-        let module = unsafe {
-            let handle = GetModuleHandleA(library.as_ptr() as *const c_char);
+        let module = {
+            let handle = unsafe { GetModuleHandleA(library.as_ptr() as *const c_char) };
             if !handle.is_null() {
                 handle
             } else {
-                LoadLibraryA(library.as_ptr() as *const c_char)
+                unsafe { LoadLibraryA(library.as_ptr() as *const c_char) }
             }
         };
 
@@ -114,13 +114,19 @@ mod windows_gnu {
 
     #[inline(always)]
     unsafe fn resolve_register() -> Option<RegisterFrameInfo> {
-        let ptr = unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) }?;
+        let ptr = match unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) } {
+            Some(ptr) => ptr,
+            None => return None,
+        };
         Some(unsafe { transmute::<*mut (), RegisterFrameInfo>(ptr) })
     }
 
     #[inline(always)]
     unsafe fn resolve_deregister() -> Option<DeregisterFrameInfo> {
-        let ptr = unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) }?;
+        let ptr = match unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) } {
+            Some(ptr) => ptr,
+            None => return None,
+        };
         Some(unsafe { transmute::<*mut (), DeregisterFrameInfo>(ptr) })
     }
 
