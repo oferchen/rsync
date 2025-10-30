@@ -50,29 +50,29 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         ),
     )?;
 
-    let config_dir = Path::new(&branding.daemon_config_dir);
+    let config_dir = branding.daemon_config_dir.as_path();
     ensure(
         config_dir.is_absolute(),
         format!(
             "daemon_config_dir must be an absolute path; found {}",
-            branding.daemon_config_dir
+            branding.daemon_config_dir.display()
         ),
     )?;
 
-    let config_path = Path::new(&branding.daemon_config);
-    let secrets_path = Path::new(&branding.daemon_secrets);
+    let config_path = branding.daemon_config.as_path();
+    let secrets_path = branding.daemon_secrets.as_path();
     ensure(
         config_path.is_absolute(),
         format!(
             "daemon_config must be an absolute path; found {}",
-            branding.daemon_config
+            branding.daemon_config.display()
         ),
     )?;
     ensure(
         secrets_path.is_absolute(),
         format!(
             "daemon_secrets must be an absolute path; found {}",
-            branding.daemon_secrets
+            branding.daemon_secrets.display()
         ),
     )?;
 
@@ -81,40 +81,47 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         config_dir.file_name().and_then(|name| name.to_str()) == Some(expected_dir_suffix.as_str()),
         format!(
             "daemon_config_dir must end with '{}'; found {}",
-            expected_dir_suffix, branding.daemon_config_dir
+            expected_dir_suffix,
+            branding.daemon_config_dir.display()
         ),
     )?;
 
     ensure(
-        file_name(&branding.daemon_config, "daemon_config")?
+        file_name(branding.daemon_config.as_path(), "daemon_config")?
             == PathBuf::from(format!("{}-rsyncd.conf", branding.brand)),
         format!(
             "daemon_config {} must be named {}-rsyncd.conf",
-            branding.daemon_config, branding.brand
+            branding.daemon_config.display(),
+            branding.brand
         ),
     )?;
     ensure(
-        file_name(&branding.daemon_secrets, "daemon_secrets")?
+        file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?
             == PathBuf::from(format!("{}-rsyncd.secrets", branding.brand)),
         format!(
             "daemon_secrets {} must be named {}-rsyncd.secrets",
-            branding.daemon_secrets, branding.brand
+            branding.daemon_secrets.display(),
+            branding.brand
         ),
     )?;
     ensure(
-        file_name(&branding.legacy_daemon_config, "legacy_daemon_config")?
-            == PathBuf::from("rsyncd.conf"),
+        file_name(
+            branding.legacy_daemon_config.as_path(),
+            "legacy_daemon_config",
+        )? == PathBuf::from("rsyncd.conf"),
         format!(
             "legacy_daemon_config {} must be named rsyncd.conf",
-            branding.legacy_daemon_config
+            branding.legacy_daemon_config.display()
         ),
     )?;
     ensure(
-        file_name(&branding.legacy_daemon_secrets, "legacy_daemon_secrets")?
-            == PathBuf::from("rsyncd.secrets"),
+        file_name(
+            branding.legacy_daemon_secrets.as_path(),
+            "legacy_daemon_secrets",
+        )? == PathBuf::from("rsyncd.secrets"),
         format!(
             "legacy_daemon_secrets {} must be named rsyncd.secrets",
-            branding.legacy_daemon_secrets
+            branding.legacy_daemon_secrets.display()
         ),
     )?;
 
@@ -122,14 +129,16 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         config_path.parent() == Some(config_dir),
         format!(
             "daemon_config {} must reside within configured directory {}",
-            branding.daemon_config, branding.daemon_config_dir
+            branding.daemon_config.display(),
+            branding.daemon_config_dir.display()
         ),
     )?;
     ensure(
         secrets_path.parent() == Some(config_dir),
         format!(
             "daemon_secrets {} must reside within configured directory {}",
-            branding.daemon_secrets, branding.daemon_config_dir
+            branding.daemon_secrets.display(),
+            branding.daemon_config_dir.display()
         ),
     )?;
 
@@ -209,63 +218,63 @@ pub(crate) fn validate_documentation(
 ) -> TaskResult<()> {
     struct DocumentationCheck<'a> {
         relative_path: &'a str,
-        required_snippets: Vec<&'a str>,
+        required_snippets: Vec<String>,
     }
 
     let checks = [
         DocumentationCheck {
             relative_path: "README.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
-                branding.daemon_config.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
+                branding.daemon_config.display().to_string(),
             ],
         },
         DocumentationCheck {
             relative_path: "docs/production_scope_p1.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
-                branding.daemon_config_dir.as_str(),
-                branding.daemon_config.as_str(),
-                branding.daemon_secrets.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
+                branding.daemon_config_dir.display().to_string(),
+                branding.daemon_config.display().to_string(),
+                branding.daemon_secrets.display().to_string(),
             ],
         },
         DocumentationCheck {
             relative_path: "docs/differences.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
             ],
         },
         DocumentationCheck {
             relative_path: "docs/gaps.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
             ],
         },
         DocumentationCheck {
             relative_path: "docs/COMPARE.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
-                branding.daemon_config.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
+                branding.daemon_config.display().to_string(),
             ],
         },
         DocumentationCheck {
             relative_path: "docs/feature_matrix.md",
             required_snippets: vec![
-                branding.client_bin.as_str(),
-                branding.daemon_bin.as_str(),
-                branding.rust_version.as_str(),
-                branding.daemon_config.as_str(),
-                branding.daemon_secrets.as_str(),
+                branding.client_bin.clone(),
+                branding.daemon_bin.clone(),
+                branding.rust_version.clone(),
+                branding.daemon_config.display().to_string(),
+                branding.daemon_secrets.display().to_string(),
             ],
         },
     ];
@@ -282,7 +291,7 @@ pub(crate) fn validate_documentation(
         let missing: Vec<&str> = check
             .required_snippets
             .iter()
-            .copied()
+            .map(|snippet| snippet.as_str())
             .filter(|snippet| !snippet.is_empty() && !contents.contains(snippet))
             .collect();
 
