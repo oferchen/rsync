@@ -14,21 +14,25 @@
 mod windows_gnu {
     use core::ffi::c_void;
 
-    extern "C" {
+    unsafe extern "C" {
         fn __register_frame_info(eh_frame: *const u8, object: *mut c_void);
         fn __deregister_frame_info(eh_frame: *const u8);
     }
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ___register_frame_info(eh_frame: *const u8, object: *mut c_void) {
-        __register_frame_info(eh_frame, object);
+        unsafe {
+            __register_frame_info(eh_frame, object);
+        }
     }
 
     /// Forwards `rsbegin`'s deregistration hook to libunwind.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ___deregister_frame_info(eh_frame: *const u8) {
-        __deregister_frame_info(eh_frame);
+        unsafe {
+            __deregister_frame_info(eh_frame);
+        }
     }
 
     /// No-op helper invoked by dependants to ensure the crate remains linked.
