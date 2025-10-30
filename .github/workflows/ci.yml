@@ -189,7 +189,7 @@ jobs:
     name: Cross-compile (${{ matrix.platform.name }})
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 7
       matrix:
         platform:
           - name: linux-x86_64
@@ -229,6 +229,13 @@ jobs:
             generate_sbom: false
           - name: windows-x86
             target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            target: aarch64-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
