@@ -459,6 +459,7 @@ name = "oc-rsync-bin"
 version = "3.4.1-rust"
 dependencies = [
  "rsync-cli",
+ "rsync-windows-gnu-eh",
 ]
 
 [[package]]
@@ -466,6 +467,7 @@ name = "oc-rsyncd-bin"
 version = "3.4.1-rust"
 dependencies = [
  "rsync-daemon",
+ "rsync-windows-gnu-eh",
 ]
 
 [[package]]
@@ -768,6 +770,10 @@ version = "3.4.1-rust"
 dependencies = [
  "tempfile",
 ]
+
+[[package]]
+name = "rsync-windows-gnu-eh"
+version = "3.4.1-rust"
 
 [[package]]
 name = "rustix"
