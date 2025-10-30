@@ -260,6 +260,47 @@ mod tests {
     }
 
     #[test]
+    fn parser_retains_backslash_inside_single_quotes() {
+        let parsed = parse_remote_shell(OsStr::new("ssh -o'Proxy\\Command'"))
+            .expect("parse succeeds");
+
+        assert_eq!(parsed[0], OsString::from("ssh"));
+        assert_eq!(parsed[1], OsString::from("-oProxy\\Command"));
+    }
+
+    #[test]
+    fn parser_honours_double_quote_escape_rules() {
+        let parsed = parse_remote_shell(OsStr::new(
+            r#"ssh -o"ProxyCommand=echo \$HOME \a""#,
+        ))
+        .expect("parse succeeds");
+
+        assert_eq!(parsed[0], OsString::from("ssh"));
+        assert_eq!(parsed[1], OsString::from("-oProxyCommand=echo $HOME \\a"));
+    }
+
+    #[test]
+    fn parser_strips_newline_after_escape_sequence() {
+        let parsed = parse_remote_shell(OsStr::new(
+            "ssh -oProxyCommand=echo\\\nbar",
+        ))
+        .expect("parse succeeds");
+
+        assert_eq!(parsed[1], OsString::from("-oProxyCommand=echobar"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parser_rejects_interior_null_byte() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let spec = OsString::from_vec(b"ssh\0-p 22".to_vec());
+        let error = parse_remote_shell(spec.as_os_str()).unwrap_err();
+
+        assert_eq!(error, RemoteShellParseError::InteriorNull);
+    }
+
+    #[test]
     fn parser_treats_extended_ascii_whitespace_as_delimiters() {
         let spec = OsString::from("ssh\u{0B}-p\u{0C}2222");
         let parsed = parse_remote_shell(spec.as_os_str()).expect("parse succeeds");
