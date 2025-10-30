@@ -107,7 +107,7 @@ impl<R> BinaryHandshakeParts<R> {
     /// Upstream rsync writes the caller's desired protocol (after applying any `--protocol` cap) to the
     /// transport before reading the remote advertisement. Capturing the value here allows higher layers
     /// to surface diagnostics such as "client requested protocol 32 but server replied with 30" without
-    /// having to retain the original argument passed to [`negotiate_binary_session`].
+    /// having to retain the original argument passed to [`crate::negotiate_binary_session`].
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
