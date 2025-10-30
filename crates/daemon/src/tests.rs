@@ -1,4 +1,6 @@
 use super::*;
+use rsync_core::fallback::DAEMON_AUTO_DELEGATE_ENV;
+use rsync_core::version::VersionInfoReport;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
