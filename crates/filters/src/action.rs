@@ -26,3 +26,23 @@ impl fmt::Display for FilterAction {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FilterAction;
+
+    #[test]
+    fn display_variants_matches_expected_tokens() {
+        let cases = [
+            (FilterAction::Include, "include"),
+            (FilterAction::Exclude, "exclude"),
+            (FilterAction::Protect, "protect"),
+            (FilterAction::Risk, "risk"),
+            (FilterAction::Clear, "clear"),
+        ];
+
+        for (action, expected) in cases {
+            assert_eq!(action.to_string(), expected);
+        }
+    }
+}

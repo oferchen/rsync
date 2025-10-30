@@ -86,3 +86,38 @@ impl fmt::Display for RollingSliceError {
 }
 
 impl std::error::Error for RollingSliceError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{RollingError, RollingSliceError};
+
+    #[test]
+    fn rolling_error_display_messages_are_descriptive() {
+        let empty = RollingError::EmptyWindow.to_string();
+        assert!(empty.contains("non-empty"));
+
+        let too_large = RollingError::WindowTooLarge { len: 1 << 20 }.to_string();
+        assert!(too_large.contains("exceeds"));
+        assert!(too_large.contains("1048576"));
+
+        let mismatched = RollingError::MismatchedSliceLength {
+            outgoing: 2,
+            incoming: 1,
+        }
+        .to_string();
+        assert!(mismatched.contains("outgoing (2)"));
+        assert!(mismatched.contains("incoming (1)"));
+    }
+
+    #[test]
+    fn rolling_slice_error_reports_length_information() {
+        let err = RollingSliceError::new(2);
+        assert_eq!(err.len(), 2);
+        assert!(!err.is_empty());
+        assert_eq!(RollingSliceError::EXPECTED_LEN, 4);
+        assert!(err.to_string().contains("received 2"));
+
+        let empty_err = RollingSliceError::new(0);
+        assert!(empty_err.is_empty());
+    }
+}
