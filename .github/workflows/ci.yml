@@ -143,18 +143,14 @@ jobs:
           cargo --locked llvm-cov nextest --workspace --all-features
           --no-report
 
-      - name: Export coverage summary (JSON)
-        run: >-
-          cargo --locked llvm-cov report --json --summary-only
-          --output-path coverage-summary.json
-
       - name: Export coverage report (lcov)
         run: cargo --locked llvm-cov report --lcov --output-path coverage.lcov
 
-      - name: Enforce coverage thresholds
+      - name: Enforce coverage thresholds and export summary
         run: >-
-          python3 tools/check_coverage.py coverage-summary.json
-          --min-lines 95 --min-functions 95
+          cargo --locked llvm-cov report --json --summary-only
+          --output-path coverage-summary.json --fail-under-lines 95
+          --fail-under-functions 95
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
