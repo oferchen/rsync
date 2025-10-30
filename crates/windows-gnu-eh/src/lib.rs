@@ -131,8 +131,11 @@ mod windows_gnu {
     }
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
-    #[no_mangle]
-    pub unsafe extern "C" fn ___register_frame_info(eh_frame: *const u8, object: *mut c_void) {
+    #[export_name = "___register_frame_info"]
+    pub unsafe extern "C" fn forward_register_frame_info(
+        eh_frame: *const u8,
+        object: *mut c_void,
+    ) {
         if let Some(register) = unsafe { resolve_register() } {
             unsafe {
                 register(eh_frame, object);
@@ -141,8 +144,8 @@ mod windows_gnu {
     }
 
     /// Forwards `rsbegin`'s deregistration hook to libunwind.
-    #[no_mangle]
-    pub unsafe extern "C" fn ___deregister_frame_info(eh_frame: *const u8) {
+    #[export_name = "___deregister_frame_info"]
+    pub unsafe extern "C" fn forward_deregister_frame_info(eh_frame: *const u8) {
         if let Some(deregister) = unsafe { resolve_deregister() } {
             unsafe {
                 deregister(eh_frame);
