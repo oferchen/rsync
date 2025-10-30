@@ -126,7 +126,7 @@ mod progress;
 mod server;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "tests/mod.rs"]
 mod tests;
 
 pub(crate) use defaults::LIST_TIMESTAMP_FORMAT;
