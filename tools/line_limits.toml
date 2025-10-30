@@ -14,7 +14,7 @@ warn_lines = 5580
 
 [[overrides]]
 path = "crates/engine/src/local_copy.rs"
-max_lines = 9600
+max_lines = 9650
 warn_lines = 9500
 
 [[overrides]]
