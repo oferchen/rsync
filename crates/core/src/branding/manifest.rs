@@ -12,6 +12,7 @@
 //! first use from [`crate::workspace::metadata()`] and cached for the lifetime of
 //! the process so callers can obtain references to the data at negligible cost.
 
+use serde::Serialize;
 use std::sync::OnceLock;
 
 use super::brand::{self, Brand};
@@ -20,7 +21,7 @@ use crate::version::{self, BUILD_TOOLCHAIN};
 use crate::workspace;
 
 /// Cached branding snapshot derived from the workspace manifest.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct BrandManifest {
     default_brand: Brand,
     oc: BrandProfile,

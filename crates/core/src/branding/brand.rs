@@ -4,8 +4,6 @@ use core::str::FromStr;
 use std::fmt;
 use std::path::Path;
 
-use crate::workspace;
-
 use super::constants::{
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
     UPSTREAM_DAEMON_PROGRAM_NAME,
@@ -14,6 +12,8 @@ use super::profile::{
     BrandProfile, config_path_candidate_strs, config_path_candidates, oc_profile,
     secrets_path_candidate_strs, secrets_path_candidates, upstream_profile,
 };
+use crate::workspace;
+use serde::ser::{Serialize, Serializer};
 
 /// Identifies the brand associated with an executable name.
 ///
@@ -189,6 +189,15 @@ pub fn default_brand() -> Brand {
 impl fmt::Display for Brand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
+    }
+}
+
+impl Serialize for Brand {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.label())
     }
 }
 
