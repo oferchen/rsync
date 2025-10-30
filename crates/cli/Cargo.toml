@@ -28,6 +28,8 @@ rsync-meta = { path = "../meta" }
 rsync-checksums = { path = "../checksums" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
 tempfile = "3.10"
+
+[target.'cfg(unix)'.dependencies]
 users = "0.11"
 
 [dev-dependencies]

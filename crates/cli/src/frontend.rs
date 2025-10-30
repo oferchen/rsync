@@ -91,6 +91,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::platform::{self, gid_t, uid_t};
 use clap::{Arg, ArgAction, Command as ClapCommand, builder::OsStringValueParser};
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::{
@@ -111,7 +112,6 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-use users::{get_group_by_name, get_user_by_name, gid_t, uid_t};
 
 #[path = "defaults.rs"]
 mod defaults;
@@ -5533,8 +5533,15 @@ fn resolve_chown_user(input: &str) -> Result<uid_t, Message> {
         return Ok(id);
     }
 
-    if let Some(user) = get_user_by_name(input) {
-        return Ok(user.uid());
+    if let Some(uid) = platform::lookup_user_by_name(input) {
+        return Ok(uid);
+    }
+
+    if !platform::SUPPORTS_USER_NAME_LOOKUP {
+        return Err(
+            rsync_error!(1, "--chown requires numeric user IDs on this platform")
+                .with_role(Role::Client),
+        );
     }
 
     Err(rsync_error!(1, "unknown user '{}' specified for --chown", input).with_role(Role::Client))
@@ -5545,8 +5552,15 @@ fn resolve_chown_group(input: &str) -> Result<gid_t, Message> {
         return Ok(id);
     }
 
-    if let Some(group) = get_group_by_name(input) {
-        return Ok(group.gid());
+    if let Some(gid) = platform::lookup_group_by_name(input) {
+        return Ok(gid);
+    }
+
+    if !platform::SUPPORTS_GROUP_NAME_LOOKUP {
+        return Err(
+            rsync_error!(1, "--chown requires numeric group IDs on this platform")
+                .with_role(Role::Client),
+        );
     }
 
     Err(rsync_error!(1, "unknown group '{}' specified for --chown", input).with_role(Role::Client))
