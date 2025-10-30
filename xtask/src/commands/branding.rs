@@ -3,7 +3,7 @@ use crate::util::is_help_flag;
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use serde_json::json;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Output format supported by the `branding` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -93,34 +93,37 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     }
 
     let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
-    if Path::new(&branding.daemon_config_dir)
+    if branding
+        .daemon_config_dir
+        .as_path()
         .file_name()
         .and_then(|name| name.to_str())
         != Some(expected_dir_suffix.as_str())
     {
         return Err(TaskError::Validation(format!(
             "daemon_config_dir '{}' must end with '{}'",
-            branding.daemon_config_dir, expected_dir_suffix
+            branding.daemon_config_dir.display(),
+            expected_dir_suffix
         )));
     }
 
     ensure_named_file(
-        &branding.daemon_config,
+        branding.daemon_config.as_path(),
         &format!("{}-rsyncd.conf", branding.brand),
         "daemon_config",
     )?;
     ensure_named_file(
-        &branding.daemon_secrets,
+        branding.daemon_secrets.as_path(),
         &format!("{}-rsyncd.secrets", branding.brand),
         "daemon_secrets",
     )?;
     ensure_named_file(
-        &branding.legacy_daemon_config,
+        branding.legacy_daemon_config.as_path(),
         "rsyncd.conf",
         "legacy_daemon_config",
     )?;
     ensure_named_file(
-        &branding.legacy_daemon_secrets,
+        branding.legacy_daemon_secrets.as_path(),
         "rsyncd.secrets",
         "legacy_daemon_secrets",
     )?;
@@ -183,40 +186,45 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
 }
 
 fn ensure_under_dir(
-    path: &str,
-    expected_dir: &str,
+    path: &Path,
+    expected_dir: &Path,
     path_label: &str,
     dir_label: &str,
 ) -> TaskResult<()> {
-    let candidate = std::path::Path::new(path);
-    let expected = std::path::Path::new(expected_dir);
-
-    let parent = candidate.parent().ok_or_else(|| {
+    let parent = path.parent().ok_or_else(|| {
         TaskError::Validation(format!(
-            "{path_label} '{path}' must reside under {dir_label} '{expected_dir}'",
+            "{path_label} '{}' must reside under {dir_label} '{}'",
+            path.display(),
+            expected_dir.display()
         ))
     })?;
 
-    if parent != expected {
+    if parent != expected_dir {
         return Err(TaskError::Validation(format!(
-            "{path_label} '{path}' must reside under {dir_label} '{expected_dir}'",
+            "{path_label} '{}' must reside under {dir_label} '{}'",
+            path.display(),
+            expected_dir.display()
         )));
     }
 
     Ok(())
 }
 
-fn ensure_named_file(path: &str, expected: &str, label: &str) -> TaskResult<()> {
-    let name = Path::new(path)
+fn ensure_named_file(path: &Path, expected: &str, label: &str) -> TaskResult<()> {
+    let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| {
-            TaskError::Validation(format!("{label} '{path}' must include a file name"))
+            TaskError::Validation(format!(
+                "{label} '{}' must include a file name",
+                path.display()
+            ))
         })?;
 
     if name != expected {
         return Err(TaskError::Validation(format!(
-            "{label} '{path}' must be named '{expected}'"
+            "{label} '{}' must be named '{expected}'",
+            path.display()
         )));
     }
 
@@ -261,12 +269,12 @@ fn render_branding_text(branding: &WorkspaceBranding) -> String {
         branding.daemon_bin,
         branding.legacy_client_bin,
         branding.legacy_daemon_bin,
-        branding.daemon_config_dir,
-        branding.daemon_config,
-        branding.daemon_secrets,
-        branding.legacy_daemon_config_dir,
-        branding.legacy_daemon_config,
-        branding.legacy_daemon_secrets,
+        branding.daemon_config_dir.display(),
+        branding.daemon_config.display(),
+        branding.daemon_secrets.display(),
+        branding.legacy_daemon_config_dir.display(),
+        branding.legacy_daemon_config.display(),
+        branding.legacy_daemon_secrets.display(),
         branding.source,
     )
 }
@@ -281,12 +289,21 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
         "daemon_bin": branding.daemon_bin,
         "legacy_client_bin": branding.legacy_client_bin,
         "legacy_daemon_bin": branding.legacy_daemon_bin,
-        "daemon_config_dir": branding.daemon_config_dir,
-        "daemon_config": branding.daemon_config,
-        "daemon_secrets": branding.daemon_secrets,
-        "legacy_daemon_config_dir": branding.legacy_daemon_config_dir,
-        "legacy_daemon_config": branding.legacy_daemon_config,
-        "legacy_daemon_secrets": branding.legacy_daemon_secrets,
+        "daemon_config_dir": branding.daemon_config_dir.display().to_string(),
+        "daemon_config": branding.daemon_config.display().to_string(),
+        "daemon_secrets": branding.daemon_secrets.display().to_string(),
+        "legacy_daemon_config_dir": branding
+            .legacy_daemon_config_dir
+            .display()
+            .to_string(),
+        "legacy_daemon_config": branding
+            .legacy_daemon_config
+            .display()
+            .to_string(),
+        "legacy_daemon_secrets": branding
+            .legacy_daemon_secrets
+            .display()
+            .to_string(),
         "source": branding.source,
     });
 
@@ -318,12 +335,12 @@ mod tests {
             daemon_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: String::from("/etc/oc-rsyncd"),
-            daemon_config: String::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: String::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: String::from("/etc"),
-            legacy_daemon_config: String::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: String::from("/etc/rsyncd.secrets"),
+            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
+            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
+            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
+            legacy_daemon_config_dir: PathBuf::from("/etc"),
+            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
+            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
         }
     }
@@ -482,7 +499,7 @@ mod tests {
     #[test]
     fn validate_branding_requires_paths_to_match_directories() {
         let mut branding = sample_branding();
-        branding.daemon_config = String::from("/etc/oc-rsyncd.conf");
+        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd.conf");
         let daemon_config_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             daemon_config_error,
@@ -490,7 +507,7 @@ mod tests {
         ));
 
         let mut branding = sample_branding();
-        branding.legacy_daemon_secrets = String::from("/var/lib/rsyncd.secrets");
+        branding.legacy_daemon_secrets = PathBuf::from("/var/lib/rsyncd.secrets");
         let legacy_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             legacy_error,
@@ -501,7 +518,7 @@ mod tests {
     #[test]
     fn validate_branding_requires_daemon_directory_suffix() {
         let mut branding = sample_branding();
-        branding.daemon_config_dir = String::from("/etc/oc-rsync");
+        branding.daemon_config_dir = PathBuf::from("/etc/oc-rsync");
         let error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             error,
@@ -512,7 +529,7 @@ mod tests {
     #[test]
     fn validate_branding_requires_daemon_file_names() {
         let mut branding = sample_branding();
-        branding.daemon_config = String::from("/etc/oc-rsyncd/custom.conf");
+        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd/custom.conf");
         let config_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             config_error,
@@ -521,7 +538,7 @@ mod tests {
         ));
 
         let mut branding = sample_branding();
-        branding.daemon_secrets = String::from("/etc/oc-rsyncd/rsyncd.secret");
+        branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd/rsyncd.secret");
         let secrets_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             secrets_error,
@@ -532,7 +549,7 @@ mod tests {
     #[test]
     fn validate_branding_requires_legacy_file_names() {
         let mut branding = sample_branding();
-        branding.legacy_daemon_config = String::from("/etc/rsync.conf");
+        branding.legacy_daemon_config = PathBuf::from("/etc/rsync.conf");
         let config_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             config_error,
@@ -540,7 +557,7 @@ mod tests {
         ));
 
         let mut branding = sample_branding();
-        branding.legacy_daemon_secrets = String::from("/etc/rsync.secret");
+        branding.legacy_daemon_secrets = PathBuf::from("/etc/rsync.secret");
         let secrets_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             secrets_error,

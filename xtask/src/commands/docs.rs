@@ -109,6 +109,8 @@ pub fn usage() -> String {
 fn validate_documents(workspace: &Path) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
     let docs_dir = workspace.join("docs");
+    let daemon_config = branding.daemon_config.display().to_string();
+    let daemon_secrets = branding.daemon_secrets.display().to_string();
 
     let checks = [
         DocumentCheck::new(
@@ -128,8 +130,8 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
             [
                 (branding.client_bin.as_str(), "client binary name"),
                 (branding.daemon_bin.as_str(), "daemon binary name"),
-                (branding.daemon_config.as_str(), "daemon configuration path"),
-                (branding.daemon_secrets.as_str(), "daemon secrets path"),
+                (daemon_config.as_str(), "daemon configuration path"),
+                (daemon_secrets.as_str(), "daemon secrets path"),
             ],
         ),
         DocumentCheck::new(
