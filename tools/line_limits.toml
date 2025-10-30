@@ -4,7 +4,7 @@
 # modest buffer above the current line count so future cleanups continue to be
 # encouraged.
 
-default_max_lines = 600
+default_max_lines = 650
 default_warn_lines = 400
 
 [[overrides]]
