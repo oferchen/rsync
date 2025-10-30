@@ -376,6 +376,23 @@ mod tests {
     }
 
     #[test]
+    fn validation_error_constructs_validation_variant() {
+        let error = validation_error("invalid");
+        assert!(matches!(error, TaskError::Validation(message) if message == "invalid"));
+    }
+
+    #[test]
+    fn run_cargo_tool_succeeds_for_version_query() {
+        run_cargo_tool(
+            workspace_root(),
+            vec![OsString::from("--version")],
+            "cargo --version",
+            "install cargo",
+        )
+        .expect("cargo --version succeeds");
+    }
+
+    #[test]
     fn run_cargo_tool_maps_missing_subcommand_to_tool_missing() {
         let err = run_cargo_tool(
             workspace_root(),
