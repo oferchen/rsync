@@ -3,7 +3,7 @@ use crate::util::is_help_flag;
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use serde_json::json;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Output format supported by the `branding` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -324,6 +324,7 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn sample_branding() -> WorkspaceBranding {
         WorkspaceBranding {
