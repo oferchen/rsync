@@ -124,6 +124,73 @@ fn allocate_test_port() -> u16 {
     panic!("failed to allocate a free test port");
 }
 
+#[test]
+fn parse_auth_user_list_trims_and_deduplicates_case_insensitively() {
+    let users = parse_auth_user_list(" alice,BOB, alice ,  Carol ")
+        .expect("parse non-empty user list");
+    assert_eq!(users, ["alice", "BOB", "Carol"]);
+
+    let err = parse_auth_user_list(" , ,  ").expect_err("blank list rejected");
+    assert_eq!(err, "must specify at least one username");
+}
+
+#[test]
+fn parse_refuse_option_list_normalises_and_deduplicates() {
+    let options = parse_refuse_option_list("delete, ICONV ,compress, delete")
+        .expect("parse refuse option list");
+    assert_eq!(options, ["delete", "iconv", "compress"]);
+
+    let err = parse_refuse_option_list("   ,").expect_err("blank option list rejected");
+    assert_eq!(err, "must specify at least one option");
+}
+
+#[test]
+fn parse_boolean_directive_interprets_common_forms() {
+    for value in ["1", "true", "YES", " On "] {
+        assert_eq!(parse_boolean_directive(value), Some(true));
+    }
+
+    for value in ["0", "false", "No", " off "] {
+        assert_eq!(parse_boolean_directive(value), Some(false));
+    }
+
+    assert_eq!(parse_boolean_directive("maybe"), None);
+}
+
+#[test]
+fn parse_numeric_identifier_rejects_blank_or_invalid_input() {
+    assert_eq!(parse_numeric_identifier("  42  "), Some(42));
+    assert_eq!(parse_numeric_identifier(""), None);
+    assert_eq!(parse_numeric_identifier("not-a-number"), None);
+}
+
+#[test]
+fn parse_timeout_seconds_supports_zero_and_non_zero_values() {
+    assert_eq!(parse_timeout_seconds(""), None);
+    assert_eq!(parse_timeout_seconds("  "), None);
+    assert_eq!(parse_timeout_seconds("0"), Some(None));
+
+    let expected = NonZeroU64::new(30).expect("non-zero timeout");
+    assert_eq!(parse_timeout_seconds("30"), Some(Some(expected)));
+    assert_eq!(parse_timeout_seconds("invalid"), None);
+}
+
+#[test]
+fn parse_max_connections_directive_handles_zero_and_positive() {
+    assert_eq!(parse_max_connections_directive(""), None);
+    assert_eq!(parse_max_connections_directive("  "), None);
+    assert_eq!(parse_max_connections_directive("0"), Some(None));
+
+    let expected = NonZeroU32::new(25).expect("non-zero");
+    assert_eq!(
+        parse_max_connections_directive("25"),
+        Some(Some(expected))
+    );
+
+    assert_eq!(parse_max_connections_directive("-1"), None);
+    assert_eq!(parse_max_connections_directive("invalid"), None);
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<OsString>,
