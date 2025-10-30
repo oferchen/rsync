@@ -88,11 +88,6 @@ max_lines = 570
 warn_lines = 530
 
 [[overrides]]
-path = "crates/transport/src/binary.rs"
-max_lines = 1700
-warn_lines = 1650
-
-[[overrides]]
 path = "crates/transport/src/daemon.rs"
 max_lines = 1600
 warn_lines = 1550
