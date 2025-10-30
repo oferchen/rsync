@@ -176,7 +176,6 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, HashSet};
 use std::convert::TryFrom;
 use std::env;
-use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
@@ -225,7 +224,12 @@ use rsync_protocol::{
     format_legacy_daemon_message, parse_legacy_daemon_message,
 };
 
+mod config;
+mod error;
 mod systemd;
+
+pub use config::{DaemonConfig, DaemonConfigBuilder};
+pub use error::DaemonError;
 
 /// Exit code used when daemon functionality is unavailable.
 const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -783,47 +787,6 @@ fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
 #[cfg(test)]
 fn clear_test_hostname_overrides() {
     TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow_mut().clear());
-}
-
-/// Configuration describing the requested daemon operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DaemonConfig {
-    brand: Brand,
-    arguments: Vec<OsString>,
-    load_default_paths: bool,
-}
-
-impl DaemonConfig {
-    /// Creates a new [`DaemonConfigBuilder`].
-    #[must_use]
-    pub fn builder() -> DaemonConfigBuilder {
-        DaemonConfigBuilder::default()
-    }
-
-    /// Returns the raw arguments supplied to the daemon.
-    #[must_use]
-    pub fn arguments(&self) -> &[OsString] {
-        &self.arguments
-    }
-
-    /// Returns the branding profile associated with the daemon invocation.
-    #[must_use]
-    pub const fn brand(&self) -> Brand {
-        self.brand
-    }
-
-    /// Indicates whether default configuration and secrets paths should be
-    /// consulted when parsing runtime options.
-    #[must_use]
-    pub const fn load_default_paths(&self) -> bool {
-        self.load_default_paths
-    }
-
-    /// Reports whether any daemon-specific arguments were provided.
-    #[must_use]
-    pub fn has_runtime_request(&self) -> bool {
-        !self.arguments.is_empty()
-    }
 }
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
@@ -3019,94 +2982,6 @@ fn parse_host_list(
 
     Ok(patterns)
 }
-
-/// Builder used to assemble a [`DaemonConfig`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DaemonConfigBuilder {
-    brand: Brand,
-    arguments: Vec<OsString>,
-    load_default_paths: bool,
-}
-
-impl Default for DaemonConfigBuilder {
-    fn default() -> Self {
-        Self {
-            brand: Brand::Oc,
-            arguments: Vec::new(),
-            load_default_paths: true,
-        }
-    }
-}
-
-impl DaemonConfigBuilder {
-    /// Selects the branding profile that should be used for this configuration.
-    #[must_use]
-    pub fn brand(mut self, brand: Brand) -> Self {
-        self.brand = brand;
-        self
-    }
-
-    /// Supplies the arguments that should be forwarded to the daemon loop once implemented.
-    #[must_use]
-    pub fn arguments<I, S>(mut self, arguments: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<OsString>,
-    {
-        self.arguments = arguments.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Skips discovery of default configuration and secrets paths.
-    #[must_use]
-    pub fn disable_default_paths(mut self) -> Self {
-        self.load_default_paths = false;
-        self
-    }
-
-    /// Finalises the builder and constructs the [`DaemonConfig`].
-    #[must_use]
-    pub fn build(self) -> DaemonConfig {
-        DaemonConfig {
-            brand: self.brand,
-            arguments: self.arguments,
-            load_default_paths: self.load_default_paths,
-        }
-    }
-}
-
-/// Error returned when daemon orchestration fails.
-#[derive(Clone, Debug)]
-pub struct DaemonError {
-    exit_code: i32,
-    message: Message,
-}
-
-impl DaemonError {
-    /// Creates a new [`DaemonError`] from the supplied message and exit code.
-    fn new(exit_code: i32, message: Message) -> Self {
-        Self { exit_code, message }
-    }
-
-    /// Returns the exit code associated with this error.
-    #[must_use]
-    pub const fn exit_code(&self) -> i32 {
-        self.exit_code
-    }
-
-    /// Returns the formatted diagnostic message that should be emitted.
-    pub fn message(&self) -> &Message {
-        &self.message
-    }
-}
-
-impl fmt::Display for DaemonError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
-    }
-}
-
-impl Error for DaemonError {}
 
 /// Runs the daemon orchestration using the provided configuration.
 ///
