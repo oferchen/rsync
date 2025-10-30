@@ -8,11 +8,6 @@ default_max_lines = 650
 default_warn_lines = 400
 
 [[overrides]]
-path = "crates/cli/src/lib.rs"
-max_lines = 5900
-warn_lines = 5800
-
-[[overrides]]
 path = "crates/cli/src/frontend.rs"
 max_lines = 5700
 warn_lines = 5580
@@ -24,8 +19,8 @@ warn_lines = 9500
 
 [[overrides]]
 path = "crates/core/src/client/mod.rs"
-max_lines = 10100
-warn_lines = 10000
+max_lines = 5800
+warn_lines = 5600
 
 [[overrides]]
 path = "crates/core/src/client/tests.rs"
@@ -34,8 +29,8 @@ warn_lines = 4380
 
 [[overrides]]
 path = "crates/daemon/src/lib.rs"
-max_lines = 10100
-warn_lines = 10000
+max_lines = 5500
+warn_lines = 5400
 
 [[overrides]]
 path = "crates/daemon/src/tests.rs"
@@ -76,11 +71,6 @@ warn_lines = 550
 path = "crates/protocol/src/negotiation/tests/sniffer_take.rs"
 max_lines = 570
 warn_lines = 530
-
-[[overrides]]
-path = "crates/protocol/src/version/tests/mod.rs"
-max_lines = 1400
-warn_lines = 1350
 
 [[overrides]]
 path = "crates/cli/src/tests.rs"
