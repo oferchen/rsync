@@ -78,6 +78,13 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
 
     let expected_prefix = format!("{}-", branding.brand);
 
+    if !(28..=32).contains(&branding.protocol) {
+        return Err(TaskError::Validation(format!(
+            "protocol version {} must be between 28 and 32",
+            branding.protocol
+        )));
+    }
+
     if !branding.client_bin.starts_with(&expected_prefix) {
         return Err(TaskError::Validation(format!(
             "client binary '{}' must use '{}' prefix",
@@ -128,17 +135,36 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         "legacy_daemon_secrets",
     )?;
 
-    if branding.legacy_client_bin.trim().is_empty() {
-        return Err(TaskError::Validation(String::from(
-            "legacy client binary name must not be empty",
+    if branding.legacy_client_bin != "rsync" {
+        return Err(TaskError::Validation(format!(
+            "legacy client binary '{}' must be 'rsync'",
+            branding.legacy_client_bin
         )));
     }
 
-    if branding.legacy_daemon_bin.trim().is_empty() {
-        return Err(TaskError::Validation(String::from(
-            "legacy daemon binary name must not be empty",
+    if branding.legacy_daemon_bin != "rsyncd" {
+        return Err(TaskError::Validation(format!(
+            "legacy daemon binary '{}' must be 'rsyncd'",
+            branding.legacy_daemon_bin
         )));
     }
+
+    if branding.legacy_daemon_config_dir.as_path().to_str() != Some("/etc") {
+        return Err(TaskError::Validation(format!(
+            "legacy_daemon_config_dir '{}' must be '/etc'",
+            branding.legacy_daemon_config_dir.display()
+        )));
+    }
+
+    ensure_absolute(&branding.daemon_config_dir, "daemon_config_dir")?;
+    ensure_absolute(&branding.daemon_config, "daemon_config")?;
+    ensure_absolute(&branding.daemon_secrets, "daemon_secrets")?;
+    ensure_absolute(
+        &branding.legacy_daemon_config_dir,
+        "legacy_daemon_config_dir",
+    )?;
+    ensure_absolute(&branding.legacy_daemon_config, "legacy_daemon_config")?;
+    ensure_absolute(&branding.legacy_daemon_secrets, "legacy_daemon_secrets")?;
 
     if !branding
         .rust_version
@@ -182,6 +208,16 @@ fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         "legacy_daemon_config_dir",
     )?;
 
+    Ok(())
+}
+
+fn ensure_absolute(path: &Path, label: &str) -> TaskResult<()> {
+    if !path.is_absolute() {
+        return Err(TaskError::Validation(format!(
+            "{label} '{}' must be an absolute path",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
@@ -324,7 +360,8 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::workspace::parse_workspace_branding;
+    use std::path::{Path, PathBuf};
 
     fn sample_branding() -> WorkspaceBranding {
         WorkspaceBranding {
@@ -344,6 +381,11 @@ mod tests {
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
         }
+    }
+
+    fn manifest_branding() -> WorkspaceBranding {
+        let manifest = include_str!("../../../Cargo.toml");
+        parse_workspace_branding(manifest).expect("manifest parses")
     }
 
     #[test]
@@ -426,9 +468,26 @@ mod tests {
     }
 
     #[test]
+    fn validate_branding_accepts_manifest_configuration() {
+        let branding = manifest_branding();
+        validate_branding(&branding).expect("validation succeeds");
+    }
+
+    #[test]
     fn validate_branding_accepts_prefixed_binaries() {
         let branding = sample_branding();
         validate_branding(&branding).expect("validation succeeds");
+    }
+
+    #[test]
+    fn validate_branding_rejects_protocol_outside_supported_range() {
+        let mut branding = sample_branding();
+        branding.protocol = 40;
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("protocol version")
+        ));
     }
 
     #[test]
@@ -460,6 +519,17 @@ mod tests {
     }
 
     #[test]
+    fn validate_branding_rejects_non_absolute_paths() {
+        let mut branding = sample_branding();
+        branding.daemon_config_dir = Path::new("relative").into();
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("daemon_config_dir")
+        ));
+    }
+
+    #[test]
     fn validate_branding_rejects_empty_legacy_names() {
         let mut branding = sample_branding();
         branding.legacy_client_bin.clear();
@@ -475,6 +545,36 @@ mod tests {
         assert!(matches!(
             daemon_error,
             TaskError::Validation(message) if message.contains("legacy daemon binary")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_rejects_incorrect_legacy_names() {
+        let mut branding = sample_branding();
+        branding.legacy_client_bin = String::from("legacy-rsync");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("legacy client binary")
+        ));
+
+        let mut branding = sample_branding();
+        branding.legacy_daemon_bin = String::from("legacy-rsyncd");
+        let daemon_error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            daemon_error,
+            TaskError::Validation(message) if message.contains("legacy daemon binary")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_requires_legacy_directory() {
+        let mut branding = sample_branding();
+        branding.legacy_daemon_config_dir = PathBuf::from("/opt");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("legacy_daemon_config_dir")
         ));
     }
 
