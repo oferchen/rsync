@@ -44,3 +44,44 @@ impl fmt::Display for EnvelopeError {
 }
 
 impl std::error::Error for EnvelopeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_display(error: EnvelopeError, expected: String) {
+        assert_eq!(error.to_string(), expected);
+    }
+
+    #[test]
+    fn display_formats_truncated_header() {
+        assert_display(
+            EnvelopeError::TruncatedHeader { actual: 3 },
+            format!("multiplexed header truncated: expected {HEADER_LEN} bytes, got 3"),
+        );
+    }
+
+    #[test]
+    fn display_formats_invalid_tag() {
+        assert_display(
+            EnvelopeError::InvalidTag(0x12),
+            String::from("multiplexed header contained invalid tag byte 18"),
+        );
+    }
+
+    #[test]
+    fn display_formats_unknown_message_code() {
+        assert_display(
+            EnvelopeError::UnknownMessageCode(0xAA),
+            String::from("unknown multiplexed message code 170"),
+        );
+    }
+
+    #[test]
+    fn display_formats_oversized_payload() {
+        assert_display(
+            EnvelopeError::OversizedPayload(42),
+            format!("multiplexed payload length 42 exceeds maximum {MAX_PAYLOAD_LENGTH}"),
+        );
+    }
+}
