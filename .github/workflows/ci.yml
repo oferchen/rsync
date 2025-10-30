@@ -138,11 +138,23 @@ jobs:
       - name: Run tests (extended features)
         run: cargo --locked nextest run --workspace --all-features
 
-      - name: Test with coverage (enforce ≥95% lines & functions)
+      - name: Generate coverage profile
         run: >-
           cargo --locked llvm-cov nextest --workspace --all-features
-          --fail-under-lines 95 --fail-under-functions 95
-          --lcov --output-path coverage.lcov
+          --no-report
+
+      - name: Export coverage summary (JSON)
+        run: >-
+          cargo --locked llvm-cov report --json --summary-only
+          --output-path coverage-summary.json
+
+      - name: Export coverage report (lcov)
+        run: cargo --locked llvm-cov report --lcov --output-path coverage.lcov
+
+      - name: Enforce coverage thresholds
+        run: >-
+          python3 tools/check_coverage.py coverage-summary.json
+          --min-lines 95 --min-functions 95
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
