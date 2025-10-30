@@ -499,6 +499,28 @@ mod tests {
     }
 
     #[test]
+    fn counting_encoder_exposes_sink_references() {
+        let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+        assert!(encoder.get_ref().is_empty());
+
+        encoder
+            .get_mut()
+            .extend_from_slice(b"prefix");
+        assert_eq!(encoder.get_ref(), b"prefix");
+
+        encoder
+            .write_all(b"payload")
+            .expect("compress payload");
+        let (sink, bytes) = encoder
+            .finish_into_inner()
+            .expect("finish compression stream");
+
+        assert!(bytes > 0);
+        assert!(sink.starts_with(b"prefix"));
+        assert_eq!(bytes as usize, sink.len() - b"prefix".len());
+    }
+
+    #[test]
     fn counting_decoder_tracks_output_bytes() {
         let payload = b"streaming decoder payload";
         let compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
@@ -535,6 +557,21 @@ mod tests {
     }
 
     #[test]
+    fn counting_decoder_exposes_reader_accessors() {
+        let payload = b"reader accessor payload";
+        let compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
+        let cursor = Cursor::new(compressed);
+        let mut decoder = CountingZlibDecoder::new(cursor);
+
+        assert_eq!(decoder.get_ref().position(), 0);
+        decoder.get_mut().set_position(2);
+        assert_eq!(decoder.get_ref().position(), 2);
+
+        let inner = decoder.into_inner();
+        assert_eq!(inner.position(), 2);
+    }
+
+    #[test]
     fn precise_level_converts_to_requested_value() {
         let level = NonZeroU8::new(7).expect("non-zero");
         let compression = Compression::from(CompressionLevel::precise(level));
@@ -554,5 +591,13 @@ mod tests {
     fn numeric_level_constructor_rejects_out_of_range() {
         let err = CompressionLevel::from_numeric(10).expect_err("level above 9 rejected");
         assert_eq!(err.level(), 10);
+    }
+
+    #[test]
+    fn counting_writer_saturating_add_prevents_overflow() {
+        let mut writer = CountingWriter::new(CountingSink);
+        writer.bytes = u64::MAX - 1;
+        writer.saturating_add_bytes(5);
+        assert_eq!(writer.bytes(), u64::MAX);
     }
 }
