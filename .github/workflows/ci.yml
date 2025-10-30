@@ -232,55 +232,77 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
-          target: ${{ matrix.platform.target }}
           cache: true
 
+      - name: Install Rust target
+        id: install-target
+        run: |
+          if rustup target list --installed | grep -q '^${{ matrix.platform.target }}$'; then
+            echo "unsupported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if rustup target add ${{ matrix.platform.target }}; then
+            echo "unsupported=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "unsupported=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Rust target '${{ matrix.platform.target }}' is unavailable on $(rustc --version). Skipping build steps."
+          fi
+
+      - name: Note skipped target
+        if: steps.install-target.outputs.unsupported == 'true'
+        run: echo "Target ${{ matrix.platform.target }} is not available for the current toolchain; cross-compile job will exit early."
+
       - uses: Swatinem/rust-cache@v2
+        if: steps.install-target.outputs.unsupported != 'true'
         with:
           shared-key: cross-${{ matrix.platform.name }}
           target: ${{ matrix.platform.target }}
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
+        if: steps.install-target.outputs.unsupported != 'true'
         with:
           packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev
           version: 1
 
       - uses: awalsh128/cache-apt-pkgs-action@v1
-        if: matrix.platform.needs_cross_gcc
+        if: matrix.platform.needs_cross_gcc && steps.install-target.outputs.unsupported != 'true'
         with:
           packages: gcc-aarch64-linux-gnu
           version: 1
 
       - name: Install Zig toolchain
-        if: matrix.platform.uses_zig
+        if: matrix.platform.uses_zig && steps.install-target.outputs.unsupported != 'true'
         uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
 
       - name: Install cargo-zigbuild
-        if: matrix.platform.uses_zig
+        if: matrix.platform.uses_zig && steps.install-target.outputs.unsupported != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
 
       - name: Install cargo-cyclonedx
-        if: matrix.platform.generate_sbom
+        if: matrix.platform.generate_sbom && steps.install-target.outputs.unsupported != 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-cyclonedx
 
       - name: Build oc-rsync
+        if: steps.install-target.outputs.unsupported != 'true'
         run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
 
       - name: Build oc-rsyncd
-        if: matrix.platform.build_daemon
+        if: matrix.platform.build_daemon && steps.install-target.outputs.unsupported != 'true'
         run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
 
       - name: Generate target SBOM
-        if: matrix.platform.generate_sbom
+        if: matrix.platform.generate_sbom && steps.install-target.outputs.unsupported != 'true'
         run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.platform.target }}/release/oc-rsync-${{ matrix.platform.name }}-sbom.json
 
       - name: Upload oc-rsync artifact
+        if: steps.install-target.outputs.unsupported != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.platform.name }}
@@ -288,7 +310,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload oc-rsyncd artifact
-        if: matrix.platform.build_daemon
+        if: matrix.platform.build_daemon && steps.install-target.outputs.unsupported != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsyncd-${{ matrix.platform.name }}
