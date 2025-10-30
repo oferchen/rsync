@@ -3246,11 +3246,11 @@ fn run_module_list_collects_entries() {
     ];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(
@@ -3288,11 +3288,11 @@ fn run_module_list_uses_connect_program_command() {
     let _shell_guard = EnvGuard::remove("RSYNC_SHELL");
     let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new("example.com".to_string(), 873).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new("example.com".to_string(), 873).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("connect program listing succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3367,11 +3367,11 @@ fn run_module_list_collects_motd_after_acknowledgement() {
     ];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(
@@ -3398,11 +3398,11 @@ fn run_module_list_suppresses_motd_when_requested() {
     ];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list =
         run_module_list_with_options(request, ModuleListOptions::default().suppress_motd(true))
@@ -3428,11 +3428,11 @@ fn run_module_list_collects_warnings() {
     ];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3462,11 +3462,11 @@ fn run_module_list_collects_capabilities() {
     ];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3492,12 +3492,11 @@ fn run_module_list_via_proxy_connects_through_tunnel() {
         &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
     );
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
-            .expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3532,12 +3531,11 @@ fn run_module_list_via_proxy_includes_auth_header() {
         &format!("user:secret@{}:{}", proxy_addr.ip(), proxy_addr.port()),
     );
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
-            .expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3600,12 +3598,11 @@ fn run_module_list_accepts_lowercase_proxy_status_line() {
         &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
     );
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port())
-            .expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(daemon_addr.ip().to_string(), daemon_addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let list = run_module_list(request).expect("module list succeeds");
     assert_eq!(list.entries().len(), 1);
@@ -3620,11 +3617,11 @@ fn run_module_list_reports_invalid_proxy_configuration() {
     let _env_lock = env_lock().lock().expect("env mutex poisoned");
     let _guard = EnvGuard::set("RSYNC_PROXY", "invalid-proxy");
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(String::from("localhost"), 873).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(String::from("localhost"), 873).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("invalid proxy should fail");
     assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
@@ -3733,11 +3730,11 @@ fn run_module_list_reports_daemon_error() {
     let responses = vec!["@ERROR: unavailable\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("daemon error should surface");
     assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
@@ -3753,11 +3750,11 @@ fn run_module_list_reports_daemon_error_without_colon() {
     let responses = vec!["@ERROR unavailable\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("daemon error should surface");
     assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
@@ -3825,11 +3822,11 @@ fn run_module_list_reports_daemon_error_with_case_insensitive_prefix() {
     let responses = vec!["@error:\tunavailable\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("daemon error should surface");
     assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
@@ -3845,11 +3842,11 @@ fn run_module_list_reports_authentication_required() {
     let responses = vec!["@RSYNCD: AUTHREQD modules\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("auth requirement should surface");
     assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
@@ -3865,11 +3862,11 @@ fn run_module_list_requires_password_for_authentication() {
     let responses = vec!["@RSYNCD: AUTHREQD challenge\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: Some(String::from("user")),
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        Some(String::from("user")),
+        ProtocolVersion::NEWEST,
+    );
 
     let _guard = env_lock().lock().unwrap();
     super::set_test_daemon_password(None);
@@ -3932,11 +3929,11 @@ fn run_module_list_authenticates_with_credentials() {
         }
     });
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: Some(String::from("user")),
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        Some(String::from("user")),
+        ProtocolVersion::NEWEST,
+    );
 
     let _guard = env_lock().lock().unwrap();
     super::set_test_daemon_password(Some(b"secret".to_vec()));
@@ -4000,11 +3997,11 @@ fn run_module_list_authenticates_with_password_override() {
         }
     });
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: Some(String::from("user")),
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        Some(String::from("user")),
+        ProtocolVersion::NEWEST,
+    );
 
     let _guard = env_lock().lock().unwrap();
     super::set_test_daemon_password(Some(b"wrong".to_vec()));
@@ -4079,11 +4076,11 @@ fn run_module_list_authenticates_with_split_challenge() {
         }
     });
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: Some(String::from("user")),
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        Some(String::from("user")),
+        ProtocolVersion::NEWEST,
+    );
 
     let _guard = env_lock().lock().unwrap();
     super::set_test_daemon_password(Some(b"secret".to_vec()));
@@ -4149,11 +4146,11 @@ fn run_module_list_reports_authentication_failure() {
         }
     });
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: Some(String::from("user")),
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        Some(String::from("user")),
+        ProtocolVersion::NEWEST,
+    );
 
     let _guard = env_lock().lock().unwrap();
     super::set_test_daemon_password(Some(b"secret".to_vec()));
@@ -4178,11 +4175,11 @@ fn run_module_list_reports_access_denied() {
     let responses = vec!["@RSYNCD: DENIED host rules\n", "@RSYNCD: EXIT\n"];
     let (addr, handle) = spawn_stub_daemon(responses);
 
-    let request = ModuleListRequest {
-        address: DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
-        username: None,
-        protocol: ProtocolVersion::NEWEST,
-    };
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
 
     let error = run_module_list(request).expect_err("denied response should surface");
     assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
