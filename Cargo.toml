@@ -28,6 +28,12 @@ authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 version = "3.4.1-rust"
 
+[workspace.package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [workspace.metadata.oc_rsync]
 brand = "oc"
 upstream_version = "3.4.1"
