@@ -231,13 +231,13 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             generate_sbom: false
-          - name: windows-x86
-            target: i686-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
+          # - name: windows-x86
+          #   target: i686-pc-windows-gnu
+          #   build_command: zigbuild
+          #   build_daemon: false
+          #   uses_zig: true
+          #   needs_cross_gcc: false
+          #   generate_sbom: false
     env:
       CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
