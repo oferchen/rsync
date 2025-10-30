@@ -104,7 +104,20 @@ static NEXT_TEMP_FILE_ID: AtomicUsize = AtomicUsize::new(0);
 
 use overrides::{create_hard_link, device_identifier};
 #[cfg(test)]
-pub(crate) use overrides::{with_device_id_override, with_hard_link_override};
+pub(crate) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path, &Path) -> io::Result<()> + 'static,
+{
+    overrides::with_hard_link_override(override_fn, action)
+}
+
+#[cfg(test)]
+pub(crate) fn with_device_id_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
+where
+    F: Fn(&Path, &fs::Metadata) -> Option<u64> + 'static,
+{
+    overrides::with_device_id_override(override_fn, action)
+}
 
 #[cfg(unix)]
 const CROSS_DEVICE_ERROR_CODE: i32 = 18;
