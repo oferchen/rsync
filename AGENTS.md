@@ -6,14 +6,19 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ## Global Conventions
 
-- **Error Message Suffix (C→Rust remap)**:  
-  Format: `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`  
+- **Error Message Suffix (C→Rust remap)**:
+  Format: `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`
   Implemented in `crates/core/src/message.rs` via:
   - `role: Role` enum (`Sender/Receiver/Generator/Server/Client/Daemon`) chosen at call-site.  
   - `source_path: &'static str = file!()`; `source_line: u32 = line!()`; normalized to repo-relative.  
   - Central constructor: `Message::error(code, text).with_role(role).with_source(file!(), line!())`.
 - **Roles in trailers** mirror upstream semantics exactly.  
 - **All info/warn/error/progress strings** are centralized in `core::message::strings` for snapshot tests.
+- **Workspace-wide nextest configuration**: `.config/nextest.toml` pins
+  `[profile.default.package] graph = "workspace"` so a bare
+  `cargo nextest run` executes the entire workspace without additional flags.
+  Contributors must keep this file in sync with any future profile
+  adjustments so local invocations match CI coverage.
 
 ---
 
