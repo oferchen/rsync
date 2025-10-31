@@ -13,14 +13,14 @@ max_lines = 5700
 warn_lines = 5580
 
 [[overrides]]
-path = "crates/engine/src/local_copy.rs"
-max_lines = 9650
-warn_lines = 9500
-
-[[overrides]]
 path = "crates/core/src/client/mod.rs"
 max_lines = 5800
 warn_lines = 5600
+
+[[overrides]]
+path = "crates/cli/src/frontend/filter_rules.rs"
+max_lines = 1300
+warn_lines = 1200
 
 [[overrides]]
 path = "crates/daemon/src/lib.rs"
