@@ -72,8 +72,14 @@
 //!   these helpers on the client side.
 //! - `rsync_daemon::run` for daemon-side delegation.
 
+mod binary;
+
 use std::env;
 use std::ffi::{OsStr, OsString};
+
+pub use binary::{
+    describe_missing_fallback_binary, fallback_binary_available, fallback_binary_candidates,
+};
 
 /// Name of the client fallback override environment variable.
 ///

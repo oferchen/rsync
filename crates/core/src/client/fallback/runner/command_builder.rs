@@ -1,15 +1,14 @@
-use std::collections::HashSet;
-use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
 
 use super::super::args::RemoteFallbackArgs;
 use super::helpers::{fallback_error, prepare_file_list, push_human_readable, push_toggle};
 use crate::client::{AddressMode, ClientError, DeleteMode, TransferTimeout};
-use crate::fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override};
+use crate::fallback::{
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
+    fallback_binary_available, fallback_override,
+};
 
 /// Prepared command invocation for the legacy fallback binary.
 pub(crate) struct PreparedInvocation {
@@ -559,13 +558,10 @@ pub(crate) fn prepare_invocation(
         }
     };
 
-    if !fallback_binary_available(&binary) {
-        let display = Path::new(&binary).display();
-        return Err(fallback_error(format!(
-            "fallback rsync binary '{}' is not available on PATH or is not executable; install upstream rsync or set {env} to an explicit path",
-            display,
-            env = CLIENT_FALLBACK_ENV
-        )));
+    if !fallback_binary_available(binary.as_os_str()) {
+        let diagnostic =
+            describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        return Err(fallback_error(diagnostic));
     }
 
     Ok(PreparedInvocation {
