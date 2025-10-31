@@ -312,7 +312,15 @@ fn validate_ci_cross_compile_matrix(
                     &display_path,
                     &ci_contents,
                     &name,
-                    true,
+                    MatrixExpectations {
+                        enabled: Some(true),
+                        target: expected_target(os, arch),
+                        build_command: Some(expected_build_command(os)),
+                        build_daemon: Some(expected_build_daemon(os, arch)),
+                        uses_zig: Some(expected_uses_zig(os)),
+                        generate_sbom: Some(expected_generate_sbom(os)),
+                        needs_cross_gcc: expected_needs_cross_gcc(os, arch),
+                    },
                 ),
                 None => failures.push(format!(
                     "{display_path}: unrecognised cross-compile platform '{os}' in workspace metadata"
@@ -321,13 +329,35 @@ fn validate_ci_cross_compile_matrix(
         }
     }
 
-    ensure_matrix_entry(failures, &display_path, &ci_contents, "windows-x86", false);
+    ensure_matrix_entry(
+        failures,
+        &display_path,
+        &ci_contents,
+        "windows-x86",
+        MatrixExpectations {
+            enabled: Some(false),
+            target: expected_target("windows", "x86"),
+            build_command: Some("zigbuild"),
+            build_daemon: Some(false),
+            uses_zig: Some(true),
+            generate_sbom: Some(false),
+            needs_cross_gcc: Some(false),
+        },
+    );
     ensure_matrix_entry(
         failures,
         &display_path,
         &ci_contents,
         "windows-aarch64",
-        false,
+        MatrixExpectations {
+            enabled: Some(false),
+            target: expected_target("windows", "aarch64"),
+            build_command: Some("zigbuild"),
+            build_daemon: Some(false),
+            uses_zig: Some(true),
+            generate_sbom: Some(false),
+            needs_cross_gcc: Some(false),
+        },
     );
 
     Ok(())
@@ -338,14 +368,64 @@ fn ensure_matrix_entry(
     display_path: &str,
     contents: &str,
     name: &str,
-    expected_enabled: bool,
+    expectations: MatrixExpectations<'_>,
 ) {
     match extract_matrix_entry(contents, name) {
         Some(entry) => {
-            if entry.enabled != Some(expected_enabled) {
-                failures.push(format!(
-                    "{display_path}: cross-compilation entry '{name}' expected enabled={expected_enabled}"
-                ));
+            if let Some(expected) = expectations.enabled {
+                if entry.enabled != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected enabled={expected}"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.target {
+                if entry.target.as_deref() != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected target='{expected}'"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.build_command {
+                if entry.build_command.as_deref() != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected build_command='{expected}'"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.build_daemon {
+                if entry.build_daemon != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected build_daemon={expected}"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.uses_zig {
+                if entry.uses_zig != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected uses_zig={expected}"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.generate_sbom {
+                if entry.generate_sbom != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected generate_sbom={expected}"
+                    ));
+                }
+            }
+
+            if let Some(expected) = expectations.needs_cross_gcc {
+                if entry.needs_cross_gcc != Some(expected) {
+                    failures.push(format!(
+                        "{display_path}: cross-compilation entry '{name}' expected needs_cross_gcc={expected}"
+                    ));
+                }
             }
         }
         None => failures.push(format!(
@@ -363,10 +443,67 @@ fn expected_matrix_name(os: &str, arch: &str) -> Option<String> {
     }
 }
 
+fn expected_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-gnu"),
+        ("windows", "x86") => Some("i686-pc-windows-gnu"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+fn expected_build_command(os: &str) -> &'static str {
+    match os {
+        "linux" => "build",
+        "macos" | "windows" => "zigbuild",
+        _ => "build",
+    }
+}
+
+fn expected_build_daemon(os: &str, _arch: &str) -> bool {
+    !matches!(os, "windows")
+}
+
+fn expected_uses_zig(os: &str) -> bool {
+    matches!(os, "macos" | "windows")
+}
+
+fn expected_generate_sbom(os: &str) -> bool {
+    !matches!(os, "windows")
+}
+
+fn expected_needs_cross_gcc(os: &str, arch: &str) -> Option<bool> {
+    match (os, arch) {
+        ("linux", "aarch64") => Some(true),
+        ("linux", _) => Some(false),
+        _ => Some(false),
+    }
+}
+
 #[derive(Debug, Default, Eq, PartialEq)]
 struct MatrixEntry {
     enabled: Option<bool>,
     target: Option<String>,
+    build_command: Option<String>,
+    build_daemon: Option<bool>,
+    uses_zig: Option<bool>,
+    generate_sbom: Option<bool>,
+    needs_cross_gcc: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MatrixExpectations<'a> {
+    enabled: Option<bool>,
+    target: Option<&'a str>,
+    build_command: Option<&'a str>,
+    build_daemon: Option<bool>,
+    uses_zig: Option<bool>,
+    generate_sbom: Option<bool>,
+    needs_cross_gcc: Option<bool>,
 }
 
 fn extract_matrix_entry(contents: &str, name: &str) -> Option<MatrixEntry> {
@@ -397,11 +534,29 @@ fn extract_matrix_entry(contents: &str, name: &str) -> Option<MatrixEntry> {
                 current.enabled = Some(matches!(enabled.trim(), "true"));
             } else if let Some(target) = trimmed.strip_prefix("target:") {
                 current.target = Some(target.trim().to_owned());
+            } else if let Some(build_command) = trimmed.strip_prefix("build_command:") {
+                current.build_command = Some(build_command.trim().to_owned());
+            } else if let Some(build_daemon) = trimmed.strip_prefix("build_daemon:") {
+                current.build_daemon = parse_bool(build_daemon);
+            } else if let Some(uses_zig) = trimmed.strip_prefix("uses_zig:") {
+                current.uses_zig = parse_bool(uses_zig);
+            } else if let Some(generate_sbom) = trimmed.strip_prefix("generate_sbom:") {
+                current.generate_sbom = parse_bool(generate_sbom);
+            } else if let Some(needs_cross_gcc) = trimmed.strip_prefix("needs_cross_gcc:") {
+                current.needs_cross_gcc = parse_bool(needs_cross_gcc);
             }
         }
     }
 
     entry
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn display_os_name(os: &str) -> &str {
@@ -464,16 +619,38 @@ mod tests {
           - name: linux-x86_64
             enabled: true
             target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
           - name: windows-x86
             enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
         "#;
 
         let linux = extract_matrix_entry(contents, "linux-x86_64").expect("linux entry");
         assert_eq!(linux.enabled, Some(true));
         assert_eq!(linux.target.as_deref(), Some("x86_64-unknown-linux-gnu"));
+        assert_eq!(linux.build_command.as_deref(), Some("build"));
+        assert_eq!(linux.build_daemon, Some(true));
+        assert_eq!(linux.uses_zig, Some(false));
+        assert_eq!(linux.needs_cross_gcc, Some(false));
+        assert_eq!(linux.generate_sbom, Some(true));
 
         let windows = extract_matrix_entry(contents, "windows-x86").expect("windows entry");
         assert_eq!(windows.enabled, Some(false));
+        assert_eq!(windows.target.as_deref(), Some("i686-pc-windows-gnu"));
+        assert_eq!(windows.build_command.as_deref(), Some("zigbuild"));
+        assert_eq!(windows.build_daemon, Some(false));
+        assert_eq!(windows.uses_zig, Some(true));
+        assert_eq!(windows.needs_cross_gcc, Some(false));
+        assert_eq!(windows.generate_sbom, Some(false));
     }
 
     #[test]
@@ -529,16 +706,52 @@ jobs:
         platform:
           - name: linux-x86_64
             enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
           - name: linux-aarch64
             enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
           - name: darwin-x86_64
             enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
           - name: darwin-aarch64
             enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
           - name: windows-x86
             enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
           - name: windows-aarch64
             enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
 "#,
         )
         .expect("write ci workflow");
@@ -551,6 +764,131 @@ jobs:
             failures
                 .iter()
                 .any(|message| message.contains("windows-x86_64")),
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_detects_mismatched_fields() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("xtask_docs_ci_fields_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup stale workspace");
+        }
+        fs::create_dir_all(workspace.join(".github").join("workflows")).expect("create workflows");
+
+        fs::write(
+            workspace.join("Cargo.toml"),
+            r#"[workspace]
+members = []
+[workspace.metadata]
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
+[workspace.metadata.oc_rsync.cross_compile]
+linux = ["x86_64", "aarch64"]
+macos = ["x86_64", "aarch64"]
+windows = ["x86_64"]
+"#,
+        )
+        .expect("write manifest");
+
+        fs::write(
+            workspace.join(".github").join("workflows").join("ci.yml"),
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        )
+        .expect("write ci workflow");
+
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("linux-x86_64")
+                    && message.contains("build_command='build'")),
+            "expected build_command validation failure, got {failures:?}"
         );
 
         fs::remove_dir_all(&workspace).expect("cleanup workspace");
