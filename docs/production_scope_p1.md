@@ -1,10 +1,11 @@
 # Production Scope P1 (Ship Bar)
 
-This document freezes the mandatory scope that must reach green status before the Rust rsync implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project while tracking the branded **oc-rsync 3.4.1-rust** release line.
+This document freezes the mandatory scope that must reach green status before the Rust rsync implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project while tracking the branded **rsync 3.4.1-rust** release line.
 
 > **Binary naming note**: The production scope targets the canonical
-> `oc-rsync` and `oc-rsyncd` binaries. The CLI/daemon still recognise the
-> upstream names when invoked via compatibility symlinks or remote transports.
+> `rsync` and `rsyncd` binaries. Compatibility symlinks may still be
+> shipped for downstream tooling, but the native Rust executables own the
+> canonical names.
 
 ## Platforms
 - Linux x86_64
@@ -76,8 +77,8 @@ This document freezes the mandatory scope that must reach green status before th
 ## Packaging & Artifacts
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
-- Systemd `oc-rsyncd.service` unit (ships with an alias for `rsyncd.service`)
-- Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
+- Systemd `rsyncd.service` unit (ships with an alias for legacy unit names when required)
+- Default daemon configuration installed at `/etc/rsyncd.conf` with secrets stored in `/etc/rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 - Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) produced by the CI matrix (Windows x86/aarch64 targets remain disabled to avoid conflicting toolchains)
 
