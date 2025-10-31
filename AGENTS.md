@@ -52,10 +52,12 @@ This document defines the internal actors (“agents”), their responsibilities
   via `xtask` subcommands so both local and CI runs stay in sync.
 - **Documentation validation guardrail**: `cargo xtask docs --validate` now
   asserts that `.github/workflows/ci.yml` mirrors the cross-compilation
-  platforms declared under `[workspace.metadata.oc_rsync.cross_compile]` and
-  keeps the Windows x86/aarch64 entries present but disabled. Contributors must
-  update both the manifest metadata and CI matrix together so the validation
-  continues to pass.
+  platforms declared under `[workspace.metadata.oc_rsync.cross_compile]`, keeps
+  the Windows x86/aarch64 entries present but disabled, and verifies that each
+  matrix entry advertises the expected `target`, `build_command`,
+  `build_daemon`, `uses_zig`, `needs_cross_gcc`, and `generate_sbom` values for
+  its platform. Contributors must update both the manifest metadata and CI
+  matrix together so the validation continues to pass.
 
 ---
 
