@@ -2792,6 +2792,24 @@ where
     transfer_operands.append(&mut file_list_operands);
     transfer_operands.extend(remainder);
 
+    if transfer_operands.is_empty() {
+        let message = rsync_error!(
+            1,
+            "missing source operands: supply at least one source and a destination"
+        )
+        .with_role(Role::Client);
+        if write_message(&message, stderr).is_err() {
+            let fallback = message.to_string();
+            let _ = writeln!(stderr.writer_mut(), "{fallback}");
+        }
+
+        let usage = render_help(program_name);
+        if writeln!(stderr.writer_mut(), "{usage}").is_err() {
+            let _ = writeln!(stdout, "{usage}");
+        }
+        return 1;
+    }
+
     let preserve_owner = if parsed_chown
         .as_ref()
         .and_then(|value| value.owner)
