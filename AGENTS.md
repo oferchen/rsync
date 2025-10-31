@@ -63,6 +63,12 @@ pub fn main() -> ExitCode {
 }
 ```
 
+*Modularity notes*: the daemon implementation is now decomposed across
+`crates/daemon/src/daemon/sections/*.rs` and pulled into `daemon.rs` via
+`include!` blocks so no single file exceeds the hygiene caps. New work that
+touches the daemon should follow this layout, adding additional section files as
+needed rather than growing existing ones.
+
 ---
 
 ### 3) Core (Facade)
