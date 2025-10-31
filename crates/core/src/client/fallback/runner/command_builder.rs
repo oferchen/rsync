@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::path::Path;
 
 use tempfile::NamedTempFile;
 
@@ -561,7 +562,10 @@ pub(crate) fn prepare_invocation(
     if !fallback_binary_available(binary.as_os_str()) {
         let diagnostic =
             describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
-        return Err(fallback_error(diagnostic));
+        return Err(fallback_error(format!(
+            "failed to launch fallback rsync binary '{}': {diagnostic}",
+            Path::new(binary.as_os_str()).display()
+        )));
     }
 
     Ok(PreparedInvocation {
