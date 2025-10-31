@@ -1,6 +1,7 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::{is_help_flag, run_cargo_tool};
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -316,10 +317,12 @@ fn validate_ci_cross_compile_matrix(
         .map(|relative| relative.display().to_string())
         .unwrap_or_else(|_| ci_path.display().to_string());
 
+    let mut expected_entries = BTreeSet::new();
+
     for (os, arches) in &branding.cross_compile {
         for arch in arches {
-            match expected_matrix_name(os, arch) {
-                Some(name) => ensure_matrix_entry(
+            if let Some(name) = expected_matrix_name(os, arch) {
+                ensure_matrix_entry(
                     failures,
                     &display_path,
                     &ci_contents,
@@ -333,10 +336,12 @@ fn validate_ci_cross_compile_matrix(
                         generate_sbom: Some(expected_generate_sbom(os)),
                         needs_cross_gcc: expected_needs_cross_gcc(os, arch),
                     },
-                ),
-                None => failures.push(format!(
+                );
+                expected_entries.insert(name);
+            } else {
+                failures.push(format!(
                     "{display_path}: unrecognised cross-compile platform '{os}' in workspace metadata"
-                )),
+                ));
             }
         }
     }
@@ -356,6 +361,10 @@ fn validate_ci_cross_compile_matrix(
             needs_cross_gcc: Some(false),
         },
     );
+    if failures.is_empty() {
+        expected_entries.insert(String::from("windows-x86"));
+    }
+
     ensure_matrix_entry(
         failures,
         &display_path,
@@ -372,7 +381,84 @@ fn validate_ci_cross_compile_matrix(
         },
     );
 
+    if failures.is_empty() {
+        expected_entries.insert(String::from("windows-aarch64"));
+    }
+
+    if failures.is_empty() {
+        let names = collect_matrix_platform_names(&ci_contents);
+        check_for_unexpected_matrix_entries(&display_path, &names, &expected_entries, failures);
+    }
+
     Ok(())
+}
+
+fn collect_matrix_platform_names(contents: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_platform_list = false;
+    let mut platform_indent = 0usize;
+
+    for line in contents.lines() {
+        if !in_platform_list {
+            if let Some(index) = line.find("platform:") {
+                platform_indent = line[..index].chars().take_while(|c| *c == ' ').count();
+                in_platform_list = true;
+            }
+            continue;
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        if indent <= platform_indent {
+            in_platform_list = false;
+            if let Some(index) = line.find("platform:") {
+                platform_indent = line[..index].chars().take_while(|c| *c == ' ').count();
+                in_platform_list = true;
+            }
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("- name:") {
+            names.push(rest.trim().to_string());
+        }
+    }
+
+    names
+}
+
+fn check_for_unexpected_matrix_entries(
+    display_path: &str,
+    names: &[String],
+    expected_entries: &BTreeSet<String>,
+    failures: &mut Vec<String>,
+) {
+    let mut seen = BTreeSet::new();
+
+    for name in names {
+        if !seen.insert(name.clone()) {
+            failures.push(format!(
+                "{display_path}: duplicate cross-compilation entry '{name}'"
+            ));
+        }
+
+        if !expected_entries.contains(name) {
+            failures.push(format!(
+                "{display_path}: unexpected cross-compilation entry '{name}'"
+            ));
+        }
+    }
+
+    for expected in expected_entries {
+        if !seen.contains(expected) {
+            failures.push(format!(
+                "{display_path}: missing cross-compilation entry '{expected}'"
+            ));
+        }
+    }
 }
 
 fn ensure_matrix_entry(
@@ -584,7 +670,47 @@ fn display_os_name(os: &str) -> &str {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    const MANIFEST_SNIPPET: &str = r#"[workspace]
+members = []
+[workspace.metadata]
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
+[workspace.metadata.oc_rsync.cross_compile]
+linux = ["x86_64", "aarch64"]
+macos = ["x86_64", "aarch64"]
+windows = ["x86_64"]
+"#;
+
+    fn write_manifest(workspace: &Path) {
+        if !workspace.exists() {
+            fs::create_dir_all(workspace).expect("create workspace root");
+        }
+
+        fs::write(workspace.join("Cargo.toml"), MANIFEST_SNIPPET).expect("write manifest");
+    }
+
+    fn write_ci_file(workspace: &Path, contents: &str) {
+        let workflows = workspace.join(".github").join("workflows");
+        fs::create_dir_all(&workflows).expect("create workflows");
+        fs::write(workflows.join("ci.yml"), contents).expect("write ci workflow");
+    }
 
     #[test]
     fn parse_args_accepts_default_configuration() {
@@ -676,39 +802,10 @@ mod tests {
         if workspace.exists() {
             fs::remove_dir_all(&workspace).expect("cleanup stale workspace");
         }
-        fs::create_dir_all(workspace.join(".github").join("workflows")).expect("create workflows");
 
-        fs::write(
-            workspace.join("Cargo.toml"),
-            r#"[workspace]
-members = []
-[workspace.metadata]
-[workspace.metadata.oc_rsync]
-brand = "oc"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "oc-rsync"
-daemon_bin = "oc-rsyncd"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://github.com/oferchen/rsync"
-[workspace.metadata.oc_rsync.cross_compile]
-linux = ["x86_64", "aarch64"]
-macos = ["x86_64", "aarch64"]
-windows = ["x86_64"]
-"#,
-        )
-        .expect("write manifest");
-
-        fs::write(
-            workspace.join(".github").join("workflows").join("ci.yml"),
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
             r#"name: CI
 
 jobs:
@@ -765,8 +862,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
 "#,
-        )
-        .expect("write ci workflow");
+        );
 
         let branding = load_workspace_branding(&workspace).expect("load branding");
         let mut failures = Vec::new();
@@ -791,39 +887,10 @@ jobs:
         if workspace.exists() {
             fs::remove_dir_all(&workspace).expect("cleanup stale workspace");
         }
-        fs::create_dir_all(workspace.join(".github").join("workflows")).expect("create workflows");
 
-        fs::write(
-            workspace.join("Cargo.toml"),
-            r#"[workspace]
-members = []
-[workspace.metadata]
-[workspace.metadata.oc_rsync]
-brand = "oc"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "oc-rsync"
-daemon_bin = "oc-rsyncd"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://github.com/oferchen/rsync"
-[workspace.metadata.oc_rsync.cross_compile]
-linux = ["x86_64", "aarch64"]
-macos = ["x86_64", "aarch64"]
-windows = ["x86_64"]
-"#,
-        )
-        .expect("write manifest");
-
-        fs::write(
-            workspace.join(".github").join("workflows").join("ci.yml"),
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
             r#"name: CI
 
 jobs:
@@ -888,8 +955,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
 "#,
-        )
-        .expect("write ci workflow");
+        );
 
         let branding = load_workspace_branding(&workspace).expect("branding");
         let mut failures = Vec::new();
@@ -921,6 +987,213 @@ jobs:
             failures.is_empty(),
             "unexpected CI validation failures: {failures:?}"
         );
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_detects_unexpected_entries() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_unexpected_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: freebsd-x86_64
+            enabled: false
+            target: x86_64-unknown-freebsd
+            build_command: build
+            build_daemon: false
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message
+                    .contains("unexpected cross-compilation entry 'freebsd-x86_64'")),
+            "expected unexpected-entry failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_detects_duplicate_entries() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_duplicate_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("duplicate cross-compilation entry 'linux-x86_64'")),
+            "expected duplicate-entry failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
     }
 
     #[test]

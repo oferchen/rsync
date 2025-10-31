@@ -59,7 +59,9 @@ This document defines the internal actors (“agents”), their responsibilities
   the Windows x86/aarch64 entries present but disabled, and verifies that each
   matrix entry advertises the expected `target`, `build_command`,
   `build_daemon`, `uses_zig`, `needs_cross_gcc`, and `generate_sbom` values for
-  its platform. Contributors must update both the manifest metadata and CI
+  its platform. The validator also rejects duplicate matrix entries and flags
+  unexpected targets so the release matrix remains tightly scoped to the
+  supported platforms. Contributors must update both the manifest metadata and CI
   matrix together so the validation continues to pass. The same validation pass
   also enforces that `docs/COMPARE.md` references the branded `oc-rsync`
   binaries, daemon configuration path (`/etc/oc-rsyncd/oc-rsyncd.conf`), and
