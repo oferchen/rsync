@@ -15,7 +15,7 @@ use super::super::{
     extract_operands, load_file_list_operands, parse_chown_argument, transfer_requires_remote,
 };
 use super::messages::{fail_with_custom_fallback, fail_with_message};
-use super::module_listing::maybe_handle_module_listing;
+use super::module_listing::{ModuleListingInputs, maybe_handle_module_listing};
 use crate::frontend::{arguments::ParsedArgs, execution::chown::ParsedChown};
 use metadata::MetadataSettings;
 use rsync_core::client::HumanReadableMode;
@@ -224,7 +224,7 @@ where
         skip_compress_list,
         compression_setting,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
-        options::SettingsOutcome::Proceed(settings) => settings,
+        options::SettingsOutcome::Proceed(settings) => *settings,
         options::SettingsOutcome::Exit(code) => return code,
     };
 
@@ -259,19 +259,21 @@ where
     };
 
     if let Some(exit_code) = maybe_handle_module_listing(
-        &file_list_operands,
-        &remainder,
-        daemon_port,
-        desired_protocol,
-        password_file.as_deref(),
-        no_motd,
-        address_mode,
-        bind_address.as_ref(),
-        connect_program.as_ref(),
-        timeout_setting,
-        connect_timeout_setting,
         stdout,
         stderr,
+        ModuleListingInputs {
+            file_list_operands: &file_list_operands,
+            remainder: &remainder,
+            daemon_port,
+            desired_protocol,
+            password_file: password_file.as_deref(),
+            no_motd,
+            address_mode,
+            bind_address: bind_address.as_ref(),
+            connect_program: connect_program.as_ref(),
+            timeout_setting,
+            connect_timeout_setting,
+        },
     ) {
         return exit_code;
     }
@@ -414,9 +416,9 @@ where
         return code;
     }
 
-    let metadata = match metadata::compute_metadata_settings(
+    let metadata = match metadata::compute_metadata_settings(metadata::MetadataInputs {
         archive,
-        parsed_chown.as_ref(),
+        parsed_chown: parsed_chown.as_ref(),
         owner,
         group,
         perms,
@@ -433,8 +435,8 @@ where
         keep_dirlinks,
         relative,
         one_file_system,
-        &chmod,
-    ) {
+        chmod: &chmod,
+    }) {
         Ok(settings) => settings,
         Err(message) => return fail_with_message(message, stderr),
     };
@@ -564,19 +566,21 @@ where
     let config = builder.build();
 
     summary::execute_transfer(
-        config,
-        fallback_args,
         stdout,
         stderr,
-        msgs_to_stderr,
-        progress_mode,
-        human_readable_mode,
-        itemize_changes,
-        stats,
-        verbosity,
-        list_only,
-        out_format_template.as_ref(),
-        name_level,
-        name_overridden,
+        summary::TransferExecutionInputs {
+            config,
+            fallback_args,
+            msgs_to_stderr,
+            progress_mode,
+            human_readable_mode,
+            itemize_changes,
+            stats,
+            verbosity,
+            list_only,
+            out_format_template: out_format_template.as_ref(),
+            name_level,
+            name_overridden,
+        },
     )
 }

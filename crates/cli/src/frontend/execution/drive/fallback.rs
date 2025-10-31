@@ -254,9 +254,9 @@ where
         rsync_path: inputs.rsync_path,
         remainder: inputs.remainder,
         #[cfg(feature = "acl")]
-        acls: inputs.acls,
+        acls: inputs.acls.then_some(true),
         #[cfg(feature = "xattr")]
-        xattrs: inputs.xattrs,
+        xattrs: inputs.xattrs.then_some(true),
         itemize_changes: inputs.itemize_changes,
     };
 

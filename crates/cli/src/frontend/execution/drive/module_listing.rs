@@ -13,25 +13,43 @@ use crate::frontend::{
     execution::render_module_list, password::load_optional_password, write_message,
 };
 
+pub(super) struct ModuleListingInputs<'a> {
+    pub file_list_operands: &'a [OsString],
+    pub remainder: &'a [OsString],
+    pub daemon_port: Option<u16>,
+    pub desired_protocol: Option<ProtocolVersion>,
+    pub password_file: Option<&'a Path>,
+    pub no_motd: bool,
+    pub address_mode: AddressMode,
+    pub bind_address: Option<&'a BindAddress>,
+    pub connect_program: Option<&'a OsString>,
+    pub timeout_setting: TransferTimeout,
+    pub connect_timeout_setting: TransferTimeout,
+}
+
 pub(super) fn maybe_handle_module_listing<Out, Err>(
-    file_list_operands: &[OsString],
-    remainder: &[OsString],
-    daemon_port: Option<u16>,
-    desired_protocol: Option<ProtocolVersion>,
-    password_file: Option<&Path>,
-    no_motd: bool,
-    address_mode: AddressMode,
-    bind_address: Option<&BindAddress>,
-    connect_program: Option<&OsString>,
-    timeout_setting: TransferTimeout,
-    connect_timeout_setting: TransferTimeout,
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
+    inputs: ModuleListingInputs<'_>,
 ) -> Option<i32>
 where
     Out: Write,
     Err: Write,
 {
+    let ModuleListingInputs {
+        file_list_operands,
+        remainder,
+        daemon_port,
+        desired_protocol,
+        password_file,
+        no_motd,
+        address_mode,
+        bind_address,
+        connect_program,
+        timeout_setting,
+        connect_timeout_setting,
+    } = inputs;
+
     if !file_list_operands.is_empty() {
         return None;
     }
