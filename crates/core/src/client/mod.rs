@@ -97,8 +97,9 @@ mod summary;
 pub use self::config::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder,
     CompressionSetting, DeleteMode, FilterRuleKind, FilterRuleSpec, HumanReadableMode,
-    ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumAlgorithm, StrongChecksumChoice,
-    TransferTimeout, parse_skip_compress_list, skip_compress_from_env,
+    HumanReadableModeParseError, ReferenceDirectory, ReferenceDirectoryKind,
+    StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout, parse_skip_compress_list,
+    skip_compress_from_env,
 };
 pub use self::error::{
     ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE, SOCKET_IO_EXIT_CODE,

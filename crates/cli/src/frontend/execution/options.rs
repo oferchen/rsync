@@ -111,32 +111,8 @@ pub(crate) fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, M
 
 pub(crate) fn parse_human_readable_level(value: &OsStr) -> Result<HumanReadableMode, clap::Error> {
     let text = value.to_string_lossy();
-    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
-    let display = if trimmed.is_empty() {
-        text.as_ref()
-    } else {
-        trimmed
-    };
-
-    if trimmed.is_empty() {
-        return Err(clap::Error::raw(
-            clap::error::ErrorKind::InvalidValue,
-            "human-readable level must not be empty",
-        ));
-    }
-
-    match trimmed {
-        "0" => Ok(HumanReadableMode::Disabled),
-        "1" => Ok(HumanReadableMode::Enabled),
-        "2" => Ok(HumanReadableMode::Combined),
-        _ => Err(clap::Error::raw(
-            clap::error::ErrorKind::InvalidValue,
-            format!(
-                "invalid human-readable level '{}': expected 0, 1, or 2",
-                display
-            ),
-        )),
-    }
+    HumanReadableMode::parse(text.as_ref())
+        .map_err(|error| clap::Error::raw(clap::error::ErrorKind::InvalidValue, error.to_string()))
 }
 
 pub(crate) fn parse_max_delete_argument(value: &OsStr) -> Result<u64, Message> {

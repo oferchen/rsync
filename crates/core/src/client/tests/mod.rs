@@ -1,6 +1,7 @@
 include!("client_event.rs");
 include!("builder_compress.rs");
 include!("builder_metadata.rs");
+include!("human_readable_mode.rs");
 include!("network_getters.rs");
 include!("fallback_invocation.rs");
 include!("fallback_controls.rs");
