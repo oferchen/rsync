@@ -8,7 +8,7 @@ default_max_lines = 650
 default_warn_lines = 400
 
 [[overrides]]
-path = "crates/cli/src/frontend.rs"
+path = "crates/cli/src/frontend/mod.rs"
 max_lines = 5700
 warn_lines = 5580
 

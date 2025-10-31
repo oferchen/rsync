@@ -17,7 +17,10 @@ fn combined_utf8(output: &std::process::Output) -> String {
 fn oc_rsync_help_lists_usage() {
     let output = binary_output(env!("CARGO_BIN_EXE_oc-rsync"), &["--help"]);
     assert!(output.status.success(), "--help should succeed");
-    assert!(output.stderr.is_empty(), "help output should not write to stderr");
+    assert!(
+        output.stderr.is_empty(),
+        "help output should not write to stderr"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("oc-rsync"));
@@ -38,7 +41,10 @@ fn oc_rsync_without_operands_shows_usage() {
 fn oc_rsyncd_help_lists_usage() {
     let output = binary_output(env!("CARGO_BIN_EXE_oc-rsyncd"), &["--help"]);
     assert!(output.status.success(), "--help should succeed");
-    assert!(output.stderr.is_empty(), "help output should not write to stderr");
+    assert!(
+        output.stderr.is_empty(),
+        "help output should not write to stderr"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("oc-rsyncd"));
@@ -46,7 +52,10 @@ fn oc_rsyncd_help_lists_usage() {
 
 #[test]
 fn oc_rsyncd_rejects_unknown_flag() {
-    let output = binary_output(env!("CARGO_BIN_EXE_oc-rsyncd"), &["--definitely-not-a-flag"]);
+    let output = binary_output(
+        env!("CARGO_BIN_EXE_oc-rsyncd"),
+        &["--definitely-not-a-flag"],
+    );
     assert!(
         !output.status.success(),
         "unexpected flags should return a failure exit status"
