@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.87"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-description = "Pure-Rust implementation of the oc-rsync client and daemon binaries"
+description = "Pure-Rust implementation of the rsync client and daemon binaries (with oc-rsync compatibility wrappers)"
 publish = false
 autobins = false
 
@@ -102,7 +102,7 @@ section = "utils"
 priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
-extended-description = "Pure-Rust implementation of oc-rsync-compatible client and daemon binaries."
+extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
 assets = [
     ["target/release/rsync", "/usr/bin/rsync", "755"],
     ["target/release/rsyncd", "/usr/bin/rsyncd", "755"],
@@ -121,7 +121,7 @@ conf-files = [
 
 [package.metadata.rpm]
 package = "oc-rsync"
-summary = "Rust implementation of oc-rsync-compatible client and daemon"
+summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
 requires = ["glibc", "libgcc"]
 assets = [
     { path = "target/release/rsync", dest = "/usr/bin/rsync", mode = "0755" },

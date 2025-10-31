@@ -2,16 +2,16 @@
 
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
-what must land to eliminate the difference. The branded binaries ship as
-**oc-rsync 3.4.1-rust** and **oc-rsyncd 3.4.1-rust**; references below use the
-prefixed names to match the distribution artefacts. Items remain in this list
-until the referenced functionality ships and parity is verified by tests or
-goldens.
+what must land to eliminate the difference. The canonical binaries ship as
+**rsync 3.4.1-rust** and **rsyncd 3.4.1-rust**; compatibility wrappers
+(**oc-rsync**, **oc-rsyncd**) share the same execution paths for environments
+that still depend on the legacy branding. Items remain in this list until the
+referenced functionality ships and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **`oc-rsync` client uses native local copies and a fallback for remote transfers**
-  - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
+- **`rsync` client uses native local copies and a fallback for remote transfers**
+  - *Impact*: `rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, hard links, block/character
     devices, FIFOs, and sparse files while preserving permissions, timestamps,
     optional ownership metadata, and—when compiled in—POSIX ACLs and extended
@@ -27,7 +27,8 @@ goldens.
     contact an `rsync://` daemon to list available modules and, when remote
     operands are supplied, spawns the system `rsync` binary (configurable via
     `OC_RSYNC_FALLBACK`) so full network functionality remains available while
-    the native transport and delta engine are built. Filter handling via
+    the native transport and delta engine are built. The `oc-rsync`
+    compatibility wrapper reuses the same execution path. Filter handling via
     `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
     with `+`/`-` actions, `show`/`hide`, `protect`/`risk`,
     `exclude-if-present=FILE`, and `merge`/`dir-merge` directives (including
@@ -42,8 +43,8 @@ goldens.
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, remove the fallback dependency, and
     validate the resulting behaviour via the parity harness.
-- **Daemon functionality incomplete (`oc-rsyncd`)**
-  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
+- **Daemon functionality incomplete (`rsyncd`)**
+  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config`. When the upstream
     `rsync` binary is available, the daemon now delegates authenticated module
@@ -52,6 +53,8 @@ goldens.
     `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
     override); when disabled or when the helper binary is missing the daemon
     explains that transfers are unavailable after completing authentication.
+    The `oc-rsyncd` compatibility wrapper exposes the same behaviour through the
+    legacy binary name.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
     module serving and the broader directive matrix remain unimplemented when
@@ -77,7 +80,8 @@ goldens.
 - **Interop harness and packaging automation incomplete**
   - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix
     that exercises upstream rsync releases. Packaging metadata for
-    `cargo-deb`/`cargo-rpm` installs both binaries, a hardened `oc-rsyncd.service`
+    `cargo-deb`/`cargo-rpm` installs the canonical binaries together with the
+    oc-rsync compatibility wrappers, a hardened `oc-rsyncd.service`
     systemd unit (with a compatibility alias for `rsyncd.service`), and example
     configuration files installed at `/etc/oc-rsyncd/oc-rsyncd.conf` and
     `/etc/oc-rsyncd/oc-rsyncd.secrets`; the GitHub Actions workflow builds
