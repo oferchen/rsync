@@ -1,5 +1,5 @@
 use crate::error::{TaskError, TaskResult};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -174,13 +174,25 @@ fn metadata_cross_compile(table: &Value) -> TaskResult<BTreeMap<String, Vec<Stri
             metadata_error(format!("cross_compile entry '{os}' must be an array"))
         })?;
 
+        if list.is_empty() {
+            return Err(metadata_error(format!(
+                "cross_compile entry '{os}' must contain at least one target"
+            )));
+        }
+
         let mut targets = Vec::with_capacity(list.len());
+        let mut seen = BTreeSet::new();
         for entry in list {
             let target = entry.as_str().ok_or_else(|| {
                 metadata_error(format!(
                     "cross_compile entry '{os}' must contain only strings"
                 ))
             })?;
+            if !seen.insert(target) {
+                return Err(metadata_error(format!(
+                    "cross_compile entry '{os}' contains duplicate target '{target}'"
+                )));
+            }
             targets.push(target.to_owned());
         }
 
@@ -203,6 +215,36 @@ fn metadata_error(message: impl Into<String>) -> TaskError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::TaskError;
+
+    fn manifest_with_cross_compile(entries: &str) -> String {
+        format!(
+            r#"[workspace]
+members = []
+
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
+
+[workspace.metadata.oc_rsync.cross_compile]
+{entries}
+"#,
+            entries = entries
+        )
+    }
 
     #[test]
     fn parse_workspace_branding_extracts_fields() {
@@ -237,6 +279,28 @@ mod tests {
             ]),
         };
         assert_eq!(branding, expected);
+    }
+
+    #[test]
+    fn cross_compile_entries_must_not_be_empty() {
+        let manifest = manifest_with_cross_compile("linux = []");
+        let error = parse_workspace_branding(&manifest).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Metadata(message)
+                if message.contains("cross_compile entry 'linux' must contain at least one target")
+        ));
+    }
+
+    #[test]
+    fn cross_compile_entries_reject_duplicates() {
+        let manifest = manifest_with_cross_compile("linux = [\"x86_64\", \"x86_64\"]");
+        let error = parse_workspace_branding(&manifest).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Metadata(message)
+                if message.contains("cross_compile entry 'linux' contains duplicate target 'x86_64'")
+        ));
     }
 
     #[test]
