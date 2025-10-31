@@ -10,7 +10,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, tempdir};
 
 mod support;

@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
+#[cfg(feature = "acl")]
+use crate::local_copy::sync_acls_if_requested;
+#[cfg(feature = "xattr")]
+use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
     LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo, copy_file,

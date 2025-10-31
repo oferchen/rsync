@@ -60,16 +60,6 @@ impl ModuleDefinition {
         self.max_connections
     }
 
-    #[cfg(test)]
-    fn auth_users(&self) -> &[String] {
-        &self.auth_users
-    }
-
-    #[cfg(test)]
-    fn secrets_file(&self) -> Option<&Path> {
-        self.secrets_file.as_deref()
-    }
-
     fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
     }
@@ -90,55 +80,58 @@ impl ModuleDefinition {
         self.bandwidth_limit_configured
     }
 
-    #[cfg(test)]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[cfg(test)]
-    fn refused_options(&self) -> &[String] {
-        &self.refuse_options
-    }
-
-    #[cfg(test)]
-    fn read_only(&self) -> bool {
-        self.read_only
-    }
-
-    #[cfg(test)]
-    fn numeric_ids(&self) -> bool {
-        self.numeric_ids
-    }
-
-    #[cfg(test)]
-    fn uid(&self) -> Option<u32> {
-        self.uid
-    }
-
-    #[cfg(test)]
-    fn gid(&self) -> Option<u32> {
-        self.gid
-    }
-
-    #[cfg(test)]
-    fn timeout(&self) -> Option<NonZeroU64> {
-        self.timeout
-    }
-
-    #[cfg(test)]
-    fn listable(&self) -> bool {
-        self.listable
-    }
-
-    #[cfg(test)]
-    fn use_chroot(&self) -> bool {
-        self.use_chroot
-    }
-
     fn inherit_refuse_options(&mut self, options: &[String]) {
         if self.refuse_options.is_empty() {
             self.refuse_options = options.to_vec();
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl ModuleDefinition {
+    pub(super) fn auth_users(&self) -> &[String] {
+        &self.auth_users
+    }
+
+    pub(super) fn secrets_file(&self) -> Option<&Path> {
+        self.secrets_file.as_deref()
+    }
+
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn refused_options(&self) -> &[String] {
+        &self.refuse_options
+    }
+
+    pub(super) fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub(super) fn numeric_ids(&self) -> bool {
+        self.numeric_ids
+    }
+
+    pub(super) fn uid(&self) -> Option<u32> {
+        self.uid
+    }
+
+    pub(super) fn gid(&self) -> Option<u32> {
+        self.gid
+    }
+
+    pub(super) fn timeout(&self) -> Option<NonZeroU64> {
+        self.timeout
+    }
+
+    pub(super) fn listable(&self) -> bool {
+        self.listable
+    }
+
+    pub(super) fn use_chroot(&self) -> bool {
+        self.use_chroot
     }
 }
 
@@ -460,6 +453,7 @@ pub(super) struct TestSecretsEnvOverride {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
     TEST_HOSTNAME_OVERRIDES.with(|map| {
         map.borrow_mut()
@@ -468,6 +462,7 @@ fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn clear_test_hostname_overrides() {
     TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow_mut().clear());
 }
