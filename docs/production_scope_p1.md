@@ -79,7 +79,7 @@ This document freezes the mandatory scope that must reach green status before th
 - Systemd `oc-rsyncd.service` unit (ships with an alias for `rsyncd.service`)
 - Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
-- Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86, x86_64, aarch64) produced by the CI matrix
+- Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) produced by the CI matrix (Windows x86/aarch64 targets remain disabled to avoid conflicting toolchains)
 
 ## Deterministic Test Environment
 - `LC_ALL=C`

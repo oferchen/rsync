@@ -204,6 +204,7 @@ fn ensure_named_file(path: &Path, expected: &str, label: &str) -> TaskResult<()>
 mod tests {
     use super::*;
     use crate::workspace::parse_workspace_branding;
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     fn sample_branding() -> WorkspaceBranding {
@@ -223,6 +224,17 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
+            cross_compile: BTreeMap::from([
+                (
+                    String::from("linux"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (
+                    String::from("macos"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (String::from("windows"), vec![String::from("x86_64")]),
+            ]),
         }
     }
 

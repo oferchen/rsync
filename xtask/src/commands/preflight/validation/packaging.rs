@@ -46,7 +46,7 @@ fn validate_bin_manifest_packaging(
     workspace: &Path,
     branding: &WorkspaceBranding,
 ) -> TaskResult<()> {
-    let manifest_path = workspace.join("bin").join("oc-rsync").join("Cargo.toml");
+    let manifest_path = workspace.join("Cargo.toml");
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| {
         TaskError::Io(std::io::Error::new(
             error.kind(),

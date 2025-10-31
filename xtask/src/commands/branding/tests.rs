@@ -3,6 +3,7 @@ use super::render::{render_branding, render_branding_json, render_branding_text}
 use super::validate::validate_branding;
 use crate::error::TaskError;
 use crate::workspace::{WorkspaceBranding, parse_workspace_branding};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -23,6 +24,11 @@ fn sample_branding() -> WorkspaceBranding {
         legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
         legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
         source: String::from("https://example.invalid/rsync"),
+        cross_compile: BTreeMap::from([
+            (String::from("linux"), vec![String::from("x86_64"), String::from("aarch64")]),
+            (String::from("macos"), vec![String::from("x86_64"), String::from("aarch64")]),
+            (String::from("windows"), vec![String::from("x86_64")]),
+        ]),
     }
 }
 
@@ -86,7 +92,8 @@ fn render_text_matches_expected_layout() {
         "  legacy_daemon_config_dir: /etc\n",
         "  legacy_daemon_config: /etc/rsyncd.conf\n",
         "  legacy_daemon_secrets: /etc/rsyncd.secrets\n",
-        "  source: https://example.invalid/rsync"
+        "  source: https://example.invalid/rsync\n",
+        "  cross_compile: Linux: x86_64, aarch64; macOS: x86_64, aarch64; Windows: x86_64"
     );
     assert_eq!(rendered, expected);
 }
