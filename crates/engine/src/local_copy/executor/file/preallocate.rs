@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(unix)]
 use std::io;
 use std::path::Path;
 
