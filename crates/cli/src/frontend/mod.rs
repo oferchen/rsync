@@ -299,7 +299,6 @@ fn env_protect_args_default() -> Option<bool> {
 }
 
 /// Builds the `clap` command used for parsing.
-
 /// Parses command-line arguments into a [`ParsedArgs`] structure.
 fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where

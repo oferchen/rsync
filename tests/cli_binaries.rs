@@ -1,10 +1,20 @@
-use std::process::Command;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-fn binary_output(path: &str, args: &[&str]) -> std::process::Output {
+fn binary_path(var_name: &str) -> PathBuf {
+    env::var(var_name)
+        .unwrap_or_else(|error| panic!("environment variable {var_name} not set: {error}"))
+        .into()
+}
+
+fn binary_output(path: &Path, args: &[&str]) -> std::process::Output {
     Command::new(path)
         .args(args)
         .output()
-        .unwrap_or_else(|error| panic!("failed to run {}: {}", path, error))
+        .unwrap_or_else(|error| panic!("failed to run {}: {error}", path.display()))
 }
 
 fn combined_utf8(output: &std::process::Output) -> String {
@@ -15,7 +25,8 @@ fn combined_utf8(output: &std::process::Output) -> String {
 
 #[test]
 fn oc_rsync_help_lists_usage() {
-    let output = binary_output(env!("CARGO_BIN_EXE_oc-rsync"), &["--help"]);
+    let binary = binary_path("CARGO_BIN_EXE_oc-rsync");
+    let output = binary_output(&binary, &["--help"]);
     assert!(output.status.success(), "--help should succeed");
     assert!(
         output.stderr.is_empty(),
@@ -28,7 +39,8 @@ fn oc_rsync_help_lists_usage() {
 
 #[test]
 fn oc_rsync_without_operands_shows_usage() {
-    let output = binary_output(env!("CARGO_BIN_EXE_oc-rsync"), &[]);
+    let binary = binary_path("CARGO_BIN_EXE_oc-rsync");
+    let output = binary_output(&binary, &[]);
     assert!(
         !output.status.success(),
         "running without operands should fail so the caller sees the usage"
@@ -39,7 +51,8 @@ fn oc_rsync_without_operands_shows_usage() {
 
 #[test]
 fn oc_rsyncd_help_lists_usage() {
-    let output = binary_output(env!("CARGO_BIN_EXE_oc-rsyncd"), &["--help"]);
+    let binary = binary_path("CARGO_BIN_EXE_oc-rsyncd");
+    let output = binary_output(&binary, &["--help"]);
     assert!(output.status.success(), "--help should succeed");
     assert!(
         output.stderr.is_empty(),
@@ -52,10 +65,8 @@ fn oc_rsyncd_help_lists_usage() {
 
 #[test]
 fn oc_rsyncd_rejects_unknown_flag() {
-    let output = binary_output(
-        env!("CARGO_BIN_EXE_oc-rsyncd"),
-        &["--definitely-not-a-flag"],
-    );
+    let binary = binary_path("CARGO_BIN_EXE_oc-rsyncd");
+    let output = binary_output(&binary, &["--definitely-not-a-flag"]);
     assert!(
         !output.status.success(),
         "unexpected flags should return a failure exit status"
