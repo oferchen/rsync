@@ -94,43 +94,11 @@ impl ServiceNotifier {
 #[cfg(test)]
 mod tests {
     use super::ServiceNotifier;
-    use std::env;
-    use std::ffi::OsString;
-
-    #[allow(unsafe_code)]
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    #[allow(unsafe_code)]
-    impl EnvGuard {
-        fn remove(key: &'static str) -> Self {
-            let previous = env::var_os(key);
-            unsafe {
-                env::remove_var(key);
-            }
-            Self { key, previous }
-        }
-    }
-
-    #[allow(unsafe_code)]
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(ref value) = self.previous {
-                unsafe {
-                    env::set_var(self.key, value);
-                }
-            } else {
-                unsafe {
-                    env::remove_var(self.key);
-                }
-            }
-        }
-    }
+    use crate::test_env::{ENV_LOCK, EnvGuard};
 
     #[test]
     fn notifier_behaves_as_noop_without_notify_socket() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
         let _guard = EnvGuard::remove("NOTIFY_SOCKET");
 
         let notifier = ServiceNotifier::new();
