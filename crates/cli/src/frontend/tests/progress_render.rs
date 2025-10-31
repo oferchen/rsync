@@ -52,6 +52,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         NameOutputLevel::UpdatedAndUnchanged,
         false,
         HumanReadableMode::Enabled,
+        false,
         &mut rendered,
     )
     .expect("render summary");
@@ -80,6 +81,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         NameOutputLevel::UpdatedAndUnchanged,
         false,
         HumanReadableMode::Enabled,
+        false,
         &mut rendered,
     )
     .expect("render summary");
@@ -109,6 +111,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         NameOutputLevel::Disabled,
         false,
         HumanReadableMode::Disabled,
+        false,
         &mut rendered,
     )
     .expect("render summary");
