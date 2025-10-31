@@ -117,11 +117,6 @@ jobs:
       - name: Pre-flight check
         run: cargo --locked run -p xtask -- preflight
 
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
@@ -235,6 +230,7 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             generate_sbom: false
+            # Kept in the matrix for future enablement once toolchains stabilise.
           - name: windows-aarch64
             enabled: false
             target: aarch64-pc-windows-msvc
@@ -243,6 +239,7 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             generate_sbom: false
+            # Kept in the matrix for future enablement once toolchains stabilise.
     env:
       CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
