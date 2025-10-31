@@ -1102,7 +1102,7 @@ impl DestinationWriteGuard {
         }
     }
 
-    fn staging_path(&self) -> &Path {
+    pub(crate) fn staging_path(&self) -> &Path {
         &self.temp_path
     }
 
@@ -1135,7 +1135,7 @@ impl DestinationWriteGuard {
         Ok(())
     }
 
-    fn final_path(&self) -> &Path {
+    pub(crate) fn final_path(&self) -> &Path {
         &self.final_path
     }
 

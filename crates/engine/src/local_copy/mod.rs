@@ -103,6 +103,8 @@ pub use filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, ExcludeIfPresentRule, FilterProgram,
     FilterProgramEntry, FilterProgramError,
 };
+#[cfg(test)]
+pub(crate) use filter_program::{FilterContext, FilterSegment};
 
 use std::sync::atomic::AtomicUsize;
 
@@ -121,7 +123,7 @@ const CROSS_DEVICE_ERROR_CODE: i32 = 18;
 #[cfg(test)]
 pub(crate) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
-    F: Fn(&Path, &Path) -> std::io::Result<()> + 'static,
+    F: Fn(&std::path::Path, &std::path::Path) -> std::io::Result<()> + 'static,
 {
     overrides::with_hard_link_override(override_fn, action)
 }
@@ -129,7 +131,7 @@ where
 #[cfg(test)]
 pub(crate) fn with_device_id_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
-    F: Fn(&Path, &fs::Metadata) -> Option<u64> + 'static,
+    F: Fn(&std::path::Path, &std::fs::Metadata) -> Option<u64> + 'static,
 {
     overrides::with_device_id_override(override_fn, action)
 }

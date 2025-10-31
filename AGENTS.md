@@ -28,6 +28,11 @@ This document defines the internal actors (“agents”), their responsibilities
   library and well-supported crates that are actively maintained. Avoid
   deprecated APIs, pseudo-code, or placeholder logic; every change must ship
   production-ready behaviour with comprehensive tests or parity checks.
+- **Environment guardrails for tests**: When exercising fallback overrides or
+  other environment-sensitive logic in unit tests, use the existing
+  `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
+  scoped guard in `crates/daemon/src/daemon/sections/tests.rs`) so variables
+  are restored even if the test panics.
 - **CI workflow contract**: `.github/workflows/ci.yml` runs the primary test
   job (`test-linux`) exclusively on Linux and a dedicated cross-compilation
   matrix covering Linux (x86_64/aarch64), macOS (x86_64/aarch64), and Windows
