@@ -30,7 +30,6 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
 }
 
 /// Parsed command produced by [`parse_args`].
-/// Parsed command produced by [`parse_args`].
 pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
@@ -39,8 +38,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) remainder: Vec<OsString>,
 }
 
-/// Parsed command produced by [`parse_args`].
-
+/// Internal helper constructing the clap command used by [`parse_args`].
 fn clap_command(program_name: &'static str) -> Command {
     Command::new(program_name)
         .disable_help_flag(true)

@@ -471,10 +471,7 @@ where
         .remove_many::<OsString>("link-dest")
         .map(|values| values.collect())
         .unwrap_or_default();
-    let link_dests = link_dest_args
-        .iter()
-        .map(|value| PathBuf::from(value))
-        .collect();
+    let link_dests = link_dest_args.iter().map(PathBuf::from).collect();
     let link_destinations = link_dest_args;
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");

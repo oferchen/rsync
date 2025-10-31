@@ -57,6 +57,7 @@ impl Default for RuntimeOptions {
 
 impl RuntimeOptions {
     #[cfg(test)]
+    #[allow(dead_code)]
     fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
         Self::parse_with_brand(arguments, Brand::Oc, true)
     }
@@ -385,61 +386,6 @@ impl RuntimeOptions {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn modules(&self) -> &[ModuleDefinition] {
-        &self.modules
-    }
-
-    #[cfg(test)]
-    fn bandwidth_limit(&self) -> Option<NonZeroU64> {
-        self.bandwidth_limit
-    }
-
-    #[cfg(test)]
-    fn bandwidth_burst(&self) -> Option<NonZeroU64> {
-        self.bandwidth_burst
-    }
-
-    #[cfg(test)]
-    fn bandwidth_limit_configured(&self) -> bool {
-        self.bandwidth_limit_configured
-    }
-
-    #[cfg(test)]
-    fn bind_address(&self) -> IpAddr {
-        self.bind_address
-    }
-
-    #[cfg(test)]
-    fn address_family(&self) -> Option<AddressFamily> {
-        self.address_family
-    }
-
-    #[cfg(test)]
-    fn motd_lines(&self) -> &[String] {
-        &self.motd_lines
-    }
-
-    #[cfg(test)]
-    fn log_file(&self) -> Option<&PathBuf> {
-        self.log_file.as_ref()
-    }
-
-    #[cfg(test)]
-    fn pid_file(&self) -> Option<&Path> {
-        self.pid_file.as_deref()
-    }
-
-    #[cfg(test)]
-    fn reverse_lookup(&self) -> bool {
-        self.reverse_lookup
-    }
-
-    #[cfg(test)]
-    fn lock_file(&self) -> Option<&Path> {
-        self.lock_file.as_deref()
-    }
-
     fn inherit_global_refuse_options(
         &mut self,
         options: Vec<String>,
@@ -575,6 +521,54 @@ impl RuntimeOptions {
             .trim_matches(['\r', '\n'])
             .to_string();
         self.motd_lines.push(line);
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl RuntimeOptions {
+    pub(super) fn modules(&self) -> &[ModuleDefinition] {
+        &self.modules
+    }
+
+    pub(super) fn bandwidth_limit(&self) -> Option<NonZeroU64> {
+        self.bandwidth_limit
+    }
+
+    pub(super) fn bandwidth_burst(&self) -> Option<NonZeroU64> {
+        self.bandwidth_burst
+    }
+
+    pub(super) fn bandwidth_limit_configured(&self) -> bool {
+        self.bandwidth_limit_configured
+    }
+
+    pub(super) fn bind_address(&self) -> IpAddr {
+        self.bind_address
+    }
+
+    pub(super) fn address_family(&self) -> Option<AddressFamily> {
+        self.address_family
+    }
+
+    pub(super) fn motd_lines(&self) -> &[String] {
+        &self.motd_lines
+    }
+
+    pub(super) fn log_file(&self) -> Option<&PathBuf> {
+        self.log_file.as_ref()
+    }
+
+    pub(super) fn pid_file(&self) -> Option<&Path> {
+        self.pid_file.as_deref()
+    }
+
+    pub(super) fn reverse_lookup(&self) -> bool {
+        self.reverse_lookup
+    }
+
+    pub(super) fn lock_file(&self) -> Option<&Path> {
+        self.lock_file.as_deref()
     }
 }
 
