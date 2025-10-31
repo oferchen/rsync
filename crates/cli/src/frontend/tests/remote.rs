@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use rsync_core::fallback::describe_missing_fallback_binary;
 
 #[test]
 fn remote_operand_reports_launch_failure_when_fallback_missing() {
@@ -18,7 +19,11 @@ fn remote_operand_reports_launch_failure_when_fallback_missing() {
     assert!(stdout.is_empty());
 
     let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(rendered.contains("failed to launch fallback rsync binary"));
+    let expected = describe_missing_fallback_binary(missing.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+    assert!(
+        rendered.contains(&expected),
+        "missing fallback diagnostic should mention {expected:?}, got {rendered:?}"
+    );
     assert_contains_client_trailer(&rendered);
 }
 
