@@ -196,3 +196,4 @@ include!("tests/chunks/chunk_176.rs");
 include!("tests/chunks/chunk_177.rs");
 include!("tests/chunks/chunk_178.rs");
 include!("tests/chunks/chunk_179.rs");
+include!("tests/chunks/chunk_180.rs");

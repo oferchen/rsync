@@ -27,7 +27,10 @@ This document defines the internal actors (“agents”), their responsibilities
   and daemon must confirm that the selected fallback binary exists on `PATH`
   (or via explicit overrides) and is executable, surfacing a branded
   diagnostic when the check fails so operators can install upstream `rsync` or
-  set `OC_RSYNC_FALLBACK` appropriately.
+  set `OC_RSYNC_FALLBACK` appropriately. Use the shared
+  `rsync_core::fallback::fallback_binary_available` and
+  `rsync_core::fallback::describe_missing_fallback_binary` helpers to keep the
+  guard rails consistent across binaries.
 - **Workspace-wide nextest configuration**: `.config/nextest.toml` pins
   `[profile.default.package] graph = "workspace"` so a bare
   `cargo nextest run` executes the entire workspace without additional flags.

@@ -1,15 +1,14 @@
-use std::collections::HashSet;
-use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
 
 use super::super::args::RemoteFallbackArgs;
 use super::helpers::{fallback_error, prepare_file_list, push_human_readable, push_toggle};
 use crate::client::{AddressMode, ClientError, DeleteMode, TransferTimeout};
-use crate::fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override};
+use crate::fallback::{
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
+    fallback_binary_available, fallback_override,
+};
 
 /// Prepared command invocation for the legacy fallback binary.
 pub(crate) struct PreparedInvocation {
@@ -559,13 +558,10 @@ pub(crate) fn prepare_invocation(
         }
     };
 
-    if !fallback_binary_available(&binary) {
-        let display = Path::new(&binary).display();
-        return Err(fallback_error(format!(
-            "fallback rsync binary '{}' is not available on PATH or is not executable; install upstream rsync or set {env} to an explicit path",
-            display,
-            env = CLIENT_FALLBACK_ENV
-        )));
+    if !fallback_binary_available(binary.as_os_str()) {
+        let diagnostic =
+            describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        return Err(fallback_error(diagnostic));
     }
 
     Ok(PreparedInvocation {
@@ -574,109 +570,4 @@ pub(crate) fn prepare_invocation(
         daemon_password,
         files_from_temp,
     })
-}
-
-fn fallback_binary_available(binary: &OsStr) -> bool {
-    fallback_binary_candidates(binary)
-        .into_iter()
-        .any(|candidate| candidate_is_executable(&candidate))
-}
-
-fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
-    let direct_path = Path::new(binary);
-    if has_explicit_path(direct_path) {
-        return vec![direct_path.to_path_buf()];
-    }
-
-    let Some(path_env) = env::var_os("PATH") else {
-        return Vec::new();
-    };
-
-    let mut results = Vec::new();
-    let mut seen = HashSet::new();
-
-    #[cfg(windows)]
-    let extensions = collect_windows_extensions(direct_path.extension());
-
-    #[cfg(not(windows))]
-    let extensions: Vec<OsString> = vec![OsString::new()];
-
-    for dir in env::split_paths(&path_env) {
-        if !dir.as_os_str().is_empty() {
-            #[allow(clippy::needless_borrow)]
-            for ext in &extensions {
-                let mut candidate = dir.join(direct_path);
-                if !ext.is_empty() {
-                    let ext_text = ext.to_string_lossy();
-                    let trimmed = ext_text.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    let ext_without_dot = trimmed.strip_prefix('.').unwrap_or(trimmed);
-                    candidate.set_extension(ext_without_dot);
-                }
-
-                if seen.insert(candidate.clone()) {
-                    results.push(candidate);
-                }
-            }
-        }
-    }
-
-    results
-}
-
-fn has_explicit_path(path: &Path) -> bool {
-    path.is_absolute() || path.components().count() > 1
-}
-
-fn candidate_is_executable(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-
-    if !metadata.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mode = metadata.permissions().mode();
-        return mode & 0o111 != 0;
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-#[cfg(windows)]
-fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
-    let mut exts = Vec::new();
-
-    if current_ext.is_some() {
-        exts.push(OsString::new());
-        return exts;
-    }
-
-    let raw = env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD"));
-    let mut seen = HashSet::new();
-
-    for entry in raw.to_string_lossy().split(';') {
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let value = OsString::from(trimmed);
-        if seen.insert(value.clone()) {
-            exts.push(value);
-        }
-    }
-
-    exts.push(OsString::new());
-    exts
 }

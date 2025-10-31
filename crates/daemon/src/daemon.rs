@@ -29,9 +29,6 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(test)]
-use std::time::Instant;
-
 use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;
@@ -49,7 +46,10 @@ use rsync_core::{
         parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
-    fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, fallback_override},
+    fallback::{
+        CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, describe_missing_fallback_binary,
+        fallback_binary_available, fallback_override,
+    },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
 };
