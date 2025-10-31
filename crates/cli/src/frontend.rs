@@ -76,7 +76,7 @@
 //! # See also
 //!
 //! - [`rsync_core::version`] for the underlying banner rendering helpers.
-//! - `bin/oc-rsync` for the binary crate that wires [`run`] into `main`.
+//! - `src/bin/oc-rsync.rs` for the binary that wires [`run`] into `main`.
 
 use std::collections::{HashSet, VecDeque};
 use std::env;
