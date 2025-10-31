@@ -21,11 +21,14 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ### 1) Client (CLI Frontend)
 - **Binary**: `src/bin/oc-rsync.rs`
-- **Depends on**: `cli`, `core`, `transport`  
+- **Depends on**: `cli`, `core`, `transport`
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
   - Build `CoreConfig` via Builder and call `core::run_client()`.
   - Route `--msgs2stderr`, `--out-format`, `--info/--debug` to `logging`.
+- **Layout**: `crates/cli/src/frontend/program.rs` handles brand detection while
+  `crates/cli/src/frontend/args/` owns `ParsedArgs` and the argument parser so
+  `mod.rs` can focus on orchestration.
 - **Invariants**:
   - Never access protocol/engine directly; only via `core`.
   - `--version` reflects feature gates and prints `3.4.1-rust`.
