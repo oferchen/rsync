@@ -26,6 +26,7 @@ This document defines the internal actors (“agents”), their responsibilities
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
   - Build `CoreConfig` via Builder and call `core::run_client()`.
   - Route `--msgs2stderr`, `--out-format`, `--info/--debug` to `logging`.
+  - When invoked without transfer operands, emit the usage banner before surfacing the canonical "missing source operands" error so tests remain deterministic.
 - **Invariants**:
   - Never access protocol/engine directly; only via `core`.
   - `--version` reflects feature gates and prints `3.4.1-rust`.
@@ -37,6 +38,8 @@ pub fn main() -> ExitCode {
     core::run_client(cfg, fmt).into()
 }
 ````
+
+*Decomposition note*: flag parsing lives in `crates/cli/src/frontend/arguments.rs`; keep new switches in that module to avoid regressing the hygiene guard on `mod.rs`.
 
 ---
 

@@ -24,6 +24,7 @@ pub(crate) fn emit_transfer_summary(
     name_level: NameOutputLevel,
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
+    suppress_updated_only_totals: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -99,9 +100,13 @@ pub(crate) fn emit_transfer_summary(
         }
     }
 
+    let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
+    let suppress_name_totals =
+        suppress_updated_only_totals && matches!(name_level, NameOutputLevel::UpdatedOnly);
+
     if stats {
         emit_stats(summary, writer, human_readable_mode)?;
-    } else if verbosity > 0 || (verbosity == 0 && name_enabled) {
+    } else if verbosity > 0 || (name_enabled && !suppress_name_totals) {
         emit_totals(summary, writer, human_readable_mode)?;
     }
 
