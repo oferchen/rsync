@@ -7,7 +7,10 @@ use std::sync::mpsc;
 use std::thread;
 
 use rsync_core::branding::Brand;
-use rsync_core::fallback::{CLIENT_FALLBACK_ENV, FallbackOverride, fallback_override};
+use rsync_core::fallback::{
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
+    fallback_binary_available, fallback_override,
+};
 use rsync_core::message::Role;
 use rsync_core::rsync_error;
 use rsync_logging::MessageSink;
@@ -94,6 +97,13 @@ where
             .unwrap_or_else(|| OsString::from(upstream_program)),
         None => OsString::from(upstream_program),
     };
+
+    if !fallback_binary_available(fallback.as_os_str()) {
+        let diagnostic =
+            describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        write_server_fallback_error(stderr, diagnostic);
+        return 1;
+    }
 
     let mut command = Command::new(&fallback);
     command.args(args.iter().skip(1));
