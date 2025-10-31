@@ -91,6 +91,12 @@ This document defines the internal actors (“agents”), their responsibilities
   renders progress/output, `fallback.rs` prepares remote invocation arguments,
   and `metadata.rs` derives preservation flags). Extend these modules directly
   instead of inflating `mod.rs` again.
+- **Filter rule decomposition**: The CLI filter utilities now live in
+  `crates/cli/src/frontend/filter_rules/` with focused modules for arguments,
+  CVS exclusions, directive parsing, merge handling, and source loading. New
+  helpers must join the appropriate submodule rather than reintroducing a
+  monolithic `filter_rules.rs`; keep each file below the hygiene threshold and
+  follow the existing layering when extending filter behaviour.
 - **Local copy file executor decomposition**: The massive
   `crates/engine/src/local_copy/executor/file.rs` implementation has been
   reorganized into the `file/` module tree (`copy/`, `links`, `transfer`, etc.)
