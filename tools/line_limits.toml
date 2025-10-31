@@ -18,11 +18,6 @@ max_lines = 5800
 warn_lines = 5600
 
 [[overrides]]
-path = "crates/cli/src/frontend/filter_rules.rs"
-max_lines = 1300
-warn_lines = 1200
-
-[[overrides]]
 path = "crates/daemon/src/lib.rs"
 max_lines = 5500
 warn_lines = 5400
