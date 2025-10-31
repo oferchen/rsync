@@ -62,6 +62,8 @@ pub fn run_cargo_tool(
     }
 
     let output = Command::new("cargo")
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let output = Command::new(cargo)
         .current_dir(workspace)
         .args(&args)
         .output()
