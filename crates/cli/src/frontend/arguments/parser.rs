@@ -1,180 +1,16 @@
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-use rsync_core::branding::{self, Brand};
+use crate::frontend::command_builder::clap_command;
+use crate::frontend::execution::{
+    parse_checksum_seed_argument, parse_compress_level_argument, parse_human_readable_level,
+};
+use crate::frontend::filter_rules::{collect_filter_arguments, locate_filter_arguments};
+use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 use rsync_core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
 
-use super::command_builder::clap_command;
-use super::filter_rules::{collect_filter_arguments, locate_filter_arguments};
-use super::progress::{NameOutputLevel, ProgressSetting};
-use super::{parse_checksum_seed_argument, parse_human_readable_level};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ProgramName {
-    Rsync,
-    OcRsync,
-}
-
-impl ProgramName {
-    #[inline]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Rsync => Brand::Upstream.client_program_name(),
-            Self::OcRsync => Brand::Oc.client_program_name(),
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn brand(self) -> Brand {
-        match self {
-            Self::Rsync => Brand::Upstream,
-            Self::OcRsync => Brand::Oc,
-        }
-    }
-}
-
-pub(crate) fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
-    match branding::detect_brand(program) {
-        Brand::Oc => ProgramName::OcRsync,
-        Brand::Upstream => ProgramName::Rsync,
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum BandwidthArgument {
-    Limit(OsString),
-    Disabled,
-}
-
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ParsedArgs {
-    pub(crate) program_name: ProgramName,
-    pub(crate) show_help: bool,
-    pub(crate) show_version: bool,
-    pub(crate) human_readable: Option<HumanReadableMode>,
-    pub(crate) dry_run: bool,
-    pub(crate) list_only: bool,
-    pub(crate) remote_shell: Option<OsString>,
-    pub(crate) connect_program: Option<OsString>,
-    pub(crate) remote_options: Vec<OsString>,
-    pub(crate) rsync_path: Option<OsString>,
-    pub(crate) protect_args: Option<bool>,
-    pub(crate) address_mode: AddressMode,
-    pub(crate) bind_address: Option<OsString>,
-    pub(crate) archive: bool,
-    pub(crate) delete_mode: DeleteMode,
-    pub(crate) delete_excluded: bool,
-    pub(crate) backup: bool,
-    pub(crate) backup_dir: Option<OsString>,
-    pub(crate) backup_suffix: Option<OsString>,
-    pub(crate) checksum: bool,
-    pub(crate) checksum_choice: Option<StrongChecksumChoice>,
-    pub(crate) checksum_choice_arg: Option<OsString>,
-    pub(crate) checksum_seed: Option<u32>,
-    pub(crate) size_only: bool,
-    pub(crate) ignore_existing: bool,
-    pub(crate) ignore_missing_args: bool,
-    pub(crate) update: bool,
-    pub(crate) remainder: Vec<OsString>,
-    pub(crate) bwlimit: Option<BandwidthArgument>,
-    pub(crate) max_delete: Option<OsString>,
-    pub(crate) min_size: Option<OsString>,
-    pub(crate) max_size: Option<OsString>,
-    pub(crate) modify_window: Option<OsString>,
-    pub(crate) compress: bool,
-    pub(crate) no_compress: bool,
-    pub(crate) compress_level: Option<OsString>,
-    pub(crate) skip_compress: Option<OsString>,
-    pub(crate) owner: Option<bool>,
-    pub(crate) group: Option<bool>,
-    pub(crate) chown: Option<OsString>,
-    pub(crate) chmod: Vec<OsString>,
-    pub(crate) perms: Option<bool>,
-    pub(crate) super_mode: Option<bool>,
-    pub(crate) times: Option<bool>,
-    pub(crate) omit_dir_times: Option<bool>,
-    pub(crate) omit_link_times: Option<bool>,
-    pub(crate) acls: Option<bool>,
-    pub(crate) numeric_ids: Option<bool>,
-    pub(crate) hard_links: Option<bool>,
-    pub(crate) sparse: Option<bool>,
-    pub(crate) copy_links: Option<bool>,
-    pub(crate) copy_dirlinks: bool,
-    pub(crate) copy_unsafe_links: Option<bool>,
-    pub(crate) keep_dirlinks: Option<bool>,
-    pub(crate) safe_links: bool,
-    pub(crate) devices: Option<bool>,
-    pub(crate) specials: Option<bool>,
-    pub(crate) relative: Option<bool>,
-    pub(crate) one_file_system: Option<bool>,
-    pub(crate) implied_dirs: Option<bool>,
-    pub(crate) mkpath: bool,
-    pub(crate) prune_empty_dirs: Option<bool>,
-    pub(crate) verbosity: u8,
-    pub(crate) progress: ProgressSetting,
-    pub(crate) name_level: NameOutputLevel,
-    pub(crate) name_overridden: bool,
-    pub(crate) stats: bool,
-    pub(crate) partial: bool,
-    pub(crate) preallocate: bool,
-    pub(crate) delay_updates: bool,
-    pub(crate) partial_dir: Option<PathBuf>,
-    pub(crate) temp_dir: Option<PathBuf>,
-    pub(crate) link_dests: Vec<PathBuf>,
-    pub(crate) remove_source_files: bool,
-    pub(crate) inplace: Option<bool>,
-    pub(crate) append: Option<bool>,
-    pub(crate) append_verify: bool,
-    pub(crate) msgs_to_stderr: bool,
-    pub(crate) itemize_changes: bool,
-    pub(crate) whole_file: Option<bool>,
-    pub(crate) excludes: Vec<OsString>,
-    pub(crate) includes: Vec<OsString>,
-    pub(crate) compare_destinations: Vec<OsString>,
-    pub(crate) copy_destinations: Vec<OsString>,
-    pub(crate) link_destinations: Vec<OsString>,
-    pub(crate) exclude_from: Vec<OsString>,
-    pub(crate) include_from: Vec<OsString>,
-    pub(crate) filters: Vec<OsString>,
-    pub(crate) cvs_exclude: bool,
-    pub(crate) rsync_filter_shortcuts: u8,
-    pub(crate) files_from: Vec<OsString>,
-    pub(crate) from0: bool,
-    pub(crate) info: Vec<OsString>,
-    pub(crate) debug: Vec<OsString>,
-    pub(crate) xattrs: Option<bool>,
-    pub(crate) no_motd: bool,
-    pub(crate) password_file: Option<OsString>,
-    pub(crate) protocol: Option<OsString>,
-    pub(crate) timeout: Option<OsString>,
-    pub(crate) contimeout: Option<OsString>,
-    pub(crate) out_format: Option<OsString>,
-    pub(crate) daemon_port: Option<u16>,
-}
-
-pub(crate) fn env_protect_args_default() -> Option<bool> {
-    let value = env::var_os("RSYNC_PROTECT_ARGS")?;
-    if value.is_empty() {
-        return Some(true);
-    }
-
-    let normalized = value.to_string_lossy();
-    let trimmed = normalized.trim();
-
-    if trimmed.is_empty() {
-        Some(true)
-    } else if trimmed.eq_ignore_ascii_case("0")
-        || trimmed.eq_ignore_ascii_case("no")
-        || trimmed.eq_ignore_ascii_case("false")
-        || trimmed.eq_ignore_ascii_case("off")
-    {
-        Some(false)
-    } else {
-        Some(true)
-    }
-}
+use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
 
 pub(crate) fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where
@@ -311,7 +147,7 @@ where
     let mut compress = if no_compress { false } else { compress_flag };
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt {
-        if let Ok(setting) = super::parse_compress_level_argument(value.as_os_str()) {
+        if let Ok(setting) = parse_compress_level_argument(value.as_os_str()) {
             compress = !setting.is_disabled();
         }
     }
