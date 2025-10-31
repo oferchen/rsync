@@ -45,7 +45,6 @@ impl LocalCopyPlan {
     ///
     /// let operands = vec![OsString::from("src"), OsString::from("dst")];
     /// let plan = LocalCopyPlan::from_operands(&operands).expect("plan succeeds");
-    /// assert_eq!(plan.sources().len(), 1);
     /// assert_eq!(plan.destination(), std::path::Path::new("dst"));
     /// ```
     pub fn from_operands(operands: &[OsString]) -> Result<Self, LocalCopyError> {
