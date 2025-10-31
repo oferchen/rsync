@@ -191,6 +191,7 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
     }
 
     validate_cross_compile_sections(workspace, &branding, &mut failures)?;
+    validate_ci_cross_compile_matrix(workspace, &branding, &mut failures)?;
 
     if failures.is_empty() {
         Ok(())
@@ -291,6 +292,118 @@ fn validate_cross_compile_sections(
     Ok(())
 }
 
+fn validate_ci_cross_compile_matrix(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    failures: &mut Vec<String>,
+) -> TaskResult<()> {
+    let ci_path = workspace.join(".github").join("workflows").join("ci.yml");
+    let ci_contents = read_file(&ci_path)?;
+    let display_path = ci_path
+        .strip_prefix(workspace)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| ci_path.display().to_string());
+
+    for (os, arches) in &branding.cross_compile {
+        for arch in arches {
+            match expected_matrix_name(os, arch) {
+                Some(name) => ensure_matrix_entry(
+                    failures,
+                    &display_path,
+                    &ci_contents,
+                    &name,
+                    true,
+                ),
+                None => failures.push(format!(
+                    "{display_path}: unrecognised cross-compile platform '{os}' in workspace metadata"
+                )),
+            }
+        }
+    }
+
+    ensure_matrix_entry(failures, &display_path, &ci_contents, "windows-x86", false);
+    ensure_matrix_entry(
+        failures,
+        &display_path,
+        &ci_contents,
+        "windows-aarch64",
+        false,
+    );
+
+    Ok(())
+}
+
+fn ensure_matrix_entry(
+    failures: &mut Vec<String>,
+    display_path: &str,
+    contents: &str,
+    name: &str,
+    expected_enabled: bool,
+) {
+    match extract_matrix_entry(contents, name) {
+        Some(entry) => {
+            if entry.enabled != Some(expected_enabled) {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected enabled={expected_enabled}"
+                ));
+            }
+        }
+        None => failures.push(format!(
+            "{display_path}: missing cross-compilation entry '{name}'"
+        )),
+    }
+}
+
+fn expected_matrix_name(os: &str, arch: &str) -> Option<String> {
+    match os {
+        "linux" => Some(format!("linux-{arch}")),
+        "macos" => Some(format!("darwin-{arch}")),
+        "windows" => Some(format!("windows-{arch}")),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct MatrixEntry {
+    enabled: Option<bool>,
+    target: Option<String>,
+}
+
+fn extract_matrix_entry(contents: &str, name: &str) -> Option<MatrixEntry> {
+    let mut entry = None;
+    let mut capturing = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("- name:") {
+            if capturing {
+                break;
+            }
+
+            if rest.trim() == name {
+                entry = Some(MatrixEntry::default());
+                capturing = true;
+            }
+            continue;
+        }
+
+        if !capturing {
+            continue;
+        }
+
+        if let Some(current) = entry.as_mut() {
+            let trimmed = trimmed.trim();
+            if let Some(enabled) = trimmed.strip_prefix("enabled:") {
+                current.enabled = Some(matches!(enabled.trim(), "true"));
+            } else if let Some(target) = trimmed.strip_prefix("target:") {
+                current.target = Some(target.trim().to_owned());
+            }
+        }
+    }
+
+    entry
+}
+
 fn display_os_name(os: &str) -> &str {
     match os {
         "linux" => "Linux",
@@ -343,6 +456,121 @@ mod tests {
     fn parse_args_rejects_unknown_argument() {
         let error = parse_args([OsString::from("--unknown")]).unwrap_err();
         assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
+    }
+
+    #[test]
+    fn extract_matrix_entry_parses_enabled_flag() {
+        let contents = r#"
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86
+            enabled: false
+        "#;
+
+        let linux = extract_matrix_entry(contents, "linux-x86_64").expect("linux entry");
+        assert_eq!(linux.enabled, Some(true));
+        assert_eq!(linux.target.as_deref(), Some("x86_64-unknown-linux-gnu"));
+
+        let windows = extract_matrix_entry(contents, "windows-x86").expect("windows entry");
+        assert_eq!(windows.enabled, Some(false));
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_detects_missing_entries() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_validate_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup stale workspace");
+        }
+        fs::create_dir_all(workspace.join(".github").join("workflows")).expect("create workflows");
+
+        fs::write(
+            workspace.join("Cargo.toml"),
+            r#"[workspace]
+members = []
+[workspace.metadata]
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "3.4.1-rust"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsyncd"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsyncd"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
+[workspace.metadata.oc_rsync.cross_compile]
+linux = ["x86_64", "aarch64"]
+macos = ["x86_64", "aarch64"]
+windows = ["x86_64"]
+"#,
+        )
+        .expect("write manifest");
+
+        fs::write(
+            workspace.join(".github").join("workflows").join("ci.yml"),
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+          - name: linux-aarch64
+            enabled: true
+          - name: darwin-x86_64
+            enabled: true
+          - name: darwin-aarch64
+            enabled: true
+          - name: windows-x86
+            enabled: false
+          - name: windows-aarch64
+            enabled: false
+"#,
+        )
+        .expect("write ci workflow");
+
+        let branding = load_workspace_branding(&workspace).expect("load branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("windows-x86_64")),
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_accepts_workspace_configuration() {
+        let workspace = crate::workspace::workspace_root().expect("workspace root");
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let ci_contents = read_file(&workspace.join(".github").join("workflows").join("ci.yml"))
+            .expect("read ci");
+        let entry = extract_matrix_entry(&ci_contents, "windows-x86").expect("windows entry");
+        assert_eq!(entry.enabled, Some(false));
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation succeeds");
+        assert!(
+            failures.is_empty(),
+            "unexpected CI validation failures: {failures:?}"
+        );
     }
 
     #[test]
@@ -406,6 +634,32 @@ windows = ["x86_64"]
         fs::write(workspace.join("docs").join("resume_note.md"), "placeholder")
             .expect("write resume note");
         fs::write(workspace.join("AGENTS.md"), "placeholder").expect("write agents");
+        fs::create_dir_all(workspace.join(".github").join("workflows"))
+            .expect("create workflow directory");
+        fs::write(
+            workspace.join(".github").join("workflows").join("ci.yml"),
+            r#"jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+          - name: linux-aarch64
+            enabled: true
+          - name: darwin-x86_64
+            enabled: true
+          - name: darwin-aarch64
+            enabled: true
+          - name: windows-x86_64
+            enabled: true
+          - name: windows-x86
+            enabled: false
+          - name: windows-aarch64
+            enabled: false
+"#,
+        )
+        .expect("write ci workflow");
 
         let error = validate_documents(&workspace).expect_err("validation should fail");
         match error {
