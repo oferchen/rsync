@@ -91,6 +91,12 @@ This document defines the internal actors (“agents”), their responsibilities
   renders progress/output, `fallback.rs` prepares remote invocation arguments,
   and `metadata.rs` derives preservation flags). Extend these modules directly
   instead of inflating `mod.rs` again.
+- **CLI argument parser decomposition**: `crates/cli/src/frontend/arguments`
+  has been converted into a module tree (`program_name.rs`, `bandwidth.rs`,
+  `parsed_args.rs`, `env.rs`, and `parser.rs`) to keep every file below the
+  hygiene ceiling. New parsing helpers or data structures must join the
+  appropriate submodule (or an additional sibling) so `parser.rs` stays focused
+  on orchestration while data types and environment glue remain isolated.
 - **Filter rule decomposition**: The CLI filter utilities now live in
   `crates/cli/src/frontend/filter_rules/` with focused modules for arguments,
   CVS exclusions, directive parsing, merge handling, and source loading. New
