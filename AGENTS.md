@@ -50,6 +50,12 @@ This document defines the internal actors (“agents”), their responsibilities
   rely on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or
   Python scripts, and additional validation/packaging logic should be surfaced
   via `xtask` subcommands so both local and CI runs stay in sync.
+- **Documentation validation guardrail**: `cargo xtask docs --validate` now
+  asserts that `.github/workflows/ci.yml` mirrors the cross-compilation
+  platforms declared under `[workspace.metadata.oc_rsync.cross_compile]` and
+  keeps the Windows x86/aarch64 entries present but disabled. Contributors must
+  update both the manifest metadata and CI matrix together so the validation
+  continues to pass.
 
 ---
 
