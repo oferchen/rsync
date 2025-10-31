@@ -26,28 +26,54 @@ pub(crate) struct MetadataSettings {
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
+pub(crate) struct MetadataSettingsInputs<'a> {
+    pub(crate) archive: bool,
+    pub(crate) parsed_chown: Option<&'a ParsedChown>,
+    pub(crate) owner: Option<bool>,
+    pub(crate) group: Option<bool>,
+    pub(crate) perms: Option<bool>,
+    pub(crate) super_mode: Option<bool>,
+    pub(crate) times: Option<bool>,
+    pub(crate) omit_dir_times: Option<bool>,
+    pub(crate) omit_link_times: Option<bool>,
+    pub(crate) devices: Option<bool>,
+    pub(crate) specials: Option<bool>,
+    pub(crate) hard_links: Option<bool>,
+    pub(crate) sparse: Option<bool>,
+    pub(crate) copy_links: Option<bool>,
+    pub(crate) copy_unsafe_links: Option<bool>,
+    pub(crate) keep_dirlinks: Option<bool>,
+    pub(crate) relative: Option<bool>,
+    pub(crate) one_file_system: Option<bool>,
+    pub(crate) chmod: &'a [OsString],
+}
+
 /// Computes metadata preservation flags according to upstream semantics.
 pub(crate) fn compute_metadata_settings(
-    archive: bool,
-    parsed_chown: Option<&ParsedChown>,
-    owner: Option<bool>,
-    group: Option<bool>,
-    perms: Option<bool>,
-    super_mode: Option<bool>,
-    times: Option<bool>,
-    omit_dir_times: Option<bool>,
-    omit_link_times: Option<bool>,
-    devices: Option<bool>,
-    specials: Option<bool>,
-    hard_links: Option<bool>,
-    sparse: Option<bool>,
-    copy_links: Option<bool>,
-    copy_unsafe_links: Option<bool>,
-    keep_dirlinks: Option<bool>,
-    relative: Option<bool>,
-    one_file_system: Option<bool>,
-    chmod: &[OsString],
+    inputs: MetadataSettingsInputs<'_>,
 ) -> Result<MetadataSettings, rsync_core::message::Message> {
+    let MetadataSettingsInputs {
+        archive,
+        parsed_chown,
+        owner,
+        group,
+        perms,
+        super_mode,
+        times,
+        omit_dir_times,
+        omit_link_times,
+        devices,
+        specials,
+        hard_links,
+        sparse,
+        copy_links,
+        copy_unsafe_links,
+        keep_dirlinks,
+        relative,
+        one_file_system,
+        chmod,
+    } = inputs;
     let preserve_owner = if parsed_chown.and_then(|value| value.owner()).is_some() {
         true
     } else if let Some(value) = owner {

@@ -15,7 +15,7 @@ use super::super::{
     extract_operands, load_file_list_operands, parse_chown_argument, transfer_requires_remote,
 };
 use super::messages::{fail_with_custom_fallback, fail_with_message};
-use super::module_listing::maybe_handle_module_listing;
+use super::module_listing::{ModuleListingInputs, maybe_handle_module_listing};
 use crate::frontend::{arguments::ParsedArgs, execution::chown::ParsedChown};
 use metadata::MetadataSettings;
 use rsync_core::client::HumanReadableMode;
@@ -224,7 +224,7 @@ where
         skip_compress_list,
         compression_setting,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
-        options::SettingsOutcome::Proceed(settings) => settings,
+        options::SettingsOutcome::Proceed(settings) => *settings,
         options::SettingsOutcome::Exit(code) => return code,
     };
 
@@ -232,9 +232,9 @@ where
     let whole_file_option = whole_file;
 
     #[allow(unused_variables)]
-    let preserve_acls = acls.unwrap_or(false);
+    let preserve_acls_enabled = acls.unwrap_or(false);
 
-    if let Err(code) = validate_feature_support(preserve_acls, xattrs, stderr) {
+    if let Err(code) = validate_feature_support(preserve_acls_enabled, xattrs, stderr) {
         return code;
     }
 
@@ -258,21 +258,21 @@ where
         Err(message) => return fail_with_message(message, stderr),
     };
 
-    if let Some(exit_code) = maybe_handle_module_listing(
-        &file_list_operands,
-        &remainder,
+    let module_listing_inputs = ModuleListingInputs {
+        file_list_operands: &file_list_operands,
+        remainder: &remainder,
         daemon_port,
         desired_protocol,
-        password_file.as_deref(),
+        password_file: password_file.as_deref(),
         no_motd,
         address_mode,
-        bind_address.as_ref(),
-        connect_program.as_ref(),
+        bind_address: bind_address.as_ref(),
+        connect_program: connect_program.as_ref(),
         timeout_setting,
         connect_timeout_setting,
-        stdout,
-        stderr,
-    ) {
+    };
+
+    if let Some(exit_code) = maybe_handle_module_listing(stdout, stderr, module_listing_inputs) {
         return exit_code;
     }
 
@@ -380,9 +380,9 @@ where
         rsync_path: rsync_path.as_ref(),
         remainder: &remainder,
         #[cfg(feature = "acl")]
-        preserve_acls,
+        preserve_acls: acls,
         #[cfg(feature = "xattr")]
-        xattrs: xattrs.unwrap_or(false),
+        xattrs,
         itemize_changes,
     };
     let fallback_args = match build_fallback_arguments(fallback_context, stderr) {
@@ -414,9 +414,9 @@ where
         return code;
     }
 
-    let metadata = match metadata::compute_metadata_settings(
+    let metadata_inputs = metadata::MetadataSettingsInputs {
         archive,
-        parsed_chown.as_ref(),
+        parsed_chown: parsed_chown.as_ref(),
         owner,
         group,
         perms,
@@ -433,8 +433,10 @@ where
         keep_dirlinks,
         relative,
         one_file_system,
-        &chmod,
-    ) {
+        chmod: &chmod,
+    };
+
+    let metadata = match metadata::compute_metadata_settings(metadata_inputs) {
         Ok(settings) => settings,
         Err(message) => return fail_with_message(message, stderr),
     };
@@ -536,7 +538,7 @@ where
         copy_destinations,
         link_destinations,
         #[cfg(feature = "acl")]
-        preserve_acls,
+        preserve_acls: preserve_acls_enabled,
         #[cfg(feature = "xattr")]
         xattrs: xattrs.unwrap_or(false),
         skip_compress_list,
@@ -563,11 +565,7 @@ where
 
     let config = builder.build();
 
-    summary::execute_transfer(
-        config,
-        fallback_args,
-        stdout,
-        stderr,
+    let transfer_options = summary::TransferExecutionOptions {
         msgs_to_stderr,
         progress_mode,
         human_readable_mode,
@@ -575,8 +573,10 @@ where
         stats,
         verbosity,
         list_only,
-        out_format_template.as_ref(),
+        out_format_template: out_format_template.as_ref(),
         name_level,
         name_overridden,
-    )
+    };
+
+    summary::execute_transfer(config, fallback_args, stdout, stderr, transfer_options)
 }

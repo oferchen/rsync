@@ -18,7 +18,5 @@ pub(crate) use guard::{DestinationWriteGuard, remove_existing_destination};
 #[cfg(test)]
 pub(crate) use paths::partial_destination_path;
 #[cfg(test)]
-pub(crate) use paths::partial_directory_destination_path;
-#[cfg(test)]
 pub(crate) use preallocate::maybe_preallocate_destination;
 pub(crate) use sparse::write_sparse_chunk;

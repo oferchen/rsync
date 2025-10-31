@@ -73,7 +73,7 @@ pub(crate) struct DerivedSettings {
 /// Outcome of parsing additional execution settings.
 pub(crate) enum SettingsOutcome {
     /// Parsing produced fully-resolved settings.
-    Proceed(DerivedSettings),
+    Proceed(Box<DerivedSettings>),
     /// Parsing requested an early exit with the supplied exit code.
     Exit(i32),
 }
@@ -274,7 +274,7 @@ where
         }
     }
 
-    SettingsOutcome::Proceed(DerivedSettings {
+    SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
         fallback_out_format,
         progress_setting,
@@ -295,5 +295,5 @@ where
         compress_level_cli,
         skip_compress_list,
         compression_setting,
-    })
+    }))
 }

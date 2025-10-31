@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-use super::super::messages::{fail_with_custom_fallback, fail_with_message};
+use super::super::messages::fail_with_message;
 
 pub(crate) fn validate_stdin_sources_conflict<Err>(
     password_file: &Option<PathBuf>,
@@ -130,12 +130,17 @@ pub(crate) fn validate_feature_support<Err>(
 where
     Err: Write,
 {
+    #[cfg(all(feature = "acl", feature = "xattr"))]
+    let _ = stderr;
+
     #[cfg(not(feature = "acl"))]
     if preserve_acls {
         let message =
             rsync_error!(1, "POSIX ACLs are not supported on this client").with_role(Role::Client);
         let fallback = "POSIX ACLs are not supported on this client".to_string();
-        return Err(fail_with_custom_fallback(message, fallback, stderr));
+        return Err(super::super::messages::fail_with_custom_fallback(
+            message, fallback, stderr,
+        ));
     }
 
     #[cfg(feature = "acl")]
@@ -146,7 +151,9 @@ where
         let message = rsync_error!(1, "extended attributes are not supported on this client")
             .with_role(Role::Client);
         let fallback = "extended attributes are not supported on this client".to_string();
-        return Err(fail_with_custom_fallback(message, fallback, stderr));
+        return Err(super::super::messages::fail_with_custom_fallback(
+            message, fallback, stderr,
+        ));
     }
 
     #[cfg(feature = "xattr")]

@@ -84,8 +84,6 @@ pub(crate) fn copy_file(
             record_path.as_path(),
             existing_metadata.as_ref(),
             destination_previously_existed,
-            file_size,
-            file_type,
         )?;
         return Ok(());
     }

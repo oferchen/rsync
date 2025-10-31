@@ -17,9 +17,9 @@ pub(super) fn handle_dry_run(
     record_path: &Path,
     existing_metadata: Option<&fs::Metadata>,
     destination_previously_existed: bool,
-    file_size: u64,
-    file_type: fs::FileType,
 ) -> Result<(), LocalCopyError> {
+    let file_size = metadata.len();
+    let file_type = metadata.file_type();
     if context.update_enabled() {
         if let Some(existing) = existing_metadata {
             if super::super::comparison::destination_is_newer(metadata, existing) {

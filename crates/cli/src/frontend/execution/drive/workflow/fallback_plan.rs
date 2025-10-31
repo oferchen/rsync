@@ -111,9 +111,9 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) rsync_path: Option<&'a OsString>,
     pub(crate) remainder: &'a [OsString],
     #[cfg(feature = "acl")]
-    pub(crate) preserve_acls: bool,
+    pub(crate) preserve_acls: Option<bool>,
     #[cfg(feature = "xattr")]
-    pub(crate) xattrs: bool,
+    pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
 }
 

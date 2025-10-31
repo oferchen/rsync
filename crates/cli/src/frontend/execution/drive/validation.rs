@@ -8,7 +8,7 @@ use rsync_protocol::ProtocolVersion;
 
 use crate::frontend::write_message;
 
-pub(super) fn validate_local_only_options<Err: Write>(
+pub(super) fn validate_local_only_options<Err>(
     fallback_required: bool,
     desired_protocol: Option<ProtocolVersion>,
     password_file: Option<&PathBuf>,
