@@ -200,7 +200,24 @@ fn remote_fallback_reports_launch_errors() {
 
     assert_eq!(error.exit_code(), 1);
     let message = format!("{error}");
-    assert!(message.contains("failed to launch fallback rsync binary"));
+    assert!(message.contains("is not available on PATH"));
+}
+
+#[test]
+fn remote_fallback_detects_missing_default_binary_on_path() {
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+    let _path_guard = EnvGuard::set("PATH", "");
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let args = baseline_fallback_args();
+    let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+        .expect_err("missing default binary should surface");
+
+    assert_eq!(error.exit_code(), 1);
+    let message = format!("{error}");
+    assert!(message.contains("is not available on PATH"));
 }
 
 #[cfg(unix)]
