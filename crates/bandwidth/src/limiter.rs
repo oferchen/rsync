@@ -183,12 +183,61 @@ impl LimiterChange {
         }
     }
 
-    const fn combine(self, other: Self) -> Self {
+    /// Returns the variant with the higher precedence between `self` and `other`.
+    ///
+    /// The precedence mirrors the state transitions performed by
+    /// [`apply_effective_limit`]: [`LimiterChange::Disabled`] outranks
+    /// [`LimiterChange::Enabled`], which in turn outranks
+    /// [`LimiterChange::Updated`], while [`LimiterChange::Unchanged`] is always
+    /// superseded by the other operand. The helper is `const`, allowing callers
+    /// to perform combination logic in compile-time contexts when required.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_bandwidth::LimiterChange;
+    ///
+    /// const CHANGE: LimiterChange =
+    ///     LimiterChange::Unchanged.combine(LimiterChange::Updated);
+    /// assert!(CHANGE.is_changed());
+    /// ```
+    #[must_use]
+    pub const fn combine(self, other: Self) -> Self {
         if self.priority() >= other.priority() {
             self
         } else {
             other
         }
+    }
+
+    /// Collapses an iterator of changes into a single representative variant.
+    ///
+    /// The function mirrors repeated calls to [`LimiterChange::combine`],
+    /// returning the highest-precedence variant observed in the iterator. This
+    /// is particularly useful for higher layers that apply several limiter
+    /// adjustments in sequence (for example, daemon-level throttling followed
+    /// by module overrides) and wish to emit a single consolidated status.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_bandwidth::LimiterChange;
+    ///
+    /// let summary = LimiterChange::combine_all([
+    ///     LimiterChange::Unchanged,
+    ///     LimiterChange::Updated,
+    ///     LimiterChange::Enabled,
+    /// ]);
+    /// assert_eq!(summary, LimiterChange::Enabled);
+    /// ```
+    #[must_use]
+    pub fn combine_all<I>(changes: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        changes
+            .into_iter()
+            .fold(Self::Unchanged, |acc, change| acc.combine(change))
     }
 
     /// Returns `true` when the limiter configuration or activation state changed.
