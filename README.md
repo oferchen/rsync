@@ -2,15 +2,15 @@
 
 This workspace hosts a Rust rsync implementation that targets upstream rsync
 **3.4.1** (protocol version **32**) under the branded version string
-**3.4.1-rust**. The canonical distribution ships the **oc-rsync** and
-**oc-rsyncd** binaries, which wrap the shared CLI/daemon front-ends provided by
-this repository. The command-line interface still inspects the invoked program
-name so operators can provide compatibility symlinks (`rsync` / `rsyncd`) when
-required, but the workspace no longer maintains separate wrapper crates. The
-long-term goal is byte-for-byte parity with upstream behaviour while
+**3.4.1-rust**. The canonical distribution ships the **rsync** and
+**rsyncd** binaries, while compatibility wrappers (**oc-rsync** and
+**oc-rsyncd**) remain available for environments that still reference the
+legacy branding. The command-line interface inspects the invoked program name
+so operators can continue using either set of entry points without behavioural
+drift. The long-term goal is byte-for-byte parity with upstream behaviour while
 modernising the implementation in Rust. The project follows the requirements
 outlined in the repository's Codex Mission Brief and implements modules as
-cohesive crates so both binaries reuse the same core logic.
+cohesive crates so all binaries reuse the same core logic.
 
 ## Repository layout
 
@@ -43,19 +43,25 @@ The workspace currently contains the following published crates:
 
 ## Binaries
 
-- `src/bin/oc-rsync.rs` — canonical client wrapper that locks standard streams
+- `src/bin/rsync.rs` — canonical client wrapper that locks standard streams
   and invokes [`rsync_cli::run`](crates/cli/src/lib.rs) before converting the
   resulting status into `std::process::ExitCode`. Supplying `--daemon` delegates
-  argument parsing to the daemon front-end so `oc-rsync --daemon ...` behaves
-  like invoking the dedicated daemon binary. Local copies honour the full
-  metadata matrix (`--owner`, `--group`, `--perms`, `--times`, sparse files,
-  hard links, devices, FIFOs, and optional ACL/xattr preservation) together with
-  deletion, partial transfer, reference directory, bandwidth, progress, and
-  stats flags.
-- `src/bin/oc-rsyncd.rs` — canonical daemon wrapper that binds the requested TCP
+  argument parsing to the daemon front-end so `rsync --daemon ...` behaves like
+  invoking the dedicated daemon binary. Local copies honour the full metadata
+  matrix (`--owner`, `--group`, `--perms`, `--times`, sparse files, hard links,
+  devices, FIFOs, and optional ACL/xattr preservation) together with deletion,
+  partial transfer, reference directory, bandwidth, progress, and stats flags.
+- `src/bin/rsyncd.rs` — canonical daemon wrapper that binds the requested TCP
   socket, performs the legacy `@RSYNCD:` handshake, lists configured in-memory
   modules for `#list` requests, and reports that full module transfers are still
   under development.
+- `src/bin/oc-rsync.rs` — compatibility client wrapper that shares the same
+  execution path as `rsync.rs`, preserving existing packaging layouts that
+  expect the `oc-rsync` binary name while still honouring the canonical
+  behaviour.
+- `src/bin/oc-rsyncd.rs` — compatibility daemon wrapper that exposes the
+  `oc-rsyncd` entry point while delegating to the shared daemon front-end used
+  by `rsyncd.rs`.
 
 ## Branding and configuration defaults
 
@@ -94,8 +100,8 @@ assert_eq!(manifest.source_url(), "https://github.com/oferchen/rsync");
 The packaging metadata installs example files at the same locations so new
 deployments pick up sane defaults out of the box. The binaries rely on the
 shared branding facade, ensuring help text, diagnostics, and configuration
-searches remain consistent across entry points regardless of the executable
-name that launched the process.
+searches remain consistent across entry points regardless of which executable
+name launched the process.
 
 Automation can serialise the same snapshot without reimplementing parsing
 logic by calling [`rsync_core::branding::manifest_json`] or the pretty-printed
