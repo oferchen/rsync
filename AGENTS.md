@@ -14,6 +14,11 @@ This document defines the internal actors (“agents”), their responsibilities
   - Central constructor: `Message::error(code, text).with_role(role).with_source(file!(), line!())`.
 - **Roles in trailers** mirror upstream semantics exactly.  
 - **All info/warn/error/progress strings** are centralized in `core::message::strings` for snapshot tests.
+- **Remote fallback guardrails**: before spawning upstream helpers, the client
+  and daemon must confirm that the selected fallback binary exists on `PATH`
+  (or via explicit overrides) and is executable, surfacing a branded
+  diagnostic when the check fails so operators can install upstream `rsync` or
+  set `OC_RSYNC_FALLBACK` appropriately.
 
 ---
 
