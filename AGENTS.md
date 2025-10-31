@@ -137,6 +137,11 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 - When splitting further, update this section to document the new module and
   adjust the curated re-export list so that only intentional surface area is
   exposed.
+- `local_copy/context.rs` keeps the `CopyContext` inherent impl decomposed via
+  `include!` into `context_impl/impl_part*.rs` files, each ≤400 LoC. Extend the
+  implementation by adding new part files (and updating the include list) when
+  a segment would otherwise exceed the hygiene caps—never grow the root file
+  beyond the centralized preamble/postamble.
 
 ---
 
