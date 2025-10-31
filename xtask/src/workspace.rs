@@ -1,4 +1,5 @@
 use crate::error::{TaskError, TaskResult};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,8 @@ pub struct WorkspaceBranding {
     pub legacy_daemon_secrets: PathBuf,
     /// Project source URL advertised in documentation and banners.
     pub source: String,
+    /// Cross-compilation targets grouped by operating system.
+    pub cross_compile: BTreeMap<String, Vec<String>>,
 }
 
 impl WorkspaceBranding {
@@ -134,6 +137,7 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         legacy_daemon_config: metadata_path(oc, "legacy_daemon_config")?,
         legacy_daemon_secrets: metadata_path(oc, "legacy_daemon_secrets")?,
         source: metadata_str(oc, "source")?,
+        cross_compile: metadata_cross_compile(oc)?,
     })
 }
 
@@ -155,6 +159,41 @@ fn metadata_protocol(table: &Value) -> TaskResult<u16> {
         .and_then(Value::as_integer)
         .ok_or_else(|| metadata_error("missing or non-integer metadata field 'protocol'"))?;
     u16::try_from(value).map_err(|_| metadata_error("protocol value must fit into u16"))
+}
+
+fn metadata_cross_compile(table: &Value) -> TaskResult<BTreeMap<String, Vec<String>>> {
+    let cross_compile = table
+        .get("cross_compile")
+        .ok_or_else(|| metadata_error("missing [workspace.metadata.oc_rsync.cross_compile] table"))?
+        .as_table()
+        .ok_or_else(|| metadata_error("cross_compile metadata must be a table"))?;
+
+    let mut result = BTreeMap::new();
+    for (os, value) in cross_compile {
+        let list = value.as_array().ok_or_else(|| {
+            metadata_error(format!("cross_compile entry '{os}' must be an array"))
+        })?;
+
+        let mut targets = Vec::with_capacity(list.len());
+        for entry in list {
+            let target = entry.as_str().ok_or_else(|| {
+                metadata_error(format!(
+                    "cross_compile entry '{os}' must contain only strings"
+                ))
+            })?;
+            targets.push(target.to_owned());
+        }
+
+        result.insert(os.to_owned(), targets);
+    }
+
+    if result.is_empty() {
+        return Err(metadata_error(
+            "cross_compile metadata must contain at least one platform",
+        ));
+    }
+
+    Ok(result)
 }
 
 fn metadata_error(message: impl Into<String>) -> TaskError {
@@ -185,6 +224,17 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://github.com/oferchen/rsync"),
+            cross_compile: BTreeMap::from([
+                (
+                    String::from("linux"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (
+                    String::from("macos"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (String::from("windows"), vec![String::from("x86_64")]),
+            ]),
         };
         assert_eq!(branding, expected);
     }

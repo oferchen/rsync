@@ -2,6 +2,7 @@ use super::BrandingOutputFormat;
 use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use serde_json::json;
+use std::collections::BTreeMap;
 
 pub fn render_branding(
     branding: &WorkspaceBranding,
@@ -31,7 +32,8 @@ fn render_branding_text(branding: &WorkspaceBranding) -> String {
             "  legacy_daemon_config_dir: {}\n",
             "  legacy_daemon_config: {}\n",
             "  legacy_daemon_secrets: {}\n",
-            "  source: {}"
+            "  source: {}\n",
+            "  cross_compile: {}"
         ),
         branding.brand,
         branding.upstream_version,
@@ -48,10 +50,17 @@ fn render_branding_text(branding: &WorkspaceBranding) -> String {
         branding.legacy_daemon_config.display(),
         branding.legacy_daemon_secrets.display(),
         branding.source,
+        format_cross_compile_summary(&branding.cross_compile),
     )
 }
 
 fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
+    let cross_compile: BTreeMap<_, _> = branding
+        .cross_compile
+        .iter()
+        .map(|(os, archs)| (os.clone(), archs.clone()))
+        .collect();
+
     let value = json!({
         "brand": branding.brand,
         "upstream_version": branding.upstream_version,
@@ -77,6 +86,7 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
             .display()
             .to_string(),
         "source": branding.source,
+        "cross_compile": cross_compile,
     });
 
     serde_json::to_string_pretty(&value).map_err(|error| {
@@ -86,9 +96,30 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
     })
 }
 
+fn format_cross_compile_summary(matrix: &BTreeMap<String, Vec<String>>) -> String {
+    matrix
+        .iter()
+        .map(|(os, archs)| {
+            let label = match os.as_str() {
+                "linux" => "Linux",
+                "macos" => "macOS",
+                "windows" => "Windows",
+                other => other,
+            };
+            if archs.is_empty() {
+                format!("{label}: (none)")
+            } else {
+                format!("{label}: {}", archs.join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn sample_branding() -> WorkspaceBranding {
@@ -108,6 +139,17 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
+            cross_compile: BTreeMap::from([
+                (
+                    String::from("linux"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (
+                    String::from("macos"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
+                (String::from("windows"), vec![String::from("x86_64")]),
+            ]),
         }
     }
 
@@ -131,7 +173,8 @@ mod tests {
             "  legacy_daemon_config_dir: /etc\n",
             "  legacy_daemon_config: /etc/rsyncd.conf\n",
             "  legacy_daemon_secrets: /etc/rsyncd.secrets\n",
-            "  source: https://example.invalid/rsync"
+            "  source: https://example.invalid/rsync\n",
+            "  cross_compile: Linux: x86_64, aarch64; macOS: x86_64, aarch64; Windows: x86_64"
         );
         assert_eq!(rendered, expected);
     }
