@@ -57,9 +57,7 @@ impl RollingDigest {
     /// [`RollingDigest`] directly. The buffer must be non-empty; otherwise an
     /// [`io::ErrorKind::InvalidInput`] error is returned. The `len` reported by
     /// the digest matches the total number of bytes consumed from `reader`
-    /// (clamped to [`usize::MAX`] just like [`RollingChecksum`]), while the
-    /// helper itself reports the read byte count as a [`u64`] saturated at
-    /// [`u64::MAX`].
+    /// (clamped to [`usize::MAX`] just like [`RollingChecksum`]).
     ///
     /// # Errors
     ///
