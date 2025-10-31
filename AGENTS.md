@@ -6,6 +6,15 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ## Global Conventions
 
+- **Canonical branding metadata** is sourced from `[workspace.metadata.oc_rsync]`
+  in `Cargo.toml`. The branded binaries are **`oc-rsync`** and **`oc-rsyncd`**,
+  the daemon configuration lives under `/etc/oc-rsyncd/` (for example
+  `/etc/oc-rsyncd/oc-rsyncd.conf` and `/etc/oc-rsyncd/oc-rsyncd.secrets`), the
+  published version string is `3.4.1-rust`, and the authoritative source
+  repository URL is <https://github.com/oferchen/rsync>. Any user-facing surface
+  (rustdoc examples, CLI help, documentation, packaging manifests, CI logs) must
+  derive these values from the shared metadata via the `xtask branding` helpers
+  or equivalent library APIs rather than hard-coding constants.
 - **Error Message Suffix (C→Rust remap)**:
   Format: `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`
   Implemented in `crates/core/src/message.rs` via:
@@ -36,10 +45,11 @@ This document defines the internal actors (“agents”), their responsibilities
 - **CI workflow contract**: `.github/workflows/ci.yml` runs the primary test
   job (`test-linux`) exclusively on Linux and a dedicated cross-compilation
   matrix covering Linux (x86_64/aarch64), macOS (x86_64/aarch64), and Windows
-  (x86_64). The Windows x86 and Windows aarch64 entries remain in the matrix
-  but stay disabled for future enablement. Automation inside CI steps must rely
-  on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or Python
-  scripts.
+  (x86_64). The Windows x86 and Windows aarch64 entries remain in the matrix as
+  disabled placeholders for future enablement. Automation inside CI steps must
+  rely on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or
+  Python scripts, and additional validation/packaging logic should be surfaced
+  via `xtask` subcommands so both local and CI runs stay in sync.
 
 ---
 

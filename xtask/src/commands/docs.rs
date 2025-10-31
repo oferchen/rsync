@@ -160,6 +160,19 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
                 (branding.daemon_bin.as_str(), "daemon binary name"),
             ],
         ),
+        DocumentCheck::new(
+            workspace.join("AGENTS.md"),
+            [
+                (
+                    branding.rust_version.as_str(),
+                    "Rust-branded version string",
+                ),
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+                (daemon_config.as_str(), "daemon configuration path"),
+                (branding.source.as_str(), "source repository URL"),
+            ],
+        ),
     ];
 
     let mut failures = Vec::new();
@@ -392,6 +405,7 @@ windows = ["x86_64"]
         fs::write(workspace.join("docs").join("gaps.md"), "placeholder").expect("write gaps");
         fs::write(workspace.join("docs").join("resume_note.md"), "placeholder")
             .expect("write resume note");
+        fs::write(workspace.join("AGENTS.md"), "placeholder").expect("write agents");
 
         let error = validate_documents(&workspace).expect_err("validation should fail");
         match error {
@@ -402,6 +416,7 @@ windows = ["x86_64"]
                 assert!(message.contains("differences.md"), "{message}");
                 assert!(message.contains("gaps.md"), "{message}");
                 assert!(message.contains("resume_note.md"), "{message}");
+                assert!(message.contains("AGENTS.md"), "{message}");
             }
             other => panic!("unexpected error: {other}"),
         }
