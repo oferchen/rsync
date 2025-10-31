@@ -71,6 +71,12 @@ This document defines the internal actors (“agents”), their responsibilities
   (`/etc/oc-rsyncd/oc-rsyncd.conf`), and published version string
   (`3.4.1-rust`) sourced from workspace metadata so release documentation
   remains consistent with packaged artifacts.
+- **`xtask docs` decomposition**: the former monolithic `docs.rs` command
+  handler now lives in `xtask/src/commands/docs/` with dedicated modules for
+  argument parsing (`cli.rs`), command execution (`executor.rs`), and
+  validation (`validation/`). Keep new helpers scoped to these purpose-built
+  modules so the hygiene guard continues to pass and future contributors can
+  extend validation logic without regressing the line-count cap.
 - **CLI execution decomposition**: The `crates/cli/src/frontend/execution`
   module is being split into dedicated submodules (`options`, `module_listing`,
   `validation`, etc.) so the formerly monolithic `execution.rs` file can be
