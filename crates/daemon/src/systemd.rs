@@ -41,10 +41,10 @@ impl ServiceNotifier {
         #[cfg(feature = "sd-notify")]
         {
             if let Some(text) = status {
-                return self.send_states(&[NotifyState::Ready, NotifyState::Status(text)]);
+                self.send_states(&[NotifyState::Ready, NotifyState::Status(text)])
+            } else {
+                self.send_states(&[NotifyState::Ready])
             }
-
-            return self.send_states(&[NotifyState::Ready]);
         }
 
         #[cfg(not(feature = "sd-notify"))]
@@ -58,7 +58,7 @@ impl ServiceNotifier {
     pub(crate) fn status(&self, status: &str) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
-            return self.send_states(&[NotifyState::Status(status)]);
+            self.send_states(&[NotifyState::Status(status)])
         }
 
         #[cfg(not(feature = "sd-notify"))]
@@ -72,7 +72,7 @@ impl ServiceNotifier {
     pub(crate) fn stopping(&self) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
-            return self.send_states(&[NotifyState::Stopping]);
+            self.send_states(&[NotifyState::Stopping])
         }
 
         #[cfg(not(feature = "sd-notify"))]

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Shared helpers for manipulating environment variables within daemon tests.
 //! The helpers centralise the unsafe interactions with `std::env` so individual
 //! tests can remain focused on their specific assertions while ensuring the
