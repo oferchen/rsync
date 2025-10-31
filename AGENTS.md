@@ -122,6 +122,22 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
   * `--inplace/--partial` behavior; temp-file commit.
 * **Perf**: buffer reuse; vectored I/O; cache-friendly layouts.
 
+#### Local Copy Module Layout
+
+- `crates/engine/src/local_copy/` is decomposed into focused modules. The
+  `executor/` directory now contains `cleanup`, `directory`, `file`,
+  `reference`, `sources`, `special`, and `util` submodules. Shared helpers such
+  as hard-link tracking, metadata synchronization, and operand parsing live in
+  sibling files (`hard_links.rs`, `metadata_sync.rs`, `operands.rs`).
+- New work touching the local copy path **must** follow this structure instead
+  of growing a single monolithic file. Prefer adding small modules and keep
+  re-exports in `executor/mod.rs` limited to items required by other modules or
+  tests. Test-only helpers are gated behind `cfg(test)` to keep release builds
+  warning-free.
+- When splitting further, update this section to document the new module and
+  adjust the curated re-export list so that only intentional surface area is
+  exposed.
+
 ---
 
 ### 6) Walk (File List)
