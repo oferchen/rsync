@@ -9,17 +9,28 @@ use crate::local_copy::{
 
 use super::super::append::{AppendMode, determine_append_mode};
 
+pub(super) struct DryRunRequest<'a> {
+    pub source: &'a Path,
+    pub destination: &'a Path,
+    pub metadata: &'a fs::Metadata,
+    pub record_path: &'a Path,
+    pub existing_metadata: Option<&'a fs::Metadata>,
+}
+
 pub(super) fn handle_dry_run(
     context: &mut CopyContext,
-    source: &Path,
-    destination: &Path,
-    metadata: &fs::Metadata,
-    record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
-    destination_previously_existed: bool,
-    file_size: u64,
-    file_type: fs::FileType,
+    request: DryRunRequest<'_>,
 ) -> Result<(), LocalCopyError> {
+    let DryRunRequest {
+        source,
+        destination,
+        metadata,
+        record_path,
+        existing_metadata,
+    } = request;
+    let destination_previously_existed = existing_metadata.is_some();
+    let file_size = metadata.len();
+    let file_type = metadata.file_type();
     if context.update_enabled() {
         if let Some(existing) = existing_metadata {
             if super::super::comparison::destination_is_newer(metadata, existing) {

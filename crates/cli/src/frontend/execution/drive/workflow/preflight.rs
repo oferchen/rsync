@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-use super::super::messages::{fail_with_custom_fallback, fail_with_message};
+#[cfg(any(not(feature = "acl"), not(feature = "xattr")))]
+use super::super::messages::fail_with_custom_fallback;
+use super::super::messages::fail_with_message;
 
 pub(crate) fn validate_stdin_sources_conflict<Err>(
     password_file: &Option<PathBuf>,
@@ -130,6 +132,7 @@ pub(crate) fn validate_feature_support<Err>(
 where
     Err: Write,
 {
+    let _ = stderr;
     #[cfg(not(feature = "acl"))]
     if preserve_acls {
         let message =

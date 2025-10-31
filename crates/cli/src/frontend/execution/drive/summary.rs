@@ -19,27 +19,46 @@ use crate::frontend::{
 use super::messages::emit_message_with_fallback;
 use super::with_output_writer;
 
+pub(crate) struct TransferExecutionInputs<'a> {
+    pub(crate) config: ClientConfig,
+    pub(crate) fallback_args: Option<RemoteFallbackArgs>,
+    pub(crate) msgs_to_stderr: bool,
+    pub(crate) progress_mode: Option<ProgressMode>,
+    pub(crate) human_readable_mode: HumanReadableMode,
+    pub(crate) itemize_changes: bool,
+    pub(crate) stats: bool,
+    pub(crate) verbosity: u8,
+    pub(crate) list_only: bool,
+    pub(crate) out_format_template: Option<&'a crate::frontend::out_format::OutFormat>,
+    pub(crate) name_level: NameOutputLevel,
+    pub(crate) name_overridden: bool,
+}
+
 /// Drives the client transfer, handling optional fallback execution and final summaries.
 pub(crate) fn execute_transfer<Out, Err>(
-    config: ClientConfig,
-    fallback_args: Option<RemoteFallbackArgs>,
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
-    msgs_to_stderr: bool,
-    progress_mode: Option<ProgressMode>,
-    human_readable_mode: HumanReadableMode,
-    itemize_changes: bool,
-    stats: bool,
-    verbosity: u8,
-    list_only: bool,
-    out_format_template: Option<&crate::frontend::out_format::OutFormat>,
-    name_level: NameOutputLevel,
-    name_overridden: bool,
+    inputs: TransferExecutionInputs<'_>,
 ) -> i32
 where
     Out: Write,
     Err: Write,
 {
+    let TransferExecutionInputs {
+        config,
+        fallback_args,
+        msgs_to_stderr,
+        progress_mode: requested_progress_mode,
+        human_readable_mode,
+        itemize_changes,
+        stats,
+        verbosity,
+        list_only,
+        out_format_template,
+        name_level,
+        name_overridden,
+    } = inputs;
+
     if let Some(args) = fallback_args {
         let outcome = {
             let mut stderr_writer = stderr.writer_mut();
@@ -64,7 +83,7 @@ where
         };
     }
 
-    let mut live_progress = progress_mode.map(|mode| {
+    let mut live_progress = requested_progress_mode.map(|mode| {
         with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
             LiveProgress::new(writer, mode, human_readable_mode)
         })
@@ -96,7 +115,7 @@ where
                 emit_transfer_summary(
                     &summary,
                     verbosity,
-                    progress_mode,
+                    requested_progress_mode,
                     stats,
                     progress_rendered_live,
                     list_only,

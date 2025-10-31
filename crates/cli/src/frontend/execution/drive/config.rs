@@ -116,7 +116,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .backup(inputs.backup)
         .backup_directory(inputs.backup_dir.clone())
         .backup_suffix(inputs.backup_suffix.clone())
-        .bandwidth_limit(inputs.bandwidth_limit.clone())
+        .bandwidth_limit(inputs.bandwidth_limit.take())
         .compression_setting(inputs.compression_setting)
         .compress(inputs.compress)
         .compression_level(inputs.compression_level_override)

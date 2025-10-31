@@ -78,14 +78,13 @@ pub(crate) fn copy_file(
     if mode.is_dry_run() {
         dry_run::handle_dry_run(
             context,
-            source,
-            destination,
-            metadata,
-            record_path.as_path(),
-            existing_metadata.as_ref(),
-            destination_previously_existed,
-            file_size,
-            file_type,
+            dry_run::DryRunRequest {
+                source,
+                destination,
+                metadata,
+                record_path: record_path.as_path(),
+                existing_metadata: existing_metadata.as_ref(),
+            },
         )?;
         return Ok(());
     }
