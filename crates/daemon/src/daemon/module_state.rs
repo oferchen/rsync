@@ -430,32 +430,33 @@ fn normalize_hostname_owned(mut name: String) -> String {
 
 #[cfg(test)]
 thread_local! {
-    static TEST_HOSTNAME_OVERRIDES: RefCell<HashMap<IpAddr, Option<String>>> =
+    pub(super) static TEST_HOSTNAME_OVERRIDES: RefCell<HashMap<IpAddr, Option<String>>> =
         RefCell::new(HashMap::new());
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_CONFIG_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
+    pub(super) static TEST_CONFIG_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
         const { RefCell::new(Some(Vec::new())) };
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) };
+    pub(super) static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
+        const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> =
+    pub(super) static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> =
         const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 #[derive(Clone, Debug, Default)]
-struct TestSecretsEnvOverride {
-    branded: Option<OsString>,
-    legacy: Option<OsString>,
+pub(super) struct TestSecretsEnvOverride {
+    pub(crate) branded: Option<OsString>,
+    pub(crate) legacy: Option<OsString>,
 }
 
 #[cfg(test)]
