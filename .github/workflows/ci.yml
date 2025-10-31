@@ -139,18 +139,13 @@ jobs:
         run: cargo --locked nextest run --workspace --all-features
 
       - name: Generate coverage profile
-        run: >-
-          cargo --locked llvm-cov nextest --workspace --all-features
-          --no-report
+        run: cargo --locked llvm-cov nextest --workspace --all-features --no-report
 
       - name: Export coverage report (lcov)
         run: cargo --locked llvm-cov report --lcov --output-path coverage.lcov
 
       - name: Enforce coverage thresholds and export summary
-        run: >-
-          cargo --locked llvm-cov report --json --summary-only
-          --output-path coverage-summary.json --fail-under-lines 95
-          --fail-under-functions 95
+        run: cargo --locked llvm-cov report --json --summary-only --output-path coverage-summary.json --fail-under-lines 95 --fail-under-functions 95
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -185,6 +180,7 @@ jobs:
 
   cross-compile:
     needs: lint
+    if: ${{ matrix.platform.enabled != false }}
     runs-on: ubuntu-latest
     name: Cross-compile (${{ matrix.platform.name }})
     strategy:
@@ -227,6 +223,22 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             generate_sbom: false
+          - name: windows-x86
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+            enabled: false
+          - name: windows-aarch64
+            target: aarch64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+            enabled: false
     env:
       CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}

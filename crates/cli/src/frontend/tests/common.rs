@@ -1,4 +1,5 @@
 use super::*;
+use rsync_core::branding::rust_version;
 
 pub(super) const RSYNC: &str = branding::client_program_name();
 pub(super) const OC_RSYNC: &str = branding::oc_client_program_name();
@@ -183,7 +184,7 @@ pub(super) fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
 }
 
 pub(super) fn assert_contains_client_trailer(rendered: &str) {
-    let expected = format!("[client={}]", manifest().rust_version());
+    let expected = format!("[client={}]", rust_version());
     assert!(
         rendered.contains(&expected),
         "expected message to contain {expected:?}, got {rendered:?}"
