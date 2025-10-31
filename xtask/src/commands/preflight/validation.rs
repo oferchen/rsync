@@ -171,18 +171,17 @@ pub(crate) fn validate_package_versions(
         versions.insert(name.to_string(), version.to_string());
     }
 
-    for crate_name in ["oc-rsync"] {
-        let version = versions.get(crate_name).ok_or_else(|| {
-            validation_error(format!("crate {crate_name} missing from cargo metadata"))
-        })?;
-        ensure(
-            version == &branding.rust_version,
-            format!(
-                "crate {crate_name} version {version} does not match {}",
-                branding.rust_version
-            ),
-        )?;
-    }
+    let crate_name = "oc-rsync";
+    let version = versions.get(crate_name).ok_or_else(|| {
+        validation_error(format!("crate {crate_name} missing from cargo metadata"))
+    })?;
+    ensure(
+        version == &branding.rust_version,
+        format!(
+            "crate {crate_name} version {version} does not match {}",
+            branding.rust_version
+        ),
+    )?;
 
     Ok(())
 }
