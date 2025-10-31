@@ -1,6 +1,6 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::{is_help_flag, run_cargo_tool};
-use crate::workspace::load_workspace_branding;
+use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -177,6 +177,8 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
         }
     }
 
+    validate_cross_compile_sections(workspace, &branding, &mut failures)?;
+
     if failures.is_empty() {
         Ok(())
     } else {
@@ -235,6 +237,53 @@ fn ensure_contains(
         failures.push(format!(
             "{display_path}: missing {description} ('{needle}')"
         ));
+    }
+}
+
+fn validate_cross_compile_sections(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    failures: &mut Vec<String>,
+) -> TaskResult<()> {
+    let docs = [
+        workspace.join("docs").join("production_scope_p1.md"),
+        workspace.join("docs").join("feature_matrix.md"),
+    ];
+
+    for path in &docs {
+        let contents = read_file(path)?;
+        for (os, archs) in &branding.cross_compile {
+            let formatted = format!("{} ({})", display_os_name(os), archs.join(", "));
+            ensure_contains(
+                workspace,
+                failures,
+                path,
+                &contents,
+                &formatted,
+                "cross-compilation target listing",
+            );
+        }
+
+        if contents.contains("Windows (x86,") || contents.contains("Windows (aarch64") {
+            let display_path = path
+                .strip_prefix(workspace)
+                .map(|relative| relative.display().to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+            failures.push(format!(
+                "{display_path}: references disabled Windows cross-compilation targets"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn display_os_name(os: &str) -> &str {
+    match os {
+        "linux" => "Linux",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        other => other,
     }
 }
 
@@ -321,6 +370,10 @@ legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
 source = "https://github.com/oferchen/rsync"
+[workspace.metadata.oc_rsync.cross_compile]
+linux = ["x86_64", "aarch64"]
+macos = ["x86_64", "aarch64"]
+windows = ["x86_64"]
 "#;
         fs::write(workspace.join("Cargo.toml"), manifest).expect("write manifest");
         fs::write(workspace.join("README.md"), "placeholder").expect("write README");
