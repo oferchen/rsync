@@ -24,6 +24,17 @@ This document defines the internal actors (“agents”), their responsibilities
   `cargo nextest run` executes the entire workspace without additional flags.
   Contributors must keep this file in sync with any future profile
   adjustments so local invocations match CI coverage.
+- **Standard-library-first implementations**: Prefer the Rust standard
+  library and well-supported crates that are actively maintained. Avoid
+  deprecated APIs, pseudo-code, or placeholder logic; every change must ship
+  production-ready behaviour with comprehensive tests or parity checks.
+- **CI workflow contract**: `.github/workflows/ci.yml` runs the primary test
+  job (`test-linux`) exclusively on Linux and a dedicated cross-compilation
+  matrix covering Linux (x86_64/aarch64), macOS (x86_64/aarch64), and Windows
+  (x86_64). The Windows x86 and Windows aarch64 entries remain in the matrix
+  but stay disabled for future enablement. Automation inside CI steps must rely
+  on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or Python
+  scripts.
 
 ---
 
