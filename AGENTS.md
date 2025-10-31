@@ -57,7 +57,11 @@ This document defines the internal actors (“agents”), their responsibilities
   matrix entry advertises the expected `target`, `build_command`,
   `build_daemon`, `uses_zig`, `needs_cross_gcc`, and `generate_sbom` values for
   its platform. Contributors must update both the manifest metadata and CI
-  matrix together so the validation continues to pass.
+  matrix together so the validation continues to pass. The same validation pass
+  also enforces that `docs/COMPARE.md` references the branded `oc-rsync`
+  binaries, daemon configuration path (`/etc/oc-rsyncd/oc-rsyncd.conf`), and
+  published version string (`3.4.1-rust`) sourced from workspace metadata so
+  release documentation remains consistent with packaged artifacts.
 
 ---
 

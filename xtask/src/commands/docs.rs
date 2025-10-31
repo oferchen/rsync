@@ -143,6 +143,18 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
             [(branding.daemon_bin.as_str(), "daemon binary name")],
         ),
         DocumentCheck::new(
+            docs_dir.join("COMPARE.md"),
+            [
+                (
+                    branding.rust_version.as_str(),
+                    "Rust-branded version string",
+                ),
+                (branding.client_bin.as_str(), "client binary name"),
+                (branding.daemon_bin.as_str(), "daemon binary name"),
+                (daemon_config.as_str(), "daemon configuration path"),
+            ],
+        ),
+        DocumentCheck::new(
             docs_dir.join("gaps.md"),
             [
                 (branding.client_bin.as_str(), "client binary name"),
@@ -968,6 +980,8 @@ windows = ["x86_64"]
         .expect("write feature matrix");
         fs::write(workspace.join("docs").join("differences.md"), "placeholder")
             .expect("write differences");
+        fs::write(workspace.join("docs").join("COMPARE.md"), "placeholder")
+            .expect("write compare log");
         fs::write(workspace.join("docs").join("gaps.md"), "placeholder").expect("write gaps");
         fs::write(workspace.join("docs").join("resume_note.md"), "placeholder")
             .expect("write resume note");
@@ -1007,6 +1021,7 @@ windows = ["x86_64"]
                 assert!(message.contains("feature_matrix.md"), "{message}");
                 assert!(message.contains("differences.md"), "{message}");
                 assert!(message.contains("gaps.md"), "{message}");
+                assert!(message.contains("COMPARE.md"), "{message}");
                 assert!(message.contains("resume_note.md"), "{message}");
                 assert!(message.contains("AGENTS.md"), "{message}");
             }
