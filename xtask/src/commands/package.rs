@@ -261,7 +261,8 @@ mod tests {
 
     struct EnvGuards {
         previous: Vec<(&'static str, Option<OsString>)>,
-        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
@@ -270,16 +271,32 @@ mod tests {
     impl EnvGuards {
         #[allow(unsafe_code)]
         fn set_many(pairs: &[(&'static str, &str)]) -> Self {
-            let guard = env_lock().lock().unwrap();
+            let lock = env_lock().lock().unwrap();
             let mut previous = Vec::with_capacity(pairs.len());
             for (key, value) in pairs {
                 previous.push((*key, env::var_os(key)));
                 unsafe { env::set_var(key, value) };
             }
-            Self {
-                previous,
-                _lock: guard,
+            drop(lock);
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvGuards {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            let _lock = env_lock().lock().unwrap();
+            for (key, previous) in self.previous.drain(..).rev() {
+                if let Some(previous) = previous {
+                    unsafe { env::set_var(key, previous) };
+                } else {
+                    unsafe { env::remove_var(key) };
+                }
             }
+        }
+    }
+
+    impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             Self::set_os(key, OsStr::new(value))
         }
@@ -294,15 +311,9 @@ mod tests {
         }
     }
 
-    impl Drop for EnvGuards {
+    impl Drop for EnvGuard {
         #[allow(unsafe_code)]
         fn drop(&mut self) {
-            for (key, value) in self.previous.iter_mut().rev() {
-                if let Some(previous) = value.take() {
-                    unsafe { env::set_var(*key, previous) };
-                } else {
-                    unsafe { env::remove_var(*key) };
-                }
             let _lock = env_lock().lock().unwrap();
             if let Some(previous) = self.previous.take() {
                 unsafe { env::set_var(self.key, previous) };
