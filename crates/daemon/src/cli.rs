@@ -10,9 +10,12 @@ use rsync_core::{
 };
 use rsync_logging::MessageSink;
 
-use super::{
-    DaemonConfig, MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help,
-    run_daemon, write_message,
+use crate::{
+    config::DaemonConfig,
+    daemon::{
+        MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help, run_daemon,
+        write_message,
+    },
 };
 
 /// Runs the daemon CLI using the provided argument iterator and output handles.
