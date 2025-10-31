@@ -71,6 +71,14 @@ This document defines the internal actors (“agents”), their responsibilities
   (`/etc/oc-rsyncd/oc-rsyncd.conf`), and published version string
   (`3.4.1-rust`) sourced from workspace metadata so release documentation
   remains consistent with packaged artifacts.
+- **CLI execution decomposition**: The `crates/cli/src/frontend/execution`
+  module is being split into dedicated submodules (`options`, `module_listing`,
+  `validation`, etc.) so the formerly monolithic `execution.rs` file can be
+  reduced below the hygiene thresholds. New helpers should continue to live in
+  those purpose-specific modules (or additional siblings) instead of returning
+  to `drive/mod.rs`, and future iterations should keep migrating logical
+  segments (for example, fallback handling and config assembly) until every
+  file stays under the 600-line cap.
 
 ---
 

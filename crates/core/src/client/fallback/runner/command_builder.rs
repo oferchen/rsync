@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
 
@@ -6,8 +10,7 @@ use super::super::args::RemoteFallbackArgs;
 use super::helpers::{fallback_error, prepare_file_list, push_human_readable, push_toggle};
 use crate::client::{AddressMode, ClientError, DeleteMode, TransferTimeout};
 use crate::fallback::{
-    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_available, fallback_override,
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary, fallback_override,
 };
 
 /// Prepared command invocation for the legacy fallback binary.
