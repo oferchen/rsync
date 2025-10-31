@@ -114,3 +114,63 @@ fn limiter_change_helper_methods_reflect_state() {
     assert!(!LimiterChange::Disabled.leaves_limiter_active());
     assert!(LimiterChange::Disabled.disables_limiter());
 }
+
+#[test]
+fn limiter_change_combine_prefers_highest_precedence() {
+    let cases = [
+        (
+            LimiterChange::Unchanged,
+            LimiterChange::Unchanged,
+            LimiterChange::Unchanged,
+        ),
+        (
+            LimiterChange::Unchanged,
+            LimiterChange::Updated,
+            LimiterChange::Updated,
+        ),
+        (
+            LimiterChange::Updated,
+            LimiterChange::Enabled,
+            LimiterChange::Enabled,
+        ),
+        (
+            LimiterChange::Enabled,
+            LimiterChange::Disabled,
+            LimiterChange::Disabled,
+        ),
+        (
+            LimiterChange::Updated,
+            LimiterChange::Unchanged,
+            LimiterChange::Updated,
+        ),
+    ];
+
+    for (left, right, expected) in cases {
+        assert_eq!(left.combine(right), expected);
+        assert_eq!(right.combine(left), expected);
+    }
+}
+
+#[test]
+fn limiter_change_combine_all_matches_folded_combination() {
+    let changes = [
+        LimiterChange::Unchanged,
+        LimiterChange::Updated,
+        LimiterChange::Enabled,
+        LimiterChange::Disabled,
+    ];
+
+    let folded = changes
+        .into_iter()
+        .fold(LimiterChange::Unchanged, |acc, change| acc.combine(change));
+    assert_eq!(LimiterChange::combine_all(changes), folded);
+
+    assert_eq!(
+        LimiterChange::combine_all([LimiterChange::Unchanged]),
+        LimiterChange::Unchanged
+    );
+    assert_eq!(
+        LimiterChange::combine_all([LimiterChange::Updated, LimiterChange::Enabled]),
+        LimiterChange::Enabled
+    );
+}
