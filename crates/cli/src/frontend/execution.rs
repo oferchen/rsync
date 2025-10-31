@@ -1034,7 +1034,6 @@ where
         .debug_flags(debug_flags_list.clone())
         .partial(partial)
         .preallocate(preallocate)
-        .delay_updates(delay_updates)
         .partial_directory(partial_dir.clone())
         .temp_directory(temp_dir.clone())
         .delay_updates(delay_updates)
