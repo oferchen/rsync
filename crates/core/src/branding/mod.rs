@@ -42,3 +42,51 @@ pub use profile::{
     oc_daemon_program_name_os_str, oc_daemon_secrets_path, oc_profile,
     upstream_client_program_name, upstream_daemon_program_name, upstream_profile,
 };
+
+/// Returns the Rust-branded version string advertised by the workspace binaries.
+#[must_use]
+pub fn rust_version() -> &'static str {
+    manifest().rust_version()
+}
+
+/// Returns the upstream base version that this workspace targets.
+#[must_use]
+pub fn upstream_version() -> &'static str {
+    manifest().upstream_version()
+}
+
+/// Returns the highest rsync protocol version supported by the workspace.
+#[must_use]
+pub fn protocol_version() -> u32 {
+    manifest().protocol_version()
+}
+
+/// Returns the source repository URL advertised by `--version` banners.
+#[must_use]
+pub fn source_url() -> &'static str {
+    manifest().source_url()
+}
+
+/// Returns the sanitized build revision baked into the binaries.
+#[must_use]
+pub fn build_revision() -> &'static str {
+    manifest().build_revision()
+}
+
+/// Returns the human-readable toolchain description rendered by banners.
+#[must_use]
+pub fn build_toolchain() -> &'static str {
+    manifest().build_toolchain()
+}
+
+/// Returns the [`BrandSummary`] describing the branded `oc-rsync` binaries.
+#[must_use]
+pub fn oc_summary() -> BrandSummary {
+    manifest().oc_summary()
+}
+
+/// Returns the [`BrandSummary`] describing the upstream-compatible binaries.
+#[must_use]
+pub fn upstream_summary() -> BrandSummary {
+    manifest().upstream_summary()
+}

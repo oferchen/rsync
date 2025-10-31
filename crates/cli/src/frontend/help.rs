@@ -1,6 +1,6 @@
 //! Rendering helpers for `--help` output.
 
-use rsync_core::branding::manifest;
+use rsync_core::branding::{manifest, rust_version, source_url};
 
 use super::ProgramName;
 
@@ -169,8 +169,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "covers permissions, timestamps, and optional ownership metadata.\n",
         ),
         program = program,
-        version = manifest.rust_version(),
-        website = manifest.source_url(),
+        version = rust_version(),
+        website = source_url(),
         daemon = daemon,
     )
 }

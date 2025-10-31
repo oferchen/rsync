@@ -209,6 +209,20 @@ fn resolve_brand_profile_delegates_to_detect_brand() {
 }
 
 #[test]
+fn helper_accessors_forward_to_manifest() {
+    let manifest = manifest();
+
+    assert_eq!(rust_version(), manifest.rust_version());
+    assert_eq!(upstream_version(), manifest.upstream_version());
+    assert_eq!(protocol_version(), manifest.protocol_version());
+    assert_eq!(source_url(), manifest.source_url());
+    assert_eq!(build_revision(), manifest.build_revision());
+    assert_eq!(build_toolchain(), manifest.build_toolchain());
+    assert_eq!(oc_summary(), manifest.oc_summary());
+    assert_eq!(upstream_summary(), manifest.upstream_summary());
+}
+
+#[test]
 fn detect_brand_falls_back_to_current_executable() {
     let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
     let expected = env::current_exe()

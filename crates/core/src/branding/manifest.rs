@@ -179,6 +179,18 @@ impl BrandManifest {
             build_toolchain: self.build_toolchain,
         }
     }
+
+    /// Returns the [`BrandSummary`] describing the branded `oc-rsync` binaries.
+    #[must_use]
+    pub const fn oc_summary(self) -> BrandSummary {
+        self.summary_for(Brand::Oc)
+    }
+
+    /// Returns the [`BrandSummary`] describing the upstream-compatible binaries.
+    #[must_use]
+    pub const fn upstream_summary(self) -> BrandSummary {
+        self.summary_for(Brand::Upstream)
+    }
 }
 
 fn build_manifest() -> BrandManifest {
@@ -358,12 +370,17 @@ mod tests {
         assert_eq!(manifest.source_url(), metadata.source_url());
         assert_eq!(manifest.build_revision(), version::build_revision());
         assert_eq!(manifest.build_toolchain(), BUILD_TOOLCHAIN);
+        assert_eq!(manifest.oc_summary(), manifest.summary_for(Brand::Oc));
+        assert_eq!(
+            manifest.upstream_summary(),
+            manifest.summary_for(Brand::Upstream)
+        );
     }
 
     #[test]
     fn summary_for_oc_brand_exposes_expected_metadata() {
         let manifest = manifest();
-        let summary = manifest.summary_for(Brand::Oc);
+        let summary = manifest.oc_summary();
 
         assert_eq!(summary.brand(), Brand::Oc);
         assert_eq!(summary.client_program_name(), "oc-rsync");
@@ -392,7 +409,7 @@ mod tests {
     #[test]
     fn summary_for_upstream_brand_reflects_legacy_names() {
         let manifest = manifest();
-        let summary = manifest.summary_for(Brand::Upstream);
+        let summary = manifest.upstream_summary();
 
         assert_eq!(summary.brand(), Brand::Upstream);
         assert_eq!(summary.client_program_name(), "rsync");
