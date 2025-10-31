@@ -29,9 +29,6 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(test)]
-use std::time::Instant;
-
 use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 
 use base64::Engine as _;

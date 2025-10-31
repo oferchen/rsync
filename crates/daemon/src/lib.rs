@@ -63,7 +63,7 @@
 //! - `run` never panics. I/O failures propagate as exit code `1` with the
 //!   original error rendered verbatim.
 //! - [`DaemonError::exit_code`] always matches the exit code embedded within the
-//!   associated [`Message`].
+//!   associated [`rsync_core::message::Message`].
 //! - `run_daemon` configures read and write timeouts on accepted sockets so
 //!   handshake deadlocks are avoided, mirroring upstream rsync's timeout
 //!   handling expectations.

@@ -33,9 +33,9 @@ impl LocalCopyPlan {
     ///
     /// # Errors
     ///
-    /// Returns [`LocalCopyErrorKind::MissingSourceOperands`] when fewer than two
+    /// Returns [`crate::local_copy::LocalCopyErrorKind::MissingSourceOperands`] when fewer than two
     /// operands are supplied. Empty operands and invalid destination states are
-    /// reported via [`LocalCopyErrorKind::InvalidArgument`].
+    /// reported via [`crate::local_copy::LocalCopyErrorKind::InvalidArgument`].
     ///
     /// # Examples
     ///
