@@ -27,6 +27,19 @@ pub fn validation_error(message: impl Into<String>) -> TaskError {
     TaskError::Validation(message.into())
 }
 
+const FORCE_MISSING_ENV: &str = "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS";
+
+fn should_simulate_missing_tool(display: &str) -> bool {
+    let Ok(entries) = env::var(FORCE_MISSING_ENV) else {
+        return false;
+    };
+
+    entries
+        .split(|ch| matches!(ch, ',' | ';' | '|'))
+        .map(str::trim)
+        .any(|value| !value.is_empty() && value == display)
+}
+
 fn map_command_error(error: io::Error, program: &str, install_hint: &str) -> TaskError {
     if error.kind() == io::ErrorKind::NotFound {
         TaskError::ToolMissing(format!("{program} is unavailable; {install_hint}"))
@@ -42,6 +55,12 @@ pub fn run_cargo_tool(
     display: &str,
     install_hint: &str,
 ) -> TaskResult<()> {
+    if should_simulate_missing_tool(display) {
+        return Err(TaskError::ToolMissing(format!(
+            "{display} is unavailable; {install_hint}"
+        )));
+    }
+
     let output = Command::new("cargo")
         .current_dir(workspace)
         .args(&args)
@@ -403,6 +422,21 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(err, TaskError::ToolMissing(message) if message.contains("nonexistent-subcommand"))
+        );
+    }
+
+    #[test]
+    fn run_cargo_tool_honours_forced_missing_configuration() {
+        let _env = EnvGuard::set(FORCE_MISSING_ENV, "cargo --version");
+        let err = run_cargo_tool(
+            workspace_root(),
+            vec![OsString::from("--version")],
+            "cargo --version",
+            "install cargo",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, TaskError::ToolMissing(message) if message.contains("cargo --version"))
         );
     }
 
