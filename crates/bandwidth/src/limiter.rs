@@ -201,7 +201,6 @@ impl LimiterChange {
     ///     LimiterChange::Unchanged.combine(LimiterChange::Updated);
     /// assert!(CHANGE.is_changed());
     /// ```
-    #[must_use]
     pub const fn combine(self, other: Self) -> Self {
         if self.priority() >= other.priority() {
             self
@@ -230,7 +229,6 @@ impl LimiterChange {
     /// ]);
     /// assert_eq!(summary, LimiterChange::Enabled);
     /// ```
-    #[must_use]
     pub fn combine_all<I>(changes: I) -> Self
     where
         I: IntoIterator<Item = Self>,
