@@ -87,7 +87,7 @@ impl LocalCopyPlan {
 
     /// Returns the planned source operands.
     #[must_use]
-    pub fn sources(&self) -> &[SourceSpec] {
+    pub(crate) fn sources(&self) -> &[SourceSpec] {
         &self.sources
     }
 
