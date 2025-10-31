@@ -259,13 +259,27 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
+    struct EnvGuards {
+        previous: Vec<(&'static str, Option<OsString>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
     }
 
-    impl EnvGuard {
+    impl EnvGuards {
         #[allow(unsafe_code)]
+        fn set_many(pairs: &[(&'static str, &str)]) -> Self {
+            let guard = env_lock().lock().unwrap();
+            let mut previous = Vec::with_capacity(pairs.len());
+            for (key, value) in pairs {
+                previous.push((*key, env::var_os(key)));
+                unsafe { env::set_var(key, value) };
+            }
+            Self {
+                previous,
+                _lock: guard,
+            }
         fn set(key: &'static str, value: &str) -> Self {
             Self::set_os(key, OsStr::new(value))
         }
@@ -280,9 +294,15 @@ mod tests {
         }
     }
 
-    impl Drop for EnvGuard {
+    impl Drop for EnvGuards {
         #[allow(unsafe_code)]
         fn drop(&mut self) {
+            for (key, value) in self.previous.iter_mut().rev() {
+                if let Some(previous) = value.take() {
+                    unsafe { env::set_var(*key, previous) };
+                } else {
+                    unsafe { env::remove_var(*key) };
+                }
             let _lock = env_lock().lock().unwrap();
             if let Some(previous) = self.previous.take() {
                 unsafe { env::set_var(self.key, previous) };
@@ -307,6 +327,10 @@ mod tests {
 
     #[test]
     fn execute_reports_missing_cargo_deb_tool() {
+        let _env = EnvGuards::set_many(&[
+            ("OC_RSYNC_PACKAGE_SKIP_BUILD", "1"),
+            ("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "cargo deb"),
+        ]);
         let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
         let (_fake_cargo_dir, fake_cargo) = fake_cargo_path();
         let _cargo = EnvGuard::set_os("CARGO", fake_cargo.as_os_str());
@@ -324,6 +348,10 @@ mod tests {
 
     #[test]
     fn execute_reports_missing_cargo_rpm_tool() {
+        let _env = EnvGuards::set_many(&[
+            ("OC_RSYNC_PACKAGE_SKIP_BUILD", "1"),
+            ("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "cargo rpm build"),
+        ]);
         let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
         let (_fake_cargo_dir, fake_cargo) = fake_cargo_path();
         let _cargo = EnvGuard::set_os("CARGO", fake_cargo.as_os_str());
