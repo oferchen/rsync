@@ -19,9 +19,7 @@ fn remote_operand_reports_launch_failure_when_fallback_missing() {
 
     let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
     assert!(
-        rendered.contains(
-            "fallback rsync binary 'rsync-missing-binary' is not available on PATH"
-        ),
+        rendered.contains("fallback rsync binary 'rsync-missing-binary' is not available on PATH"),
         "expected fallback availability diagnostic, got {rendered:?}"
     );
     assert!(
