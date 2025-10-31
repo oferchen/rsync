@@ -91,6 +91,13 @@ This document defines the internal actors (“agents”), their responsibilities
   renders progress/output, `fallback.rs` prepares remote invocation arguments,
   and `metadata.rs` derives preservation flags). Extend these modules directly
   instead of inflating `mod.rs` again.
+- **Drive workflow layering**: The orchestrator now lives under
+  `crates/cli/src/frontend/execution/drive/workflow/` with
+  `preflight.rs`, `fallback_plan.rs`, and `operands.rs` hosting the
+  argument validation, remote-fallback assembly, and usage rendering logic,
+  respectively. Keep new flow-control helpers in these focused modules (or
+  additional siblings) so `workflow/mod.rs` remains under the hygiene cap and
+  primarily coordinates the sequence rather than re-implementing the details.
 - **CLI argument parser decomposition**: `crates/cli/src/frontend/arguments`
   has been converted into a module tree (`program_name.rs`, `bandwidth.rs`,
   `parsed_args.rs`, `env.rs`, and `parser.rs`) to keep every file below the
