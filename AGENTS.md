@@ -20,7 +20,7 @@ This document defines the internal actors (“agents”), their responsibilities
 ## Agents Overview
 
 ### 1) Client (CLI Frontend)
-- **Binary**: `bin/oc-rsync`  
+- **Binary**: `src/bin/oc-rsync.rs`
 - **Depends on**: `cli`, `core`, `transport`  
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
@@ -42,7 +42,7 @@ pub fn main() -> ExitCode {
 
 ### 2) Daemon (rsyncd)
 
-* **Binary**: `bin/oc-rsyncd`
+* **Binary**: `src/bin/oc-rsyncd.rs`
 * **Depends on**: `daemon`, `core`, `transport`, `logging`
 * **Responsibilities**:
 

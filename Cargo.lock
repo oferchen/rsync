@@ -455,17 +455,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "oc-rsync-bin"
+name = "oc-rsync"
 version = "3.4.1-rust"
 dependencies = [
  "rsync-cli",
- "rsync-windows-gnu-eh",
-]
-
-[[package]]
-name = "oc-rsyncd-bin"
-version = "3.4.1-rust"
-dependencies = [
  "rsync-daemon",
  "rsync-windows-gnu-eh",
 ]
