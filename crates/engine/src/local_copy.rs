@@ -138,6 +138,9 @@ pub use filter_program::{
     FilterProgramEntry, FilterProgramError,
 };
 
+#[cfg(test)]
+pub(crate) use filter_program::FilterOutcome;
+
 /// Plan describing a local filesystem copy.
 ///
 /// Instances are constructed from CLI-style operands using
