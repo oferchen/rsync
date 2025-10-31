@@ -261,21 +261,21 @@ fn deferred_updates_flush_commits_pending_files() {
     let metadata_options = context.metadata_options();
     let partial_path = partial_destination_path(&destination);
     let final_path = guard.final_path().to_path_buf();
-    let update = DeferredUpdate {
+    let update = DeferredUpdate::new(
         guard,
-        metadata: metadata.clone(),
+        metadata.clone(),
         metadata_options,
-        mode: LocalCopyExecution::Apply,
-        source: source.clone(),
-        relative: Some(std::path::PathBuf::from("file.txt")),
-        destination: final_path,
-        file_type: metadata.file_type(),
-        destination_previously_existed: false,
+        LocalCopyExecution::Apply,
+        source.clone(),
+        Some(std::path::PathBuf::from("file.txt")),
+        final_path,
+        metadata.file_type(),
+        false,
         #[cfg(feature = "xattr")]
-        preserve_xattrs: context.xattrs_enabled(),
+        context.xattrs_enabled(),
         #[cfg(feature = "acl")]
-        preserve_acls: context.acls_enabled(),
-    };
+        context.acls_enabled(),
+    );
 
     context.register_deferred_update(update);
 
