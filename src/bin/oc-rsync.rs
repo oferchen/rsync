@@ -1,5 +1,7 @@
 #![deny(unsafe_code)]
 
+mod support;
+
 use std::io::Write;
 use std::{env, io, process::ExitCode};
 
@@ -19,8 +21,13 @@ where
     Out: Write,
     Err: Write,
 {
-    let status = rsync_cli::run(args, stdout, stderr);
-    rsync_cli::exit_code_from(status)
+    support::dispatch(
+        args,
+        stdout,
+        stderr,
+        rsync_cli::run,
+        rsync_cli::exit_code_from,
+    )
 }
 
 #[cfg(test)]
