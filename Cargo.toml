@@ -1,7 +1,35 @@
+[package]
+name = "oc-rsync"
+version = "3.4.1-rust"
+edition = "2024"
+rust-version = "1.87"
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
+license = "GPL-3.0-or-later"
+description = "Pure-Rust implementation of the oc-rsync client and daemon binaries"
+publish = false
+autobins = false
+
+[[bin]]
+name = "oc-rsync"
+path = "src/bin/oc-rsync.rs"
+
+[[bin]]
+name = "oc-rsyncd"
+path = "src/bin/oc-rsyncd.rs"
+
+[features]
+default = []
+sd-notify = ["rsync-daemon/sd-notify"]
+
+[dependencies]
+rsync-cli = { path = "crates/cli" }
+rsync-daemon = { path = "crates/daemon" }
+
+[target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
+rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
+
 [workspace]
 members = [
-    "bin/oc-rsync",
-    "bin/oc-rsyncd",
     "crates/cli",
     "crates/bandwidth",
     "crates/checksums",
@@ -50,3 +78,37 @@ legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
 source = "https://github.com/oferchen/rsync"
+
+[package.metadata.deb]
+name = "oc-rsync"
+section = "utils"
+priority = "optional"
+maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
+depends = "libc6 (>= 2.34), libgcc-s1"
+extended-description = "Pure-Rust implementation of oc-rsync-compatible client and daemon binaries."
+assets = [
+    ["target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
+    ["target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
+    ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
+    ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
+    ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
+    ["packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
+]
+conf-files = [
+    "etc/oc-rsyncd/oc-rsyncd.conf",
+    "etc/oc-rsyncd/oc-rsyncd.secrets",
+    "etc/default/oc-rsyncd",
+]
+
+[package.metadata.rpm]
+package = "oc-rsync"
+summary = "Rust implementation of oc-rsync-compatible client and daemon"
+requires = ["glibc", "libgcc"]
+assets = [
+    { path = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
+    { path = "target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
+    { path = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
+    { path = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
+    { path = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
+    { path = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
+]
