@@ -196,6 +196,7 @@ fn build_workspace_binaries(workspace: &Path, profile: &Option<OsString>) -> Tas
 mod tests {
     use super::*;
     use std::env;
+    use std::ffi::OsStr;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -261,26 +262,28 @@ mod tests {
     struct EnvGuard {
         key: &'static str,
         previous: Option<OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
         #[allow(unsafe_code)]
         fn set(key: &'static str, value: &str) -> Self {
-            let guard = env_lock().lock().unwrap();
+            Self::set_os(key, OsStr::new(value))
+        }
+
+        #[allow(unsafe_code)]
+        fn set_os(key: &'static str, value: &OsStr) -> Self {
+            let lock = env_lock().lock().unwrap();
             let previous = env::var_os(key);
             unsafe { env::set_var(key, value) };
-            Self {
-                key,
-                previous,
-                _lock: guard,
-            }
+            drop(lock);
+            Self { key, previous }
         }
     }
 
     impl Drop for EnvGuard {
         #[allow(unsafe_code)]
         fn drop(&mut self) {
+            let _lock = env_lock().lock().unwrap();
             if let Some(previous) = self.previous.take() {
                 unsafe { env::set_var(self.key, previous) };
             } else {
@@ -305,6 +308,8 @@ mod tests {
     #[test]
     fn execute_reports_missing_cargo_deb_tool() {
         let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
+        let (_fake_cargo_dir, fake_cargo) = fake_cargo_path();
+        let _cargo = EnvGuard::set_os("CARGO", fake_cargo.as_os_str());
         let error = execute(
             workspace_root(),
             PackageOptions {
@@ -320,6 +325,8 @@ mod tests {
     #[test]
     fn execute_reports_missing_cargo_rpm_tool() {
         let _env = EnvGuard::set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
+        let (_fake_cargo_dir, fake_cargo) = fake_cargo_path();
+        let _cargo = EnvGuard::set_os("CARGO", fake_cargo.as_os_str());
         let error = execute(
             workspace_root(),
             PackageOptions {
@@ -332,5 +339,33 @@ mod tests {
         assert!(
             matches!(error, TaskError::ToolMissing(message) if message.contains("cargo rpm build"))
         );
+    }
+
+    fn fake_cargo_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("create temp directory for fake cargo");
+        let cargo_name = if cfg!(windows) { "cargo.cmd" } else { "cargo" };
+        let cargo_path = dir.path().join(cargo_name);
+
+        #[cfg(windows)]
+        let script =
+            b"@echo off\r\necho error: no such subcommand: %1 1>&2\r\nexit /b 101\r\n".to_vec();
+
+        #[cfg(not(windows))]
+        let script =
+            b"#!/bin/sh\necho 'error: no such subcommand: '\"$1\" >&2\nexit 101\n".to_vec();
+
+        std::fs::write(&cargo_path, script).expect("write fake cargo script");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&cargo_path)
+                .expect("read fake cargo metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&cargo_path, permissions).expect("make fake cargo executable");
+        }
+
+        (dir, cargo_path)
     }
 }
