@@ -21,8 +21,8 @@ pub use bandwidth::BandwidthLimit;
 pub use builder::ClientConfigBuilder;
 pub use client::ClientConfig;
 pub use enums::{
-    AddressMode, CompressionSetting, DeleteMode, HumanReadableMode, StrongChecksumAlgorithm,
-    StrongChecksumChoice, TransferTimeout,
+    AddressMode, CompressionSetting, DeleteMode, HumanReadableMode, HumanReadableModeParseError,
+    StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout,
 };
 pub use filters::{FilterRuleKind, FilterRuleSpec};
 pub use network::BindAddress;

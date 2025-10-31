@@ -1,4 +1,6 @@
+use std::fmt;
 use std::num::NonZeroU64;
+use std::str::FromStr;
 use std::time::Duration;
 
 use crate::{
@@ -71,6 +73,28 @@ pub enum HumanReadableMode {
 }
 
 impl HumanReadableMode {
+    /// Parses a human-readable level from textual input.
+    ///
+    /// The parser trims ASCII whitespace before interpreting the value and
+    /// accepts the numeric levels used by upstream `rsync`. A dedicated error
+    /// type captures empty inputs and out-of-range values so callers can emit
+    /// diagnostics that match the original CLI.
+    pub fn parse(text: &str) -> Result<Self, HumanReadableModeParseError> {
+        let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return Err(HumanReadableModeParseError::Empty);
+        }
+
+        match trimmed {
+            "0" => Ok(Self::Disabled),
+            "1" => Ok(Self::Enabled),
+            "2" => Ok(Self::Combined),
+            other => Err(HumanReadableModeParseError::Invalid {
+                value: other.to_string(),
+            }),
+        }
+    }
+
     /// Reports whether human-readable formatting should be used.
     #[must_use]
     pub const fn is_enabled(self) -> bool {
@@ -84,6 +108,52 @@ impl HumanReadableMode {
         matches!(self, Self::Combined)
     }
 }
+
+impl FromStr for HumanReadableMode {
+    type Err = HumanReadableModeParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+/// Errors produced when parsing a [`HumanReadableMode`] from text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HumanReadableModeParseError {
+    /// The provided value was empty after trimming ASCII whitespace.
+    Empty,
+    /// The provided value did not match an accepted human-readable level.
+    Invalid {
+        /// The invalid value supplied by the caller after trimming ASCII whitespace.
+        value: String,
+    },
+}
+
+impl HumanReadableModeParseError {
+    /// Returns the invalid value supplied by the caller when available.
+    #[must_use]
+    pub fn invalid_value(&self) -> Option<&str> {
+        match self {
+            Self::Invalid { value } => Some(value.as_str()),
+            Self::Empty => None,
+        }
+    }
+}
+
+impl fmt::Display for HumanReadableModeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("human-readable level must not be empty"),
+            Self::Invalid { value } => write!(
+                f,
+                "invalid human-readable level '{}': expected 0, 1, or 2",
+                value
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HumanReadableModeParseError {}
 
 /// Enumerates the strong checksum algorithms recognised by the client.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
