@@ -388,7 +388,16 @@ pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
                     .long("verbose")
                     .short('v')
                     .help("Increase verbosity; may be supplied multiple times.")
-                    .action(ArgAction::Count),
+                    .action(ArgAction::Count)
+                    .overrides_with("quiet"),
+            )
+            .arg(
+                Arg::new("quiet")
+                    .long("quiet")
+                    .short('q')
+                    .help("Suppress non-error messages.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("verbose"),
             )
             .arg(
                 Arg::new("relative")
