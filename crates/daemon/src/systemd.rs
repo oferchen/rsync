@@ -12,7 +12,7 @@ use std::io;
 #[cfg(feature = "sd-notify")]
 use sd_notify::NotifyState;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ServiceNotifier {
     #[cfg(feature = "sd-notify")]
     available: bool,
@@ -40,15 +40,11 @@ impl ServiceNotifier {
     pub(crate) fn ready(&self, status: Option<&str>) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
-            if !self.available {
-                return Ok(());
+            if let Some(text) = status {
+                return self.send_states(&[NotifyState::Ready, NotifyState::Status(text)]);
             }
 
-            if let Some(text) = status {
-                sd_notify::notify(false, &[NotifyState::Ready, NotifyState::Status(text)])
-            } else {
-                sd_notify::notify(false, &[NotifyState::Ready])
-            }
+            return self.send_states(&[NotifyState::Ready]);
         }
 
         #[cfg(not(feature = "sd-notify"))]
@@ -62,11 +58,7 @@ impl ServiceNotifier {
     pub(crate) fn status(&self, status: &str) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
-            if !self.available {
-                return Ok(());
-            }
-
-            sd_notify::notify(false, &[NotifyState::Status(status)])
+            return self.send_states(&[NotifyState::Status(status)]);
         }
 
         #[cfg(not(feature = "sd-notify"))]
@@ -80,16 +72,72 @@ impl ServiceNotifier {
     pub(crate) fn stopping(&self) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
-            if !self.available {
-                return Ok(());
-            }
-
-            sd_notify::notify(false, &[NotifyState::Stopping])
+            return self.send_states(&[NotifyState::Stopping]);
         }
 
         #[cfg(not(feature = "sd-notify"))]
         {
             Ok(())
         }
+    }
+
+    #[cfg(feature = "sd-notify")]
+    fn send_states(&self, states: &[NotifyState]) -> io::Result<()> {
+        if !self.available {
+            return Ok(());
+        }
+
+        sd_notify::notify(false, states)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceNotifier;
+    use std::env;
+    use std::ffi::OsString;
+
+    #[allow(unsafe_code)]
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            unsafe {
+                env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(ref value) = self.previous {
+                unsafe {
+                    env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn notifier_behaves_as_noop_without_notify_socket() {
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        assert_eq!(notifier, ServiceNotifier::default());
+        assert!(notifier.ready(Some("Listening on 127.0.0.1:873")).is_ok());
+        assert!(notifier.ready(None).is_ok());
+        assert!(notifier.status("serving 0 connections").is_ok());
+        assert!(notifier.stopping().is_ok());
     }
 }
