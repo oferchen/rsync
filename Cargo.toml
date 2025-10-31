@@ -10,6 +10,14 @@ publish = false
 autobins = false
 
 [[bin]]
+name = "rsync"
+path = "src/bin/rsync.rs"
+
+[[bin]]
+name = "rsyncd"
+path = "src/bin/rsyncd.rs"
+
+[[bin]]
 name = "oc-rsync"
 path = "src/bin/oc-rsync.rs"
 
@@ -27,6 +35,7 @@ rsync-daemon = { path = "crates/daemon" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
+rsync-core = { path = "crates/core" }
 
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
 rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
@@ -95,6 +104,8 @@ maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of oc-rsync-compatible client and daemon binaries."
 assets = [
+    ["target/release/rsync", "/usr/bin/rsync", "755"],
+    ["target/release/rsyncd", "/usr/bin/rsyncd", "755"],
     ["target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
     ["target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
@@ -113,6 +124,8 @@ package = "oc-rsync"
 summary = "Rust implementation of oc-rsync-compatible client and daemon"
 requires = ["glibc", "libgcc"]
 assets = [
+    { path = "target/release/rsync", dest = "/usr/bin/rsync", mode = "0755" },
+    { path = "target/release/rsyncd", dest = "/usr/bin/rsyncd", mode = "0755" },
     { path = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
     { path = "target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
     { path = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },

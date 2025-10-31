@@ -482,6 +482,7 @@ version = "3.4.1-rust"
 dependencies = [
  "assert_cmd",
  "rsync-cli",
+ "rsync-core",
  "rsync-daemon",
  "rsync-windows-gnu-eh",
 ]
