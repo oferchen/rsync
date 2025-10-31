@@ -115,6 +115,7 @@ pub use self::run::{run_client, run_client_or_fallback, run_client_with_observer
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };
+pub use rsync_engine::SkipCompressList;
 pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 
 use std::time::Duration;
