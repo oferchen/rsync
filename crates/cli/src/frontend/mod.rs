@@ -112,21 +112,14 @@ use rsync_core::{
 use rsync_logging::MessageSink;
 use rsync_meta::ChmodModifiers;
 use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
-#[path = "defaults.rs"]
 mod defaults;
-#[path = "help.rs"]
 mod help;
-#[path = "out_format/mod.rs"]
 mod out_format;
-#[path = "password.rs"]
 pub(crate) mod password;
-#[path = "progress/mod.rs"]
 mod progress;
-#[path = "server.rs"]
 mod server;
 
 #[cfg(test)]
-#[path = "tests/mod.rs"]
 mod tests;
 
 pub(crate) use defaults::LIST_TIMESTAMP_FORMAT;
