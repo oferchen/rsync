@@ -4,6 +4,7 @@ use std::path::Path;
 
 use rsync_core::client::{
     AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TransferTimeout,
+    run_module_list_with_password_and_options,
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::ProtocolVersion;
@@ -70,7 +71,7 @@ where
         .with_bind_address(bind_address.map(|addr| addr.socket()))
         .with_connect_program(connect_program.cloned());
 
-    match super::run_module_list_with_password_and_options(
+    match run_module_list_with_password_and_options(
         request,
         list_options,
         password_override,

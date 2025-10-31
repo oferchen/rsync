@@ -84,7 +84,19 @@ This document defines the internal actors (“agents”), their responsibilities
   those purpose-specific modules (or additional siblings) instead of returning
   to `drive/mod.rs`, and future iterations should keep migrating logical
   segments (for example, fallback handling and config assembly) until every
-  file stays under the 600-line cap.
+  file stays under the 600-line cap. The `drive/` directory now owns the
+  high-level orchestration flow through dedicated helpers (`options.rs`
+  handles info/debug/bandwidth/compress parsing, `config.rs` assembles the
+  client builder, `filters.rs` wires include/exclude rules, `summary.rs`
+  renders progress/output, `fallback.rs` prepares remote invocation arguments,
+  and `metadata.rs` derives preservation flags). Extend these modules directly
+  instead of inflating `mod.rs` again.
+- **Local copy file executor decomposition**: The massive
+  `crates/engine/src/local_copy/executor/file.rs` implementation has been
+  reorganized into the `file/` module tree (`copy/`, `links`, `transfer`, etc.)
+  so each responsibility stays below the hygiene limit. Future changes to file
+  transfer behaviour must extend the appropriate helper module rather than
+  reintroducing monolithic logic in a single file.
 
 ---
 
