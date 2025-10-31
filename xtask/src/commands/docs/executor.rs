@@ -71,7 +71,7 @@ fn library_packages(workspace: &Path) -> TaskResult<Vec<String>> {
         .packages
         .into_iter()
         .filter(|package| members.contains(&package.id))
-        .filter(|package| has_library_target(package))
+        .filter(has_library_target)
         .map(|package| package.name)
         .collect();
 
