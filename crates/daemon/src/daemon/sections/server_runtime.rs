@@ -34,13 +34,24 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         ..
     } = options;
 
-    let delegation = configured_fallback_binary().and_then(|binary| {
-        if inline_modules {
-            None
-        } else {
+    let mut fallback_warning_message: Option<Message> = None;
+
+    let delegation = if inline_modules {
+        None
+    } else if let Some(binary) = configured_fallback_binary() {
+        if fallback_binary_available(binary.as_os_str()) {
             Some(SessionDelegation::new(binary, delegate_arguments))
+        } else {
+            let warning_text = describe_missing_fallback_binary(
+                binary.as_os_str(),
+                &[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV],
+            );
+            fallback_warning_message = Some(rsync_warning!(warning_text).with_role(Role::Daemon));
+            None
         }
-    });
+    } else {
+        None
+    };
 
     let pid_guard = if let Some(path) = pid_file {
         Some(PidFileGuard::create(path)?)
@@ -48,11 +59,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
+    if let Some(message) = fallback_warning_message.as_ref() {
+        eprintln!("{message}");
+    }
+
     let log_sink = if let Some(path) = log_file {
         Some(open_log_sink(&path)?)
     } else {
         None
     };
+
+    if let (Some(log), Some(message)) = (log_sink.as_ref(), fallback_warning_message.as_ref()) {
+        log_message(log, message);
+    }
 
     let connection_limiter = if let Some(path) = lock_file {
         Some(Arc::new(ConnectionLimiter::open(path)?))

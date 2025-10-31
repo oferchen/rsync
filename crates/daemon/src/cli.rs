@@ -5,7 +5,13 @@ use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 
 use rsync_core::{
-    branding::Brand, fallback::DAEMON_AUTO_DELEGATE_ENV, message::Role, rsync_error,
+    branding::Brand,
+    fallback::{
+        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV,
+        describe_missing_fallback_binary, fallback_binary_available,
+    },
+    message::Role,
+    rsync_error,
     version::VersionInfoReport,
 };
 use rsync_logging::MessageSink;
@@ -96,7 +102,9 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 pub(super) fn fallback_binary_configured() -> bool {
-    configured_fallback_binary().is_some()
+    configured_fallback_binary()
+        .map(|binary| fallback_binary_available(binary.as_os_str()))
+        .unwrap_or(false)
 }
 
 fn fallback_binary() -> OsString {
@@ -136,6 +144,19 @@ where
     Err: Write,
 {
     let binary = fallback_binary();
+
+    if !fallback_binary_available(binary.as_os_str()) {
+        let diagnostic = describe_missing_fallback_binary(
+            binary.as_os_str(),
+            &[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV],
+        );
+        let message = rsync_error!(1, diagnostic).with_role(Role::Daemon);
+        let fallback = message.to_string();
+        if write_message(&message, stderr).is_err() {
+            let _ = writeln!(stderr.writer_mut(), "{fallback}");
+        }
+        return 1;
+    }
 
     let mut command = ProcessCommand::new(&binary);
     command.arg("--daemon");
