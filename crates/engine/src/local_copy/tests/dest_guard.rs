@@ -10,7 +10,7 @@ fn destination_write_guard_uses_custom_partial_directory() {
     let (guard, mut file) =
         DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir), None)
             .expect("guard");
-    let temp_path = guard.temp_path.clone();
+    let temp_path = guard.staging_path().to_path_buf();
     file.write_all(b"partial payload").expect("write partial");
     drop(file);
 
@@ -37,7 +37,7 @@ fn destination_write_guard_commit_moves_from_partial_directory() {
         None,
     )
     .expect("guard");
-    let temp_path = guard.temp_path.clone();
+    let temp_path = guard.staging_path().to_path_buf();
     file.write_all(b"committed payload").expect("write payload");
     drop(file);
 
