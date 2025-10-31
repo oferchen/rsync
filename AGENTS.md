@@ -59,14 +59,18 @@ This document defines the internal actors (“agents”), their responsibilities
   the Windows x86/aarch64 entries present but disabled, and verifies that each
   matrix entry advertises the expected `target`, `build_command`,
   `build_daemon`, `uses_zig`, `needs_cross_gcc`, and `generate_sbom` values for
-  its platform. The validator also rejects duplicate matrix entries and flags
-  unexpected targets so the release matrix remains tightly scoped to the
-  supported platforms. Contributors must update both the manifest metadata and CI
-  matrix together so the validation continues to pass. The same validation pass
-  also enforces that `docs/COMPARE.md` references the branded `oc-rsync`
-  binaries, daemon configuration path (`/etc/oc-rsyncd/oc-rsyncd.conf`), and
-  published version string (`3.4.1-rust`) sourced from workspace metadata so
-  release documentation remains consistent with packaged artifacts.
+  its platform. The cross-compilation job must also disable `fail-fast`, set
+  `max-parallel` to a value greater than one, and expose a `strategy.matrix`
+  block that matches the workspace metadata so builds run in parallel. The
+  validator rejects duplicate matrix entries, flags unexpected targets, and
+  enforces that `test-linux` is the only test job (running on `ubuntu-latest`)
+  to keep the test suite Linux-only as required by CI. Contributors must update
+  both the manifest metadata and CI matrix together so the validation continues
+  to pass. The same validation pass also enforces that `docs/COMPARE.md`
+  references the branded `oc-rsync` binaries, daemon configuration path
+  (`/etc/oc-rsyncd/oc-rsyncd.conf`), and published version string
+  (`3.4.1-rust`) sourced from workspace metadata so release documentation
+  remains consistent with packaged artifacts.
 
 ---
 

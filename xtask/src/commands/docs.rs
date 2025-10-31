@@ -205,6 +205,7 @@ fn validate_documents(workspace: &Path) -> TaskResult<()> {
 
     validate_cross_compile_sections(workspace, &branding, &mut failures)?;
     validate_ci_cross_compile_matrix(workspace, &branding, &mut failures)?;
+    validate_ci_test_job(workspace, &mut failures)?;
 
     if failures.is_empty() {
         Ok(())
@@ -390,7 +391,47 @@ fn validate_ci_cross_compile_matrix(
         check_for_unexpected_matrix_entries(&display_path, &names, &expected_entries, failures);
     }
 
+    ensure_cross_compile_parallelism(&display_path, &ci_contents, failures);
+
     Ok(())
+}
+
+fn ensure_cross_compile_parallelism(
+    display_path: &str,
+    contents: &str,
+    failures: &mut Vec<String>,
+) {
+    let Some(section) = extract_job_section(contents, "cross-compile") else {
+        failures.push(format!(
+            "{display_path}: missing cross-compile job definition"
+        ));
+        return;
+    };
+
+    match find_yaml_scalar(&section, "max-parallel") {
+        Some(value) => match value.parse::<usize>() {
+            Ok(parallelism) if parallelism > 1 => {}
+            Ok(_) => failures.push(format!(
+                "{display_path}: cross-compile job must set max-parallel greater than 1 for parallel builds"
+            )),
+            Err(error) => failures.push(format!(
+                "{display_path}: failed to parse max-parallel value '{value}': {error}"
+            )),
+        },
+        None => failures.push(format!(
+            "{display_path}: cross-compile job missing max-parallel configuration"
+        )),
+    }
+
+    match find_yaml_scalar(&section, "fail-fast") {
+        Some(value) if value.eq_ignore_ascii_case("false") => {}
+        Some(value) => failures.push(format!(
+            "{display_path}: cross-compile job must disable fail-fast to keep the matrix running in parallel (found '{value}')"
+        )),
+        None => failures.push(format!(
+            "{display_path}: cross-compile job missing fail-fast configuration"
+        )),
+    }
 }
 
 fn collect_matrix_platform_names(contents: &str) -> Vec<String> {
@@ -530,6 +571,108 @@ fn ensure_matrix_entry(
             "{display_path}: missing cross-compilation entry '{name}'"
         )),
     }
+}
+
+fn validate_ci_test_job(workspace: &Path, failures: &mut Vec<String>) -> TaskResult<()> {
+    let ci_path = workspace.join(".github").join("workflows").join("ci.yml");
+    let ci_contents = read_file(&ci_path)?;
+    let display_path = ci_path
+        .strip_prefix(workspace)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| ci_path.display().to_string());
+
+    match extract_job_section(&ci_contents, "test-linux") {
+        Some(section) => match find_yaml_scalar(&section, "runs-on") {
+            Some(value) if value == "ubuntu-latest" => {}
+            Some(value) => failures.push(format!(
+                "{display_path}: test-linux job must run on ubuntu-latest (found '{value}')"
+            )),
+            None => failures.push(format!(
+                "{display_path}: test-linux job missing runs-on configuration"
+            )),
+        },
+        None => failures.push(format!("{display_path}: missing test-linux job definition")),
+    }
+
+    for line in ci_contents.lines() {
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        if indent != 2 {
+            continue;
+        }
+
+        let trimmed = line[indent..].trim_end();
+        if trimmed.starts_with('#') || !trimmed.ends_with(':') {
+            continue;
+        }
+
+        let name = trimmed.trim_end_matches(':');
+        if name.starts_with("test-") && name != "test-linux" {
+            failures.push(format!(
+                "{display_path}: unexpected test job '{name}' (tests must run on Linux only)"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_job_section(contents: &str, job_name: &str) -> Option<String> {
+    let mut section_lines = Vec::new();
+    let mut collecting = false;
+    let mut job_indent = 0usize;
+    let target = format!("{job_name}:");
+
+    for line in contents.lines() {
+        let indent = line.chars().take_while(|c| *c == ' ').count();
+        let trimmed = line[indent..].trim_end();
+
+        if !collecting {
+            if indent == 2 && trimmed == target {
+                collecting = true;
+                job_indent = indent;
+                section_lines.push(line.to_string());
+            }
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            section_lines.push(line.to_string());
+            continue;
+        }
+
+        if indent <= job_indent && trimmed.ends_with(':') && !trimmed.starts_with('-') {
+            break;
+        }
+
+        section_lines.push(line.to_string());
+    }
+
+    if collecting {
+        Some(section_lines.join("\n"))
+    } else {
+        None
+    }
+}
+
+fn find_yaml_scalar(section: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    for line in section.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix(&prefix) {
+            let value = rest.split('#').next().unwrap_or("").trim();
+            if value.is_empty() {
+                return Some(String::new());
+            }
+            let value = value.trim_matches('"');
+            return Some(value.to_string());
+        }
+    }
+
+    None
 }
 
 fn expected_matrix_name(os: &str, arch: &str) -> Option<String> {
@@ -811,6 +954,8 @@ windows = ["x86_64"]
 jobs:
   cross-compile:
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
         platform:
           - name: linux-x86_64
@@ -896,6 +1041,8 @@ jobs:
 jobs:
   cross-compile:
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
         platform:
           - name: linux-x86_64
@@ -1009,6 +1156,8 @@ jobs:
 jobs:
   cross-compile:
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
         platform:
           - name: linux-x86_64
@@ -1113,6 +1262,8 @@ jobs:
 jobs:
   cross-compile:
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
         platform:
           - name: linux-x86_64
@@ -1197,6 +1348,207 @@ jobs:
     }
 
     #[test]
+    fn validate_ci_cross_compile_matrix_requires_parallelism_settings() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_parallelism_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("max-parallel")),
+            "expected max-parallel validation failure, got {failures:?}"
+        );
+        assert!(
+            failures.iter().any(|message| message.contains("fail-fast")),
+            "expected fail-fast validation failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_cross_compile_matrix_rejects_serial_parallelism() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace = std::env::temp_dir().join(format!("xtask_docs_ci_serial_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"name: CI
+
+jobs:
+  cross-compile:
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let branding = load_workspace_branding(&workspace).expect("branding");
+        let mut failures = Vec::new();
+        validate_ci_cross_compile_matrix(&workspace, &branding, &mut failures)
+            .expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("max-parallel greater than 1")),
+            "expected max-parallel range failure, got {failures:?}"
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("disable fail-fast")),
+            "expected fail-fast requirement failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
     fn validate_documents_accepts_workspace_branding() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
         validate_documents(&workspace).expect("documents validate");
@@ -1264,8 +1616,12 @@ windows = ["x86_64"]
         fs::write(
             workspace.join(".github").join("workflows").join("ci.yml"),
             r#"jobs:
+  test-linux:
+    runs-on: ubuntu-latest
   cross-compile:
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
         platform:
           - name: linux-x86_64
@@ -1302,5 +1658,208 @@ windows = ["x86_64"]
         }
 
         fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_test_job_requires_linux_runner() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_linux_runner_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"jobs:
+  test-linux:
+    runs-on: macos-latest
+  cross-compile:
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let mut failures = Vec::new();
+        validate_ci_test_job(&workspace, &mut failures).expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("test-linux job must run on ubuntu-latest")),
+            "expected linux-runner validation failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_test_job_rejects_additional_test_jobs() {
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("xtask_docs_ci_extra_tests_{unique_suffix}"));
+        if workspace.exists() {
+            fs::remove_dir_all(&workspace).expect("cleanup workspace");
+        }
+
+        write_manifest(&workspace);
+        write_ci_file(
+            &workspace,
+            r#"jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+  test-macos:
+    runs-on: macos-latest
+  cross-compile:
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          - name: darwin-x86_64
+            enabled: true
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: windows-x86_64
+            enabled: true
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+"#,
+        );
+
+        let mut failures = Vec::new();
+        validate_ci_test_job(&workspace, &mut failures).expect("validation completes");
+        assert!(
+            failures
+                .iter()
+                .any(|message| message.contains("unexpected test job 'test-macos'")),
+            "expected unexpected-test-job validation failure, got {failures:?}"
+        );
+
+        fs::remove_dir_all(&workspace).expect("cleanup workspace");
+    }
+
+    #[test]
+    fn validate_ci_test_job_accepts_workspace_configuration() {
+        let workspace = crate::workspace::workspace_root().expect("workspace root");
+        let mut failures = Vec::new();
+        validate_ci_test_job(&workspace, &mut failures).expect("validation succeeds");
+        assert!(
+            failures.is_empty(),
+            "unexpected CI test-job failures: {failures:?}"
+        );
     }
 }
