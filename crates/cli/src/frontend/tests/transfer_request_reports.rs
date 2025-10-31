@@ -6,7 +6,9 @@ fn transfer_request_reports_missing_operands() {
     let (code, stdout, stderr) = run_with_args([OsString::from(RSYNC)]);
 
     assert_eq!(code, 1);
-    assert!(stdout.is_empty());
+    let stdout_rendered = String::from_utf8(stdout).expect("usage banner utf8");
+    let expected_usage = format!("{}\n", clap_command(RSYNC).render_usage());
+    assert_eq!(stdout_rendered, expected_usage);
 
     let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
     assert!(rendered.contains("missing source operands"));
