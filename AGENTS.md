@@ -116,6 +116,12 @@ This document defines the internal actors (“agents”), their responsibilities
   so each responsibility stays below the hygiene limit. Future changes to file
   transfer behaviour must extend the appropriate helper module rather than
   reintroducing monolithic logic in a single file.
+- **Dir-merge parser decomposition**: The former
+  `crates/engine/src/local_copy/dir_merge/parse.rs` has been split into the
+  `parse/` module directory (`types.rs`, `line.rs`, `merge.rs`,
+  `dir_merge.rs`, `modifiers.rs`) so no single file exceeds the hygiene cap.
+  When extending dir-merge parsing, add helpers to the relevant focused module
+  instead of reassembling the original monolithic file.
 
 ---
 
