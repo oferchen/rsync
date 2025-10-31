@@ -4532,19 +4532,19 @@ fn copy_sources(
     options: LocalCopyOptions,
     handler: Option<&mut dyn LocalCopyRecordHandler>,
 ) -> Result<CopyOutcome, LocalCopyError> {
-    let destination_root = plan.destination.path().to_path_buf();
+    let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     let result = {
         let context = &mut context;
         (|| -> Result<(), LocalCopyError> {
-            let multiple_sources = plan.sources.len() > 1;
-            let destination_path = plan.destination.path();
+            let multiple_sources = plan.sources().len() > 1;
+            let destination_path = plan.destination_spec().path();
             let mut destination_state = query_destination_state(destination_path)?;
             if context.keep_dirlinks_enabled() && destination_state.symlink_to_dir {
                 destination_state.is_dir = true;
             }
 
-            if plan.destination.force_directory() {
+            if plan.destination_spec().force_directory() {
                 ensure_destination_directory(
                     destination_path,
                     &mut destination_state,
@@ -4561,11 +4561,11 @@ fn copy_sources(
             }
 
             let destination_behaves_like_directory =
-                destination_state.is_dir || plan.destination.force_directory();
+                destination_state.is_dir || plan.destination_spec().force_directory();
 
             let relative_enabled = context.relative_paths_enabled();
 
-            for source in &plan.sources {
+            for source in plan.sources() {
                 context.enforce_timeout()?;
                 let source_path = source.path();
                 let metadata_start = Instant::now();
