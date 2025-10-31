@@ -35,7 +35,7 @@ fn should_simulate_missing_tool(display: &str) -> bool {
     };
 
     entries
-        .split(|ch| matches!(ch, ',' | ';' | '|'))
+        .split(|ch| [',', ';', '|'].contains(&ch))
         .map(str::trim)
         .any(|value| !value.is_empty() && value == display)
 }
