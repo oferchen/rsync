@@ -107,7 +107,7 @@ fn candidate_is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         let mode = metadata.permissions().mode();
-        return mode & 0o111 != 0;
+        mode & 0o111 != 0
     }
 
     #[cfg(not(unix))]
