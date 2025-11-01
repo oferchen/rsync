@@ -7,9 +7,8 @@ use std::process::{Command as ProcessCommand, Stdio};
 use rsync_core::{
     branding::Brand,
     fallback::{
-        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV,
+        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
         describe_missing_fallback_binary, fallback_binary_available, fallback_override,
-        FallbackOverride,
     },
     message::Role,
     rsync_error,
