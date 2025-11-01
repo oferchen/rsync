@@ -96,8 +96,14 @@ jobs:
       - run: cargo build --release --bins
       - name: Install system rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
-      - name: oc-rsync → rsync.samba.org
-        run: ./target/release/oc-rsync rsync://rsync.samba.org/
+      # - name: oc-rsync → rsync.samba.org
+      #   run: ./target/release/oc-rsync rsync://rsync.samba.org/
+      - name: oc-rsync → download.samba.org (TLS/native)
+        run: ./target/release/oc-rsync rsyncs://download.samba.org/
+      - name: oc-rsync → download.samba.org:874 (TLS/native)
+        run: ./target/release/oc-rsync rsyncs://download.samba.org:874/
+      - name: oc-rsync → download.samba.org:874 (TLS/native, flag)
+        run: ./target/release/oc-rsync --tls rsync://download.samba.org:874/
       - name: rsync (system) → oc-rsyncd (local)
         shell: bash
         run: |
