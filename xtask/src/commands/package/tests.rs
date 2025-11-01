@@ -1,5 +1,6 @@
 #[cfg(test)]
-use super::build::resolve_cross_compiler_for_tests;
+use super::build::{resolve_cross_compiler_for_tests, resolve_tarball_cross_compilers_for_tests};
+use super::tarball::TarballSpec;
 use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
@@ -226,6 +227,47 @@ fn cross_compiler_resolution_falls_back_to_zig() {
     let override_path = PathBuf::from(&override_value.1);
     assert!(override_path.ends_with(zig_shim_name("aarch64-unknown-linux-gnu")));
     assert!(override_path.exists());
+}
+
+#[test]
+fn tarball_resolution_skips_targets_without_cross_tooling() {
+    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    env.set_str(
+        "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
+        "aarch64-linux-gnu-gcc,zig",
+    );
+
+    let specs = vec![
+        TarballSpec {
+            arch: "amd64",
+            target_triple: "x86_64-unknown-linux-gnu",
+        },
+        TarballSpec {
+            arch: "aarch64",
+            target_triple: "aarch64-unknown-linux-gnu",
+        },
+    ];
+
+    let resolved = resolve_tarball_cross_compilers_for_tests(workspace_root(), specs)
+        .expect("resolution succeeds");
+
+    assert_eq!(resolved.builds.len(), 1);
+    assert_eq!(
+        resolved.builds[0].spec.target_triple,
+        "x86_64-unknown-linux-gnu"
+    );
+    assert!(resolved.builds[0].linker.is_none());
+
+    assert_eq!(resolved.skipped.len(), 1);
+    assert_eq!(
+        resolved.skipped[0].spec.target_triple,
+        "aarch64-unknown-linux-gnu"
+    );
+    assert!(
+        resolved.skipped[0]
+            .message
+            .contains("aarch64-linux-gnu-gcc")
+    );
 }
 
 fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
