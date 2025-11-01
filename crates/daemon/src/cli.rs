@@ -8,7 +8,8 @@ use rsync_core::{
     branding::Brand,
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV,
-        describe_missing_fallback_binary, fallback_binary_available,
+        describe_missing_fallback_binary, fallback_binary_available, fallback_override,
+        FallbackOverride,
     },
     message::Role,
     rsync_error,
@@ -102,9 +103,19 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 }
 
 pub(super) fn fallback_binary_configured() -> bool {
+    if override_disables_fallback(DAEMON_FALLBACK_ENV)
+        || override_disables_fallback(CLIENT_FALLBACK_ENV)
+    {
+        return false;
+    }
+
     configured_fallback_binary()
         .map(|binary| fallback_binary_available(binary.as_os_str()))
         .unwrap_or(false)
+}
+
+fn override_disables_fallback(name: &str) -> bool {
+    matches!(fallback_override(name), Some(FallbackOverride::Disabled))
 }
 
 fn fallback_binary() -> OsString {
