@@ -6,8 +6,8 @@ use std::process::ExitCode;
 /// Runs the shared daemon entry point for every branded executable.
 ///
 /// Both daemon brands—the upstream-compatible service identified by
-/// [`rsync_core::version::DAEMON_PROGRAM_NAME`] and the oc-branded
-/// wrapper published as [`rsync_core::version::OC_DAEMON_PROGRAM_NAME`]—
+/// `rsync_core::version::DAEMON_PROGRAM_NAME` and the oc-branded
+/// wrapper published as `rsync_core::version::OC_DAEMON_PROGRAM_NAME`—
 /// call into this helper, keeping argument dispatch and status mapping
 /// consistent across binaries.
 #[must_use]
