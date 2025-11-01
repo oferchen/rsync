@@ -1,2 +1,5 @@
+[profile.default]
+build-bins = true
+
 [profile.default.package]
 graph = "workspace"
