@@ -29,6 +29,7 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 LimitNOFILE=16384
 UMask=0077
 
+# Intentionally omit legacy aliases (such as rsyncd.service) so oc-rsync can
+# be installed alongside upstream packages without unit-name conflicts.
 [Install]
 WantedBy=multi-user.target
-Alias=rsyncd.service

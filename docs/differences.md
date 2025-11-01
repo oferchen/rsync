@@ -82,7 +82,8 @@ referenced functionality ships and parity is verified by tests or goldens.
     that exercises upstream rsync releases. Packaging metadata for
     `cargo-deb`/`cargo-rpm` installs the canonical binaries together with the
     oc-rsync compatibility wrappers, a hardened `oc-rsyncd.service`
-    systemd unit (with a compatibility alias for `rsyncd.service`), and example
+    systemd unit that intentionally omits legacy aliases so it can coexist with
+    upstream packages, and example
     configuration files installed at `/etc/oc-rsyncd/oc-rsyncd.conf` and
     `/etc/oc-rsyncd/oc-rsyncd.secrets`; the GitHub Actions workflow builds
     `.deb`/`.rpm` artifacts and a CycloneDX SBOM for every push. Automated
