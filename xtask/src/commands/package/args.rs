@@ -15,6 +15,18 @@ pub struct PackageOptions {
     pub profile: Option<OsString>,
 }
 
+impl PackageOptions {
+    /// Returns package options that build all release artifacts.
+    pub fn release_all() -> Self {
+        Self {
+            build_deb: true,
+            build_rpm: true,
+            build_tarball: true,
+            profile: Some(OsString::from("release")),
+        }
+    }
+}
+
 /// Parses CLI arguments for the `package` command.
 pub fn parse_args<I>(args: I) -> TaskResult<PackageOptions>
 where
@@ -137,15 +149,7 @@ mod tests {
     #[test]
     fn parse_args_accepts_default_configuration() {
         let options = parse_args(std::iter::empty()).expect("parse succeeds");
-        assert_eq!(
-            options,
-            PackageOptions {
-                build_deb: true,
-                build_rpm: true,
-                build_tarball: true,
-                profile: Some(OsString::from("release")),
-            }
-        );
+        assert_eq!(options, PackageOptions::release_all());
     }
 
     #[test]
@@ -192,5 +196,14 @@ mod tests {
                 profile: Some(OsString::from("release")),
             }
         );
+    }
+
+    #[test]
+    fn release_all_returns_release_profile_with_all_targets() {
+        let options = PackageOptions::release_all();
+        assert!(options.build_deb);
+        assert!(options.build_rpm);
+        assert!(options.build_tarball);
+        assert_eq!(options.profile, Some(OsString::from("release")));
     }
 }
