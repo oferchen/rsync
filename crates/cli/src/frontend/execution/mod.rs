@@ -14,6 +14,8 @@ pub(crate) use compression::{
     CompressLevelArg, parse_bandwidth_limit, parse_compress_level, parse_compress_level_argument,
 };
 #[cfg(test)]
+pub(crate) use drive::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
+#[cfg(test)]
 pub(crate) use file_list::read_file_list_from_reader;
 pub(crate) use file_list::{load_file_list_operands, transfer_requires_remote};
 pub(crate) use flags::{

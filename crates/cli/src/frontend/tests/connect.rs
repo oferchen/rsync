@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use crate::frontend::execution::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
 
 #[test]
 fn connect_program_requires_remote_operands() {
@@ -20,10 +21,6 @@ fn connect_program_requires_remote_operands() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     let message = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(
-        message.contains(
-            "the --connect-program option may only be used when accessing an rsync daemon"
-        )
-    );
+    assert!(message.contains(CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE));
     assert!(!dest.exists());
 }
