@@ -68,23 +68,66 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
 
     if options.build_tarball {
         let specs = tarball::linux_tarball_specs(&branding)?;
-        let mut resolved_specs = Vec::with_capacity(specs.len());
-        for spec in specs {
-            let linker = resolve_cross_compiler(workspace, spec.target_triple)?;
-            resolved_specs.push((spec, linker));
+        let resolved = resolve_tarball_cross_compilers(workspace, specs)?;
+
+        if resolved.builds.is_empty() {
+            if let Some(skipped) = resolved.skipped.first() {
+                return Err(TaskError::ToolMissing(skipped.message.clone()));
+            }
+
+            return Err(TaskError::ToolMissing(String::from(
+                "no Linux tarball targets available for packaging",
+            )));
         }
-        for (spec, linker) in &resolved_specs {
+
+        for skipped in &resolved.skipped {
+            println!(
+                "Skipping {target} tar.gz distribution because cross-compilation tooling is unavailable: {message}",
+                target = skipped.spec.target_triple,
+                message = skipped.message
+            );
+        }
+
+        for build in &resolved.builds {
             build_workspace_binaries(
                 workspace,
                 &options.profile,
-                Some(spec.target_triple),
-                linker.as_ref(),
+                Some(build.spec.target_triple),
+                build.linker.as_ref(),
             )?;
-            tarball::build_tarball(workspace, &branding, &options.profile, spec)?;
+            tarball::build_tarball(workspace, &branding, &options.profile, &build.spec)?;
         }
     }
 
     Ok(())
+}
+
+fn resolve_tarball_cross_compilers(
+    workspace: &Path,
+    specs: Vec<tarball::TarballSpec>,
+) -> TaskResult<ResolvedTarballSpecs> {
+    let mut builds = Vec::with_capacity(specs.len());
+    let mut skipped = Vec::new();
+
+    for spec in specs {
+        match resolve_cross_compiler(workspace, spec.target_triple) {
+            Ok(linker) => builds.push(TarballBuild { spec, linker }),
+            Err(TaskError::ToolMissing(message)) => {
+                skipped.push(SkippedTarballSpec { spec, message })
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(ResolvedTarballSpecs { builds, skipped })
+}
+
+#[cfg(test)]
+pub(super) fn resolve_tarball_cross_compilers_for_tests(
+    workspace: &Path,
+    specs: Vec<tarball::TarballSpec>,
+) -> TaskResult<ResolvedTarballSpecs> {
+    resolve_tarball_cross_compilers(workspace, specs)
 }
 
 pub(super) fn build_workspace_binaries(
@@ -139,10 +182,28 @@ fn linker_env_var_name(target: &str) -> OsString {
     OsString::from(format!("CARGO_TARGET_{}_LINKER", normalized))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct LinkerOverride {
     env_var: OsString,
     value: OsString,
+}
+
+#[cfg_attr(test, derive(Debug))]
+pub(super) struct ResolvedTarballSpecs {
+    pub builds: Vec<TarballBuild>,
+    pub skipped: Vec<SkippedTarballSpec>,
+}
+
+#[cfg_attr(test, derive(Debug))]
+pub(super) struct TarballBuild {
+    pub spec: tarball::TarballSpec,
+    pub linker: Option<LinkerOverride>,
+}
+
+#[cfg_attr(test, derive(Debug))]
+pub(super) struct SkippedTarballSpec {
+    pub spec: tarball::TarballSpec,
+    pub message: String,
 }
 
 fn resolve_cross_compiler(workspace: &Path, target: &str) -> TaskResult<Option<LinkerOverride>> {
