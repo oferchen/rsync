@@ -1,21 +1,19 @@
 use super::*;
-use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+pub(super) use crate::test_env::{EnvGuard, ENV_LOCK};
+
 pub(super) const RSYNCD: &str = branding::daemon_program_name();
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
-
-pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) fn base_module(name: &str) -> ModuleDefinition {
     ModuleDefinition {
@@ -173,45 +171,6 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
     fs::set_permissions(path, permissions).expect("set script permissions");
 }
 
-#[allow(unsafe_code)]
-pub(super) struct EnvGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-#[allow(unsafe_code)]
-impl EnvGuard {
-    pub(super) fn set(key: &'static str, value: &OsStr) -> Self {
-        let previous = env::var_os(key);
-        unsafe {
-            env::set_var(key, value);
-        }
-        Self { key, previous }
-    }
-
-    pub(super) fn remove(key: &'static str) -> Self {
-        let previous = env::var_os(key);
-        unsafe {
-            env::remove_var(key);
-        }
-        Self { key, previous }
-    }
-}
-
-#[allow(unsafe_code)]
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.previous.take() {
-            unsafe {
-                env::set_var(self.key, value);
-            }
-        } else {
-            unsafe {
-                env::remove_var(self.key);
-            }
-        }
-    }
-}
 
 pub(super) fn connect_with_retries(port: u16) -> TcpStream {
     const INITIAL_BACKOFF: Duration = Duration::from_millis(20);
