@@ -1,7 +1,9 @@
 use rsync_core::version::{
     DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
 };
+use std::collections::BTreeSet;
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -104,13 +106,52 @@ fn binary_path(name: &str) -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let mut target_dir = env::current_exe().expect("current_exe should be available");
-    target_dir.pop();
-    if target_dir.ends_with("deps") {
-        target_dir.pop();
+    let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let current_exe = env::current_exe().expect("current_exe should be available");
+    let mut candidates = BTreeSet::new();
+
+    let mut directory = current_exe.parent();
+    while let Some(dir) = directory {
+        candidates.insert(dir.join(&binary_name));
+
+        if dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value == "target")
+        {
+            candidates.insert(dir.join("debug").join(&binary_name));
+            candidates.insert(dir.join("release").join(&binary_name));
+
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let entry_path = entry.path();
+                            candidates.insert(entry_path.join(&binary_name));
+                            candidates.insert(entry_path.join("debug").join(&binary_name));
+                            candidates.insert(entry_path.join("release").join(&binary_name));
+                        }
+                    }
+                }
+            }
+        }
+
+        directory = dir.parent();
     }
-    target_dir.push(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    target_dir
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    let mut fallback_dir = current_exe;
+    fallback_dir.pop();
+    if fallback_dir.ends_with("deps") {
+        fallback_dir.pop();
+    }
+    fallback_dir.push(binary_name);
+    fallback_dir
 }
 
 fn cargo_target_runner() -> Option<Vec<String>> {
