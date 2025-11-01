@@ -234,6 +234,21 @@ impl LimiterChange {
     /// ]);
     /// assert_eq!(summary, LimiterChange::Enabled);
     /// ```
+    ///
+    /// The helper also powers [`Iterator::collect`], allowing callers to gather
+    /// a sequence of changes directly into a consolidated [`LimiterChange`]:
+    ///
+    /// ```
+    /// use rsync_bandwidth::LimiterChange;
+    ///
+    /// let summary: LimiterChange = [
+    ///     LimiterChange::Updated,
+    ///     LimiterChange::Disabled,
+    /// ]
+    /// .into_iter()
+    /// .collect();
+    /// assert_eq!(summary, LimiterChange::Disabled);
+    /// ```
     pub fn combine_all<I>(changes: I) -> Self
     where
         I: IntoIterator<Item = Self>,
@@ -289,6 +304,14 @@ impl Ord for LimiterChange {
 impl PartialOrd for LimiterChange {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl FromIterator<LimiterChange> for LimiterChange {
+    /// Collapses an iterator of [`LimiterChange`] values into a single
+    /// representative variant.
+    fn from_iter<I: IntoIterator<Item = LimiterChange>>(iter: I) -> Self {
+        Self::combine_all(iter)
     }
 }
 

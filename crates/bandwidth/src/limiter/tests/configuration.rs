@@ -211,6 +211,22 @@ fn limiter_change_combine_all_matches_folded_combination() {
 }
 
 #[test]
+fn limiter_change_collect_collapses_iterator() {
+    let aggregated: LimiterChange = [
+        LimiterChange::Unchanged,
+        LimiterChange::Updated,
+        LimiterChange::Disabled,
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(aggregated, LimiterChange::Disabled);
+
+    let empty: LimiterChange = std::iter::empty().collect();
+    assert_eq!(empty, LimiterChange::Unchanged);
+}
+
+#[test]
 fn limiter_write_max_enforces_minimum_threshold() {
     let limiter = BandwidthLimiter::new(NonZeroU64::new(128).unwrap());
 
