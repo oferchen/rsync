@@ -1,0 +1,288 @@
+name: cross-compile
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: ""
+
+jobs:
+  cross-compile:
+    name: build ${{ matrix.platform.name }} (${{ matrix.platform.target }})
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        platform:
+          - name: linux-x86_64
+            enabled: true
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            package_linux: true
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            package_linux: true
+            generate_sbom: true
+
+          - name: darwin-x86_64
+            enabled: true
+            runner: macos-13
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            package_linux: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            runner: macos-14
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            package_linux: false
+            generate_sbom: true
+
+          - name: windows-x86_64
+            enabled: true
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            package_linux: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: true
+            runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            package_linux: false
+            generate_sbom: false
+          - name: windows-x86
+            enabled: false
+            runner: windows-latest
+            target: i686-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            package_linux: false
+            generate_sbom: false
+
+    runs-on: ${{ matrix.platform.runner }}
+
+    steps:
+      - name: Skip disabled target
+        if: ${{ !matrix.platform.enabled }}
+        run: echo "Platform '${{ matrix.platform.name }}' is disabled."
+
+      - uses: actions/checkout@v4
+        if: ${{ matrix.platform.enabled }}
+
+      - name: Setup Rust toolchain
+        if: ${{ matrix.platform.enabled }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.4
+        if: ${{ matrix.platform.enabled }}
+        continue-on-error: true
+
+      - name: Configure local sccache dir
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+
+      - name: Enable sccache wrapper if available (non-fatal)
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ matrix.platform.enabled }}
+        with:
+          shared-key: cross-${{ matrix.platform.name }}
+          target: ${{ matrix.platform.target }}
+
+      - name: Install Zig toolchain
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
+
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Install Ubuntu build deps
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') }}
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm fakeroot
+          version: 1
+
+      - name: Install cross GCC for aarch64 (Ubuntu)
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') && matrix.platform.needs_cross_gcc }}
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: gcc-aarch64-linux-gnu
+          version: 1
+
+      - name: Install cargo-deb & cargo-rpm
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-rpm
+
+      - name: Install cargo-cyclonedx (SBOM)
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+
+      - name: Build oc-rsync (dist, locked)
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin oc-rsync
+
+      - name: Build oc-rsyncd (dist, locked)
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        shell: bash
+        run: |
+          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin oc-rsyncd
+
+      - name: Build legacy rsync wrapper
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --features legacy-binaries --bin rsync
+
+      - name: Build legacy rsyncd wrapper
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        shell: bash
+        run: |
+          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --features legacy-binaries --bin rsyncd
+
+      - name: Build .deb (cargo-deb)
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo deb --profile dist --locked --target ${{ matrix.platform.target }} --no-strip
+          mkdir -p dist/${{ matrix.platform.name }}
+          cp -v target/${{ matrix.platform.target }}/debian/*.deb dist/${{ matrix.platform.name }}/
+
+      - name: Upload .deb artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.platform.name }}
+          path: dist/${{ matrix.platform.name }}/*.deb
+          if-no-files-found: error
+          retention-days: 10
+
+      - name: Build .rpm (cargo-rpm)
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rpmbuild --version
+          cargo rpm build -v --target ${{ matrix.platform.target }}
+          RPM_DIR="target/${{ matrix.platform.target }}/release/rpmbuild/RPMS"
+          mkdir -p dist/${{ matrix.platform.name }}
+          find "$RPM_DIR" -type f -name '*.rpm' -exec cp -v {} dist/${{ matrix.platform.name }}/ \;
+
+      - name: Upload .rpm artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.platform.name }}
+          path: dist/${{ matrix.platform.name }}/*.rpm
+          if-no-files-found: error
+          retention-days: 10
+
+      - name: Build tarball
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        env:
+          OC_RSYNC_PACKAGE_SKIP_BUILD: "1"
+        run: |
+          rm -f target/dist/*.tar.gz
+          cargo xtask package --tarball --release --tarball-target ${{ matrix.platform.target }}
+
+      - name: Upload tarball artifact
+        if: ${{ matrix.platform.enabled }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tar-${{ matrix.platform.name }}
+          path: target/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 10
+
+      - name: Generate target SBOM (best-effort)
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo cyclonedx --help >/dev/null 2>&1; then
+            cargo cyclonedx --format json --all-features \
+              --output target/${{ matrix.platform.target }}/dist/oc-rsync-${{ matrix.platform.name }}-sbom.json || true
+          fi
+
+      - name: Upload oc-rsync artifact
+        if: ${{ matrix.platform.enabled }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/dist/oc-rsync*
+          if-no-files-found: error
+          retention-days: 10
+
+      - name: Upload oc-rsyncd artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsyncd-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/dist/oc-rsyncd*
+          if-no-files-found: error
+          retention-days: 10
+
+      - name: sccache stats (best-effort)
+        if: always()
+        run: |
+          command -v sccache >/dev/null 2>&1 && sccache --show-stats || true

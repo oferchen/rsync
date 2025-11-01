@@ -40,7 +40,7 @@ fn check_for_unexpected_matrix_entries_reports_all_issues() {
     let mut failures = Vec::new();
 
     check_for_unexpected_matrix_entries(
-        ".github/workflows/ci.yml",
+        ".github/workflows/cross-compile.yml",
         &names,
         &expected_entries,
         &mut failures,
@@ -50,13 +50,13 @@ fn check_for_unexpected_matrix_entries_reports_all_issues() {
         failures,
         vec![
             String::from(
-                ".github/workflows/ci.yml: duplicate cross-compilation entry 'linux-x86_64'",
+                ".github/workflows/cross-compile.yml: duplicate cross-compilation entry 'linux-x86_64'",
             ),
             String::from(
-                ".github/workflows/ci.yml: unexpected cross-compilation entry 'unexpected'",
+                ".github/workflows/cross-compile.yml: unexpected cross-compilation entry 'unexpected'",
             ),
             String::from(
-                ".github/workflows/ci.yml: missing cross-compilation entry 'linux-aarch64'",
+                ".github/workflows/cross-compile.yml: missing cross-compilation entry 'linux-aarch64'",
             ),
         ],
     );

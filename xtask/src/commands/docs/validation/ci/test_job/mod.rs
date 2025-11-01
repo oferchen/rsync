@@ -4,7 +4,10 @@ use crate::error::TaskResult;
 use std::path::Path;
 
 pub(super) fn validate_ci_test_job(workspace: &Path, failures: &mut Vec<String>) -> TaskResult<()> {
-    let ci_path = workspace.join(".github").join("workflows").join("ci.yml");
+    let ci_path = workspace
+        .join(".github")
+        .join("workflows")
+        .join("test-linux.yml");
     let ci_contents = read_file(&ci_path)?;
     let display_path = ci_path
         .strip_prefix(workspace)
@@ -75,7 +78,7 @@ source = "https://github.com/oferchen/rsync"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
-windows = ["x86_64"]
+windows = ["x86_64", "aarch64"]
 "#;
 
     fn unique_workspace(prefix: &str) -> std::path::PathBuf {
@@ -97,7 +100,7 @@ windows = ["x86_64"]
     fn write_ci_file(workspace: &Path, contents: &str) {
         let workflows = workspace.join(".github").join("workflows");
         std::fs::create_dir_all(&workflows).expect("create workflows");
-        std::fs::write(workflows.join("ci.yml"), contents).expect("write ci workflow");
+        std::fs::write(workflows.join("test-linux.yml"), contents).expect("write ci workflow");
     }
 
     #[test]
@@ -113,68 +116,6 @@ windows = ["x86_64"]
             r#"jobs:
   test-linux:
     runs-on: macos-latest
-  cross-compile:
-    strategy:
-      fail-fast: false
-      max-parallel: 5
-      matrix:
-        platform:
-          - name: linux-x86_64
-            enabled: true
-            target: x86_64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: linux-aarch64
-            enabled: true
-            target: aarch64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: true
-            generate_sbom: true
-          - name: darwin-x86_64
-            enabled: true
-            target: x86_64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: darwin-aarch64
-            enabled: true
-            target: aarch64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: windows-x86_64
-            enabled: true
-            target: x86_64-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-x86
-            enabled: false
-            target: i686-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-aarch64
-            enabled: false
-            target: aarch64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
 "#,
         );
 
@@ -205,68 +146,6 @@ windows = ["x86_64"]
     runs-on: ubuntu-latest
   test-macos:
     runs-on: macos-latest
-  cross-compile:
-    strategy:
-      fail-fast: false
-      max-parallel: 5
-      matrix:
-        platform:
-          - name: linux-x86_64
-            enabled: true
-            target: x86_64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: linux-aarch64
-            enabled: true
-            target: aarch64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: true
-            generate_sbom: true
-          - name: darwin-x86_64
-            enabled: true
-            target: x86_64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: darwin-aarch64
-            enabled: true
-            target: aarch64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: windows-x86_64
-            enabled: true
-            target: x86_64-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-x86
-            enabled: false
-            target: i686-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-aarch64
-            enabled: false
-            target: aarch64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
 "#,
         );
 

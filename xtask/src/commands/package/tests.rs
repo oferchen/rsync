@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::build::{resolve_cross_compiler_for_tests, resolve_tarball_cross_compilers_for_tests};
-use super::tarball::TarballSpec;
+use super::tarball::{TarballPlatform, TarballSpec};
 use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
@@ -80,6 +80,7 @@ fn execute_with_no_targets_returns_success() {
             build_deb: false,
             build_rpm: false,
             build_tarball: false,
+            tarball_target: None,
             profile: None,
         },
     )
@@ -100,6 +101,7 @@ fn execute_reports_missing_cargo_deb_tool() {
             build_deb: true,
             build_rpm: false,
             build_tarball: false,
+            tarball_target: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         },
     )
@@ -132,6 +134,7 @@ fn execute_reports_missing_cargo_rpm_tool() {
             build_deb: false,
             build_rpm: true,
             build_tarball: false,
+            tarball_target: None,
             profile: Some(OsString::from("debug")),
         },
     )
@@ -156,6 +159,7 @@ fn execute_reports_missing_rpmbuild_tool() {
             build_deb: false,
             build_rpm: true,
             build_tarball: false,
+            tarball_target: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         },
     )
@@ -239,11 +243,15 @@ fn tarball_resolution_skips_targets_without_cross_tooling() {
 
     let specs = vec![
         TarballSpec {
+            platform: TarballPlatform::Linux,
             arch: "amd64",
+            metadata_arch: "x86_64",
             target_triple: "x86_64-unknown-linux-gnu",
         },
         TarballSpec {
+            platform: TarballPlatform::Linux,
             arch: "aarch64",
+            metadata_arch: "aarch64",
             target_triple: "aarch64-unknown-linux-gnu",
         },
     ];

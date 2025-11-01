@@ -26,7 +26,7 @@ source = "https://github.com/oferchen/rsync"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
-windows = ["x86_64"]
+windows = ["x86_64", "aarch64"]
 "#;
 
 fn write_manifest(workspace: &Path) {
@@ -40,7 +40,7 @@ fn write_manifest(workspace: &Path) {
 fn write_ci_file(workspace: &Path, contents: &str) {
     let workflows = workspace.join(".github").join("workflows");
     fs::create_dir_all(&workflows).expect("create workflows");
-    fs::write(workflows.join("ci.yml"), contents).expect("write ci workflow");
+    fs::write(workflows.join("cross-compile.yml"), contents).expect("write ci workflow");
 }
 
 fn unique_workspace(prefix: &str) -> std::path::PathBuf {

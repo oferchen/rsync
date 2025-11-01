@@ -45,16 +45,19 @@ This document defines the internal actors (“agents”), their responsibilities
   `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
   scoped guard in `crates/daemon/src/daemon/sections/tests.rs`) so variables
   are restored even if the test panics.
-- **CI workflow contract**: `.github/workflows/ci.yml` runs the primary test
-  job (`test-linux`) exclusively on Linux and a dedicated cross-compilation
-  matrix covering Linux (x86_64/aarch64), macOS (x86_64/aarch64), and Windows
-  (x86_64). The Windows x86 and Windows aarch64 entries remain in the matrix as
-  disabled placeholders for future enablement. Automation inside CI steps must
-  rely on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or
-  Python scripts, and additional validation/packaging logic should be surfaced
-  via `xtask` subcommands so both local and CI runs stay in sync.
+- **CI workflow contract**: `.github/workflows/ci.yml` orchestrates the
+  reusable workflows in `.github/workflows/lint.yml`,
+  `.github/workflows/test-linux.yml`, and
+  `.github/workflows/cross-compile.yml`. The test workflow continues to run
+  exclusively on Linux, while the cross-compilation workflow builds Linux
+  (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
+  artifacts. The Windows x86 entry remains in the matrix as a disabled
+  placeholder for future enablement. Automation inside CI steps must rely on
+  Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or Python
+  scripts, and additional validation/packaging logic should be surfaced via
+  `xtask` subcommands so both local and CI runs stay in sync.
 - **Documentation validation guardrail**: `cargo xtask docs --validate` now
-  asserts that `.github/workflows/ci.yml` mirrors the cross-compilation
+  asserts that `.github/workflows/cross-compile.yml` mirrors the cross-compilation
   platforms declared under `[workspace.metadata.oc_rsync.cross_compile]`, keeps
   the Windows x86/aarch64 entries present but disabled, and verifies that each
   matrix entry advertises the expected `target`, `build_command`,
