@@ -12,10 +12,12 @@ autobins = false
 [[bin]]
 name = "rsync"
 path = "src/bin/rsync.rs"
+required-features = ["legacy-binaries"]
 
 [[bin]]
 name = "rsyncd"
 path = "src/bin/rsyncd.rs"
+required-features = ["legacy-binaries"]
 
 [[bin]]
 name = "oc-rsync"
@@ -27,6 +29,7 @@ path = "src/bin/oc-rsyncd.rs"
 
 [features]
 default = []
+legacy-binaries = []
 sd-notify = ["rsync-daemon/sd-notify"]
 
 [dependencies]
@@ -103,6 +106,7 @@ priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
+features = ["legacy-binaries"]
 assets = [
     ["target/release/rsync", "/usr/libexec/oc-rsync/rsync", "755"],
     ["target/release/rsyncd", "/usr/libexec/oc-rsync/rsyncd", "755"],
@@ -248,7 +252,7 @@ fi
 '''
 
 [package.metadata.rpm.cargo]
-buildflags = ["--release"]
+buildflags = ["--release", "--features", "legacy-binaries"]
 
 [package.metadata.rpm.targets]
 rsync = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
