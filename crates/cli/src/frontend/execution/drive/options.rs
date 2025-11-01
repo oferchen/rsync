@@ -243,7 +243,7 @@ where
 
     let compress_disabled =
         inputs.no_compress || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
-    let compress_level_cli = match (compress_level_setting, compress_disabled) {
+    let compress_level_cli = match (compress_level_setting.as_ref(), compress_disabled) {
         (Some(CompressLevelArg::Level(level)), false) => {
             Some(OsString::from(level.get().to_string()))
         }
@@ -263,16 +263,27 @@ where
         }
     };
 
-    let mut compression_setting = CompressionSetting::default();
-    if let Some(value) = inputs.compress_level {
-        match parse_compress_level_argument(value.as_os_str()) {
-            Ok(setting) => {
-                compression_setting = setting;
-                compress = !setting.is_disabled();
-            }
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+    let compression_setting = match compress_level_setting {
+        Some(CompressLevelArg::Disable) => CompressionSetting::disabled(),
+        Some(CompressLevelArg::Level(level)) => {
+            CompressionSetting::level(CompressionLevel::precise(level))
         }
-    }
+        None => {
+            if let Some(value) = inputs.compress_level {
+                match parse_compress_level_argument(value.as_os_str()) {
+                    Ok(setting) => {
+                        compress = !setting.is_disabled();
+                        setting
+                    }
+                    Err(message) => {
+                        return SettingsOutcome::Exit(fail_with_message(message, stderr));
+                    }
+                }
+            } else {
+                CompressionSetting::default()
+            }
+        }
+    };
 
     SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
