@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
 /// Returns the set of candidate executable paths derived from `binary`.
 ///
 /// When the supplied value contains path separators the helper returns a
@@ -125,11 +128,7 @@ fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
     }
 
     if let Some(path_ext) = env::var_os("PATHEXT") {
-        for ext in path_ext.split(';') {
-            if !ext.trim().is_empty() {
-                exts.push(OsString::from(ext));
-            }
-        }
+        push_pathext_segments(&path_ext, &mut exts);
     }
 
     if exts.is_empty() {
@@ -140,6 +139,49 @@ fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
     }
 
     exts
+}
+
+#[cfg(windows)]
+fn push_pathext_segments(value: &OsStr, exts: &mut Vec<OsString>) {
+    let units: Vec<u16> = value.encode_wide().collect();
+    if units.is_empty() {
+        return;
+    }
+
+    let mut start = 0;
+    for (idx, unit) in units.iter().enumerate() {
+        if *unit == b';' as u16 {
+            push_segment(&units[start..idx], exts);
+            start = idx + 1;
+        }
+    }
+
+    push_segment(&units[start..], exts);
+}
+
+#[cfg(windows)]
+fn push_segment(segment: &[u16], exts: &mut Vec<OsString>) {
+    let mut start = 0;
+    let mut end = segment.len();
+
+    while start < end && is_windows_whitespace(segment[start]) {
+        start += 1;
+    }
+
+    while end > start && is_windows_whitespace(segment[end - 1]) {
+        end -= 1;
+    }
+
+    if start == end {
+        return;
+    }
+
+    exts.push(OsString::from_wide(&segment[start..end]));
+}
+
+#[cfg(windows)]
+fn is_windows_whitespace(unit: u16) -> bool {
+    matches!(unit, b' ' as u16 | b'\t' as u16 | b'\n' as u16 | b'\r' as u16)
 }
 
 #[cfg(test)]
