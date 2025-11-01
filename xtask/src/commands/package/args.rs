@@ -2,6 +2,9 @@ use crate::error::{TaskError, TaskResult};
 use crate::util::is_help_flag;
 use std::ffi::OsString;
 
+/// Optimised cargo profile used for release packaging.
+pub const DIST_PROFILE: &str = "dist";
+
 /// Options accepted by the `package` command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageOptions {
@@ -16,13 +19,14 @@ pub struct PackageOptions {
 }
 
 impl PackageOptions {
-    /// Returns package options that build all release artifacts.
+    /// Returns package options that build all release artifacts using the
+    /// optimised distribution profile.
     pub fn release_all() -> Self {
         Self {
             build_deb: true,
             build_rpm: true,
             build_tarball: true,
-            profile: Some(OsString::from("release")),
+            profile: Some(OsString::from(DIST_PROFILE)),
         }
     }
 }
@@ -36,7 +40,7 @@ where
     let mut build_deb = false;
     let mut build_rpm = false;
     let mut build_tarball = false;
-    let mut profile = Some(OsString::from("release"));
+    let mut profile = Some(OsString::from(DIST_PROFILE));
     let mut profile_explicit = false;
 
     while let Some(arg) = args.next() {
@@ -63,7 +67,7 @@ where
             set_profile_option(
                 &mut profile,
                 &mut profile_explicit,
-                Some(OsString::from("release")),
+                Some(OsString::from(DIST_PROFILE)),
             )?;
             continue;
         }
@@ -138,7 +142,7 @@ fn set_profile_option(
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the Linux tar.gz distributions\n  --release        Build using the release profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
+        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the Linux tar.gz distributions\n  --release        Build using the dist profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
     )
 }
 
@@ -193,17 +197,17 @@ mod tests {
                 build_deb: false,
                 build_rpm: false,
                 build_tarball: true,
-                profile: Some(OsString::from("release")),
+                profile: Some(OsString::from(DIST_PROFILE)),
             }
         );
     }
 
     #[test]
-    fn release_all_returns_release_profile_with_all_targets() {
+    fn release_all_returns_dist_profile_with_all_targets() {
         let options = PackageOptions::release_all();
         assert!(options.build_deb);
         assert!(options.build_rpm);
         assert!(options.build_tarball);
-        assert_eq!(options.profile, Some(OsString::from("release")));
+        assert_eq!(options.profile, Some(OsString::from(DIST_PROFILE)));
     }
 }

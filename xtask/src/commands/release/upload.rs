@@ -1,3 +1,4 @@
+use crate::commands::package::DIST_PROFILE;
 use crate::error::{TaskError, TaskResult};
 use crate::util::ensure_command_available;
 use crate::workspace::WorkspaceBranding;
@@ -126,7 +127,7 @@ fn collect_debian_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> Ta
 }
 
 fn collect_rpm_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
-    for profile in ["release", "debug"] {
+    for profile in [DIST_PROFILE, "release", "debug"] {
         let rpms_dir = workspace
             .join("target")
             .join(profile)
@@ -364,7 +365,9 @@ mod tests {
             .join("target/debian")
             .join("oc-rsync_3.4.1-rust_amd64.deb");
         let rpm = workspace
-            .join("target/release/rpmbuild/RPMS/x86_64")
+            .join("target")
+            .join(DIST_PROFILE)
+            .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
 
         for path in [&tarball, &deb, &rpm] {
@@ -393,7 +396,9 @@ mod tests {
             .join("target/debian")
             .join("oc-rsync_3.4.1-rust_amd64.deb");
         let rpm = workspace
-            .join("target/release/rpmbuild/RPMS/x86_64")
+            .join("target")
+            .join(DIST_PROFILE)
+            .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
 
         for path in [&tarball, &deb, &rpm] {
