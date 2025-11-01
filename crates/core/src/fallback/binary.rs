@@ -181,9 +181,14 @@ fn push_segment(segment: &[u16], exts: &mut Vec<OsString>) {
 
 #[cfg(windows)]
 fn is_windows_whitespace(unit: u16) -> bool {
+    const SPACE: u16 = b' ' as u16;
+    const TAB: u16 = b'\t' as u16;
+    const NEWLINE: u16 = b'\n' as u16;
+    const CARRIAGE_RETURN: u16 = b'\r' as u16;
+
     matches!(
         unit,
-        b' ' as u16 | b'\t' as u16 | b'\n' as u16 | b'\r' as u16
+        SPACE | TAB | NEWLINE | CARRIAGE_RETURN
     )
 }
 
