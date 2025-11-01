@@ -1,9 +1,8 @@
 #!/bin/sh
 set -e
 
-if command -v update-alternatives >/dev/null 2>&1; then
-    update-alternatives --install /usr/bin/rsync rsync /usr/libexec/oc-rsync/rsync 50
-    update-alternatives --install /usr/bin/rsyncd rsyncd /usr/libexec/oc-rsync/rsyncd 50
-fi
+# No post-install actions are required when co-installing alongside
+# upstream rsync packages. The oc-rsync binaries ship under unique
+# names so they can coexist without touching /usr/bin/rsync.
 
 exit 0
