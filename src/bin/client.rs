@@ -80,4 +80,26 @@ mod tests {
             assert!(!stderr.is_empty(), "invalid flag should emit diagnostics");
         }
     }
+
+    #[test]
+    fn empty_argument_list_defaults_to_usage_error() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with(std::iter::empty::<OsString>(), &mut stdout, &mut stderr);
+
+        assert_eq!(exit, ExitCode::FAILURE);
+
+        let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
+        assert!(stdout_text.contains("Usage:"));
+        assert!(
+            stdout_text.contains(PROGRAM_NAME),
+            "usage banner should mention the canonical program name"
+        );
+
+        let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr_text.contains("missing source operands"),
+            "diagnostic should explain that operands are required"
+        );
+    }
 }
