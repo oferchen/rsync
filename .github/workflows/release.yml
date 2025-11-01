@@ -97,10 +97,13 @@ jobs:
           tar -C dist -czf "dist/${out}.tar.gz" "${out}"
 
           if command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 "dist/${out}.tar.gz" > "dist/${out}.sha256"
+            checksum_cmd=(shasum -a 256)
           else
-            sha256sum "dist/${out}.tar.gz" > "dist/${out}.sha256"
+            checksum_cmd=(sha256sum)
           fi
+
+          checksum="$(${checksum_cmd[@]} "dist/${out}.tar.gz" | awk '{print $1}')"
+          printf "%s  %s\n" "${checksum}" "${out}.tar.gz" > "dist/${out}.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -125,8 +128,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p upload
-          find dist-agg -type f -name '*.tar.gz' -exec cp -v {} upload/ \;
-          find dist-agg -type f -name '*.sha256' -exec cat {} \; | sort > upload/SHA256SUMS
+          while IFS= read -r -d '' tarball; do
+            cp -v "${tarball}" upload/
+          done < <(find dist-agg -type f -name '*.tar.gz' -print0)
+
+          sha_files=()
+          while IFS= read -r -d '' sha_file; do
+            dest="upload/$(basename "${sha_file}")"
+            cp -v "${sha_file}" "${dest}"
+            sha_files+=("${dest}")
+          done < <(find dist-agg -type f -name '*.sha256' -print0)
+
+          if [[ ${#sha_files[@]} -eq 0 ]]; then
+            echo "no checksum files were found in downloaded artifacts" >&2
+            exit 1
+          fi
+
+          temp_file="$(mktemp)"
+          trap 'rm -f "${temp_file}"' EXIT
+          for sha in "${sha_files[@]}"; do
+            cat "${sha}" >> "${temp_file}"
+          done
+          sort "${temp_file}" > upload/SHA256SUMS
 
           pushd upload >/dev/null
           if command -v shasum >/dev/null 2>&1; then
@@ -141,6 +164,7 @@ jobs:
         with:
           files: |
             upload/*.tar.gz
+            upload/*.sha256
             upload/SHA256SUMS
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
