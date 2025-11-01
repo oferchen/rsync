@@ -123,6 +123,10 @@ maintainer-scripts = "packaging/deb"
 [package.metadata.rpm]
 package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
+assets = [
+    { source = "../packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
+    { source = "../packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
+]
 
 [package.metadata.rpm.files."../packaging/systemd/oc-rsyncd.service"]
 path = "/usr/lib/systemd/system/oc-rsyncd.service"
