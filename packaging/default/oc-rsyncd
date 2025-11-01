@@ -9,3 +9,9 @@
 # OC_RSYNC_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets
 # RSYNCD_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets
 # RSYNCD_ARGS="--max-sessions 16"
+
+# Set this to "yes" (or export OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES=1 while
+# installing) to register oc-rsync with update-alternatives. The packaging
+# scripts skip registration by default so the upstream rsync binaries can
+# remain in place when both packages are installed.
+# OC_RSYNC_REGISTER_ALTERNATIVES=yes

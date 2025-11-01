@@ -78,7 +78,11 @@ This document freezes the mandatory scope that must reach green status before th
 ## Packaging & Artifacts
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
+- amd64 (`x86_64-unknown-linux-gnu`) tarball at `target/dist/oc-rsync-<version>-x86_64-unknown-linux-gnu.tar.gz`
 - Systemd `oc-rsyncd.service` unit that avoids legacy aliases so upstream packages can coexist on the same host
+- Packaging scripts skip update-alternatives registration unless explicitly
+  enabled, allowing upstream `rsync` packages to remain installed alongside
+  oc-rsync without file conflicts
 - Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 - Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) produced by the CI matrix (Windows x86/aarch64 targets remain disabled to avoid conflicting toolchains)

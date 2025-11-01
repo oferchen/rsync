@@ -160,6 +160,22 @@ Generate a CycloneDX SBOM for packaging via the workspace helper:
 cargo run -p xtask -- sbom
 ```
 
+## Packaging
+
+The workspace `package` task builds Debian and RPM packages alongside an amd64
+tarball distribution:
+
+```bash
+cargo run -p xtask -- package
+```
+
+The command produces `target/dist/oc-rsync-<version>-x86_64-unknown-linux-gnu.tar.gz`
+in addition to the package formats. The install scripts deliberately skip
+`update-alternatives` registration so upstream `rsync` packages can remain
+installed side by side; opt in by setting `OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES=1`
+during installation or by defining `OC_RSYNC_REGISTER_ALTERNATIVES=yes` in
+`/etc/default/oc-rsyncd` before reconfiguring the package.
+
 Collect code coverage reports (enforced at ≥95% line coverage in CI) by first
 installing the `cargo-llvm-cov` subcommand and the LLVM tooling component. The
 binary name is **`cargo-llvm-cov`**, not `llvm-cov`:
