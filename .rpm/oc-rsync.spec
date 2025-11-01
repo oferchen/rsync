@@ -1,6 +1,7 @@
 %define __spec_install_post %{nil}
 %define __os_install_post %{_dbpath}/brp-compress
 %define debug_package %{nil}
+%{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
 Name: oc-rsync
 Summary: Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)
