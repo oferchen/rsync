@@ -100,9 +100,6 @@ fn scan_rust_file_for_placeholders(path: &Path) -> TaskResult<Vec<PlaceholderFin
         }
 
         line_number += 1;
-        if line_number == 1 {
-            continue;
-        }
 
         let line = buffer.trim_end_matches(['\r', '\n']);
         let panic_index = find_subsequence(line.as_bytes(), &PANIC_MACRO_BYTES);
@@ -430,14 +427,22 @@ mod tests {
     }
 
     #[test]
-    fn scan_ignores_first_line() {
-        let path = unique_temp_path("first_line_ignored");
-        let note = ["TO", "DO"].concat();
-        let content = format!("// {note}: license\nfn ok() {{}}\n");
+    fn scan_detects_first_line_placeholder() {
+        let path = unique_temp_path("first_line_placeholder");
+        let marker = ["FIX", "ME"].concat();
+        let content = format!("// {marker}: license\nfn ok() {{}}\n");
         fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
-        assert!(findings.is_empty());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 1);
+        let marker_lower = marker.to_ascii_lowercase();
+        assert!(
+            findings[0]
+                .snippet
+                .to_ascii_lowercase()
+                .contains(&marker_lower)
+        );
     }
 
     #[test]
