@@ -57,4 +57,5 @@ mod extract;
 mod mismatched_fields;
 mod missing_entries;
 mod parallelism;
+mod platform_names;
 mod unexpected_entries;
