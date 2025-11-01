@@ -5,6 +5,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, Read};
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 /// Returns `true` when the argument requests help output.
@@ -46,6 +49,47 @@ fn map_command_error(error: io::Error, program: &str, install_hint: &str) -> Tas
     } else {
         TaskError::Io(error)
     }
+}
+
+/// Ensures that the provided command is present in `PATH`.
+pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult<()> {
+    if should_simulate_missing_tool(program) {
+        return Err(TaskError::ToolMissing(format!(
+            "{program} is unavailable; {install_hint}"
+        )));
+    }
+
+    let path_value = env::var_os("PATH").unwrap_or_default();
+    let mut candidates = vec![OsString::from(program)];
+    let exe_suffix = env::consts::EXE_SUFFIX;
+    if !exe_suffix.is_empty() && !program.ends_with(exe_suffix) {
+        candidates.push(OsString::from(format!("{program}{exe_suffix}")));
+    }
+
+    for directory in env::split_paths(&path_value) {
+        for candidate in &candidates {
+            let path = directory.join(candidate);
+            match fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {
+                    #[cfg(unix)]
+                    {
+                        if metadata.permissions().mode() & 0o111 == 0 {
+                            continue;
+                        }
+                    }
+
+                    return Ok(());
+                }
+                Ok(_) | Err(_) => {
+                    continue;
+                }
+            }
+        }
+    }
+
+    Err(TaskError::ToolMissing(format!(
+        "{program} is unavailable; {install_hint}"
+    )))
 }
 
 /// Runs `cargo` with the supplied arguments and maps failures to [`TaskError`].

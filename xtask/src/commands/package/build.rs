@@ -1,6 +1,6 @@
 use super::{AMD64_TARBALL_TARGET, PackageOptions, tarball};
 use crate::error::TaskResult;
-use crate::util::run_cargo_tool;
+use crate::util::{ensure_command_available, run_cargo_tool};
 use crate::workspace::load_workspace_branding;
 use std::env;
 use std::ffi::OsString;
@@ -32,6 +32,10 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
 
     if options.build_rpm {
         println!("Building RPM package with cargo rpm build");
+        ensure_command_available(
+            "rpmbuild",
+            "install the rpmbuild tooling (for example, `dnf install rpm-build` or `apt install rpm`)",
+        )?;
         let mut rpm_args = vec![OsString::from("rpm"), OsString::from("build")];
         if let Some(profile) = &options.profile {
             rpm_args.push(OsString::from("--profile"));
