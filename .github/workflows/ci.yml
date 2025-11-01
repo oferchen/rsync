@@ -149,27 +149,76 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
             # Kept in the matrix for future enablement once toolchains stabilise.
-    runs-on: ${{ matrix.os }}
+    env:
+      CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
     steps:
+      - name: Skip disabled target
+        if: ${{ !matrix.platform.enabled }}
+        run: echo "Platform '${{ matrix.platform.name }}' is disabled for this release line."
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ matrix.platform.enabled }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ matrix.platform.enabled }}
         with:
-          targets: ${{ matrix.target }}
+          toolchain: 1.87
+          components: rust-src
+          targets: ${{ matrix.platform.target }}
+          cache: true
+      - name: Ensure target std is installed
+        if: ${{ matrix.platform.enabled }}
+        run: rustup target add ${{ matrix.platform.target }}
       - uses: Swatinem/rust-cache@v2
+        if: ${{ matrix.platform.enabled }}
         with:
-          cache-all-crates: true
-      - name: Install Zig & cargo-zigbuild (Linux-musl only)
-        if: matrix.use_zig == true
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install cargo-zigbuild --locked
-      - name: Build (release, no tests)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${{ matrix.use_zig }}" == "true" ]]; then
-            cargo zigbuild --release --target "${{ matrix.target }}" --bins
-          else
-            cargo build --release --target "${{ matrix.target }}" --bins
-          fi
+          shared-key: cross-${{ matrix.platform.name }}
+          target: ${{ matrix.platform.target }}
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        if: ${{ matrix.platform.enabled }}
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
+          version: 1
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        if: ${{ matrix.platform.enabled && matrix.platform.needs_cross_gcc }}
+        with:
+          packages: gcc-aarch64-linux-gnu
+          version: 1
+      - name: Install Zig toolchain
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - name: Install cargo-cyclonedx
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+      - name: Build oc-rsync
+        if: ${{ matrix.platform.enabled }}
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
+      - name: Build oc-rsyncd
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
+      - name: Generate target SBOM
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.platform.target }}/release/oc-rsync-${{ matrix.platform.name }}-sbom.json
+      - name: Upload oc-rsync artifact
+        if: ${{ matrix.platform.enabled }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/release/oc-rsync*
+          if-no-files-found: error
+      - name: Upload oc-rsyncd artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsyncd-${{ matrix.platform.name }}
+          path: target/${{ matrix.platform.target }}/release/oc-rsyncd*
+          if-no-files-found: error
