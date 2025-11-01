@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+ZIG_BIN=${ZIG:-zig}
+if ! command -v "$ZIG_BIN" >/dev/null 2>&1; then
+    echo "error: zig is required to emulate aarch64-unknown-linux-gnu-gcc" >&2
+    echo "hint: install zig or set the ZIG environment variable to its path" >&2
+    exit 127
+fi
+exec "$ZIG_BIN" cc -target aarch64-linux-gnu "$@"
