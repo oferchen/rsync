@@ -165,3 +165,14 @@ pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
 
     daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
 }
+
+pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
+    let trimmed = reason.trim();
+    let detail = if trimmed.is_empty() {
+        "daemon refused module listing".to_string()
+    } else {
+        format!("daemon refused module listing: {trimmed}")
+    };
+
+    daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
+}

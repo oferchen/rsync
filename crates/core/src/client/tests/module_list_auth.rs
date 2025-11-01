@@ -95,6 +95,26 @@ fn run_module_list_reports_access_denied() {
     handle.join().expect("server thread");
 }
 
+#[test]
+fn run_module_list_reports_daemon_listing_unavailable() {
+    let responses = vec!["@RSYNCD: --daemon not enabled--\n", "@RSYNCD: EXIT\n"];
+    let (addr, handle) = spawn_stub_daemon(responses);
+
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()).expect("address"),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+
+    let error = run_module_list(request).expect_err("daemon refusal should surface");
+    assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    let rendered = error.message().to_string();
+    assert!(rendered.contains("daemon refused module listing"));
+    assert!(rendered.contains("--daemon not enabled--"));
+
+    handle.join().expect("server thread");
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<OsString>,
