@@ -122,16 +122,22 @@ conf-files = [
 [package.metadata.rpm]
 package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
-assets = [
-    { path = "target/release/rsync", dest = "/usr/bin/rsync", mode = "0755" },
-    { path = "target/release/rsyncd", dest = "/usr/bin/rsyncd", mode = "0755" },
-    { path = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
-    { path = "target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
-    { path = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
-    { path = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
-    { path = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
-    { path = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
-]
+
+[package.metadata.rpm.files."../packaging/systemd/oc-rsyncd.service"]
+path = "/usr/lib/systemd/system/oc-rsyncd.service"
+mode = "0644"
+
+[package.metadata.rpm.files."../packaging/etc/oc-rsyncd/oc-rsyncd.conf"]
+path = "/etc/oc-rsyncd/oc-rsyncd.conf"
+mode = "0644"
+
+[package.metadata.rpm.files."../packaging/etc/oc-rsyncd/oc-rsyncd.secrets"]
+path = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+mode = "0600"
+
+[package.metadata.rpm.files."../packaging/default/oc-rsyncd"]
+path = "/etc/default/oc-rsyncd"
+mode = "0644"
 
 [package.metadata.rpm.cargo]
 buildflags = ["--release"]
