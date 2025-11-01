@@ -6,8 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Avoid cross-workflow pileups and branch collisions
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -16,36 +17,53 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Make sccache deterministic and safe in CI
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: ""   # set dynamically if sccache comes up
 
 jobs:
   lint:
     name: fmt + clippy (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --no-deps
+        with:
+          # Reuse cache between lint/test/build
+          shared-key: "linux-lint-core"
+
+      - name: rustfmt (check)
+        run: cargo fmt --all -- --check
+
+      - name: clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
 
   test-linux:
-    name: tests (Linux only)
+    name: tests (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     needs: [lint]
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
 
       # Optional, non-fatal sccache using local disk (no GHA backend)
       - uses: mozilla-actions/sccache-action@v0.0.4
         continue-on-error: true
+
       - name: Configure local sccache dir
         shell: bash
         run: |
           echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+
       - name: Enable sccache wrapper if available (non-fatal)
         shell: bash
         run: |
@@ -56,78 +74,26 @@ jobs:
           fi
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "linux-test-core"
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
           tool: nextest
-      - name: Build (debug)
-        run: cargo build --workspace --all-features
-      - name: Unit tests
-        run: cargo nextest run --workspace --all-features --no-capture
 
-  # interop-linux:
-  #   name: interop smoke (Linux only)
-  #   runs-on: ubuntu-latest
-  #   needs: [test-linux]
-  #   timeout-minutes: 15
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: dtolnay/rust-toolchain@stable
+      - name: Build (debug, locked)
+        run: cargo build --workspace --all-features --locked
 
-  #     # Optional, non-fatal sccache using local disk (no GHA backend)
-  #     - uses: mozilla-actions/sccache-action@v0.0.4
-  #       continue-on-error: true
-  #     - name: Configure local sccache dir
-  #       shell: bash
-  #       run: |
-  #         echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
-  #         echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
-  #     - name: Enable sccache wrapper if available (non-fatal)
-  #       shell: bash
-  #       run: |
-  #         if command -v sccache >/dev/null 2>&1; then
-  #           sccache --start-server || true
-  #           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-  #           sccache --show-stats || true
-  #         fi
+      - name: Unit tests (nextest)
+        run: cargo nextest run --workspace --all-features --no-capture --locked
 
-  #     - uses: Swatinem/rust-cache@v2
-  #     - run: cargo build --release --bins
-  #     - name: Install system rsync
-  #       run: sudo apt-get update && sudo apt-get install -y rsync
-  #     # - name: oc-rsync → rsync.samba.org
-  #     #   run: ./target/release/oc-rsync rsync://rsync.samba.org/
-  #     - name: oc-rsync → download.samba.org (TLS/native)
-  #       run: ./target/release/oc-rsync rsyncs://download.samba.org/
-  #     - name: oc-rsync → download.samba.org:874 (TLS/native)
-  #       run: ./target/release/oc-rsync rsyncs://download.samba.org:874/
-  #     - name: oc-rsync → download.samba.org:874 (TLS/native, flag)
-  #       run: ./target/release/oc-rsync --tls rsync://download.samba.org:874/
-  #     - name: rsync (system) → oc-rsyncd (local)
-  #       shell: bash
-  #       run: |
-  #         set -euo pipefail
-  #         work="${RUNNER_TEMP}/interop"
-  #         mkdir -p "${work}/module" "${work}/dst"
-  #         printf "hello\n" > "${work}/module/hello.txt"
-  #         cat > "${work}/oc-rsyncd.conf" <<'CONF'
-  #         pid file = oc-rsyncd.pid
-  #         use chroot = no
-  #         [mod]
-  #             path = REPLACE_PATH
-  #             read only = false
-  #         CONF
-  #         sed -i "s#REPLACE_PATH#${work}/module#g" "${work}/oc-rsyncd.conf"
-  #         ./target/release/oc-rsyncd --config "${work}/oc-rsyncd.conf" --port 8730 &
-  #         srv_pid=$!
-  #         trap "kill ${srv_pid} || true" EXIT
-  #         sleep 1
-  #         rsync rsync://127.0.0.1:8730/mod/hello.txt "${work}/dst/hello.txt"
-  #         diff -u "${work}/module/hello.txt" "${work}/dst/hello.txt"
+      - name: sccache stats (best-effort)
+        if: always()
+        run: |
+          command -v sccache >/dev/null 2>&1 && sccache --show-stats || true
 
   cross-compile:
-    # Compile on all supported platforms (no tests, no tar.gz here).
     name: build ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     needs: [lint]
     strategy:
@@ -144,6 +110,7 @@ jobs:
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: false
+            package_linux: true
             generate_sbom: true
           - name: linux-aarch64
             enabled: true
@@ -153,8 +120,10 @@ jobs:
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: true
+            package_linux: true
             generate_sbom: true
-          # macOS native
+
+          # macOS native (zigbuild makes universal setup painless)
           - name: darwin-x86_64
             enabled: true
             runner: macos-13
@@ -163,6 +132,7 @@ jobs:
             build_daemon: true
             uses_zig: true
             needs_cross_gcc: false
+            package_linux: false
             generate_sbom: true
           - name: darwin-aarch64
             enabled: true
@@ -172,26 +142,31 @@ jobs:
             build_daemon: true
             uses_zig: true
             needs_cross_gcc: false
+            package_linux: false
             generate_sbom: true
-          # Windows GNU
+
+          # Windows: prefer MSVC for fewer toolchain edge-cases with zig
           - name: windows-x86_64
             enabled: true
             runner: windows-latest
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
             needs_cross_gcc: false
+            package_linux: false
             generate_sbom: false
-          # Windows placeholders (disabled for now)
+
+          # Placeholders (disabled)
           - name: windows-x86
             enabled: false
             runner: windows-latest
-            target: i686-pc-windows-gnu
+            target: i686-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
             needs_cross_gcc: false
+            package_linux: false
             generate_sbom: false
           - name: windows-aarch64
             enabled: false
@@ -201,7 +176,9 @@ jobs:
             build_daemon: false
             uses_zig: true
             needs_cross_gcc: false
+            package_linux: false
             generate_sbom: false
+
     runs-on: ${{ matrix.platform.runner }}
 
     steps:
@@ -218,16 +195,18 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
-      # Optional, non-fatal sccache using local disk (no GHA backend)
+      # Optional sccache (non-fatal)
       - uses: mozilla-actions/sccache-action@v0.0.4
         if: ${{ matrix.platform.enabled }}
         continue-on-error: true
+
       - name: Configure local sccache dir
         if: ${{ matrix.platform.enabled }}
         shell: bash
         run: |
           echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+
       - name: Enable sccache wrapper if available (non-fatal)
         if: ${{ matrix.platform.enabled }}
         shell: bash
@@ -248,6 +227,7 @@ jobs:
         if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
         uses: goto-bus-stop/setup-zig@v2
         with:
+          # 0.11 is widely available across hosted runners
           version: 0.11.0
 
       - name: Install cargo-zigbuild
@@ -282,13 +262,12 @@ jobs:
         with:
           tool: cargo-cyclonedx
 
-      # ===== Linux packaging (.deb / .rpm) in CI =====
+      # ===== Linux packaging (.deb / .rpm) =====
       - name: Build .deb (cargo-deb)
         if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
         shell: bash
         run: |
           set -euo pipefail
-          # Build Debian package from crate metadata; binaries auto-installed to /usr/bin
           cargo deb --profile dist --locked --target ${{ matrix.platform.target }} --no-strip
           mkdir -p dist/${{ matrix.platform.name }}
           cp -v target/${{ matrix.platform.target }}/debian/*.deb dist/${{ matrix.platform.name }}/
@@ -300,13 +279,13 @@ jobs:
           name: deb-${{ matrix.platform.name }}
           path: dist/${{ matrix.platform.name }}/*.deb
           if-no-files-found: error
+          retention-days: 10
 
       - name: Build .rpm (cargo-rpm)
         if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
         shell: bash
         run: |
           set -euo pipefail
-          # Ensure rpmbuild is present (from 'rpm' package) and build all bins per Cargo.toml
           rpmbuild --version
           cargo rpm build -v --target ${{ matrix.platform.target }}
           RPM_DIR="target/${{ matrix.platform.target }}/release/rpmbuild/RPMS"
@@ -320,14 +299,15 @@ jobs:
           name: rpm-${{ matrix.platform.name }}
           path: dist/${{ matrix.platform.name }}/*.rpm
           if-no-files-found: error
+          retention-days: 10
       # ===== end Linux packaging =====
 
-      - name: Build oc-rsync
+      - name: Build oc-rsync (release, locked)
         if: ${{ matrix.platform.enabled }}
         shell: bash
         run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
 
-      - name: Build oc-rsyncd
+      - name: Build oc-rsyncd (release, locked)
         if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
         shell: bash
         run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
@@ -351,6 +331,7 @@ jobs:
             target/${{ matrix.platform.target }}/release/oc-rsync
             target/${{ matrix.platform.target }}/release/oc-rsync.exe
           if-no-files-found: error
+          retention-days: 10
 
       - name: Upload oc-rsyncd artifact
         if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
@@ -361,4 +342,9 @@ jobs:
             target/${{ matrix.platform.target }}/release/oc-rsyncd
             target/${{ matrix.platform.target }}/release/oc-rsyncd.exe
           if-no-files-found: error
+          retention-days: 10
 
+      - name: sccache stats (best-effort)
+        if: always()
+        run: |
+          command -v sccache >/dev/null 2>&1 && sccache --show-stats || true
