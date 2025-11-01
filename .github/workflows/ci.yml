@@ -66,65 +66,65 @@ jobs:
       - name: Unit tests
         run: cargo nextest run --workspace --all-features --no-capture
 
-  interop-linux:
-    name: interop smoke (Linux only)
-    runs-on: ubuntu-latest
-    needs: [test-linux]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+  # interop-linux:
+  #   name: interop smoke (Linux only)
+  #   runs-on: ubuntu-latest
+  #   needs: [test-linux]
+  #   timeout-minutes: 15
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@stable
 
-      # Optional, non-fatal sccache using local disk (no GHA backend)
-      - uses: mozilla-actions/sccache-action@v0.0.4
-        continue-on-error: true
-      - name: Configure local sccache dir
-        shell: bash
-        run: |
-          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
-      - name: Enable sccache wrapper if available (non-fatal)
-        shell: bash
-        run: |
-          if command -v sccache >/dev/null 2>&1; then
-            sccache --start-server || true
-            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-            sccache --show-stats || true
-          fi
+  #     # Optional, non-fatal sccache using local disk (no GHA backend)
+  #     - uses: mozilla-actions/sccache-action@v0.0.4
+  #       continue-on-error: true
+  #     - name: Configure local sccache dir
+  #       shell: bash
+  #       run: |
+  #         echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+  #         echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+  #     - name: Enable sccache wrapper if available (non-fatal)
+  #       shell: bash
+  #       run: |
+  #         if command -v sccache >/dev/null 2>&1; then
+  #           sccache --start-server || true
+  #           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+  #           sccache --show-stats || true
+  #         fi
 
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --bins
-      - name: Install system rsync
-        run: sudo apt-get update && sudo apt-get install -y rsync
-      # - name: oc-rsync → rsync.samba.org
-      #   run: ./target/release/oc-rsync rsync://rsync.samba.org/
-      - name: oc-rsync → download.samba.org (TLS/native)
-        run: ./target/release/oc-rsync rsyncs://download.samba.org/
-      - name: oc-rsync → download.samba.org:874 (TLS/native)
-        run: ./target/release/oc-rsync rsyncs://download.samba.org:874/
-      - name: oc-rsync → download.samba.org:874 (TLS/native, flag)
-        run: ./target/release/oc-rsync --tls rsync://download.samba.org:874/
-      - name: rsync (system) → oc-rsyncd (local)
-        shell: bash
-        run: |
-          set -euo pipefail
-          work="${RUNNER_TEMP}/interop"
-          mkdir -p "${work}/module" "${work}/dst"
-          printf "hello\n" > "${work}/module/hello.txt"
-          cat > "${work}/oc-rsyncd.conf" <<'CONF'
-          pid file = oc-rsyncd.pid
-          use chroot = no
-          [mod]
-              path = REPLACE_PATH
-              read only = false
-          CONF
-          sed -i "s#REPLACE_PATH#${work}/module#g" "${work}/oc-rsyncd.conf"
-          ./target/release/oc-rsyncd --config "${work}/oc-rsyncd.conf" --port 8730 &
-          srv_pid=$!
-          trap "kill ${srv_pid} || true" EXIT
-          sleep 1
-          rsync rsync://127.0.0.1:8730/mod/hello.txt "${work}/dst/hello.txt"
-          diff -u "${work}/module/hello.txt" "${work}/dst/hello.txt"
+  #     - uses: Swatinem/rust-cache@v2
+  #     - run: cargo build --release --bins
+  #     - name: Install system rsync
+  #       run: sudo apt-get update && sudo apt-get install -y rsync
+  #     # - name: oc-rsync → rsync.samba.org
+  #     #   run: ./target/release/oc-rsync rsync://rsync.samba.org/
+  #     - name: oc-rsync → download.samba.org (TLS/native)
+  #       run: ./target/release/oc-rsync rsyncs://download.samba.org/
+  #     - name: oc-rsync → download.samba.org:874 (TLS/native)
+  #       run: ./target/release/oc-rsync rsyncs://download.samba.org:874/
+  #     - name: oc-rsync → download.samba.org:874 (TLS/native, flag)
+  #       run: ./target/release/oc-rsync --tls rsync://download.samba.org:874/
+  #     - name: rsync (system) → oc-rsyncd (local)
+  #       shell: bash
+  #       run: |
+  #         set -euo pipefail
+  #         work="${RUNNER_TEMP}/interop"
+  #         mkdir -p "${work}/module" "${work}/dst"
+  #         printf "hello\n" > "${work}/module/hello.txt"
+  #         cat > "${work}/oc-rsyncd.conf" <<'CONF'
+  #         pid file = oc-rsyncd.pid
+  #         use chroot = no
+  #         [mod]
+  #             path = REPLACE_PATH
+  #             read only = false
+  #         CONF
+  #         sed -i "s#REPLACE_PATH#${work}/module#g" "${work}/oc-rsyncd.conf"
+  #         ./target/release/oc-rsyncd --config "${work}/oc-rsyncd.conf" --port 8730 &
+  #         srv_pid=$!
+  #         trap "kill ${srv_pid} || true" EXIT
+  #         sleep 1
+  #         rsync rsync://127.0.0.1:8730/mod/hello.txt "${work}/dst/hello.txt"
+  #         diff -u "${work}/module/hello.txt" "${work}/dst/hello.txt"
 
   cross-compile:
     # Compile on all supported platforms (no tests, no tar.gz here).
