@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        if command -v update-alternatives >/dev/null 2>&1; then
+            update-alternatives --remove rsync /usr/libexec/oc-rsync/rsync || true
+            update-alternatives --remove rsyncd /usr/libexec/oc-rsync/rsyncd || true
+        fi
+        ;;
+    upgrade|failed-upgrade)
+        ;;
+    *)
+        ;;
+esac
+
+exit 0

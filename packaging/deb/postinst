@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if command -v update-alternatives >/dev/null 2>&1; then
+    update-alternatives --install /usr/bin/rsync rsync /usr/libexec/oc-rsync/rsync 50
+    update-alternatives --install /usr/bin/rsyncd rsyncd /usr/libexec/oc-rsync/rsyncd 50
+fi
+
+exit 0
