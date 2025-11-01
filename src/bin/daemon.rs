@@ -5,9 +5,11 @@ use std::process::ExitCode;
 
 /// Runs the shared daemon entry point for every branded executable.
 ///
-/// The canonical `rsyncd` binary and the `oc-rsyncd` compatibility
-/// wrapper both forward to this helper so argument dispatch and status
-/// mapping stay consistent across brands.
+/// Both daemon brands—the upstream-compatible service identified by
+/// [`rsync_core::version::DAEMON_PROGRAM_NAME`] and the oc-branded
+/// wrapper published as [`rsync_core::version::OC_DAEMON_PROGRAM_NAME`]—
+/// call into this helper, keeping argument dispatch and status mapping
+/// consistent across binaries.
 #[must_use]
 pub fn run_with<I, Out, Err>(args: I, stdout: &mut Out, stderr: &mut Err) -> ExitCode
 where
