@@ -120,80 +120,110 @@ jobs:
           rsync rsync://127.0.0.1:8730/mod/hello.txt "${work}/dst/hello.txt"
           diff -u "${work}/module/hello.txt" "${work}/dst/hello.txt"
 
-  build-all-platforms:
+  cross-compile:
     # Compile on all supported platforms (no tests, no tar.gz here).
-    name: build ${{ matrix.name }} (${{ matrix.target }})
+    name: build ${{ matrix.platform.name }} (${{ matrix.platform.target }})
     needs: [lint]
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
-        include:
+        platform:
           # Linux GNU
           - name: linux-x86_64
             enabled: true
-            os: ubuntu-latest
+            runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            build_command: build
             build_daemon: true
+            uses_zig: false
             needs_cross_gcc: false
             generate_sbom: true
           - name: linux-aarch64
             enabled: true
-            os: ubuntu-latest
+            runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            build_command: build
             build_daemon: true
+            uses_zig: false
             needs_cross_gcc: true
             generate_sbom: true
           # macOS native
           - name: darwin-x86_64
             enabled: true
-            os: macos-13
+            runner: macos-13
             target: x86_64-apple-darwin
+            build_command: zigbuild
             build_daemon: true
+            uses_zig: true
             needs_cross_gcc: false
             generate_sbom: true
           - name: darwin-aarch64
             enabled: true
-            os: macos-14
+            runner: macos-14
             target: aarch64-apple-darwin
+            build_command: zigbuild
             build_daemon: true
+            uses_zig: true
             needs_cross_gcc: false
             generate_sbom: true
-          # Windows MSVC
+          # Windows GNU
           - name: windows-x86_64
             enabled: true
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
             build_daemon: false
+            uses_zig: true
             needs_cross_gcc: false
             generate_sbom: false
-    runs-on: ${{ matrix.os }}
+          # Windows placeholders (disabled for now)
+          - name: windows-x86
+            enabled: false
+            runner: windows-latest
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+    runs-on: ${{ matrix.platform.runner }}
 
     steps:
       - name: Skip disabled target
-        if: ${{ !matrix.enabled }}
-        run: echo "Platform '${{ matrix.name }}' is disabled."
+        if: ${{ !matrix.platform.enabled }}
+        run: echo "Platform '${{ matrix.platform.name }}' is disabled."
 
       - uses: actions/checkout@v4
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
 
       - name: Setup Rust toolchain
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
 
       # Optional, non-fatal sccache using local disk (no GHA backend)
       - uses: mozilla-actions/sccache-action@v0.0.4
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         continue-on-error: true
       - name: Configure local sccache dir
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         shell: bash
         run: |
           echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
           echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
       - name: Enable sccache wrapper if available (non-fatal)
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         shell: bash
         run: |
           if command -v sccache >/dev/null 2>&1; then
@@ -203,68 +233,80 @@ jobs:
           fi
 
       - uses: Swatinem/rust-cache@v2
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         with:
-          shared-key: cross-${{ matrix.name }}
-          target: ${{ matrix.target }}
+          shared-key: cross-${{ matrix.platform.name }}
+          target: ${{ matrix.platform.target }}
+
+      - name: Install Zig toolchain
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
+
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
 
       - name: Install Ubuntu build deps
-        if: ${{ matrix.enabled && startsWith(matrix.os, 'ubuntu') }}
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') }}
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
           version: 1
 
       - name: Install cross GCC for aarch64 (Ubuntu)
-        if: ${{ matrix.enabled && startsWith(matrix.os, 'ubuntu') && matrix.needs_cross_gcc }}
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') && matrix.platform.needs_cross_gcc }}
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: gcc-aarch64-linux-gnu
           version: 1
 
       - name: Install cargo-cyclonedx (SBOM)
-        if: ${{ matrix.enabled && matrix.generate_sbom }}
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-cyclonedx
 
       - name: Build oc-rsync
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         shell: bash
-        run: cargo --locked build --release --target ${{ matrix.target }} --bin oc-rsync
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
 
       - name: Build oc-rsyncd
-        if: ${{ matrix.enabled && matrix.build_daemon }}
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
         shell: bash
-        run: cargo --locked build --release --target ${{ matrix.target }} --bin oc-rsyncd
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
 
       - name: Generate target SBOM (best-effort)
-        if: ${{ matrix.enabled && matrix.generate_sbom }}
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
         shell: bash
         run: |
           set -euo pipefail
           if cargo cyclonedx --help >/dev/null 2>&1; then
             cargo cyclonedx --format json --all-features \
-              --output target/${{ matrix.target }}/release/oc-rsync-${{ matrix.name }}-sbom.json || true
+              --output target/${{ matrix.platform.target }}/release/oc-rsync-${{ matrix.platform.name }}-sbom.json || true
           fi
 
       - name: Upload oc-rsync artifact
-        if: ${{ matrix.enabled }}
+        if: ${{ matrix.platform.enabled }}
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.name }}
+          name: oc-rsync-${{ matrix.platform.name }}
           path: |
-            target/${{ matrix.target }}/release/oc-rsync
-            target/${{ matrix.target }}/release/oc-rsync.exe
+            target/${{ matrix.platform.target }}/release/oc-rsync
+            target/${{ matrix.platform.target }}/release/oc-rsync.exe
           if-no-files-found: error
 
       - name: Upload oc-rsyncd artifact
-        if: ${{ matrix.enabled && matrix.build_daemon }}
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsyncd-${{ matrix.name }}
+          name: oc-rsyncd-${{ matrix.platform.name }}
           path: |
-            target/${{ matrix.target }}/release/oc-rsyncd
-            target/${{ matrix.target }}/release/oc-rsyncd.exe
+            target/${{ matrix.platform.target }}/release/oc-rsyncd
+            target/${{ matrix.platform.target }}/release/oc-rsyncd.exe
           if-no-files-found: error
 
