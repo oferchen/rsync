@@ -1,4 +1,3 @@
-use super::{AMD64_TARBALL_ARCH, AMD64_TARBALL_TARGET};
 use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use flate2::Compression;
@@ -9,15 +8,57 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tar::{Builder, EntryType, Header, HeaderMode};
 
-pub(super) fn build_amd64_tarball(
+/// Linux tarball specification derived from workspace metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct TarballSpec {
+    /// Architecture label embedded in the output artifact name.
+    pub arch: &'static str,
+    /// Cargo compilation target triple used to locate binaries.
+    pub target_triple: &'static str,
+}
+
+/// Returns tarball specifications for each Linux architecture declared in the
+/// workspace metadata.
+pub(super) fn linux_tarball_specs(branding: &WorkspaceBranding) -> TaskResult<Vec<TarballSpec>> {
+    let linux_arches = branding.cross_compile.get("linux").ok_or_else(|| {
+        TaskError::Validation(String::from(
+            "missing linux entry in [workspace.metadata.oc_rsync.cross_compile]",
+        ))
+    })?;
+
+    let mut specs = Vec::with_capacity(linux_arches.len());
+    for arch in linux_arches {
+        let spec = match arch.as_str() {
+            "x86_64" => TarballSpec {
+                arch: "amd64",
+                target_triple: "x86_64-unknown-linux-gnu",
+            },
+            "aarch64" => TarballSpec {
+                arch: "aarch64",
+                target_triple: "aarch64-unknown-linux-gnu",
+            },
+            other => {
+                return Err(TaskError::Validation(format!(
+                    "unsupported linux tarball architecture '{other}' declared in workspace metadata"
+                )));
+            }
+        };
+        specs.push(spec);
+    }
+
+    Ok(specs)
+}
+
+pub(super) fn build_tarball(
     workspace: &Path,
     branding: &WorkspaceBranding,
     profile: &Option<OsString>,
+    spec: &TarballSpec,
 ) -> TaskResult<()> {
     let profile_name = tarball_profile_name(profile);
     let target_dir = workspace
         .join("target")
-        .join(AMD64_TARBALL_TARGET)
+        .join(spec.target_triple)
         .join(&profile_name);
 
     let binaries = [
@@ -37,12 +78,13 @@ pub(super) fn build_amd64_tarball(
 
     let root_name = format!(
         "{}-{}-{}",
-        branding.client_bin, branding.rust_version, AMD64_TARBALL_ARCH
+        branding.client_bin, branding.rust_version, spec.arch
     );
     let tarball_path = dist_dir.join(format!("{root_name}.tar.gz"));
     println!(
-        "Building amd64 tar.gz distribution at {}",
-        tarball_path.display()
+        "Building {arch} tar.gz distribution at {path}",
+        arch = spec.arch,
+        path = tarball_path.display()
     );
 
     let tarball_file = File::create(&tarball_path).map_err(|error| {
@@ -217,4 +259,76 @@ fn append_file_entry<W: Write>(
     builder.append(&header, &mut file)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn branding_with_linux_arches(arches: &[&str]) -> WorkspaceBranding {
+        let mut cross_compile = BTreeMap::new();
+        cross_compile.insert(
+            String::from("linux"),
+            arches.iter().map(|arch| arch.to_string()).collect(),
+        );
+
+        WorkspaceBranding {
+            brand: String::from("oc"),
+            upstream_version: String::from("3.4.1"),
+            rust_version: String::from("3.4.1-rust"),
+            protocol: 32,
+            client_bin: String::from("oc-rsync"),
+            daemon_bin: String::from("oc-rsyncd"),
+            legacy_client_bin: String::from("rsync"),
+            legacy_daemon_bin: String::from("rsyncd"),
+            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
+            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
+            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
+            legacy_daemon_config_dir: PathBuf::from("/etc"),
+            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
+            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
+            source: String::from("https://example.invalid"),
+            cross_compile,
+        }
+    }
+
+    #[test]
+    fn linux_tarball_specs_accepts_supported_architectures() {
+        let branding = branding_with_linux_arches(&["x86_64", "aarch64"]);
+        let specs = linux_tarball_specs(&branding).expect("spec extraction succeeds");
+        assert_eq!(
+            specs,
+            vec![
+                TarballSpec {
+                    arch: "amd64",
+                    target_triple: "x86_64-unknown-linux-gnu",
+                },
+                TarballSpec {
+                    arch: "aarch64",
+                    target_triple: "aarch64-unknown-linux-gnu",
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn linux_tarball_specs_rejects_unknown_architecture() {
+        let branding = branding_with_linux_arches(&["sparc64"]);
+        let error = linux_tarball_specs(&branding).unwrap_err();
+        assert!(
+            matches!(error, TaskError::Validation(message) if message.contains("unsupported linux tarball architecture"))
+        );
+    }
+
+    #[test]
+    fn linux_tarball_specs_require_linux_entry() {
+        let mut branding = branding_with_linux_arches(&[]);
+        branding.cross_compile.clear();
+        let error = linux_tarball_specs(&branding).unwrap_err();
+        assert!(
+            matches!(error, TaskError::Validation(message) if message.contains("missing linux entry"))
+        );
+    }
 }
