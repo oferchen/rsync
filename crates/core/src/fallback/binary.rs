@@ -186,10 +186,7 @@ fn is_windows_whitespace(unit: u16) -> bool {
     const NEWLINE: u16 = b'\n' as u16;
     const CARRIAGE_RETURN: u16 = b'\r' as u16;
 
-    matches!(
-        unit,
-        SPACE | TAB | NEWLINE | CARRIAGE_RETURN
-    )
+    matches!(unit, SPACE | TAB | NEWLINE | CARRIAGE_RETURN)
 }
 
 #[cfg(test)]
