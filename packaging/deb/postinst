@@ -33,6 +33,10 @@ load_defaults() {
 }
 
 should_register_alternatives() {
+    if is_truthy "${OC_RSYNC_PACKAGE_DISABLE_ALTERNATIVES:-}"; then
+        return 1
+    fi
+
     if [ -n "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES:-}" ]; then
         if is_truthy "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES}"; then
             return 0

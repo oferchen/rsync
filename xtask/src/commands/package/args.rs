@@ -9,7 +9,7 @@ pub struct PackageOptions {
     pub build_deb: bool,
     /// Whether to build the RPM package.
     pub build_rpm: bool,
-    /// Whether to build the amd64 tarball distribution.
+    /// Whether to build the Linux tarball distributions.
     pub build_tarball: bool,
     /// Optional profile override.
     pub profile: Option<OsString>,
@@ -138,7 +138,7 @@ fn set_profile_option(
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the amd64 tar.gz distribution\n  --release        Build using the release profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
+        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the Linux tar.gz distributions\n  --release        Build using the release profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
     )
 }
 

@@ -1,4 +1,4 @@
-use super::{AMD64_TARBALL_TARGET, PackageOptions, tarball};
+use super::{PackageOptions, tarball};
 use crate::error::TaskResult;
 use crate::util::{ensure_command_available, probe_cargo_tool, run_cargo_tool};
 use crate::workspace::load_workspace_branding;
@@ -60,8 +60,11 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     }
 
     if options.build_tarball {
-        build_workspace_binaries(workspace, &options.profile, Some(AMD64_TARBALL_TARGET))?;
-        tarball::build_amd64_tarball(workspace, &branding, &options.profile)?;
+        let specs = tarball::linux_tarball_specs(&branding)?;
+        for spec in &specs {
+            build_workspace_binaries(workspace, &options.profile, Some(spec.target_triple))?;
+            tarball::build_tarball(workspace, &branding, &options.profile, spec)?;
+        }
     }
 
     Ok(())
