@@ -219,10 +219,19 @@ pub fn run_module_list_with_password_and_options(
             continue;
         }
 
+        if !acknowledged && !line.starts_with(LEGACY_DAEMON_PREFIX) {
+            pre_ack_messages.push(line.clone());
+            if !suppress_motd {
+                motd.push(line);
+            }
+            continue;
+        }
+
         if line.starts_with(LEGACY_DAEMON_PREFIX) {
             match parse_legacy_daemon_message(&line) {
                 Ok(LegacyDaemonMessage::Ok) => {
                     acknowledged = true;
+                    pre_ack_messages.clear();
                     continue;
                 }
                 Ok(LegacyDaemonMessage::Exit) => break,
