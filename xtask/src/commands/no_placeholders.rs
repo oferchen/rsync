@@ -444,8 +444,10 @@ mod tests {
     fn scan_detects_placeholder_inside_multiline_panic() {
         let path = unique_temp_path("panic_multiline");
         let todo = ["TO", "DO"].concat();
-        let content =
-            format!("fn explode() {{\n    panic!(\n        \"{todo}: revisit\"\n    );\n}}\n");
+        let content = format!(
+            "fn explode() {{\n    panic!(\n        \"{}: revisit\"\n    );\n}}\n",
+            todo
+        );
         fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
