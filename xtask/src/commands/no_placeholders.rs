@@ -244,8 +244,9 @@ struct PanicTracker {
     state: PanicState,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 enum PanicState {
+    #[default]
     Inactive,
     AwaitingDelimiter {
         block_comment_depth: u32,
@@ -254,12 +255,6 @@ enum PanicState {
         delimiter: PanicDelimiter,
         depth: i32,
     },
-}
-
-impl Default for PanicState {
-    fn default() -> Self {
-        PanicState::Inactive
-    }
 }
 
 impl PanicTracker {
