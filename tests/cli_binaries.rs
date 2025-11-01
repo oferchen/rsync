@@ -84,14 +84,13 @@ fn binary_command(name: &str) -> Command {
         panic!("failed to locate {name}: {}", binary.display());
     }
 
-    if let Some(mut runner) = cargo_target_runner() {
-        let runner_binary = runner
-            .get(0)
-            .cloned()
+    if let Some(runner) = cargo_target_runner() {
+        let mut runner_iter = runner.into_iter();
+        let runner_binary = runner_iter
+            .next()
             .unwrap_or_else(|| panic!("{name} runner command is empty"));
-        runner.remove(0);
         let mut command = Command::new(runner_binary);
-        command.args(runner);
+        command.args(runner_iter);
         command.arg(&binary);
         command
     } else {
@@ -251,17 +250,17 @@ mod split_shell_words_tests {
 
     #[test]
     fn detects_unterminated_single_quotes() {
-        assert!(matches!(split_shell_words("cmd 'unterminated"), Err(_)));
+        assert!(split_shell_words("cmd 'unterminated").is_err());
     }
 
     #[test]
     fn detects_unterminated_double_quotes() {
-        assert!(matches!(split_shell_words("cmd \"unterminated"), Err(_)));
+        assert!(split_shell_words("cmd \"unterminated").is_err());
     }
 
     #[test]
     fn detects_trailing_backslash() {
         let input = format!("cmd {}", '\\');
-        assert!(matches!(split_shell_words(&input), Err(_)));
+        assert!(split_shell_words(&input).is_err());
     }
 }
