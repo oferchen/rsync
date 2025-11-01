@@ -42,8 +42,8 @@ rm -rf %{buildroot}
 %defattr(-,root,root,-)
 %{_bindir}/oc-rsync
 %{_bindir}/oc-rsyncd
-%{_bindir}/rsync
-%{_bindir}/rsyncd
+%{_libexecdir}/oc-rsync/rsync
+%{_libexecdir}/oc-rsync/rsyncd
 %{_unitdir}/oc-rsyncd.service
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.conf
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.secrets
