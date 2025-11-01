@@ -36,11 +36,15 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             "rpmbuild",
             "install the rpmbuild tooling (for example, `dnf install rpm-build` or `apt install rpm`)",
         )?;
-        let mut rpm_args = vec![OsString::from("rpm"), OsString::from("build")];
-        if let Some(profile) = &options.profile {
-            rpm_args.push(OsString::from("--profile"));
-            rpm_args.push(profile.clone());
+        if let Some(profile) = options.profile.as_deref() {
+            if profile != "release" {
+                return Err(crate::util::validation_error(format!(
+                    "cargo rpm build does not support overriding the cargo profile (requested '{}'); adjust [package.metadata.rpm.cargo].buildflags instead",
+                    profile.to_string_lossy()
+                )));
+            }
         }
+        let rpm_args = vec![OsString::from("rpm"), OsString::from("build")];
         run_cargo_tool(
             workspace,
             rpm_args,
