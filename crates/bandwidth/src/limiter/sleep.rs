@@ -4,7 +4,7 @@ use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
 use super::append_recorded_sleeps;
 
-/// Result returned by [`BandwidthLimiter::register`] describing how long the limiter slept.
+/// Result returned by [`crate::limiter::BandwidthLimiter::register`] describing how long the limiter slept.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[must_use]
 pub struct LimiterSleep {
