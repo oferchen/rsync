@@ -174,3 +174,43 @@ fn limiter_change_combine_all_matches_folded_combination() {
         LimiterChange::Enabled
     );
 }
+
+#[test]
+fn limiter_write_max_enforces_minimum_threshold() {
+    let limiter = BandwidthLimiter::new(NonZeroU64::new(128).unwrap());
+
+    assert_eq!(limiter.write_max_bytes(), 512);
+    assert_eq!(limiter.recommended_read_size(4096), 512);
+}
+
+#[test]
+fn limiter_write_max_scales_with_limit() {
+    let limit = NonZeroU64::new(128 * 1024).unwrap();
+    let limiter = BandwidthLimiter::new(limit);
+
+    assert_eq!(limiter.write_max_bytes(), 16_384);
+    assert_eq!(limiter.recommended_read_size(1 << 20), 16_384);
+}
+
+#[test]
+fn limiter_write_max_uses_burst_override() {
+    let limit = NonZeroU64::new(1024 * 1024).unwrap();
+    let burst = NonZeroU64::new(2048).unwrap();
+    let limiter = BandwidthLimiter::with_burst(limit, Some(burst));
+
+    assert_eq!(limiter.write_max_bytes(), burst.get() as usize);
+    assert_eq!(
+        limiter.recommended_read_size(usize::MAX),
+        burst.get() as usize
+    );
+}
+
+#[test]
+fn limiter_write_max_honours_minimum_when_burst_is_small() {
+    let limit = NonZeroU64::new(8 * 1024).unwrap();
+    let burst = NonZeroU64::new(128).unwrap();
+    let limiter = BandwidthLimiter::with_burst(limit, Some(burst));
+
+    assert_eq!(limiter.write_max_bytes(), 512);
+    assert_eq!(limiter.recommended_read_size(1024), 512);
+}
