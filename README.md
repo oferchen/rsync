@@ -7,6 +7,9 @@ tracks upstream rsync 3.4.1 while publishing the branded release string
 `rsyncd`, so existing deployments can switch between the legacy and branded
 entry points without changing behaviour.
 
+The authoritative source repository is hosted at
+<https://github.com/oferchen/rsync>.
+
 ## Workspace essentials
 
 - `crates/core` — shared message, branding, and configuration primitives reused
