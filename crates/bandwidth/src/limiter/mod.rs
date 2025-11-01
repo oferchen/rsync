@@ -20,11 +20,11 @@ pub(super) const MIN_WRITE_MAX: usize = 512;
 #[cfg(any(test, feature = "test-support"))]
 mod test_support;
 #[cfg(any(test, feature = "test-support"))]
-pub use self::test_support::{RecordedSleepIter, RecordedSleepSession, recorded_sleep_session};
-#[cfg(any(test, feature = "test-support"))]
 pub(super) use self::test_support::append_recorded_sleeps;
 #[cfg(test)]
 pub(super) use self::test_support::recorded_sleeps;
+#[cfg(any(test, feature = "test-support"))]
+pub use self::test_support::{RecordedSleepIter, RecordedSleepSession, recorded_sleep_session};
 
 #[cfg(test)]
 mod tests;
