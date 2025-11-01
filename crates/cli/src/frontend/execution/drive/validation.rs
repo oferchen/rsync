@@ -6,7 +6,7 @@ use rsync_core::{message::Role, rsync_error};
 use rsync_logging::MessageSink;
 use rsync_protocol::ProtocolVersion;
 
-use crate::frontend::write_message;
+use super::messages::fail_with_message;
 
 pub(crate) const RSYNC_PATH_REMOTE_ONLY_MESSAGE: &str =
     "the --rsync-path option may only be used with remote connections";
@@ -36,51 +36,47 @@ where
     }
 
     if rsync_path.is_some() {
-        let message = rsync_error!(1, "{}", RSYNC_PATH_REMOTE_ONLY_MESSAGE).with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(stderr.writer_mut(), "{}", RSYNC_PATH_REMOTE_ONLY_MESSAGE);
-        }
-        return Some(1);
+        return Some(reject_local_only_option(
+            stderr,
+            RSYNC_PATH_REMOTE_ONLY_MESSAGE,
+        ));
     }
 
     if !remote_options.is_empty() {
-        let message =
-            rsync_error!(1, "{}", REMOTE_OPTION_REMOTE_ONLY_MESSAGE).with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(stderr.writer_mut(), "{}", REMOTE_OPTION_REMOTE_ONLY_MESSAGE);
-        }
-        return Some(1);
+        return Some(reject_local_only_option(
+            stderr,
+            REMOTE_OPTION_REMOTE_ONLY_MESSAGE,
+        ));
     }
 
     if desired_protocol.is_some() {
-        let message = rsync_error!(1, "{}", PROTOCOL_DAEMON_ONLY_MESSAGE).with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(stderr.writer_mut(), "{}", PROTOCOL_DAEMON_ONLY_MESSAGE);
-        }
-        return Some(1);
+        return Some(reject_local_only_option(
+            stderr,
+            PROTOCOL_DAEMON_ONLY_MESSAGE,
+        ));
     }
 
     if password_file.is_some() {
-        let message =
-            rsync_error!(1, "{}", PASSWORD_FILE_DAEMON_ONLY_MESSAGE).with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(stderr.writer_mut(), "{}", PASSWORD_FILE_DAEMON_ONLY_MESSAGE);
-        }
-        return Some(1);
+        return Some(reject_local_only_option(
+            stderr,
+            PASSWORD_FILE_DAEMON_ONLY_MESSAGE,
+        ));
     }
 
     if connect_program.is_some() {
-        let message =
-            rsync_error!(1, "{}", CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE).with_role(Role::Client);
-        if write_message(&message, stderr).is_err() {
-            let _ = writeln!(
-                stderr.writer_mut(),
-                "{}",
-                CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE
-            );
-        }
-        return Some(1);
+        return Some(reject_local_only_option(
+            stderr,
+            CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE,
+        ));
     }
 
     None
+}
+
+fn reject_local_only_option<Err>(stderr: &mut MessageSink<Err>, text: &'static str) -> i32
+where
+    Err: Write,
+{
+    let message = rsync_error!(1, "{}", text).with_role(Role::Client);
+    fail_with_message(message, stderr)
 }
