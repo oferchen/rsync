@@ -29,7 +29,7 @@ name = "oc-rsyncd"
 path = "src/bin/oc-rsyncd.rs"
 
 [features]
-default = ["legacy-binaries"]
+default = []
 legacy-binaries = []
 sd-notify = ["rsync-daemon/sd-notify"]
 
@@ -113,10 +113,8 @@ priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
-features = ["legacy-binaries"]
+features = []
 assets = [
-    ["target/dist/rsync", "/usr/libexec/oc-rsync/rsync", "755"],
-    ["target/dist/rsyncd", "/usr/libexec/oc-rsync/rsyncd", "755"],
     ["target/dist/oc-rsync", "/usr/bin/oc-rsync", "755"],
     ["target/dist/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
@@ -160,12 +158,6 @@ mode = "0644"
 post = '''
 set -e
 
-ALT_NAME=rsync
-ALT_MASTER=/usr/bin/rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
-ALT_SLAVE_NAME=rsyncd
-ALT_SLAVE_LINK=/usr/bin/rsyncd
-ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
 ALT_PRIORITY=30
 DEFAULTS_FILE=/etc/default/oc-rsyncd
 
@@ -237,9 +229,6 @@ register_alternatives
 preun = '''
 set -e
 
-ALT_NAME=rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
-
 detect_alternatives() {
     if command -v update-alternatives >/dev/null 2>&1; then
         ALT_TOOL=update-alternatives
@@ -267,9 +256,6 @@ fi
 '''
 postun = '''
 set -e
-
-ALT_NAME=rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
 
 detect_alternatives() {
     if command -v update-alternatives >/dev/null 2>&1; then
@@ -299,11 +285,9 @@ fi
 
 [package.metadata.rpm.cargo]
 profile = "dist"
-buildflags = ["--profile", "dist", "--features", "legacy-binaries"]
+buildflags = ["--profile", "dist"]
 
 [package.metadata.rpm.targets]
-rsync = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
-rsyncd = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
 
