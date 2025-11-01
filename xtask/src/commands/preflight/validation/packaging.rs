@@ -174,7 +174,6 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
         unit_daemon_config.as_str(),
         unit_daemon_secrets.as_str(),
         "Description=oc-rsyncd",
-        "Alias=rsyncd.service",
         "OC_RSYNC_CONFIG",
         "OC_RSYNC_SECRETS",
         "RSYNCD_CONFIG",
@@ -191,6 +190,14 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
             ),
         )?;
     }
+
+    ensure(
+        !unit_contents.contains("Alias=rsyncd.service"),
+        format!(
+            "systemd unit {} must not define the legacy alias 'rsyncd.service' to allow co-installation with upstream packages",
+            systemd_unit.display()
+        ),
+    )?;
 
     Ok(())
 }
