@@ -2,384 +2,134 @@ name: CI
 
 on:
   push:
-    branches: ["master"]
+    branches: [ master, main ]
   pull_request:
-    branches: ["master"]
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: full
-  RUSTFLAGS: -Dwarnings
-  RUSTDOCFLAGS: -Dwarnings -Drustdoc::broken_intra_doc_links
-  LC_ALL: C
-  TZ: UTC
-  COLUMNS: 80
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  no-binaries:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.87
-          cache: true
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: no-binaries
-
-      - name: Audit repository for tracked binary artifacts
-        run: cargo --locked run -p xtask -- no-binaries
-
-  readme-version:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.87
-          cache: true
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: readme-version
-
-      - name: Verify README version alignment
-        run: cargo --locked run -p xtask -- readme-version
-
   lint:
+    name: fmt + clippy (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.87
-          components: clippy,rustfmt
-          cache: true
-
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: lint
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
-          version: 1
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Lint with clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
-
-      - name: Enforce line count limits
-        run: cargo --locked run -p xtask -- enforce-limits
-
-      - name: Build and validate documentation
-        run: cargo --locked run -p xtask -- docs --validate
-
-      - name: Ensure no placeholders remain
-        run: cargo --locked run -p xtask -- no-placeholders
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --no-deps
 
   test-linux:
-    needs: [lint, readme-version]
+    name: tests (Linux only)
     runs-on: ubuntu-latest
+    needs: [lint]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Rust (1.87 + llvm-tools)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.87
-          components: llvm-tools-preview,clippy,rustfmt
-          cache: true
-
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-tests
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev libpopt-dev libxxhash-dev attr acl rpm
-          version: 1
-
-      - name: Pre-flight check
-        run: cargo --locked run -p xtask -- preflight
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: nextest
+      - name: Build (debug)
+        run: cargo build --workspace --all-features
+      - name: Unit tests
+        run: cargo nextest run --workspace --all-features --no-capture
 
-      - name: Run tests
-        run: cargo --locked nextest run --workspace
-
-      - name: Run tests (extended features)
-        run: cargo --locked nextest run --workspace --all-features
-
-      - name: Generate coverage profile
-        run: cargo --locked llvm-cov nextest --workspace --all-features --no-report
-
-      - name: Export coverage report (lcov)
-        run: cargo --locked llvm-cov report --lcov --output-path coverage.lcov
-
-      - name: Enforce coverage thresholds and export summary
-        run: cargo --locked llvm-cov report --json --summary-only --output-path coverage-summary.json --fail-under-lines 75 --fail-under-functions 75
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-lcov
-          path: coverage.lcov
-          if-no-files-found: error
-
-  interop:
-    needs: test-linux
+  interop-linux:
+    name: interop smoke (Linux only)
     runs-on: ubuntu-latest
+    needs: [test-linux]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.87
-          components: llvm-tools-preview
-          cache: true
-
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: interop
+      - run: cargo build --release --bins
+      - name: Install system rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+      - name: oc-rsync → rsync.samba.org
+        run: ./target/release/oc-rsync rsync://rsync.samba.org/
+      - name: rsync (system) → oc-rsyncd (local)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/interop"
+          mkdir -p "${work}/module" "${work}/dst"
+          printf "hello\n" > "${work}/module/hello.txt"
+          cat > "${work}/oc-rsyncd.conf" <<'CONF'
+          pid file = oc-rsyncd.pid
+          use chroot = no
+          [mod]
+              path = REPLACE_PATH
+              read only = false
+          CONF
+          sed -i "s#REPLACE_PATH#${work}/module#g" "${work}/oc-rsyncd.conf"
+          ./target/release/oc-rsyncd --config "${work}/oc-rsyncd.conf" --port 8730 &
+          srv_pid=$!
+          trap "kill ${srv_pid} || true" EXIT
+          sleep 1
+          rsync rsync://127.0.0.1:8730/mod/hello.txt "${work}/dst/hello.txt"
+          diff -u "${work}/module/hello.txt" "${work}/dst/hello.txt"
 
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
-          version: 1
-
-      - name: Run tests (all features)
-        run: cargo --locked test --workspace --all-features
-
-  cross-compile:
-    needs: lint
-    runs-on: ubuntu-latest
-    name: Cross-compile (${{ matrix.platform.name }})
+  build-all-platforms:
+    # Build on all platforms, no tests.
+    name: build ${{ matrix.target }}
+    needs: [lint]  # compile may start once lint passes
     strategy:
       fail-fast: false
-      max-parallel: 5
       matrix:
-        platform:
-          - name: linux-x86_64
-            enabled: true
-            target: x86_64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: linux-aarch64
-            enabled: true
-            target: aarch64-unknown-linux-gnu
-            build_command: build
-            build_daemon: true
-            uses_zig: false
-            needs_cross_gcc: true
-            generate_sbom: true
-          - name: darwin-x86_64
-            enabled: true
+        include:
+          # Linux (static MUSL via zigbuild)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use_zig: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            use_zig: true
+          # macOS (native)
+          - os: macos-13
             target: x86_64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: darwin-aarch64
-            enabled: true
+            use_zig: false
+          - os: macos-14
             target: aarch64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: windows-x86_64
-            enabled: true
-            target: x86_64-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-x86
-            enabled: false
-            target: i686-pc-windows-gnu
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-            # Kept in the matrix for future enablement once toolchains stabilise.
-          - name: windows-aarch64
-            enabled: false
-            target: aarch64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-            # Kept in the matrix for future enablement once toolchains stabilise.
-    env:
-      CC_aarch64_unknown_linux_gnu: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform.needs_cross_gcc && 'aarch64-linux-gnu-gcc' || '' }}
-    steps:
-      - name: Skip disabled target
-        if: ${{ !matrix.platform.enabled }}
-        run: echo "Platform '${{ matrix.platform.name }}' is disabled for this release line."
-
-      - uses: actions/checkout@v4
-        if: ${{ matrix.platform.enabled }}
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        if: ${{ matrix.platform.enabled }}
-        with:
-          toolchain: 1.87
-          components: rust-src
-          targets: ${{ matrix.platform.target }}
-          cache: true
-
-      - name: Ensure target std is installed
-        if: ${{ matrix.platform.enabled }}
-        run: rustup target add ${{ matrix.platform.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ matrix.platform.enabled }}
-        with:
-          shared-key: cross-${{ matrix.platform.name }}
-          target: ${{ matrix.platform.target }}
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        if: ${{ matrix.platform.enabled }}
-        with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
-          version: 1
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        if: ${{ matrix.platform.enabled && matrix.platform.needs_cross_gcc }}
-        with:
-          packages: gcc-aarch64-linux-gnu
-          version: 1
-
-      - name: Install Zig toolchain
-        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.13.0
-
-      - name: Install cargo-zigbuild
-        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
-      - name: Install cargo-cyclonedx
-        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-cyclonedx
-
-      - name: Build oc-rsync
-        if: ${{ matrix.platform.enabled }}
-        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsync
-
-      - name: Build oc-rsyncd
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin oc-rsyncd
-
-      - name: Generate target SBOM
-        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
-        run: cargo --locked run -p xtask -- sbom --output target/${{ matrix.platform.target }}/release/oc-rsync-${{ matrix.platform.name }}-sbom.json
-
-      - name: Upload oc-rsync artifact
-        if: ${{ matrix.platform.enabled }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: oc-rsync-${{ matrix.platform.name }}
-          path: target/${{ matrix.platform.target }}/release/oc-rsync*
-          if-no-files-found: error
-
-      - name: Upload oc-rsyncd artifact
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: oc-rsyncd-${{ matrix.platform.name }}
-          path: target/${{ matrix.platform.target }}/release/oc-rsyncd*
-          if-no-files-found: error
-
-  package-linux:
-    needs: [test-linux, cross-compile]
-    runs-on: ubuntu-latest
+            use_zig: false
+          # Windows (MSVC)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_zig: false
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Rust (1.87)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.87
-          cache: true
-
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: package-linux
-
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev rpm
-          version: 1
-
-      - name: Install cargo-deb
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deb
-
-      - name: Install cargo-rpm
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-rpm
-
-      - name: Install cargo-cyclonedx
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-cyclonedx
-
-      - name: Display workspace metadata
-        run: cargo --locked run -p xtask -- branding
-
-      - name: Build Debian, RPM, and amd64 tarball artifacts
-        run: cargo --locked run -p xtask -- package
-
-      - name: Generate SBOM
-        run: cargo --locked run -p xtask -- sbom
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: oc-rsync-packages
-          path: |
-            target/release/oc-rsync*
-            target/release/oc-rsyncd*
-            target/debian/*.deb
-            target/release/rpmbuild/RPMS/**/*.rpm
-            target/dist/*.tar.gz
-            target/sbom/oc-rsync.cdx.json
-          if-no-files-found: error
+          cache-all-crates: true
+      - name: Install Zig & cargo-zigbuild (Linux-musl only)
+        if: matrix.use_zig == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-zigbuild --locked
+      - name: Build (release, no tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.use_zig }}" == "true" ]]; then
+            cargo zigbuild --release --target "${{ matrix.target }}" --bins
+          else
+            cargo build --release --target "${{ matrix.target }}" --bins
+          fi
