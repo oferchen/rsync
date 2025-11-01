@@ -62,6 +62,9 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     if options.build_tarball {
         let specs = tarball::linux_tarball_specs(&branding)?;
         for spec in &specs {
+            ensure_cross_compiler_available(spec.target_triple)?;
+        }
+        for spec in &specs {
             build_workspace_binaries(workspace, &options.profile, Some(spec.target_triple))?;
             tarball::build_tarball(workspace, &branding, &options.profile, spec)?;
         }
@@ -70,7 +73,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     Ok(())
 }
 
-fn build_workspace_binaries(
+pub(super) fn build_workspace_binaries(
     workspace: &Path,
     profile: &Option<OsString>,
     target: Option<&str>,
@@ -92,6 +95,7 @@ fn build_workspace_binaries(
     args.push(OsString::from("legacy-binaries"));
 
     if let Some(target) = target {
+        ensure_cross_compiler_available(target)?;
         args.push(OsString::from("--target"));
         args.push(OsString::from(target));
     }
@@ -107,4 +111,32 @@ fn build_workspace_binaries(
         "cargo build",
         "use `cargo build` to compile the workspace binaries",
     )
+}
+
+fn ensure_cross_compiler_available(target: &str) -> TaskResult<()> {
+    if let Some(spec) = cross_compiler_for_target(target) {
+        ensure_command_available(spec.program, spec.install_hint)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct CrossCompilerSpec {
+    program: &'static str,
+    install_hint: &'static str,
+}
+
+fn cross_compiler_for_target(target: &str) -> Option<CrossCompilerSpec> {
+    match target {
+        "aarch64-unknown-linux-gnu" => Some(CrossCompilerSpec {
+            program: "aarch64-linux-gnu-gcc",
+            install_hint: "install the aarch64-linux-gnu-gcc cross-compiler (for example, `apt install gcc-aarch64-linux-gnu`)",
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+pub(super) fn cross_compiler_program_for_target(target: &str) -> Option<&'static str> {
+    cross_compiler_for_target(target).map(|spec| spec.program)
 }

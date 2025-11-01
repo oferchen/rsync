@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::build::cross_compiler_program_for_target;
 use super::{PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
@@ -160,6 +162,39 @@ fn execute_reports_missing_rpmbuild_tool() {
     assert!(matches!(
         error,
         TaskError::ToolMissing(message) if message.contains("rpmbuild")
+    ));
+}
+
+#[test]
+fn cross_compiler_detection_handles_known_targets() {
+    assert_eq!(
+        cross_compiler_program_for_target("aarch64-unknown-linux-gnu"),
+        Some("aarch64-linux-gnu-gcc")
+    );
+    assert_eq!(
+        cross_compiler_program_for_target("x86_64-unknown-linux-gnu"),
+        None
+    );
+}
+
+#[test]
+fn execute_reports_missing_cross_compiler() {
+    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    env.set_str(
+        "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
+        "aarch64-linux-gnu-gcc",
+    );
+
+    let error = super::build::build_workspace_binaries(
+        workspace_root(),
+        &Some(OsString::from("release")),
+        Some("aarch64-unknown-linux-gnu"),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        TaskError::ToolMissing(message) if message.contains("aarch64-linux-gnu-gcc")
     ));
 }
 
