@@ -111,9 +111,9 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) rsync_path: Option<&'a OsString>,
     pub(crate) remainder: &'a [OsString],
     #[cfg(feature = "acl")]
-    pub(crate) preserve_acls: bool,
+    pub(crate) acls: Option<bool>,
     #[cfg(feature = "xattr")]
-    pub(crate) xattrs: bool,
+    pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
 }
 
@@ -237,7 +237,7 @@ where
         rsync_path: context.rsync_path.cloned(),
         remainder: context.remainder.to_vec(),
         #[cfg(feature = "acl")]
-        acls: context.preserve_acls,
+        acls: context.acls,
         #[cfg(feature = "xattr")]
         xattrs: context.xattrs,
         itemize_changes: context.itemize_changes,

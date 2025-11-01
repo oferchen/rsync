@@ -382,9 +382,9 @@ where
         rsync_path: rsync_path.as_ref(),
         remainder: &remainder,
         #[cfg(feature = "acl")]
-        preserve_acls,
+        acls,
         #[cfg(feature = "xattr")]
-        xattrs: xattrs.unwrap_or(false),
+        xattrs,
         itemize_changes,
     };
     let fallback_args = match build_fallback_arguments(fallback_context, stderr) {
