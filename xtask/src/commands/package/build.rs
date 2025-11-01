@@ -1,6 +1,6 @@
 use super::{AMD64_TARBALL_TARGET, PackageOptions, tarball};
 use crate::error::TaskResult;
-use crate::util::{ensure_command_available, run_cargo_tool};
+use crate::util::{ensure_command_available, probe_cargo_tool, run_cargo_tool};
 use crate::workspace::load_workspace_branding;
 use std::env;
 use std::ffi::OsString;
@@ -38,6 +38,12 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
         )?;
         if let Some(profile) = options.profile.as_deref() {
             if profile != "release" {
+                probe_cargo_tool(
+                    workspace,
+                    &["rpm", "--help"],
+                    "cargo rpm build",
+                    "install the cargo-rpm subcommand (cargo install cargo-rpm)",
+                )?;
                 return Err(crate::util::validation_error(format!(
                     "cargo rpm build does not support overriding the cargo profile (requested '{}'); adjust [package.metadata.rpm.cargo].buildflags instead",
                     profile.to_string_lossy()
