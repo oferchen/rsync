@@ -10,7 +10,8 @@ use rsync_transport::negotiate_legacy_daemon_session;
 use super::super::{
     ClientError, DAEMON_SOCKET_TIMEOUT, PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout,
     daemon_access_denied_error, daemon_authentication_failed_error,
-    daemon_authentication_required_error, daemon_error, daemon_protocol_error, socket_error,
+    daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
+    daemon_protocol_error, socket_error,
 };
 use super::auth::{
     DaemonAuthContext, SensitiveBytes, is_motd_payload, load_daemon_password,
@@ -204,6 +205,7 @@ pub fn run_module_list_with_password_and_options(
     let mut warnings = Vec::new();
     let mut capabilities = Vec::new();
     let mut acknowledged = false;
+    let mut pre_ack_messages = Vec::new();
 
     while let Some(line) = read_trimmed_line(&mut reader)
         .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
@@ -295,6 +297,11 @@ pub fn run_module_list_with_password_and_options(
                         continue;
                     }
 
+                    if !acknowledged {
+                        pre_ack_messages.push(payload.to_string());
+                        continue;
+                    }
+
                     return Err(daemon_protocol_error(&line));
                 }
                 Ok(LegacyDaemonMessage::Version(_)) => {
@@ -314,6 +321,14 @@ pub fn run_module_list_with_password_and_options(
     }
 
     if !acknowledged {
+        if !pre_ack_messages.is_empty() {
+            let mut detail = pre_ack_messages.join("\n");
+            if detail.is_empty() {
+                detail = String::from("daemon closed connection before acknowledging module list");
+            }
+            return Err(daemon_listing_unavailable_error(&detail));
+        }
+
         return Err(daemon_protocol_error(
             "daemon did not acknowledge module listing",
         ));
