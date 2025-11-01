@@ -20,42 +20,43 @@ env:
   COLUMNS: 80
 
 jobs:
-  lint-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.87
-          components: rustfmt,clippy
-          override: true
+          components: clippy,rustfmt
+          cache: true
+
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libacl1-dev
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Verify comments
-        run: make verify-comments
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
         with:
-          tool: cargo-llvm-cov
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
-      - name: Test with coverage
-        run: cargo llvm-cov nextest --workspace --all-features --fail-under-lines 99 -- --no-fail-fast
-      - name: Validate interop matrix docs
-        run: scripts/check-run-matrix-docs.sh
-      - name: Cross-compile check
-        run: |
-          rustup target add x86_64-apple-darwin x86_64-pc-windows-msvc
-          cargo check --workspace --target x86_64-apple-darwin
-          cargo check --workspace --target x86_64-pc-windows-msvc
+          shared-key: lint
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
+          version: 1
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint with clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
+
+      - name: Enforce line count limits
+        run: cargo --locked run -p xtask -- enforce-limits
+
+      - name: Build and validate documentation
+        run: cargo --locked run -p xtask -- docs --validate
+
+      - name: Ensure no placeholders remain
+        run: cargo --locked run -p xtask -- no-placeholders
 
   build:
-    needs: lint-test
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
