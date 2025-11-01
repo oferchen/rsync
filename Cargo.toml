@@ -171,23 +171,9 @@ detect_alternatives() {
     fi
 }
 
-rpm_upstream_rsync_installed() {
-    if command -v rpm >/dev/null 2>&1; then
-        if rpm -q rsync >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 register_alternatives() {
     detect_alternatives
     if [ -z "$ALT_TOOL" ]; then
-        return 0
-    fi
-
-    if rpm_upstream_rsync_installed; then
         return 0
     fi
 

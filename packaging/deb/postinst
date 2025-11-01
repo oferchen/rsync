@@ -13,25 +13,8 @@ have_update_alternatives() {
     command -v update-alternatives >/dev/null 2>&1
 }
 
-upstream_rsync_installed() {
-    if command -v dpkg-query >/dev/null 2>&1; then
-        if dpkg-query -W -f='${Status}' rsync 2>/dev/null | grep -q 'install ok installed'; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 register_alternatives() {
     if ! have_update_alternatives; then
-        return 0
-    fi
-
-    if upstream_rsync_installed; then
-        # Preserve the upstream package's rsync binary. Administrators can
-        # opt-in to update-alternatives manually if they prefer the Rust
-        # implementation as the system default.
         return 0
     fi
 
