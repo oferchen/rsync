@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ] && command -v update-alternatives >/dev/null 2>&1; then
+    update-alternatives --remove rsync /usr/libexec/oc-rsync/rsync 2>/dev/null || true
+    update-alternatives --remove rsyncd /usr/libexec/oc-rsync/rsyncd 2>/dev/null || true
+fi
+
+exit 0
