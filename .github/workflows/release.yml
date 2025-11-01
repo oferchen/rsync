@@ -22,33 +22,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux (static MUSL via zigbuild)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             use_zig: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             use_zig: true
+          # macOS (native)
           - os: macos-13
             target: x86_64-apple-darwin
             use_zig: false
           - os: macos-14
             target: aarch64-apple-darwin
             use_zig: false
+          # Windows (MSVC)
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             use_zig: false
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           cache-all-crates: true
+
       - name: Install cargo-zigbuild (Linux-musl only)
         if: matrix.use_zig == true
         run: cargo install cargo-zigbuild --locked
+
       - name: Build (release)
         shell: bash
         run: |
@@ -58,6 +66,7 @@ jobs:
           else
             cargo build --release --target "${{ matrix.target }}" --bins
           fi
+
       - name: Package tar.gz
         shell: bash
         run: |
@@ -67,10 +76,12 @@ jobs:
           out="oc-rsync-${tag}-${tgt}"
           root="dist/${out}"
           mkdir -p "${root}"
+
           case "${tgt}" in
             *windows*) bins=("oc-rsync.exe" "oc-rsyncd.exe");;
             *)         bins=("oc-rsync" "oc-rsyncd");;
           esac
+
           for b in "${bins[@]}"; do
             src="target/${tgt}/release/${b}"
             if [[ -f "${src}" ]]; then
@@ -78,15 +89,19 @@ jobs:
               cp -v "${src}" "${root}/"
             fi
           done
+
           for f in LICENSE README.md; do
             [[ -f "$f" ]] && cp -v "$f" "${root}/"
           done
+
           tar -C dist -czf "dist/${out}.tar.gz" "${out}"
+
           if command -v shasum >/dev/null 2>&1; then
             shasum -a 256 "dist/${out}.tar.gz" > "dist/${out}.sha256"
           else
             sha256sum "dist/${out}.tar.gz" > "dist/${out}.sha256"
           fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -104,6 +119,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist-agg
+
       - name: Gather & verify
         shell: bash
         run: |
@@ -111,6 +127,7 @@ jobs:
           mkdir -p upload
           find dist-agg -type f -name '*.tar.gz' -exec cp -v {} upload/ \;
           find dist-agg -type f -name '*.sha256' -exec cat {} \; | sort > upload/SHA256SUMS
+
           pushd upload >/dev/null
           if command -v shasum >/dev/null 2>&1; then
             shasum -a 256 -c SHA256SUMS
@@ -118,6 +135,7 @@ jobs:
             sha256sum -c SHA256SUMS
           fi
           popd >/dev/null
+
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
