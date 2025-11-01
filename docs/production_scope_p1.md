@@ -78,7 +78,7 @@ This document freezes the mandatory scope that must reach green status before th
 ## Packaging & Artifacts
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
-- Systemd `oc-rsyncd.service` unit (ships with an alias for legacy unit names when required)
+- Systemd `oc-rsyncd.service` unit that avoids legacy aliases so upstream packages can coexist on the same host
 - Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
 - Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) produced by the CI matrix (Windows x86/aarch64 targets remain disabled to avoid conflicting toolchains)
