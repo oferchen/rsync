@@ -2,8 +2,8 @@
 rustc-wrapper = "tools/cross/rustc-with-zig.sh"
 
 [target.aarch64-unknown-linux-gnu]
-linker = "aarch64-unknown-linux-gnu-gcc"
-ar = "aarch64-unknown-linux-gnu-ar"
+linker = "tools/cross/bin/aarch64-unknown-linux-gnu-gcc"
+ar = "tools/cross/bin/aarch64-unknown-linux-gnu-ar"
 
 [target.i686-pc-windows-gnu]
 rustflags = ["-C", "panic=abort"]
