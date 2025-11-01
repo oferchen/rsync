@@ -13,5 +13,7 @@
 # Set this to "yes" (or export OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES=1 while
 # installing) to register oc-rsync with update-alternatives. The packaging
 # scripts skip registration by default so the upstream rsync binaries can
-# remain in place when both packages are installed.
+# remain in place when both packages are installed. Set
+# OC_RSYNC_PACKAGE_DISABLE_ALTERNATIVES=1 to force registration to remain
+# disabled even if the configuration below requests it.
 # OC_RSYNC_REGISTER_ALTERNATIVES=yes
