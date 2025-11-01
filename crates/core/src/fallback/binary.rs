@@ -145,9 +145,53 @@ fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::ffi::OsString;
     #[cfg(not(unix))]
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set_os(key: &'static str, value: &OsStr) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        #[cfg(windows)]
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            #[allow(unsafe_code)]
+            unsafe {
+                env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                #[allow(unsafe_code)]
+                unsafe {
+                    env::set_var(self.key, previous);
+                }
+            } else {
+                #[allow(unsafe_code)]
+                unsafe {
+                    env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn describe_missing_fallback_binary_lists_single_env() {
@@ -193,5 +237,37 @@ mod tests {
     fn fallback_binary_available_rejects_missing_file() {
         let missing = Path::new("/nonexistent/path/to/rsync-binary");
         assert!(!fallback_binary_available(missing.as_os_str()));
+    }
+
+    #[test]
+    fn fallback_binary_candidates_deduplicates_duplicate_path_entries() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let joined = env::join_paths([temp_dir.path(), temp_dir.path()]).expect("join paths");
+        let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+        #[cfg(windows)]
+        let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+        let expected_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+        let expected_path = temp_dir.path().join(expected_name);
+        let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == &expected_path),
+            "expected candidate {:?} missing from {:?}",
+            expected_path,
+            candidates
+        );
+
+        let occurrences = candidates
+            .iter()
+            .filter(|candidate| *candidate == &expected_path)
+            .count();
+        assert_eq!(
+            occurrences, 1,
+            "candidate should only appear once even when PATH repeats entries"
+        );
     }
 }
