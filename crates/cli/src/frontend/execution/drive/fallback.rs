@@ -116,9 +116,9 @@ pub(crate) struct FallbackInputs {
     pub(crate) rsync_path: Option<OsString>,
     pub(crate) remainder: Vec<OsString>,
     #[cfg(feature = "acl")]
-    pub(crate) acls: bool,
+    pub(crate) acls: Option<bool>,
     #[cfg(feature = "xattr")]
-    pub(crate) xattrs: bool,
+    pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
 }
 
@@ -254,9 +254,9 @@ where
         rsync_path: inputs.rsync_path,
         remainder: inputs.remainder,
         #[cfg(feature = "acl")]
-        acls: inputs.acls.then_some(true),
+        acls: inputs.acls,
         #[cfg(feature = "xattr")]
-        xattrs: inputs.xattrs.then_some(true),
+        xattrs: inputs.xattrs,
         itemize_changes: inputs.itemize_changes,
     };
 
