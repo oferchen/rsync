@@ -1,3 +1,5 @@
+mod upload;
+
 use crate::commands::{
     docs::{self, DocsOptions},
     enforce_limits::{self, EnforceLimitsOptions},
@@ -9,8 +11,10 @@ use crate::commands::{
 };
 use crate::error::{TaskError, TaskResult};
 use crate::util::is_help_flag;
+use crate::workspace::load_workspace_branding;
 use std::ffi::OsString;
 use std::path::Path;
+use upload::upload_release_artifacts;
 
 /// Options accepted by the `release` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -25,6 +29,8 @@ pub struct ReleaseOptions {
     pub skip_binary_scan: bool,
     /// Skip building distributable packages.
     pub skip_packages: bool,
+    /// Skip uploading release artifacts to GitHub.
+    pub skip_upload: bool,
 }
 
 /// Parses CLI arguments for the `release` command.
@@ -59,6 +65,10 @@ where
             "--skip-packages" => {
                 ensure_flag_unused(options.skip_packages, "--skip-packages")?;
                 options.skip_packages = true;
+            }
+            "--skip-upload" => {
+                ensure_flag_unused(options.skip_upload, "--skip-upload")?;
+                options.skip_upload = true;
             }
             other => {
                 return Err(TaskError::Usage(format!(
@@ -132,6 +142,14 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
         executed_steps.push("package");
     }
 
+    if options.skip_upload {
+        skipped_steps.push("upload");
+    } else {
+        let branding = load_workspace_branding(workspace)?;
+        upload_release_artifacts(workspace, &branding)?;
+        executed_steps.push("upload");
+    }
+
     if skipped_steps.is_empty() {
         println!(
             "Release validation complete. Executed steps: {}.",
@@ -151,7 +169,7 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  --skip-packages           Skip building release packages\n  -h, --help                Show this help message",
+        "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  --skip-packages           Skip building release packages\n  --skip-upload             Skip uploading release packages to GitHub\n  -h, --help                Show this help message",
     )
 }
 
@@ -174,6 +192,7 @@ mod tests {
             OsString::from("--skip-placeholder-scan"),
             OsString::from("--skip-binary-scan"),
             OsString::from("--skip-packages"),
+            OsString::from("--skip-upload"),
         ];
         let options = parse_args(args).expect("parse succeeds");
         assert!(options.skip_docs);
@@ -181,6 +200,7 @@ mod tests {
         assert!(options.skip_placeholder_scan);
         assert!(options.skip_binary_scan);
         assert!(options.skip_packages);
+        assert!(options.skip_upload);
     }
 
     #[test]
@@ -205,6 +225,7 @@ mod tests {
             skip_placeholder_scan: true,
             skip_binary_scan: true,
             skip_packages: true,
+            skip_upload: true,
         };
         execute(&workspace, options).expect("release validation succeeds");
     }
