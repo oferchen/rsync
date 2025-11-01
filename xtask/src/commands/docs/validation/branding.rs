@@ -207,7 +207,7 @@ source = "https://github.com/oferchen/rsync"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
-windows = ["x86_64"]
+windows = ["x86_64", "aarch64"]
 "#;
 
     #[test]

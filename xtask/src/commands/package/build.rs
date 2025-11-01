@@ -19,7 +19,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     println!("Preparing {}", branding.summary());
 
     if options.build_deb || options.build_rpm {
-        build_workspace_binaries(workspace, &options.profile, None, None)?;
+        build_workspace_binaries(workspace, &options.profile, None, None, false)?;
     }
 
     if options.build_deb {
@@ -67,8 +67,8 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     }
 
     if options.build_tarball {
-        let specs = tarball::linux_tarball_specs(&branding)?;
-        let resolved = resolve_tarball_cross_compilers(workspace, specs)?;
+        let specs = tarball::tarball_specs(&branding, options.tarball_target.as_deref())?;
+        let resolved = resolve_tarball_builds(workspace, specs)?;
 
         if resolved.builds.is_empty() {
             if let Some(skipped) = resolved.skipped.first() {
@@ -76,14 +76,14 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             }
 
             return Err(TaskError::ToolMissing(String::from(
-                "no Linux tarball targets available for packaging",
+                "no tarball targets available for packaging",
             )));
         }
 
         for skipped in &resolved.skipped {
             println!(
                 "Skipping {target} tar.gz distribution because cross-compilation tooling is unavailable: {message}",
-                target = skipped.spec.target_triple,
+                target = skipped.spec.display_name(),
                 message = skipped.message
             );
         }
@@ -94,6 +94,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
                 &options.profile,
                 Some(build.spec.target_triple),
                 build.linker.as_ref(),
+                true,
             )?;
             tarball::build_tarball(workspace, &branding, &options.profile, &build.spec)?;
         }
@@ -102,7 +103,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     Ok(())
 }
 
-fn resolve_tarball_cross_compilers(
+fn resolve_tarball_builds(
     workspace: &Path,
     specs: Vec<tarball::TarballSpec>,
 ) -> TaskResult<ResolvedTarballSpecs> {
@@ -110,7 +111,7 @@ fn resolve_tarball_cross_compilers(
     let mut skipped = Vec::new();
 
     for spec in specs {
-        match resolve_cross_compiler(workspace, spec.target_triple) {
+        match resolve_cross_compiler(workspace, &spec) {
             Ok(linker) => builds.push(TarballBuild { spec, linker }),
             Err(TaskError::ToolMissing(message)) => {
                 skipped.push(SkippedTarballSpec { spec, message })
@@ -127,7 +128,7 @@ pub(super) fn resolve_tarball_cross_compilers_for_tests(
     workspace: &Path,
     specs: Vec<tarball::TarballSpec>,
 ) -> TaskResult<ResolvedTarballSpecs> {
-    resolve_tarball_cross_compilers(workspace, specs)
+    resolve_tarball_builds(workspace, specs)
 }
 
 pub(super) fn build_workspace_binaries(
@@ -135,6 +136,7 @@ pub(super) fn build_workspace_binaries(
     profile: &Option<OsString>,
     target: Option<&str>,
     linker_override: Option<&LinkerOverride>,
+    include_legacy: bool,
 ) -> TaskResult<()> {
     if env::var_os("OC_RSYNC_PACKAGE_SKIP_BUILD").is_some() {
         println!("Skipping workspace binary build because OC_RSYNC_PACKAGE_SKIP_BUILD is set");
@@ -149,8 +151,10 @@ pub(super) fn build_workspace_binaries(
         OsString::from("--locked"),
     ];
 
-    args.push(OsString::from("--features"));
-    args.push(OsString::from("legacy-binaries"));
+    if include_legacy {
+        args.push(OsString::from("--features"));
+        args.push(OsString::from("legacy-binaries"));
+    }
 
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 
@@ -206,15 +210,22 @@ pub(super) struct SkippedTarballSpec {
     pub message: String,
 }
 
-fn resolve_cross_compiler(workspace: &Path, target: &str) -> TaskResult<Option<LinkerOverride>> {
-    let Some(candidates) = cross_compiler_candidates(target) else {
+fn resolve_cross_compiler(
+    workspace: &Path,
+    spec: &tarball::TarballSpec,
+) -> TaskResult<Option<LinkerOverride>> {
+    if !spec.requires_cross_compiler() {
+        return Ok(None);
+    }
+
+    let Some(candidates) = cross_compiler_candidates(spec.target_triple) else {
         return Ok(None);
     };
 
     for candidate in &candidates {
         match ensure_command_available(candidate.program(), candidate.install_hint) {
             Ok(()) => {
-                return candidate.configure(workspace, target);
+                return candidate.configure(workspace, spec.target_triple);
             }
             Err(TaskError::ToolMissing(_)) => {
                 continue;
@@ -225,7 +236,10 @@ fn resolve_cross_compiler(workspace: &Path, target: &str) -> TaskResult<Option<L
         }
     }
 
-    Err(missing_cross_compiler_error(target, &candidates))
+    Err(missing_cross_compiler_error(
+        spec.target_triple,
+        &candidates,
+    ))
 }
 
 fn missing_cross_compiler_error(target: &str, candidates: &[CrossCompilerCandidate]) -> TaskError {
@@ -362,7 +376,27 @@ pub(super) fn resolve_cross_compiler_for_tests(
     workspace: &Path,
     target: &str,
 ) -> TaskResult<Option<(OsString, OsString)>> {
-    resolve_cross_compiler(workspace, target).map(|override_opt| {
+    let spec = match target {
+        "x86_64-unknown-linux-gnu" => tarball::TarballSpec {
+            platform: tarball::TarballPlatform::Linux,
+            arch: "amd64",
+            metadata_arch: "x86_64",
+            target_triple: "x86_64-unknown-linux-gnu",
+        },
+        "aarch64-unknown-linux-gnu" => tarball::TarballSpec {
+            platform: tarball::TarballPlatform::Linux,
+            arch: "aarch64",
+            metadata_arch: "aarch64",
+            target_triple: "aarch64-unknown-linux-gnu",
+        },
+        other => {
+            return Err(TaskError::Validation(format!(
+                "unsupported test target '{other}'"
+            )));
+        }
+    };
+
+    resolve_cross_compiler(workspace, &spec).map(|override_opt| {
         override_opt.map(|override_value| (override_value.env_var, override_value.value))
     })
 }

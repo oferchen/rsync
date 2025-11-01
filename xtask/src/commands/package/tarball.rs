@@ -2,47 +2,251 @@ use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use std::env;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tar::{Builder, EntryType, Header, HeaderMode};
 
-/// Linux tarball specification derived from workspace metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TarballPlatform {
+    Linux,
+    Macos,
+    Windows,
+}
+
+impl TarballPlatform {
+    fn archive_tag(self) -> &'static str {
+        match self {
+            TarballPlatform::Linux => "linux",
+            TarballPlatform::Macos => "darwin",
+            TarballPlatform::Windows => "windows",
+        }
+    }
+
+    fn binary_extension(self) -> &'static str {
+        match self {
+            TarballPlatform::Windows => ".exe",
+            TarballPlatform::Linux | TarballPlatform::Macos => "",
+        }
+    }
+
+    fn includes_daemon(self) -> bool {
+        !matches!(self, TarballPlatform::Windows)
+    }
+
+    fn directories(self, root: &str) -> Vec<String> {
+        let mut directories = vec![
+            root.to_string(),
+            format!("{root}/bin"),
+            format!("{root}/libexec"),
+            format!("{root}/libexec/oc-rsync"),
+        ];
+
+        if matches!(self, TarballPlatform::Linux) {
+            directories.extend_from_slice(&[
+                format!("{root}/lib"),
+                format!("{root}/lib/systemd"),
+                format!("{root}/lib/systemd/system"),
+                format!("{root}/etc"),
+                format!("{root}/etc/oc-rsyncd"),
+                format!("{root}/etc/default"),
+            ]);
+        }
+
+        directories
+    }
+
+    fn packaging_entries(self, workspace: &Path) -> Vec<(PathBuf, String, u32)> {
+        let mut entries = vec![
+            (workspace.join("LICENSE"), String::from("LICENSE"), 0o644),
+            (
+                workspace.join("README.md"),
+                String::from("README.md"),
+                0o644,
+            ),
+        ];
+
+        if matches!(self, TarballPlatform::Linux) {
+            entries.extend_from_slice(&[
+                (
+                    workspace.join("packaging/systemd/oc-rsyncd.service"),
+                    String::from("lib/systemd/system/oc-rsyncd.service"),
+                    0o644,
+                ),
+                (
+                    workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.conf"),
+                    String::from("etc/oc-rsyncd/oc-rsyncd.conf"),
+                    0o644,
+                ),
+                (
+                    workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.secrets"),
+                    String::from("etc/oc-rsyncd/oc-rsyncd.secrets"),
+                    0o600,
+                ),
+                (
+                    workspace.join("packaging/default/oc-rsyncd"),
+                    String::from("etc/default/oc-rsyncd"),
+                    0o644,
+                ),
+            ]);
+        }
+
+        entries
+    }
+
+    fn host() -> Option<Self> {
+        if cfg!(target_os = "linux") {
+            Some(TarballPlatform::Linux)
+        } else if cfg!(target_os = "macos") {
+            Some(TarballPlatform::Macos)
+        } else if cfg!(target_os = "windows") {
+            Some(TarballPlatform::Windows)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TarballSpec {
-    /// Architecture label embedded in the output artifact name.
+    pub platform: TarballPlatform,
     pub arch: &'static str,
-    /// Cargo compilation target triple used to locate binaries.
+    pub metadata_arch: &'static str,
     pub target_triple: &'static str,
 }
 
-/// Returns tarball specifications for each Linux architecture declared in the
-/// workspace metadata.
-pub(super) fn linux_tarball_specs(branding: &WorkspaceBranding) -> TaskResult<Vec<TarballSpec>> {
-    let linux_arches = branding.cross_compile.get("linux").ok_or_else(|| {
-        TaskError::Validation(String::from(
-            "missing linux entry in [workspace.metadata.oc_rsync.cross_compile]",
-        ))
-    })?;
+impl TarballSpec {
+    pub fn display_name(&self) -> String {
+        format!("{}-{}", self.platform.archive_tag(), self.metadata_arch)
+    }
 
-    let mut specs = Vec::with_capacity(linux_arches.len());
-    for arch in linux_arches {
-        let spec = match arch.as_str() {
-            "x86_64" => TarballSpec {
+    pub fn binary_extension(&self) -> &'static str {
+        self.platform.binary_extension()
+    }
+
+    pub fn includes_daemon(&self) -> bool {
+        self.platform.includes_daemon()
+    }
+
+    pub fn requires_cross_compiler(&self) -> bool {
+        if !matches!(self.platform, TarballPlatform::Linux) {
+            return false;
+        }
+
+        let host_arch = env::consts::ARCH;
+        self.metadata_arch != host_arch
+    }
+}
+
+pub(super) fn tarball_specs(
+    branding: &WorkspaceBranding,
+    target_filter: Option<&OsStr>,
+) -> TaskResult<Vec<TarballSpec>> {
+    let mut specs = Vec::new();
+    specs.extend(platform_specs(branding, TarballPlatform::Linux)?);
+    specs.extend(platform_specs(branding, TarballPlatform::Macos)?);
+    specs.extend(platform_specs(branding, TarballPlatform::Windows)?);
+
+    if let Some(filter) = target_filter {
+        let filter_value = filter.to_string_lossy();
+        if let Some(spec) = specs
+            .into_iter()
+            .find(|candidate| candidate.target_triple == filter_value)
+        {
+            return Ok(vec![spec]);
+        }
+
+        return Err(TaskError::Validation(format!(
+            "unknown tarball target triple '{filter_value}'"
+        )));
+    }
+
+    let Some(host_platform) = TarballPlatform::host() else {
+        return Err(TaskError::Validation(String::from(
+            "tarball packaging is unsupported on this host platform",
+        )));
+    };
+
+    let host_arch = env::consts::ARCH;
+    let filtered: Vec<_> = specs
+        .into_iter()
+        .filter(|spec| spec.platform == host_platform && spec.metadata_arch == host_arch)
+        .collect();
+
+    if filtered.is_empty() {
+        return Err(TaskError::Validation(format!(
+            "no tarball specifications available for host platform {} ({host_arch})",
+            host_platform.archive_tag(),
+        )));
+    }
+
+    Ok(filtered)
+}
+
+fn platform_specs(
+    branding: &WorkspaceBranding,
+    platform: TarballPlatform,
+) -> TaskResult<Vec<TarballSpec>> {
+    let key = match platform {
+        TarballPlatform::Linux => "linux",
+        TarballPlatform::Macos => "macos",
+        TarballPlatform::Windows => "windows",
+    };
+
+    let Some(arches) = branding.cross_compile.get(key) else {
+        return Ok(Vec::new());
+    };
+
+    let mut specs = Vec::with_capacity(arches.len());
+
+    for arch in arches {
+        let spec = match (platform, arch.as_str()) {
+            (TarballPlatform::Linux, "x86_64") => TarballSpec {
+                platform,
                 arch: "amd64",
+                metadata_arch: "x86_64",
                 target_triple: "x86_64-unknown-linux-gnu",
             },
-            "aarch64" => TarballSpec {
+            (TarballPlatform::Linux, "aarch64") => TarballSpec {
+                platform,
                 arch: "aarch64",
+                metadata_arch: "aarch64",
                 target_triple: "aarch64-unknown-linux-gnu",
             },
-            other => {
+            (TarballPlatform::Macos, "x86_64") => TarballSpec {
+                platform,
+                arch: "x86_64",
+                metadata_arch: "x86_64",
+                target_triple: "x86_64-apple-darwin",
+            },
+            (TarballPlatform::Macos, "aarch64") => TarballSpec {
+                platform,
+                arch: "aarch64",
+                metadata_arch: "aarch64",
+                target_triple: "aarch64-apple-darwin",
+            },
+            (TarballPlatform::Windows, "x86_64") => TarballSpec {
+                platform,
+                arch: "x86_64",
+                metadata_arch: "x86_64",
+                target_triple: "x86_64-pc-windows-msvc",
+            },
+            (TarballPlatform::Windows, "aarch64") => TarballSpec {
+                platform,
+                arch: "aarch64",
+                metadata_arch: "aarch64",
+                target_triple: "aarch64-pc-windows-msvc",
+            },
+            _ => {
                 return Err(TaskError::Validation(format!(
-                    "unsupported linux tarball architecture '{other}' declared in workspace metadata"
+                    "unsupported {key} tarball architecture '{arch}' declared in workspace metadata",
                 )));
             }
         };
+
         specs.push(spec);
     }
 
@@ -61,29 +265,22 @@ pub(super) fn build_tarball(
         .join(spec.target_triple)
         .join(&profile_name);
 
-    let binaries = [
-        (branding.client_bin.as_str(), 0o755),
-        (branding.daemon_bin.as_str(), 0o755),
-        (branding.legacy_client_bin.as_str(), 0o755),
-        (branding.legacy_daemon_bin.as_str(), 0o755),
-    ];
-
-    for (name, _) in &binaries {
-        let path = target_dir.join(name);
-        ensure_tarball_source(&path)?;
-    }
+    let extension = spec.binary_extension();
+    let root_name = format!(
+        "{}-{}-{}-{}",
+        branding.client_bin,
+        branding.rust_version,
+        spec.platform.archive_tag(),
+        spec.arch
+    );
 
     let dist_dir = workspace.join("target").join("dist");
     fs::create_dir_all(&dist_dir)?;
 
-    let root_name = format!(
-        "{}-{}-{}",
-        branding.client_bin, branding.rust_version, spec.arch
-    );
     let tarball_path = dist_dir.join(format!("{root_name}.tar.gz"));
     println!(
-        "Building {arch} tar.gz distribution at {path}",
-        arch = spec.arch,
+        "Building {display} tar.gz distribution at {path}",
+        display = spec.display_name(),
         path = tarball_path.display()
     );
 
@@ -100,82 +297,55 @@ pub(super) fn build_tarball(
     let mut builder = Builder::new(encoder);
     builder.mode(HeaderMode::Deterministic);
 
-    let directories = [
-        root_name.clone(),
-        format!("{root_name}/bin"),
-        format!("{root_name}/libexec"),
-        format!("{root_name}/libexec/oc-rsync"),
-        format!("{root_name}/lib"),
-        format!("{root_name}/lib/systemd"),
-        format!("{root_name}/lib/systemd/system"),
-        format!("{root_name}/etc"),
-        format!("{root_name}/etc/oc-rsyncd"),
-        format!("{root_name}/etc/default"),
-    ];
-
-    for directory in &directories {
-        append_directory_entry(&mut builder, directory, 0o755)?;
+    for directory in spec.platform.directories(&root_name) {
+        append_directory_entry(&mut builder, &directory, 0o755)?;
     }
 
-    let packaging_entries: Vec<(PathBuf, &str, u32)> = vec![
-        (
-            workspace.join("packaging/systemd/oc-rsyncd.service"),
-            "lib/systemd/system/oc-rsyncd.service",
-            0o644,
-        ),
-        (
-            workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.conf"),
-            "etc/oc-rsyncd/oc-rsyncd.conf",
-            0o644,
-        ),
-        (
-            workspace.join("packaging/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            "etc/oc-rsyncd/oc-rsyncd.secrets",
-            0o600,
-        ),
-        (
-            workspace.join("packaging/default/oc-rsyncd"),
-            "etc/default/oc-rsyncd",
-            0o644,
-        ),
-        (workspace.join("LICENSE"), "LICENSE", 0o644),
-        (workspace.join("README.md"), "README.md", 0o644),
-    ];
-
-    for (source, _, _) in &packaging_entries {
-        ensure_tarball_source(source)?;
+    for (source, relative, mode) in spec.platform.packaging_entries(workspace) {
+        ensure_tarball_source(&source)?;
+        let destination = format!("{root_name}/{relative}");
+        append_file_entry(&mut builder, &destination, &source, mode)?;
     }
 
-    let mut append_binary = |name: &str, relative: &str, mode: u32| -> TaskResult<()> {
-        let source = target_dir.join(name);
-        let destination = format!("{root_name}/{relative}");
-        append_file_entry(&mut builder, &destination, &source, mode)
-    };
+    let binaries = [
+        (
+            branding.client_bin.as_str(),
+            format!("bin/{}{}", branding.client_bin, extension),
+            true,
+        ),
+        (
+            branding.daemon_bin.as_str(),
+            format!("bin/{}{}", branding.daemon_bin, extension),
+            spec.includes_daemon(),
+        ),
+        (
+            branding.legacy_client_bin.as_str(),
+            format!(
+                "libexec/oc-rsync/{}{}",
+                branding.legacy_client_bin, extension
+            ),
+            true,
+        ),
+        (
+            branding.legacy_daemon_bin.as_str(),
+            format!(
+                "libexec/oc-rsync/{}{}",
+                branding.legacy_daemon_bin, extension
+            ),
+            spec.includes_daemon(),
+        ),
+    ];
 
-    append_binary(
-        branding.client_bin.as_str(),
-        &format!("bin/{}", branding.client_bin),
-        0o755,
-    )?;
-    append_binary(
-        branding.daemon_bin.as_str(),
-        &format!("bin/{}", branding.daemon_bin),
-        0o755,
-    )?;
-    append_binary(
-        branding.legacy_client_bin.as_str(),
-        &format!("libexec/oc-rsync/{}", branding.legacy_client_bin),
-        0o755,
-    )?;
-    append_binary(
-        branding.legacy_daemon_bin.as_str(),
-        &format!("libexec/oc-rsync/{}", branding.legacy_daemon_bin),
-        0o755,
-    )?;
+    for (name, relative, include) in &binaries {
+        if !include {
+            continue;
+        }
 
-    for (source, relative, mode) in &packaging_entries {
+        let file_name = format!("{}{}", name, extension);
+        let path = target_dir.join(&file_name);
+        ensure_tarball_source(&path)?;
         let destination = format!("{root_name}/{relative}");
-        append_file_entry(&mut builder, &destination, source, *mode)?;
+        append_file_entry(&mut builder, &destination, &path, 0o755)?;
     }
 
     let encoder = builder.into_inner()?;
@@ -267,11 +437,23 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    fn branding_with_linux_arches(arches: &[&str]) -> WorkspaceBranding {
+    fn branding_with_cross_compile(
+        linux_arches: &[&str],
+        mac_arches: &[&str],
+        windows_arches: &[&str],
+    ) -> WorkspaceBranding {
         let mut cross_compile = BTreeMap::new();
         cross_compile.insert(
             String::from("linux"),
-            arches.iter().map(|arch| arch.to_string()).collect(),
+            linux_arches.iter().map(|arch| arch.to_string()).collect(),
+        );
+        cross_compile.insert(
+            String::from("macos"),
+            mac_arches.iter().map(|arch| arch.to_string()).collect(),
+        );
+        cross_compile.insert(
+            String::from("windows"),
+            windows_arches.iter().map(|arch| arch.to_string()).collect(),
         );
 
         WorkspaceBranding {
@@ -295,40 +477,39 @@ mod tests {
     }
 
     #[test]
-    fn linux_tarball_specs_accepts_supported_architectures() {
-        let branding = branding_with_linux_arches(&["x86_64", "aarch64"]);
-        let specs = linux_tarball_specs(&branding).expect("spec extraction succeeds");
+    fn tarball_specs_supports_linux_architectures() {
+        let branding = branding_with_cross_compile(&["x86_64", "aarch64"], &[], &[]);
+        let target = OsString::from("x86_64-unknown-linux-gnu");
+        let specs = tarball_specs(&branding, Some(target.as_os_str())).expect("spec extraction");
         assert_eq!(
             specs,
-            vec![
-                TarballSpec {
-                    arch: "amd64",
-                    target_triple: "x86_64-unknown-linux-gnu",
-                },
-                TarballSpec {
-                    arch: "aarch64",
-                    target_triple: "aarch64-unknown-linux-gnu",
-                },
-            ]
+            vec![TarballSpec {
+                platform: TarballPlatform::Linux,
+                arch: "amd64",
+                metadata_arch: "x86_64",
+                target_triple: "x86_64-unknown-linux-gnu",
+            }]
         );
     }
 
     #[test]
-    fn linux_tarball_specs_rejects_unknown_architecture() {
-        let branding = branding_with_linux_arches(&["sparc64"]);
-        let error = linux_tarball_specs(&branding).unwrap_err();
-        assert!(
-            matches!(error, TaskError::Validation(message) if message.contains("unsupported linux tarball architecture"))
-        );
+    fn tarball_specs_rejects_unknown_architecture() {
+        let branding = branding_with_cross_compile(&["sparc64"], &[], &[]);
+        let error = tarball_specs(&branding, None).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("unsupported linux tarball architecture")
+        ));
     }
 
     #[test]
-    fn linux_tarball_specs_require_linux_entry() {
-        let mut branding = branding_with_linux_arches(&[]);
-        branding.cross_compile.clear();
-        let error = linux_tarball_specs(&branding).unwrap_err();
-        assert!(
-            matches!(error, TaskError::Validation(message) if message.contains("missing linux entry"))
-        );
+    fn tarball_specs_rejects_unknown_target_filter() {
+        let branding = branding_with_cross_compile(&["x86_64"], &[], &[]);
+        let target = OsString::from("wasm32-unknown-unknown");
+        let error = tarball_specs(&branding, Some(target.as_os_str())).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("unknown tarball target triple")
+        ));
     }
 }

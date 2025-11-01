@@ -51,7 +51,7 @@ jobs:
             generate_sbom: true
           - name: windows-x86_64
             enabled: true
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
@@ -59,7 +59,7 @@ jobs:
             generate_sbom: false
           - name: windows-x86
             enabled: false
-            target: i686-pc-windows-gnu
+            target: i686-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
@@ -147,7 +147,7 @@ jobs:
             generate_sbom: true
           - name: windows-x86_64
             enabled: true
-            target: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
@@ -155,7 +155,7 @@ jobs:
             generate_sbom: false
           - name: windows-x86
             enabled: false
-            target: i686-pc-windows-gnu
+            target: i686-pc-windows-msvc
             build_command: zigbuild
             build_daemon: false
             uses_zig: true
