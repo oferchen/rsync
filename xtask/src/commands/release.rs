@@ -3,6 +3,7 @@ use crate::commands::{
     enforce_limits::{self, EnforceLimitsOptions},
     no_binaries::{self, NoBinariesOptions},
     no_placeholders::{self, NoPlaceholdersOptions},
+    package::{self, PackageOptions},
     preflight::{self, PreflightOptions},
     readme_version::{self, ReadmeVersionOptions},
 };
@@ -22,6 +23,8 @@ pub struct ReleaseOptions {
     pub skip_placeholder_scan: bool,
     /// Skip auditing the git index for tracked binary artifacts.
     pub skip_binary_scan: bool,
+    /// Skip building distributable packages.
+    pub skip_packages: bool,
 }
 
 /// Parses CLI arguments for the `release` command.
@@ -52,6 +55,10 @@ where
             "--skip-binary-scan" => {
                 ensure_flag_unused(options.skip_binary_scan, "--skip-binary-scan")?;
                 options.skip_binary_scan = true;
+            }
+            "--skip-packages" => {
+                ensure_flag_unused(options.skip_packages, "--skip-packages")?;
+                options.skip_packages = true;
             }
             other => {
                 return Err(TaskError::Usage(format!(
@@ -117,6 +124,14 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
         executed_steps.push("no-placeholders");
     }
 
+    if options.skip_packages {
+        skipped_steps.push("package");
+    } else {
+        let package_options = PackageOptions::release_all();
+        package::execute(workspace, package_options)?;
+        executed_steps.push("package");
+    }
+
     if skipped_steps.is_empty() {
         println!(
             "Release validation complete. Executed steps: {}.",
@@ -136,7 +151,7 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  -h, --help                Show this help message",
+        "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  --skip-packages           Skip building release packages\n  -h, --help                Show this help message",
     )
 }
 
@@ -158,12 +173,14 @@ mod tests {
             OsString::from("--skip-hygiene"),
             OsString::from("--skip-placeholder-scan"),
             OsString::from("--skip-binary-scan"),
+            OsString::from("--skip-packages"),
         ];
         let options = parse_args(args).expect("parse succeeds");
         assert!(options.skip_docs);
         assert!(options.skip_hygiene);
         assert!(options.skip_placeholder_scan);
         assert!(options.skip_binary_scan);
+        assert!(options.skip_packages);
     }
 
     #[test]
@@ -187,6 +204,7 @@ mod tests {
             skip_hygiene: true,
             skip_placeholder_scan: true,
             skip_binary_scan: true,
+            skip_packages: true,
         };
         execute(&workspace, options).expect("release validation succeeds");
     }
