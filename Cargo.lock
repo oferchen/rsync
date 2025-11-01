@@ -968,6 +968,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1350,8 +1361,10 @@ name = "xtask"
 version = "3.4.1-rust"
 dependencies = [
  "cargo_metadata",
+ "flate2",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "toml",
 ]
