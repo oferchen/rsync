@@ -1,8 +1,47 @@
 #!/bin/sh
 set -e
 
-# No post-install actions are required when co-installing alongside
-# upstream rsync packages. The oc-rsync binaries ship under unique
-# names so they can coexist without touching /usr/bin/rsync.
+ALT_NAME="rsync"
+ALT_MASTER="/usr/bin/rsync"
+ALT_IMPL="/usr/libexec/oc-rsync/rsync"
+ALT_SLAVE_NAME="rsyncd"
+ALT_SLAVE_LINK="/usr/bin/rsyncd"
+ALT_SLAVE_IMPL="/usr/libexec/oc-rsync/rsyncd"
+ALT_PRIORITY=30
+
+have_update_alternatives() {
+    command -v update-alternatives >/dev/null 2>&1
+}
+
+register_alternatives() {
+    if ! have_update_alternatives; then
+        return 0
+    fi
+
+    if [ -e "${ALT_MASTER}" ] && [ ! -L "${ALT_MASTER}" ]; then
+        if ! update-alternatives --display "${ALT_NAME}" >/dev/null 2>&1; then
+            # The upstream rsync package owns /usr/bin/rsync as a regular file.
+            # Respect the existing binary so both packages can coexist.
+            return 0
+        fi
+    fi
+
+    update-alternatives \
+        --install "${ALT_MASTER}" "${ALT_NAME}" "${ALT_IMPL}" "${ALT_PRIORITY}" \
+        --slave "${ALT_SLAVE_LINK}" "${ALT_SLAVE_NAME}" "${ALT_SLAVE_IMPL}" \
+        >/dev/null
+}
+
+case "$1" in
+    configure)
+        register_alternatives
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        :
+        ;;
+    *)
+        :
+        ;;
+esac
 
 exit 0
