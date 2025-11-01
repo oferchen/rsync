@@ -115,8 +115,6 @@ depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
 features = []
 assets = [
-    ["target/dist/oc-rsync", "/usr/bin/oc-rsync", "755"],
-    ["target/dist/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
