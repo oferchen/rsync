@@ -99,6 +99,16 @@ pub fn run_cargo_tool(
     display: &str,
     install_hint: &str,
 ) -> TaskResult<()> {
+    run_cargo_tool_with_env(workspace, args, &[], display, install_hint)
+}
+
+pub fn run_cargo_tool_with_env(
+    workspace: &std::path::Path,
+    args: Vec<OsString>,
+    env: &[(OsString, OsString)],
+    display: &str,
+    install_hint: &str,
+) -> TaskResult<()> {
     if should_simulate_missing_tool(display) {
         return Err(tool_missing_error(display, install_hint));
     }
@@ -107,6 +117,10 @@ pub fn run_cargo_tool(
     let output = Command::new(cargo)
         .current_dir(workspace)
         .args(&args)
+        .envs(
+            env.iter()
+                .map(|(key, value)| (key.as_os_str(), value.as_os_str())),
+        )
         .output()
         .map_err(|error| map_command_error(error, display, install_hint))?;
 

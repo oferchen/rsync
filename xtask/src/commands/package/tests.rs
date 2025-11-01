@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::build::cross_compiler_program_for_target;
-use super::{PackageOptions, execute};
+use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -99,7 +99,7 @@ fn execute_reports_missing_cargo_deb_tool() {
             build_deb: true,
             build_rpm: false,
             build_tarball: false,
-            profile: Some(OsString::from("release")),
+            profile: Some(OsString::from(DIST_PROFILE)),
         },
     )
     .unwrap_err();
@@ -155,7 +155,7 @@ fn execute_reports_missing_rpmbuild_tool() {
             build_deb: false,
             build_rpm: true,
             build_tarball: false,
-            profile: Some(OsString::from("release")),
+            profile: Some(OsString::from(DIST_PROFILE)),
         },
     )
     .unwrap_err();
@@ -187,7 +187,7 @@ fn execute_reports_missing_cross_compiler() {
 
     let error = super::build::build_workspace_binaries(
         workspace_root(),
-        &Some(OsString::from("release")),
+        &Some(OsString::from(DIST_PROFILE)),
         Some("aarch64-unknown-linux-gnu"),
     )
     .unwrap_err();

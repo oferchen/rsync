@@ -1,6 +1,8 @@
-use super::{PackageOptions, tarball};
+use super::{DIST_PROFILE, PackageOptions, tarball};
 use crate::error::TaskResult;
-use crate::util::{ensure_command_available, probe_cargo_tool, run_cargo_tool};
+use crate::util::{
+    ensure_command_available, probe_cargo_tool, run_cargo_tool, run_cargo_tool_with_env,
+};
 use crate::workspace::load_workspace_branding;
 use std::env;
 use std::ffi::OsString;
@@ -37,7 +39,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             "install the rpmbuild tooling (for example, `dnf install rpm-build` or `apt install rpm`)",
         )?;
         if let Some(profile) = options.profile.as_deref() {
-            if profile != "release" {
+            if profile != "release" && profile != DIST_PROFILE {
                 probe_cargo_tool(
                     workspace,
                     &["rpm", "--help"],
@@ -94,8 +96,13 @@ pub(super) fn build_workspace_binaries(
     args.push(OsString::from("--features"));
     args.push(OsString::from("legacy-binaries"));
 
+    let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
+
     if let Some(target) = target {
-        ensure_cross_compiler_available(target)?;
+        if let Some(spec) = cross_compiler_for_target(target) {
+            ensure_command_available(spec.program, spec.install_hint)?;
+            env_overrides.push((linker_env_var_name(target), OsString::from(spec.program)));
+        }
         args.push(OsString::from("--target"));
         args.push(OsString::from(target));
     }
@@ -105,9 +112,10 @@ pub(super) fn build_workspace_binaries(
         args.push(profile.clone());
     }
 
-    run_cargo_tool(
+    run_cargo_tool_with_env(
         workspace,
         args,
+        &env_overrides,
         "cargo build",
         "use `cargo build` to compile the workspace binaries",
     )
@@ -134,6 +142,12 @@ fn cross_compiler_for_target(target: &str) -> Option<CrossCompilerSpec> {
         }),
         _ => None,
     }
+}
+
+fn linker_env_var_name(target: &str) -> OsString {
+    let mut normalized = target.replace('-', "_");
+    normalized.make_ascii_uppercase();
+    OsString::from(format!("CARGO_TARGET_{}_LINKER", normalized))
 }
 
 #[cfg(test)]
