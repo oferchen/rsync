@@ -77,6 +77,11 @@ This document defines the internal actors (“agents”), their responsibilities
   validation (`validation/`). Keep new helpers scoped to these purpose-built
   modules so the hygiene guard continues to pass and future contributors can
   extend validation logic without regressing the line-count cap.
+- **`xtask package` decomposition**: the packaging command resides in
+  `xtask/src/commands/package/` split across `args.rs`, `build.rs`,
+  `tarball.rs`, and `tests.rs`. Extend argument handling or packaging logic in
+  those focused modules rather than introducing a monolithic
+  `package.rs`, and keep each file below the hygiene thresholds.
 - **CLI execution decomposition**: The `crates/cli/src/frontend/execution`
   module is being split into dedicated submodules (`options`, `module_listing`,
   `validation`, etc.) so the formerly monolithic `execution.rs` file can be
@@ -116,6 +121,11 @@ This document defines the internal actors (“agents”), their responsibilities
   so each responsibility stays below the hygiene limit. Future changes to file
   transfer behaviour must extend the appropriate helper module rather than
   reintroducing monolithic logic in a single file.
+- **Bandwidth limiter decomposition**: The throttling implementation now lives
+  in `crates/bandwidth/src/limiter/` with dedicated modules for configuration
+  (`change.rs`), runtime behaviour (`core.rs`), and sleep utilities
+  (`sleep.rs`). New pacing logic or helpers must integrate with these modules
+  instead of growing a single large source file.
 - **Dir-merge parser decomposition**: The former
   `crates/engine/src/local_copy/dir_merge/parse.rs` has been split into the
   `parse/` module directory (`types.rs`, `line.rs`, `merge.rs`,
