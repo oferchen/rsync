@@ -179,6 +179,9 @@ fn build_workspace_binaries(workspace: &Path, profile: &Option<OsString>) -> Tas
         OsString::from("--locked"),
     ];
 
+    args.push(OsString::from("--features"));
+    args.push(OsString::from("legacy-binaries"));
+
     if let Some(profile) = profile {
         args.push(OsString::from("--profile"));
         args.push(profile.clone());
