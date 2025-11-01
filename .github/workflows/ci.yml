@@ -34,25 +34,29 @@ jobs:
     name: tests (Linux only)
     runs-on: ubuntu-latest
     needs: [lint]
-    env:
-      # Force local-disk cache; never use GHA backend (prevents GHAC outages from failing builds)
-      SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: ${{ runner.temp }}/.sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      # Optional, non-fatal sccache using local disk (no GHA backend)
       - uses: mozilla-actions/sccache-action@v0.0.4
         continue-on-error: true
+      - name: Configure local sccache dir
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
       - name: Enable sccache wrapper if available (non-fatal)
         shell: bash
         run: |
-          set -euo pipefail
           if command -v sccache >/dev/null 2>&1; then
             sccache --start-server || true
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
             sccache --show-stats || true
           fi
+
       - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -67,23 +71,27 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-linux]
     timeout-minutes: 15
-    env:
-      SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: ${{ runner.temp }}/.sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      # Optional, non-fatal sccache using local disk (no GHA backend)
       - uses: mozilla-actions/sccache-action@v0.0.4
         continue-on-error: true
+      - name: Configure local sccache dir
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
       - name: Enable sccache wrapper if available (non-fatal)
         shell: bash
         run: |
-          set -euo pipefail
           if command -v sccache >/dev/null 2>&1; then
             sccache --start-server || true
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
             sccache --show-stats || true
           fi
+
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --bins
       - name: Install system rsync
@@ -160,10 +168,6 @@ jobs:
             generate_sbom: false
     runs-on: ${{ matrix.os }}
 
-    env:
-      SCCACHE_GHA_ENABLED: "false"
-      SCCACHE_DIR: ${{ runner.temp }}/.sccache
-
     steps:
       - name: Skip disabled target
         if: ${{ !matrix.enabled }}
@@ -178,14 +182,20 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Optional, non-fatal sccache using local disk (no GHA backend)
       - uses: mozilla-actions/sccache-action@v0.0.4
         if: ${{ matrix.enabled }}
         continue-on-error: true
+      - name: Configure local sccache dir
+        if: ${{ matrix.enabled }}
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
       - name: Enable sccache wrapper if available (non-fatal)
         if: ${{ matrix.enabled }}
         shell: bash
         run: |
-          set -euo pipefail
           if command -v sccache >/dev/null 2>&1; then
             sccache --start-server || true
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
@@ -257,3 +267,4 @@ jobs:
             target/${{ matrix.target }}/release/oc-rsyncd
             target/${{ matrix.target }}/release/oc-rsyncd.exe
           if-no-files-found: error
+
