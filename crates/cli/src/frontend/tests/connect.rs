@@ -4,6 +4,7 @@ use crate::frontend::execution::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
 
 #[test]
 fn connect_program_requires_remote_operands() {
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
     use tempfile::tempdir;
 
     let temp = tempdir().expect("tempdir");
