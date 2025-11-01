@@ -1,7 +1,33 @@
 #!/bin/sh
 set -e
 
-# No special handling is necessary during removal; the package no longer
-# registers alternatives that could collide with upstream rsync.
+ALT_NAME="rsync"
+ALT_IMPL="/usr/libexec/oc-rsync/rsync"
+
+have_update_alternatives() {
+    command -v update-alternatives >/dev/null 2>&1
+}
+
+remove_alternatives() {
+    if ! have_update_alternatives; then
+        return 0
+    fi
+
+    if update-alternatives --display "${ALT_NAME}" >/dev/null 2>&1; then
+        update-alternatives --remove "${ALT_NAME}" "${ALT_IMPL}" >/dev/null || true
+    fi
+}
+
+case "$1" in
+    remove|deconfigure)
+        remove_alternatives
+        ;;
+    upgrade|failed-upgrade)
+        :
+        ;;
+    *)
+        :
+        ;;
+esac
 
 exit 0

@@ -140,6 +140,109 @@ mode = "0600"
 path = "/etc/default/oc-rsyncd"
 mode = "0644"
 
+
+[package.metadata.rpm.scripts]
+post = '''
+set -e
+
+ALT_NAME=rsync
+ALT_MASTER=/usr/bin/rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+ALT_SLAVE_NAME=rsyncd
+ALT_SLAVE_LINK=/usr/bin/rsyncd
+ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
+ALT_PRIORITY=30
+
+detect_alternatives() {
+    if command -v update-alternatives >/dev/null 2>&1; then
+        ALT_TOOL=update-alternatives
+    elif command -v alternatives >/dev/null 2>&1; then
+        ALT_TOOL=alternatives
+    else
+        ALT_TOOL=
+    fi
+}
+
+register_alternatives() {
+    detect_alternatives
+    if [ -z "$ALT_TOOL" ]; then
+        return 0
+    fi
+
+    if [ -e "$ALT_MASTER" ] && [ ! -L "$ALT_MASTER" ]; then
+        if ! "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    "$ALT_TOOL" --install "$ALT_MASTER" "$ALT_NAME" "$ALT_IMPL" "$ALT_PRIORITY" --slave "$ALT_SLAVE_LINK" "$ALT_SLAVE_NAME" "$ALT_SLAVE_IMPL" >/dev/null
+}
+
+register_alternatives
+'''
+preun = '''
+set -e
+
+ALT_NAME=rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+
+detect_alternatives() {
+    if command -v update-alternatives >/dev/null 2>&1; then
+        ALT_TOOL=update-alternatives
+    elif command -v alternatives >/dev/null 2>&1; then
+        ALT_TOOL=alternatives
+    else
+        ALT_TOOL=
+    fi
+}
+
+remove_alternatives() {
+    detect_alternatives
+    if [ -z "$ALT_TOOL" ]; then
+        return 0
+    fi
+
+    if "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
+        "$ALT_TOOL" --remove "$ALT_NAME" "$ALT_IMPL" >/dev/null || true
+    fi
+}
+
+if [ "$1" -eq 0 ]; then
+    remove_alternatives
+fi
+'''
+postun = '''
+set -e
+
+ALT_NAME=rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+
+detect_alternatives() {
+    if command -v update-alternatives >/dev/null 2>&1; then
+        ALT_TOOL=update-alternatives
+    elif command -v alternatives >/dev/null 2>&1; then
+        ALT_TOOL=alternatives
+    else
+        ALT_TOOL=
+    fi
+}
+
+remove_alternatives() {
+    detect_alternatives
+    if [ -z "$ALT_TOOL" ]; then
+        return 0
+    fi
+
+    if "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
+        "$ALT_TOOL" --remove "$ALT_NAME" "$ALT_IMPL" >/dev/null || true
+    fi
+}
+
+if [ "$1" -eq 0 ]; then
+    remove_alternatives
+fi
+'''
+
 [package.metadata.rpm.cargo]
 buildflags = ["--release"]
 

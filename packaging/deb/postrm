@@ -1,7 +1,33 @@
 #!/bin/sh
 set -e
 
-# No purge-time cleanup is required; oc-rsync does not register
-# system-wide alternatives when removed.
+ALT_NAME="rsync"
+ALT_IMPL="/usr/libexec/oc-rsync/rsync"
+
+have_update_alternatives() {
+    command -v update-alternatives >/dev/null 2>&1
+}
+
+remove_alternatives_if_present() {
+    if ! have_update_alternatives; then
+        return 0
+    fi
+
+    if update-alternatives --display "${ALT_NAME}" >/dev/null 2>&1; then
+        update-alternatives --remove "${ALT_NAME}" "${ALT_IMPL}" >/dev/null || true
+    fi
+}
+
+case "$1" in
+    purge)
+        remove_alternatives_if_present
+        ;;
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        :
+        ;;
+    *)
+        :
+        ;;
+esac
 
 exit 0
