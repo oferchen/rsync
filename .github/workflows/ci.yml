@@ -35,13 +35,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint]
     env:
-      # Optional: enable sccache for faster rebuilds (kept simple & portable)
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
+      # Force local-disk cache; never use GHA backend (prevents GHAC outages from failing builds)
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: ${{ runner.temp }}/.sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.4
+        continue-on-error: true
+      - name: Enable sccache wrapper if available (non-fatal)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -58,12 +68,22 @@ jobs:
     needs: [test-linux]
     timeout-minutes: 15
     env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: ${{ runner.temp }}/.sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.4
+        continue-on-error: true
+      - name: Enable sccache wrapper if available (non-fatal)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --bins
       - name: Install system rsync
@@ -100,7 +120,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ---------- Linux GNU ----------
+          # Linux GNU
           - name: linux-x86_64
             enabled: true
             os: ubuntu-latest
@@ -115,8 +135,7 @@ jobs:
             build_daemon: true
             needs_cross_gcc: true
             generate_sbom: true
-
-          # ---------- macOS (native) ----------
+          # macOS native
           - name: darwin-x86_64
             enabled: true
             os: macos-13
@@ -131,8 +150,7 @@ jobs:
             build_daemon: true
             needs_cross_gcc: false
             generate_sbom: true
-
-          # ---------- Windows (MSVC) ----------
+          # Windows MSVC
           - name: windows-x86_64
             enabled: true
             os: windows-latest
@@ -140,21 +158,11 @@ jobs:
             build_daemon: false
             needs_cross_gcc: false
             generate_sbom: false
-
-          # Future entries (disabled until runners/toolchains are ready)
-          - name: windows-aarch64
-            enabled: false
-            os: windows-latest
-            target: aarch64-pc-windows-msvc
-            build_daemon: false
-            needs_cross_gcc: false
-            generate_sbom: false
-
     runs-on: ${{ matrix.os }}
 
     env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_ENABLED: "false"
+      SCCACHE_DIR: ${{ runner.temp }}/.sccache
 
     steps:
       - name: Skip disabled target
@@ -172,6 +180,17 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.4
         if: ${{ matrix.enabled }}
+        continue-on-error: true
+      - name: Enable sccache wrapper if available (non-fatal)
+        if: ${{ matrix.enabled }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
 
       - uses: Swatinem/rust-cache@v2
         if: ${{ matrix.enabled }}
@@ -179,7 +198,6 @@ jobs:
           shared-key: cross-${{ matrix.name }}
           target: ${{ matrix.target }}
 
-      # Ubuntu-only build deps (guard by OS)
       - name: Install Ubuntu build deps
         if: ${{ matrix.enabled && startsWith(matrix.os, 'ubuntu') }}
         uses: awalsh128/cache-apt-pkgs-action@v1
@@ -194,8 +212,7 @@ jobs:
           packages: gcc-aarch64-linux-gnu
           version: 1
 
-      # (Optional) SBOM tool
-      - name: Install cargo-cyclonedx
+      - name: Install cargo-cyclonedx (SBOM)
         if: ${{ matrix.enabled && matrix.generate_sbom }}
         uses: taiki-e/install-action@v2
         with:
