@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::build::cross_compiler_program_for_target;
+use super::build::resolve_cross_compiler_for_tests;
 use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
@@ -166,36 +166,66 @@ fn execute_reports_missing_rpmbuild_tool() {
 }
 
 #[test]
-fn cross_compiler_detection_handles_known_targets() {
-    assert_eq!(
-        cross_compiler_program_for_target("aarch64-unknown-linux-gnu"),
-        Some("aarch64-linux-gnu-gcc")
+fn execute_reports_missing_cross_compiler() {
+    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    env.set_str(
+        "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
+        "aarch64-linux-gnu-gcc,zig",
     );
-    assert_eq!(
-        cross_compiler_program_for_target("x86_64-unknown-linux-gnu"),
-        None
-    );
+
+    let error = resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        TaskError::ToolMissing(message)
+            if message.contains("aarch64-linux-gnu-gcc")
+                && message.contains("zig")
+    ));
 }
 
 #[test]
-fn execute_reports_missing_cross_compiler() {
-    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+fn cross_compiler_resolution_prefers_cross_gcc() {
+    let (dir, _path) = fake_tool("aarch64-linux-gnu-gcc");
+    let mut env = ScopedEnv::new(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    prepend_path(&mut env, dir.path());
+    env.set_str("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "zig");
+
+    let override_value =
+        resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+            .expect("resolution succeeds")
+            .expect("cross compiler override present");
+
+    assert_eq!(
+        override_value.0,
+        OsString::from("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER")
+    );
+    assert_eq!(override_value.1, OsString::from("aarch64-linux-gnu-gcc"));
+}
+
+#[test]
+fn cross_compiler_resolution_falls_back_to_zig() {
+    let (dir, _path) = fake_tool("zig");
+    let mut env = ScopedEnv::new(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    prepend_path(&mut env, dir.path());
     env.set_str(
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
         "aarch64-linux-gnu-gcc",
     );
 
-    let error = super::build::build_workspace_binaries(
-        workspace_root(),
-        &Some(OsString::from(DIST_PROFILE)),
-        Some("aarch64-unknown-linux-gnu"),
-    )
-    .unwrap_err();
+    let override_value =
+        resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
+            .expect("resolution succeeds")
+            .expect("cross compiler override present");
 
-    assert!(matches!(
-        error,
-        TaskError::ToolMissing(message) if message.contains("aarch64-linux-gnu-gcc")
-    ));
+    assert_eq!(
+        override_value.0,
+        OsString::from("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER")
+    );
+
+    let override_path = PathBuf::from(&override_value.1);
+    assert!(override_path.ends_with(zig_shim_name("aarch64-unknown-linux-gnu")));
+    assert!(override_path.exists());
 }
 
 fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
@@ -227,4 +257,51 @@ fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
     }
 
     (dir, rpmbuild_path)
+}
+
+fn fake_tool(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("create temp directory for fake tool");
+    let file_name = if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        name.to_string()
+    };
+    let tool_path = dir.path().join(file_name);
+
+    #[cfg(windows)]
+    let script = b"@echo off\r\nexit /b 0\r\n".to_vec();
+
+    #[cfg(not(windows))]
+    let script = b"#!/bin/sh\nexit 0\n".to_vec();
+
+    std::fs::write(&tool_path, script).expect("write fake tool script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&tool_path)
+            .expect("read fake tool metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tool_path, permissions).expect("make fake tool executable");
+    }
+
+    (dir, tool_path)
+}
+
+fn prepend_path(env: &mut ScopedEnv, directory: &Path) {
+    let mut path_entries = vec![directory.to_path_buf()];
+    if let Some(existing) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing));
+    }
+    let joined = env::join_paths(path_entries).expect("compose PATH");
+    env.set_os("PATH", joined.as_os_str());
+}
+
+fn zig_shim_name(target: &str) -> String {
+    if cfg!(windows) {
+        format!("zig-linker-{target}.cmd")
+    } else {
+        format!("zig-linker-{target}")
+    }
 }
