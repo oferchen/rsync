@@ -1,4 +1,4 @@
-use super::AMD64_TARBALL_TARGET;
+use super::{AMD64_TARBALL_ARCH, AMD64_TARBALL_TARGET};
 use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use flate2::Compression;
@@ -37,7 +37,7 @@ pub(super) fn build_amd64_tarball(
 
     let root_name = format!(
         "{}-{}-{}",
-        branding.client_bin, branding.rust_version, AMD64_TARBALL_TARGET
+        branding.client_bin, branding.rust_version, AMD64_TARBALL_ARCH
     );
     let tarball_path = dist_dir.join(format!("{root_name}.tar.gz"));
     println!(
