@@ -202,28 +202,9 @@ detect_alternatives() {
     fi
 }
 
-rpm_upstream_rsync_installed() {
-    if command -v rpm >/dev/null 2>&1; then
-        if rpm -q rsync >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 register_alternatives() {
     detect_alternatives
     if [ -z "$ALT_TOOL" ]; then
-        return 0
-    fi
-
-    if ! should_register_alternatives; then
-        printf '%s\n' "Skipping update-alternatives registration for oc-rsync; set OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES=1 or enable OC_RSYNC_REGISTER_ALTERNATIVES in /etc/default/oc-rsyncd to opt in." >&2
-        return 0
-    fi
-
-    if rpm_upstream_rsync_installed; then
         return 0
     fi
 
