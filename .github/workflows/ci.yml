@@ -270,6 +270,12 @@ jobs:
           packages: gcc-aarch64-linux-gnu
           version: 1
 
+      - name: Install cargo-deb & cargo-rpm
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-rpm
+
       - name: Install cargo-cyclonedx (SBOM)
         if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
         uses: taiki-e/install-action@v2
