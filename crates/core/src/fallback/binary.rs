@@ -125,10 +125,8 @@ fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
     }
 
     if let Some(path_ext) = env::var_os("PATHEXT") {
-        for ext in path_ext.split(';') {
-            if !ext.trim().is_empty() {
-                exts.push(OsString::from(ext));
-            }
+        for ext in split_pathext(&path_ext) {
+            exts.push(ext);
         }
     }
 
@@ -140,6 +138,48 @@ fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
     }
 
     exts
+}
+
+#[cfg(windows)]
+fn split_pathext(value: &OsStr) -> Vec<OsString> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+
+    for unit in value.encode_wide() {
+        if unit == b';' as u16 {
+            if let Some(segment) = finalize_segment(&current) {
+                segments.push(segment);
+            }
+            current.clear();
+        } else {
+            current.push(unit);
+        }
+    }
+
+    if let Some(segment) = finalize_segment(&current) {
+        segments.push(segment);
+    }
+
+    segments
+}
+
+#[cfg(windows)]
+fn finalize_segment(segment: &[u16]) -> Option<OsString> {
+    use std::os::windows::ffi::OsStringExt;
+
+    if segment.is_empty() {
+        return None;
+    }
+
+    let candidate = OsString::from_wide(segment);
+    let text = candidate.to_string_lossy();
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    Some(candidate)
 }
 
 #[cfg(test)]
