@@ -121,9 +121,147 @@ fn cargo_target_runner() -> Option<Vec<String>> {
         target.replace('-', "_").to_uppercase()
     );
     let runner = env::var(&runner_env).ok()?;
-    if runner.is_empty() {
+    if runner.trim().is_empty() {
         return None;
     }
 
-    Some(runner.split(' ').map(str::to_string).collect())
+    let words = split_shell_words(&runner).unwrap_or_else(|error| {
+        panic!("{runner_env} contains an invalid runner command ({error})")
+    });
+    if words.is_empty() { None } else { Some(words) }
+}
+
+fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Normal,
+        SingleQuoted,
+        DoubleQuoted,
+    }
+
+    let mut state = State::Normal;
+    let mut current = String::new();
+    let mut parts = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match state {
+            State::Normal => match ch {
+                c if c.is_whitespace() => {
+                    if !current.is_empty() {
+                        parts.push(std::mem::take(&mut current));
+                    }
+                }
+                '\\' => {
+                    let Some(escaped) = chars.next() else {
+                        return Err("trailing backslash");
+                    };
+                    current.push(escaped);
+                }
+                '\'' => {
+                    state = State::SingleQuoted;
+                }
+                '"' => {
+                    state = State::DoubleQuoted;
+                }
+                _ => current.push(ch),
+            },
+            State::SingleQuoted => {
+                if ch == '\'' {
+                    state = State::Normal;
+                } else {
+                    current.push(ch);
+                }
+            }
+            State::DoubleQuoted => match ch {
+                '"' => state = State::Normal,
+                '\\' => {
+                    let Some(escaped) = chars.next() else {
+                        return Err("unterminated escape in double quotes");
+                    };
+                    match escaped {
+                        '"' | '\\' | '$' | '`' => current.push(escaped),
+                        other => {
+                            current.push('\\');
+                            current.push(other);
+                        }
+                    }
+                }
+                _ => current.push(ch),
+            },
+        }
+    }
+
+    match state {
+        State::Normal => {
+            if !current.is_empty() {
+                parts.push(current);
+            }
+            Ok(parts)
+        }
+        State::SingleQuoted => Err("unterminated single quote"),
+        State::DoubleQuoted => Err("unterminated double quote"),
+    }
+}
+
+#[cfg(test)]
+mod split_shell_words_tests {
+    use super::split_shell_words;
+
+    #[test]
+    fn splits_whitespace_separated_words() {
+        assert_eq!(
+            split_shell_words("qemu-aarch64 -L /usr/aarch64-linux-gnu").unwrap(),
+            vec![
+                String::from("qemu-aarch64"),
+                String::from("-L"),
+                String::from("/usr/aarch64-linux-gnu"),
+            ]
+        );
+    }
+
+    #[test]
+    fn honours_quoted_sections() {
+        assert_eq!(
+            split_shell_words("\"/opt/Runner Tool/bin/runner\" --flag 'value with spaces'")
+                .unwrap(),
+            vec![
+                String::from("/opt/Runner Tool/bin/runner"),
+                String::from("--flag"),
+                String::from("value with spaces"),
+            ]
+        );
+    }
+
+    #[test]
+    fn honours_backslash_escapes_outside_quotes() {
+        assert_eq!(
+            split_shell_words("/path/with\\ space arg").unwrap(),
+            vec![String::from("/path/with space"), String::from("arg"),]
+        );
+    }
+
+    #[test]
+    fn honours_backslash_escapes_inside_double_quotes() {
+        assert_eq!(
+            split_shell_words("cmd \"escaped\\\"quote\"").unwrap(),
+            vec![String::from("cmd"), String::from("escaped\"quote")]
+        );
+    }
+
+    #[test]
+    fn detects_unterminated_single_quotes() {
+        assert!(matches!(split_shell_words("cmd 'unterminated"), Err(_)));
+    }
+
+    #[test]
+    fn detects_unterminated_double_quotes() {
+        assert!(matches!(split_shell_words("cmd \"unterminated"), Err(_)));
+    }
+
+    #[test]
+    fn detects_trailing_backslash() {
+        let input = format!("cmd {}", '\\');
+        assert!(matches!(split_shell_words(&input), Err(_)));
+    }
 }
