@@ -37,6 +37,14 @@ fn parse_bandwidth_rejects_space_between_value_and_suffix() {
 }
 
 #[test]
+fn parse_bandwidth_rejects_numeric_separators() {
+    for text in ["1_000K", "2M_", "4G__1", "1e3_", "_1K"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid, "input: {text}");
+    }
+}
+
+#[test]
 fn parse_bandwidth_accepts_iec_suffixes() {
     let limit = parse_bandwidth_argument("1MiB").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1_048_576));
@@ -466,6 +474,12 @@ fn bandwidth_parse_error_display_matches_expected_messages() {
 #[test]
 fn parse_bandwidth_rejects_overflow() {
     let error = parse_bandwidth_argument("999999999999999999999999999999P").unwrap_err();
+    assert_eq!(error, BandwidthParseError::TooLarge);
+}
+
+#[test]
+fn parse_bandwidth_rejects_excessive_exponent() {
+    let error = parse_bandwidth_argument("1e2000M").unwrap_err();
     assert_eq!(error, BandwidthParseError::TooLarge);
 }
 
