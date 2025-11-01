@@ -104,8 +104,8 @@ maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
 assets = [
-    ["target/release/rsync", "/usr/bin/rsync", "755"],
-    ["target/release/rsyncd", "/usr/bin/rsyncd", "755"],
+    ["target/release/rsync", "/usr/libexec/oc-rsync/rsync", "755"],
+    ["target/release/rsyncd", "/usr/libexec/oc-rsync/rsyncd", "755"],
     ["target/release/oc-rsync", "/usr/bin/oc-rsync", "755"],
     ["target/release/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
@@ -118,13 +118,14 @@ conf-files = [
     "etc/oc-rsyncd/oc-rsyncd.secrets",
     "etc/default/oc-rsyncd",
 ]
+maintainer-scripts = "packaging/deb"
 
 [package.metadata.rpm]
 package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
 assets = [
-    { path = "target/release/rsync", dest = "/usr/bin/rsync", mode = "0755" },
-    { path = "target/release/rsyncd", dest = "/usr/bin/rsyncd", mode = "0755" },
+    { path = "target/release/rsync", dest = "/usr/libexec/oc-rsync/rsync", mode = "0755" },
+    { path = "target/release/rsyncd", dest = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" },
     { path = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
     { path = "target/release/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
     { path = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
@@ -137,8 +138,22 @@ assets = [
 buildflags = ["--release"]
 
 [package.metadata.rpm.targets]
-rsync = { path = "/usr/bin/rsync", mode = "0755" }
-rsyncd = { path = "/usr/bin/rsyncd", mode = "0755" }
+rsync = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
+rsyncd = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
+
+[package.metadata.rpm.scripts]
+post = """
+if command -v alternatives >/dev/null 2>&1; then
+    alternatives --install /usr/bin/rsync rsync /usr/libexec/oc-rsync/rsync 50
+    alternatives --install /usr/bin/rsyncd rsyncd /usr/libexec/oc-rsync/rsyncd 50
+fi
+"""
+preun = """
+if [ "$1" -eq 0 ] && command -v alternatives >/dev/null 2>&1; then
+    alternatives --remove rsync /usr/libexec/oc-rsync/rsync || true
+    alternatives --remove rsyncd /usr/libexec/oc-rsync/rsyncd || true
+fi
+"""
 
