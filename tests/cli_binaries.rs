@@ -141,14 +141,16 @@ fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
     let mut state = State::Normal;
     let mut current = String::new();
     let mut parts = Vec::new();
+    let mut pending_empty = false;
     let mut chars = input.chars().peekable();
 
     while let Some(ch) = chars.next() {
         match state {
             State::Normal => match ch {
                 c if c.is_whitespace() => {
-                    if !current.is_empty() {
+                    if pending_empty || !current.is_empty() {
                         parts.push(std::mem::take(&mut current));
+                        pending_empty = false;
                     }
                 }
                 '\\' => {
@@ -156,6 +158,7 @@ fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
                         return Err("trailing backslash");
                     };
                     current.push(escaped);
+                    pending_empty = false;
                 }
                 '\'' => {
                     state = State::SingleQuoted;
@@ -163,17 +166,29 @@ fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
                 '"' => {
                     state = State::DoubleQuoted;
                 }
-                _ => current.push(ch),
+                _ => {
+                    current.push(ch);
+                    pending_empty = false;
+                }
             },
             State::SingleQuoted => {
                 if ch == '\'' {
+                    if current.is_empty() {
+                        pending_empty = true;
+                    }
                     state = State::Normal;
                 } else {
                     current.push(ch);
+                    pending_empty = false;
                 }
             }
             State::DoubleQuoted => match ch {
-                '"' => state = State::Normal,
+                '"' => {
+                    if current.is_empty() {
+                        pending_empty = true;
+                    }
+                    state = State::Normal;
+                }
                 '\\' => {
                     let Some(escaped) = chars.next() else {
                         return Err("unterminated escape in double quotes");
@@ -185,15 +200,19 @@ fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
                             current.push(other);
                         }
                     }
+                    pending_empty = false;
                 }
-                _ => current.push(ch),
+                _ => {
+                    current.push(ch);
+                    pending_empty = false;
+                }
             },
         }
     }
 
     match state {
         State::Normal => {
-            if !current.is_empty() {
+            if pending_empty || !current.is_empty() {
                 parts.push(current);
             }
             Ok(parts)
@@ -245,6 +264,22 @@ mod split_shell_words_tests {
         assert_eq!(
             split_shell_words("cmd \"escaped\\\"quote\"").unwrap(),
             vec![String::from("cmd"), String::from("escaped\"quote")]
+        );
+    }
+
+    #[test]
+    fn preserves_empty_argument_from_double_quotes() {
+        assert_eq!(
+            split_shell_words("binary \"\" tail").unwrap(),
+            vec![String::from("binary"), String::new(), String::from("tail"),]
+        );
+    }
+
+    #[test]
+    fn preserves_empty_argument_from_single_quotes() {
+        assert_eq!(
+            split_shell_words("tool '' next").unwrap(),
+            vec![String::from("tool"), String::new(), String::from("next"),]
         );
     }
 
