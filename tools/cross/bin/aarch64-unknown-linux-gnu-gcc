@@ -1,9 +1,21 @@
 #!/bin/sh
 set -eu
-ZIG_BIN=${ZIG:-zig}
-if ! command -v "$ZIG_BIN" >/dev/null 2>&1; then
-    echo "error: zig is required to emulate aarch64-unknown-linux-gnu-gcc" >&2
-    echo "hint: install zig or set the ZIG environment variable to its path" >&2
-    exit 127
-fi
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+CROSS_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+. "${CROSS_DIR}/lib.sh"
+
+for candidate in \
+    "${AARCH64_LINUX_GNU_GCC:-}" \
+    "/usr/bin/aarch64-linux-gnu-gcc" \
+    "/usr/local/bin/aarch64-linux-gnu-gcc" \
+    "/opt/homebrew/bin/aarch64-linux-gnu-gcc" \
+    "/opt/local/bin/aarch64-linux-gnu-gcc"
+do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
+
+ZIG_BIN=$(resolve_zig_binary "$CROSS_DIR")
 exec "$ZIG_BIN" cc -target aarch64-linux-gnu "$@"
