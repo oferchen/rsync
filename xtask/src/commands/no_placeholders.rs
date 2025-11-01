@@ -90,6 +90,7 @@ fn scan_rust_file_for_placeholders(path: &Path) -> TaskResult<Vec<PlaceholderFin
     let mut buffer = String::new();
     let mut findings = Vec::new();
     let mut line_number = 0usize;
+    let mut panic_tracker = PanicTracker::new();
 
     loop {
         buffer.clear();
@@ -104,18 +105,27 @@ fn scan_rust_file_for_placeholders(path: &Path) -> TaskResult<Vec<PlaceholderFin
         }
 
         let line = buffer.trim_end_matches(['\r', '\n']);
-        if contains_placeholder(line) {
+        let panic_index = find_subsequence(line.as_bytes(), &PANIC_MACRO_BYTES);
+        let panic_context = panic_tracker.is_active() || panic_index.is_some();
+        if contains_placeholder(line, panic_context) {
             findings.push(PlaceholderFinding {
                 line: line_number,
                 snippet: line.to_string(),
             });
+        }
+
+        if let Some(index) = panic_index {
+            panic_tracker.consume(&line[..index]);
+            panic_tracker.start(&line[index + PANIC_MACRO_BYTES.len()..]);
+        } else {
+            panic_tracker.consume(line);
         }
     }
 
     Ok(findings)
 }
 
-fn contains_placeholder(line: &str) -> bool {
+fn contains_placeholder(line: &str, panic_context: bool) -> bool {
     let line_bytes = line.as_bytes();
     if contains_subsequence(line_bytes, &TODO_MACRO_BYTES)
         || contains_subsequence(line_bytes, &UNIMPLEMENTED_MACRO_BYTES)
@@ -132,7 +142,7 @@ fn contains_placeholder(line: &str) -> bool {
         return true;
     }
 
-    if contains_subsequence(line_bytes, &PANIC_MACRO_BYTES)
+    if panic_context
         && (contains_standalone_sequence(&lower_bytes, &TODO_WORD_BYTES)
             || contains_standalone_sequence(&lower_bytes, &FIXME_WORD_BYTES)
             || contains_standalone_sequence(&lower_bytes, &TRIPLE_X_WORD_BYTES)
@@ -142,6 +152,16 @@ fn contains_placeholder(line: &str) -> bool {
     }
 
     false
+}
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
@@ -180,6 +200,167 @@ fn contains_standalone_sequence(haystack: &[u8], needle: &[u8]) -> bool {
 
 fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PanicDelimiter {
+    Parenthesis,
+    Brace,
+    Bracket,
+}
+
+impl PanicDelimiter {
+    fn from_char(ch: char) -> Option<Self> {
+        match ch {
+            '(' => Some(Self::Parenthesis),
+            '{' => Some(Self::Brace),
+            '[' => Some(Self::Bracket),
+            _ => None,
+        }
+    }
+
+    fn delta(self, text: &str) -> i32 {
+        let (open, close) = match self {
+            Self::Parenthesis => ('(', ')'),
+            Self::Brace => ('{', '}'),
+            Self::Bracket => ('[', ']'),
+        };
+
+        let mut count = 0i32;
+        for ch in text.chars() {
+            if ch == open {
+                count += 1;
+            } else if ch == close {
+                count -= 1;
+            }
+        }
+
+        count
+    }
+}
+
+#[derive(Debug, Default)]
+struct PanicTracker {
+    state: PanicState,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PanicState {
+    Inactive,
+    AwaitingDelimiter {
+        block_comment_depth: u32,
+    },
+    Active {
+        delimiter: PanicDelimiter,
+        depth: i32,
+    },
+}
+
+impl Default for PanicState {
+    fn default() -> Self {
+        PanicState::Inactive
+    }
+}
+
+impl PanicTracker {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_active(&self) -> bool {
+        !matches!(self.state, PanicState::Inactive)
+    }
+
+    fn reset(&mut self) {
+        self.state = PanicState::Inactive;
+    }
+
+    fn start(&mut self, after_macro: &str) {
+        self.state = PanicState::AwaitingDelimiter {
+            block_comment_depth: 0,
+        };
+        self.consume(after_macro);
+    }
+
+    fn consume(&mut self, segment: &str) {
+        match &mut self.state {
+            PanicState::Inactive => {}
+            PanicState::AwaitingDelimiter {
+                block_comment_depth,
+            } => {
+                let mut depth = *block_comment_depth;
+                let bytes = segment.as_bytes();
+                let mut index = 0usize;
+                while index < bytes.len() {
+                    if depth > 0 {
+                        if index + 1 < bytes.len()
+                            && bytes[index] == b'*'
+                            && bytes[index + 1] == b'/'
+                        {
+                            depth -= 1;
+                            index += 2;
+                            continue;
+                        }
+
+                        index += 1;
+                        continue;
+                    }
+
+                    match bytes[index] {
+                        b' ' | b'\t' | b'\r' | b'\n' => {
+                            index += 1;
+                        }
+                        b'/' if index + 1 < bytes.len() && bytes[index + 1] == b'/' => {
+                            *block_comment_depth = depth;
+                            return;
+                        }
+                        b'/' if index + 1 < bytes.len() && bytes[index + 1] == b'*' => {
+                            depth += 1;
+                            index += 2;
+                        }
+                        b'(' | b'{' | b'[' => {
+                            let opening = bytes[index] as char;
+                            let Some(delimiter) = PanicDelimiter::from_char(opening) else {
+                                self.reset();
+                                return;
+                            };
+                            let rest = &segment[index + 1..];
+                            let paren_depth = 1 + delimiter.delta(rest);
+                            if paren_depth <= 0 {
+                                self.reset();
+                            } else {
+                                self.state = PanicState::Active {
+                                    delimiter,
+                                    depth: paren_depth,
+                                };
+                            }
+
+                            return;
+                        }
+                        _ => {
+                            self.reset();
+                            return;
+                        }
+                    }
+                }
+
+                *block_comment_depth = depth;
+            }
+            PanicState::Active { delimiter, depth } => {
+                let delta = delimiter.delta(segment);
+                if delta == 0 {
+                    return;
+                }
+
+                let new_depth = *depth + delta;
+                if new_depth <= 0 {
+                    self.reset();
+                } else {
+                    *depth = new_depth;
+                }
+            }
+        }
+    }
 }
 
 /// Returns usage text for the command.
@@ -262,5 +443,20 @@ mod tests {
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
         fs::remove_file(&path).expect("cleanup sample");
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn scan_detects_placeholder_inside_multiline_panic() {
+        let path = unique_temp_path("panic_multiline");
+        let todo = ["TO", "DO"].concat();
+        let content =
+            format!("fn explode() {{\n    panic!(\n        \"{todo}: revisit\"\n    );\n}}\n");
+        fs::write(&path, content).expect("write sample");
+        let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");
+        fs::remove_file(&path).expect("cleanup sample");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line, 3);
+        let snippet_lower = findings[0].snippet.to_ascii_lowercase();
+        assert!(snippet_lower.contains(&todo.to_ascii_lowercase()));
     }
 }
