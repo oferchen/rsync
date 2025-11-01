@@ -141,6 +141,13 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         "legacy_daemon_config_dir",
     )?;
 
+    if branding.tarball_target != "x86_64-unknown-linux-gnu" {
+        return Err(TaskError::Validation(format!(
+            "tarball_target '{}' must be 'x86_64-unknown-linux-gnu'",
+            branding.tarball_target
+        )));
+    }
+
     Ok(())
 }
 
@@ -224,6 +231,7 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
+            tarball_target: String::from("x86_64-unknown-linux-gnu"),
             cross_compile: BTreeMap::from([
                 (
                     String::from("linux"),

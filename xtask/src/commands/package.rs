@@ -10,8 +10,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tar::{Builder, EntryType, Header, HeaderMode};
 
-const AMD64_TARBALL_TARGET: &str = "x86_64-unknown-linux-gnu";
-
 /// Options accepted by the `package` command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageOptions {
@@ -173,7 +171,11 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     }
 
     if options.build_tarball {
-        build_workspace_binaries(workspace, &options.profile, Some(AMD64_TARBALL_TARGET))?;
+        build_workspace_binaries(
+            workspace,
+            &options.profile,
+            Some(branding.tarball_target.as_str()),
+        )?;
         build_amd64_tarball(workspace, &branding, &options.profile)?;
     }
 
@@ -234,7 +236,7 @@ fn build_amd64_tarball(
     let profile_name = tarball_profile_name(profile);
     let target_dir = workspace
         .join("target")
-        .join(AMD64_TARBALL_TARGET)
+        .join(&branding.tarball_target)
         .join(&profile_name);
 
     let binaries = [
@@ -254,7 +256,7 @@ fn build_amd64_tarball(
 
     let root_name = format!(
         "{}-{}-{}",
-        branding.client_bin, branding.rust_version, AMD64_TARBALL_TARGET
+        branding.client_bin, branding.rust_version, branding.tarball_target
     );
     let tarball_path = dist_dir.join(format!("{root_name}.tar.gz"));
     println!(

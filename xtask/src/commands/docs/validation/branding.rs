@@ -204,6 +204,7 @@ legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
 source = "https://github.com/oferchen/rsync"
+tarball_target = "x86_64-unknown-linux-gnu"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]

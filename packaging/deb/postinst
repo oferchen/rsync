@@ -25,8 +25,32 @@ have_update_alternatives() {
     command -v update-alternatives >/dev/null 2>&1
 }
 
+should_register_alternatives() {
+    if [ -n "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES:-}" ]; then
+        if is_truthy "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES}"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    if [ -r "${DEFAULTS_FILE}" ]; then
+        # shellcheck disable=SC1090
+        . "${DEFAULTS_FILE}"
+    fi
+
+    if is_truthy "${OC_RSYNC_REGISTER_ALTERNATIVES:-}"; then
+        return 0
+    fi
+
+    return 1
+}
+
 register_alternatives() {
     if ! have_update_alternatives; then
+        return 0
+    fi
+
+    if ! should_register_alternatives; then
         return 0
     fi
 

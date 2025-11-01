@@ -24,6 +24,7 @@ fn sample_branding() -> WorkspaceBranding {
         legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
         legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
         source: String::from("https://example.invalid/rsync"),
+        tarball_target: String::from("x86_64-unknown-linux-gnu"),
         cross_compile: BTreeMap::from([
             (String::from("linux"), vec![String::from("x86_64"), String::from("aarch64")]),
             (String::from("macos"), vec![String::from("x86_64"), String::from("aarch64")]),
@@ -93,6 +94,7 @@ fn render_text_matches_expected_layout() {
         "  legacy_daemon_config: /etc/rsyncd.conf\n",
         "  legacy_daemon_secrets: /etc/rsyncd.secrets\n",
         "  source: https://example.invalid/rsync\n",
+        "  tarball_target: x86_64-unknown-linux-gnu\n",
         "  cross_compile: Linux: x86_64, aarch64; macOS: x86_64, aarch64; Windows: x86_64"
     );
     assert_eq!(rendered, expected);
@@ -207,6 +209,18 @@ fn validate_branding_rejects_incorrect_legacy_names() {
     assert!(matches!(
         daemon_error,
         TaskError::Validation(message) if message.contains("legacy daemon binary")
+    ));
+}
+
+#[test]
+fn validate_branding_rejects_unexpected_tarball_target() {
+    let mut branding = sample_branding();
+    branding.tarball_target = String::from("amd64-unknown-linux-musl");
+    let error = validate_branding(&branding).unwrap_err();
+    assert!(matches!(
+        error,
+        TaskError::Validation(message)
+            if message.contains("tarball_target 'amd64-unknown-linux-musl'")
     ));
 }
 

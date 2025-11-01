@@ -40,13 +40,15 @@ pub struct WorkspaceBranding {
     pub source: String,
     /// Cross-compilation targets grouped by operating system.
     pub cross_compile: BTreeMap<String, Vec<String>>,
+    /// Target triple used for the amd64 tarball distribution.
+    pub tarball_target: String,
 }
 
 impl WorkspaceBranding {
     /// Returns a concise human-readable summary.
     pub fn summary(&self) -> String {
         format!(
-            "brand={} rust_version={} protocol={} client={} daemon={} config_dir={} config={} secrets={}",
+            "brand={} rust_version={} protocol={} client={} daemon={} config_dir={} config={} secrets={} tarball_target={}",
             self.brand,
             self.rust_version,
             self.protocol,
@@ -54,7 +56,8 @@ impl WorkspaceBranding {
             self.daemon_bin,
             self.daemon_config_dir.display(),
             self.daemon_config.display(),
-            self.daemon_secrets.display()
+            self.daemon_secrets.display(),
+            self.tarball_target
         )
     }
 }
@@ -138,6 +141,7 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         legacy_daemon_secrets: metadata_path(oc, "legacy_daemon_secrets")?,
         source: metadata_str(oc, "source")?,
         cross_compile: metadata_cross_compile(oc)?,
+        tarball_target: metadata_str(oc, "tarball_target")?,
     })
 }
 
@@ -238,6 +242,7 @@ legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
 source = "https://github.com/oferchen/rsync"
+tarball_target = "x86_64-unknown-linux-gnu"
 
 [workspace.metadata.oc_rsync.cross_compile]
 {entries}
@@ -277,6 +282,7 @@ source = "https://github.com/oferchen/rsync"
                 ),
                 (String::from("windows"), vec![String::from("x86_64")]),
             ]),
+            tarball_target: String::from("x86_64-unknown-linux-gnu"),
         };
         assert_eq!(branding, expected);
     }

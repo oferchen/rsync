@@ -33,6 +33,7 @@ fn render_branding_text(branding: &WorkspaceBranding) -> String {
             "  legacy_daemon_config: {}\n",
             "  legacy_daemon_secrets: {}\n",
             "  source: {}\n",
+            "  tarball_target: {}\n",
             "  cross_compile: {}"
         ),
         branding.brand,
@@ -50,6 +51,7 @@ fn render_branding_text(branding: &WorkspaceBranding) -> String {
         branding.legacy_daemon_config.display(),
         branding.legacy_daemon_secrets.display(),
         branding.source,
+        branding.tarball_target,
         format_cross_compile_summary(&branding.cross_compile),
     )
 }
@@ -86,6 +88,7 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
             .display()
             .to_string(),
         "source": branding.source,
+        "tarball_target": branding.tarball_target,
         "cross_compile": cross_compile,
     });
 
@@ -139,6 +142,7 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid/rsync"),
+            tarball_target: String::from("x86_64-unknown-linux-gnu"),
             cross_compile: BTreeMap::from([
                 (
                     String::from("linux"),
@@ -174,6 +178,7 @@ mod tests {
             "  legacy_daemon_config: /etc/rsyncd.conf\n",
             "  legacy_daemon_secrets: /etc/rsyncd.secrets\n",
             "  source: https://example.invalid/rsync\n",
+            "  tarball_target: x86_64-unknown-linux-gnu\n",
             "  cross_compile: Linux: x86_64, aarch64; macOS: x86_64, aarch64; Windows: x86_64"
         );
         assert_eq!(rendered, expected);
@@ -186,6 +191,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("parse json");
         assert_eq!(parsed["brand"], "oc");
         assert_eq!(parsed["protocol"], 32);
+        assert_eq!(parsed["tarball_target"], "x86_64-unknown-linux-gnu");
     }
 
     #[test]
