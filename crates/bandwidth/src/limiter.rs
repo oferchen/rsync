@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
@@ -160,6 +161,10 @@ fn calculate_write_max(limit: NonZeroU64, burst: Option<NonZeroU64>) -> usize {
 /// * [`LimiterChange::Updated`] — the active limiter changed rate or burst
 ///   configuration.
 /// * [`LimiterChange::Disabled`] — throttling was removed.
+///
+/// The enum implements [`Ord`] so callers can rely on `std::cmp::max` (or
+/// sorting) to derive the highest-precedence outcome when combining several
+/// updates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub enum LimiterChange {
@@ -272,6 +277,18 @@ impl LimiterChange {
     #[must_use]
     pub const fn disables_limiter(self) -> bool {
         matches!(self, Self::Disabled)
+    }
+}
+
+impl Ord for LimiterChange {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.priority().cmp(&other.priority())
+    }
+}
+
+impl PartialOrd for LimiterChange {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

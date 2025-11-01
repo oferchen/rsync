@@ -1,4 +1,5 @@
 use super::{BandwidthLimiter, LimiterChange, MINIMUM_SLEEP_MICROS, recorded_sleep_session};
+use std::cmp::Ordering;
 use std::num::NonZeroU64;
 use std::time::Duration;
 
@@ -149,6 +150,40 @@ fn limiter_change_combine_prefers_highest_precedence() {
         assert_eq!(left.combine(right), expected);
         assert_eq!(right.combine(left), expected);
     }
+}
+
+#[test]
+fn limiter_change_ordering_tracks_priority() {
+    assert_eq!(
+        LimiterChange::Unchanged.cmp(&LimiterChange::Updated),
+        Ordering::Less
+    );
+    assert_eq!(
+        LimiterChange::Enabled.cmp(&LimiterChange::Disabled),
+        Ordering::Less
+    );
+    assert_eq!(
+        LimiterChange::Disabled.cmp(&LimiterChange::Updated),
+        Ordering::Greater
+    );
+
+    let mut variants = [
+        LimiterChange::Disabled,
+        LimiterChange::Updated,
+        LimiterChange::Enabled,
+        LimiterChange::Unchanged,
+    ];
+    variants.sort();
+
+    assert_eq!(
+        variants,
+        [
+            LimiterChange::Unchanged,
+            LimiterChange::Updated,
+            LimiterChange::Enabled,
+            LimiterChange::Disabled,
+        ]
+    );
 }
 
 #[test]
