@@ -106,6 +106,9 @@ pub const DAEMON_FALLBACK_ENV: &str = "OC_RSYNC_DAEMON_FALLBACK";
 /// toggling the behaviour.
 pub const DAEMON_AUTO_DELEGATE_ENV: &str = "OC_RSYNC_DAEMON_AUTO_DELEGATE";
 
+const DISABLED_OVERRIDES: [&str; 4] = ["0", "false", "no", "off"];
+const DEFAULT_OVERRIDES: [&str; 6] = ["1", "true", "yes", "on", "auto", "default"];
+
 /// Represents the parsed interpretation of a fallback environment override.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FallbackOverride {
@@ -158,20 +161,22 @@ pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
             return Some(FallbackOverride::Disabled);
         }
 
-        let lowered = trimmed.to_ascii_lowercase();
-        if matches!(lowered.as_str(), "0" | "false" | "no" | "off") {
+        if matches_ascii_case(trimmed, &DISABLED_OVERRIDES) {
             return Some(FallbackOverride::Disabled);
         }
 
-        if matches!(
-            lowered.as_str(),
-            "1" | "true" | "yes" | "on" | "auto" | "default"
-        ) {
+        if matches_ascii_case(trimmed, &DEFAULT_OVERRIDES) {
             return Some(FallbackOverride::Default);
         }
     }
 
     Some(FallbackOverride::Explicit(raw))
+}
+
+fn matches_ascii_case(value: &str, options: &[&str]) -> bool {
+    options
+        .iter()
+        .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
 
 #[cfg(test)]
