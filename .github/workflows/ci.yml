@@ -260,7 +260,7 @@ jobs:
         if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') }}
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm fakeroot
           version: 1
 
       - name: Install cross GCC for aarch64 (Ubuntu)
