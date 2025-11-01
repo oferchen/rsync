@@ -20,7 +20,7 @@ pub(super) fn upload_release_artifacts(
 ) -> TaskResult<()> {
     let repository = resolve_repository(branding)?;
     let tag = resolve_tag(branding)?;
-    let artifacts = gather_release_artifacts(workspace)?;
+    let artifacts = gather_release_artifacts(workspace, branding)?;
 
     println!("Uploading release artifacts for tag {tag} to {repository}:");
     for artifact in &artifacts {
@@ -75,12 +75,16 @@ fn resolve_tag(branding: &WorkspaceBranding) -> TaskResult<String> {
     Ok(format!("v{}", branding.rust_version))
 }
 
-fn gather_release_artifacts(workspace: &Path) -> TaskResult<Vec<PathBuf>> {
+fn gather_release_artifacts(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> TaskResult<Vec<PathBuf>> {
     let mut artifacts = Vec::new();
 
     collect_tarballs(workspace, &mut artifacts)?;
     collect_debian_packages(workspace, &mut artifacts)?;
     collect_rpm_packages(workspace, &mut artifacts)?;
+    collect_cross_compile_binaries(workspace, branding, &mut artifacts)?;
 
     artifacts.sort();
     artifacts.dedup();
@@ -154,6 +158,88 @@ fn collect_rpm_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskR
     }
 
     Ok(())
+}
+
+fn collect_cross_compile_binaries(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    artifacts: &mut Vec<PathBuf>,
+) -> TaskResult<()> {
+    for (os, arches) in &branding.cross_compile {
+        for arch in arches {
+            let target = cross_compile_target(os, arch).ok_or_else(|| {
+                TaskError::Validation(format!(
+                    "unsupported cross-compilation target '{os}-{arch}' declared in workspace metadata",
+                ))
+            })?;
+
+            let release_dir = workspace.join("target").join(target).join("release");
+
+            collect_cross_compile_binary(&release_dir, &branding.client_bin, os, arch, artifacts)?;
+
+            if cross_compile_builds_daemon(os) {
+                collect_cross_compile_binary(
+                    &release_dir,
+                    &branding.daemon_bin,
+                    os,
+                    arch,
+                    artifacts,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_cross_compile_binary(
+    release_dir: &Path,
+    binary: &str,
+    os: &str,
+    arch: &str,
+    artifacts: &mut Vec<PathBuf>,
+) -> TaskResult<()> {
+    let primary_path = release_dir.join(binary);
+    if primary_path.is_file() {
+        artifacts.push(primary_path);
+        return Ok(());
+    }
+
+    if os == "windows" {
+        let exe_path = release_dir.join(format!("{binary}.exe"));
+        if exe_path.is_file() {
+            artifacts.push(exe_path);
+            return Ok(());
+        }
+
+        return Err(TaskError::Validation(format!(
+            "cross-compiled binary missing for {os}/{arch}: expected {} or {}",
+            primary_path.display(),
+            exe_path.display(),
+        )));
+    }
+
+    Err(TaskError::Validation(format!(
+        "cross-compiled binary missing for {os}/{arch}: expected {}",
+        primary_path.display(),
+    )))
+}
+
+fn cross_compile_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-gnu"),
+        ("windows", "x86") => Some("i686-pc-windows-gnu"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+fn cross_compile_builds_daemon(os: &str) -> bool {
+    !matches!(os, "windows")
 }
 
 fn read_directory(path: &Path) -> TaskResult<Vec<PathBuf>> {
@@ -272,6 +358,7 @@ fn resolve_command() -> TaskResult<CommandLocation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::io::Write;
     use tempfile::TempDir;
@@ -326,7 +413,11 @@ mod tests {
             legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://github.com/example/rsync"),
-            cross_compile: Default::default(),
+            cross_compile: BTreeMap::from([
+                (String::from("linux"), vec![String::from("x86_64")]),
+                (String::from("macos"), vec![String::from("x86_64")]),
+                (String::from("windows"), vec![String::from("x86_64")]),
+            ]),
         }
     }
 
@@ -357,6 +448,7 @@ mod tests {
     fn gather_release_artifacts_collects_known_outputs() {
         let temp = TempDir::new().expect("temp workspace");
         let workspace = temp.path();
+        let branding = sample_branding();
 
         let tarball = workspace
             .join("target/dist")
@@ -369,16 +461,59 @@ mod tests {
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
+        let linux_client = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join("oc-rsync");
+        let linux_daemon = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join("oc-rsyncd");
+        let mac_client = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join("oc-rsync");
+        let mac_daemon = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join("oc-rsyncd");
+        let windows_client = workspace
+            .join("target")
+            .join("x86_64-pc-windows-gnu")
+            .join("release")
+            .join("oc-rsync.exe");
 
-        for path in [&tarball, &deb, &rpm] {
+        for path in [
+            &tarball,
+            &deb,
+            &rpm,
+            &linux_client,
+            &linux_daemon,
+            &mac_client,
+            &mac_daemon,
+            &windows_client,
+        ] {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).expect("create parent directories");
             }
             fs::File::create(path).expect("create artifact");
         }
 
-        let artifacts = gather_release_artifacts(workspace).expect("gather artifacts");
-        let mut expected = vec![deb, rpm, tarball];
+        let artifacts = gather_release_artifacts(workspace, &branding).expect("gather artifacts");
+        let mut expected = vec![
+            deb,
+            rpm,
+            tarball,
+            linux_client,
+            linux_daemon,
+            mac_client,
+            mac_daemon,
+            windows_client,
+        ];
         expected.sort();
         assert_eq!(artifacts, expected);
     }
@@ -400,8 +535,42 @@ mod tests {
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
+        let linux_client = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join("oc-rsync");
+        let linux_daemon = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join("oc-rsyncd");
+        let mac_client = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join("oc-rsync");
+        let mac_daemon = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join("oc-rsyncd");
+        let windows_client = workspace
+            .join("target")
+            .join("x86_64-pc-windows-gnu")
+            .join("release")
+            .join("oc-rsync.exe");
 
-        for path in [&tarball, &deb, &rpm] {
+        for path in [
+            &tarball,
+            &deb,
+            &rpm,
+            &linux_client,
+            &linux_daemon,
+            &mac_client,
+            &mac_daemon,
+            &windows_client,
+        ] {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).expect("create parent directories");
             }
@@ -452,6 +621,11 @@ mod tests {
             deb.to_string_lossy().into_owned(),
             rpm.to_string_lossy().into_owned(),
             tarball.to_string_lossy().into_owned(),
+            linux_client.to_string_lossy().into_owned(),
+            linux_daemon.to_string_lossy().into_owned(),
+            mac_client.to_string_lossy().into_owned(),
+            mac_daemon.to_string_lossy().into_owned(),
+            windows_client.to_string_lossy().into_owned(),
         ];
         asset_lines.sort();
         expected_lines.extend(asset_lines);
