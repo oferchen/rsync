@@ -283,7 +283,7 @@ fi
 
 [package.metadata.rpm.cargo]
 profile = "dist"
-buildflags = ["--profile", "dist"]
+buildflags = ["--profile", "dist", "--bins"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
