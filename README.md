@@ -38,11 +38,14 @@ without hard-coding values by invoking:
 cargo run -p xtask -- branding --json
 ```
 
-System packages install the daemon configuration at
-`/etc/oc-rsyncd/oc-rsyncd.conf`, with authentication secrets kept in
-`/etc/oc-rsyncd/oc-rsyncd.secrets`. The same layout is mirrored inside the
-release tarball so branded (`oc-rsync`, `oc-rsyncd`) and legacy (`rsync`,
-`rsyncd`) entry points can operate side by side on the same host.
+## Daemon configuration
+
+The `oc-rsyncd` daemon loads its runtime configuration from
+`/etc/oc-rsyncd/oc-rsyncd.conf`, with shared secret credentials stored
+alongside it in `/etc/oc-rsyncd/oc-rsyncd.secrets`. Those paths are derived
+from the workspace branding metadata and match the values reported by the
+`cargo run -p xtask -- branding --json` helper, ensuring local development and
+packaged artifacts stay aligned.
 
 ## License
 
