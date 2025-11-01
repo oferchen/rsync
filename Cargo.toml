@@ -203,6 +203,10 @@ detect_alternatives() {
 }
 
 register_alternatives() {
+    if ! should_register_alternatives; then
+        return 0
+    fi
+
     detect_alternatives
     if [ -z "$ALT_TOOL" ]; then
         return 0
