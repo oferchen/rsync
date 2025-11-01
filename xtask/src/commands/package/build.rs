@@ -1,12 +1,17 @@
 use super::{DIST_PROFILE, PackageOptions, tarball};
-use crate::error::TaskResult;
+use crate::error::{TaskError, TaskResult};
 use crate::util::{
     ensure_command_available, probe_cargo_tool, run_cargo_tool, run_cargo_tool_with_env,
 };
 use crate::workspace::load_workspace_branding;
 use std::env;
 use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Executes the `package` command.
 pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
@@ -14,7 +19,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     println!("Preparing {}", branding.summary());
 
     if options.build_deb || options.build_rpm {
-        build_workspace_binaries(workspace, &options.profile, None)?;
+        build_workspace_binaries(workspace, &options.profile, None, None)?;
     }
 
     if options.build_deb {
@@ -63,11 +68,18 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
 
     if options.build_tarball {
         let specs = tarball::linux_tarball_specs(&branding)?;
-        for spec in &specs {
-            ensure_cross_compiler_available(spec.target_triple)?;
+        let mut resolved_specs = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let linker = resolve_cross_compiler(workspace, spec.target_triple)?;
+            resolved_specs.push((spec, linker));
         }
-        for spec in &specs {
-            build_workspace_binaries(workspace, &options.profile, Some(spec.target_triple))?;
+        for (spec, linker) in &resolved_specs {
+            build_workspace_binaries(
+                workspace,
+                &options.profile,
+                Some(spec.target_triple),
+                linker.as_ref(),
+            )?;
             tarball::build_tarball(workspace, &branding, &options.profile, spec)?;
         }
     }
@@ -79,6 +91,7 @@ pub(super) fn build_workspace_binaries(
     workspace: &Path,
     profile: &Option<OsString>,
     target: Option<&str>,
+    linker_override: Option<&LinkerOverride>,
 ) -> TaskResult<()> {
     if env::var_os("OC_RSYNC_PACKAGE_SKIP_BUILD").is_some() {
         println!("Skipping workspace binary build because OC_RSYNC_PACKAGE_SKIP_BUILD is set");
@@ -99,12 +112,11 @@ pub(super) fn build_workspace_binaries(
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 
     if let Some(target) = target {
-        if let Some(spec) = cross_compiler_for_target(target) {
-            ensure_command_available(spec.program, spec.install_hint)?;
-            env_overrides.push((linker_env_var_name(target), OsString::from(spec.program)));
-        }
         args.push(OsString::from("--target"));
         args.push(OsString::from(target));
+        if let Some(linker) = linker_override {
+            env_overrides.push((linker.env_var.clone(), linker.value.clone()));
+        }
     }
 
     if let Some(profile) = profile {
@@ -121,36 +133,175 @@ pub(super) fn build_workspace_binaries(
     )
 }
 
-fn ensure_cross_compiler_available(target: &str) -> TaskResult<()> {
-    if let Some(spec) = cross_compiler_for_target(target) {
-        ensure_command_available(spec.program, spec.install_hint)?;
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct CrossCompilerSpec {
-    program: &'static str,
-    install_hint: &'static str,
-}
-
-fn cross_compiler_for_target(target: &str) -> Option<CrossCompilerSpec> {
-    match target {
-        "aarch64-unknown-linux-gnu" => Some(CrossCompilerSpec {
-            program: "aarch64-linux-gnu-gcc",
-            install_hint: "install the aarch64-linux-gnu-gcc cross-compiler (for example, `apt install gcc-aarch64-linux-gnu`)",
-        }),
-        _ => None,
-    }
-}
-
 fn linker_env_var_name(target: &str) -> OsString {
     let mut normalized = target.replace('-', "_");
     normalized.make_ascii_uppercase();
     OsString::from(format!("CARGO_TARGET_{}_LINKER", normalized))
 }
 
+#[derive(Clone)]
+pub(super) struct LinkerOverride {
+    env_var: OsString,
+    value: OsString,
+}
+
+fn resolve_cross_compiler(workspace: &Path, target: &str) -> TaskResult<Option<LinkerOverride>> {
+    let Some(candidates) = cross_compiler_candidates(target) else {
+        return Ok(None);
+    };
+
+    for candidate in &candidates {
+        match ensure_command_available(candidate.program(), candidate.install_hint) {
+            Ok(()) => {
+                return candidate.configure(workspace, target);
+            }
+            Err(TaskError::ToolMissing(_)) => {
+                continue;
+            }
+            Err(error) => {
+                return Err(error);
+            }
+        }
+    }
+
+    Err(missing_cross_compiler_error(target, &candidates))
+}
+
+fn missing_cross_compiler_error(target: &str, candidates: &[CrossCompilerCandidate]) -> TaskError {
+    if candidates.len() == 1 {
+        let candidate = &candidates[0];
+        return TaskError::ToolMissing(format!(
+            "{} is unavailable; {}",
+            candidate.display_name, candidate.install_hint
+        ));
+    }
+
+    let mut options = String::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 {
+            if index + 1 == candidates.len() {
+                options.push_str(" or ");
+            } else {
+                options.push_str(", ");
+            }
+        }
+        options.push_str(candidate.display_name);
+        options.push_str(" (");
+        options.push_str(candidate.install_hint);
+        options.push(')');
+    }
+
+    TaskError::ToolMissing(format!(
+        "unable to locate cross-compilation tooling for target {target}; install {options}"
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct CrossCompilerCandidate {
+    display_name: &'static str,
+    install_hint: &'static str,
+    strategy: CrossCompilerStrategy,
+}
+
+impl CrossCompilerCandidate {
+    fn program(&self) -> &'static str {
+        match self.strategy {
+            CrossCompilerStrategy::Direct { program } => program,
+            CrossCompilerStrategy::Zig { program, .. } => program,
+        }
+    }
+
+    fn configure(&self, workspace: &Path, target: &str) -> TaskResult<Option<LinkerOverride>> {
+        let env_var = linker_env_var_name(target);
+        let value = match self.strategy {
+            CrossCompilerStrategy::Direct { program } => OsString::from(program),
+            CrossCompilerStrategy::Zig {
+                program: _,
+                zig_target,
+            } => create_zig_linker_shim(workspace, target, zig_target)?,
+        };
+
+        Ok(Some(LinkerOverride { env_var, value }))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CrossCompilerStrategy {
+    Direct {
+        program: &'static str,
+    },
+    Zig {
+        program: &'static str,
+        zig_target: &'static str,
+    },
+}
+
+fn cross_compiler_candidates(target: &str) -> Option<Vec<CrossCompilerCandidate>> {
+    match target {
+        "aarch64-unknown-linux-gnu" => Some(vec![
+            CrossCompilerCandidate {
+                display_name: "aarch64-linux-gnu-gcc",
+                install_hint: "install the aarch64-linux-gnu-gcc cross-compiler (for example, `apt install gcc-aarch64-linux-gnu`)",
+                strategy: CrossCompilerStrategy::Direct {
+                    program: "aarch64-linux-gnu-gcc",
+                },
+            },
+            CrossCompilerCandidate {
+                display_name: "zig cc",
+                install_hint: "install the zig compiler (for example, `apt install zig` or `brew install zig`)",
+                strategy: CrossCompilerStrategy::Zig {
+                    program: "zig",
+                    zig_target: "aarch64-linux-gnu",
+                },
+            },
+        ]),
+        _ => None,
+    }
+}
+
+fn create_zig_linker_shim(
+    workspace: &Path,
+    target: &str,
+    zig_target: &str,
+) -> TaskResult<OsString> {
+    let shim_dir = workspace.join("target").join("xtask");
+    fs::create_dir_all(&shim_dir)?;
+
+    #[cfg(windows)]
+    let shim_name = format!("zig-linker-{target}.cmd");
+    #[cfg(not(windows))]
+    let shim_name = format!("zig-linker-{target}");
+    let shim_path = shim_dir.join(&shim_name);
+
+    let mut file = File::create(&shim_path)?;
+    #[cfg(windows)]
+    {
+        writeln!(file, "@echo off")?;
+        writeln!(file, "zig cc -target {zig_target} %*")?;
+    }
+    #[cfg(not(windows))]
+    {
+        writeln!(file, "#!/bin/sh")?;
+        writeln!(file, "exec zig cc -target {zig_target} \"$@\"")?;
+    }
+    drop(file);
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&shim_path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&shim_path, permissions)?;
+    }
+
+    Ok(shim_path.into_os_string())
+}
+
 #[cfg(test)]
-pub(super) fn cross_compiler_program_for_target(target: &str) -> Option<&'static str> {
-    cross_compiler_for_target(target).map(|spec| spec.program)
+pub(super) fn resolve_cross_compiler_for_tests(
+    workspace: &Path,
+    target: &str,
+) -> TaskResult<Option<(OsString, OsString)>> {
+    resolve_cross_compiler(workspace, target).map(|override_opt| {
+        override_opt.map(|override_value| (override_value.env_var, override_value.value))
+    })
 }
