@@ -1,0 +1,296 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  BIN_CLIENT: oc-rsync
+  BIN_DAEMON: oc-rsyncd
+
+jobs:
+  build:
+    name: build ${{ matrix.platform.name }} (${{ matrix.platform.target }})
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        platform:
+          # Linux GNU
+          - name: linux-x86_64
+            enabled: true
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: linux-aarch64
+            enabled: true
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            build_command: build
+            build_daemon: true
+            uses_zig: false
+            needs_cross_gcc: true
+            generate_sbom: true
+          # macOS native
+          - name: darwin-x86_64
+            enabled: true
+            runner: macos-13
+            target: x86_64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          - name: darwin-aarch64
+            enabled: true
+            runner: macos-14
+            target: aarch64-apple-darwin
+            build_command: zigbuild
+            build_daemon: true
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: true
+          # Windows (GNU) — packaged as .tar.gz per your requirement
+          - name: windows-x86_64
+            enabled: true
+            runner: windows-latest
+            target: x86_64-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          # Placeholders (disabled)
+          - name: windows-x86
+            enabled: false
+            runner: windows-latest
+            target: i686-pc-windows-gnu
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+          - name: windows-aarch64
+            enabled: false
+            runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            build_command: zigbuild
+            build_daemon: false
+            uses_zig: true
+            needs_cross_gcc: false
+            generate_sbom: false
+    runs-on: ${{ matrix.platform.runner }}
+
+    steps:
+      - name: Skip disabled target
+        if: ${{ !matrix.platform.enabled }}
+        run: echo "Platform '${{ matrix.platform.name }}' is disabled."
+
+      - uses: actions/checkout@v4
+        if: ${{ matrix.platform.enabled }}
+
+      - name: Setup Rust toolchain
+        if: ${{ matrix.platform.enabled }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      # Optional, non-fatal sccache using local disk
+      - uses: mozilla-actions/sccache-action@v0.0.4
+        if: ${{ matrix.platform.enabled }}
+        continue-on-error: true
+      - name: Configure local sccache dir
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+      - name: Enable sccache wrapper if available (non-fatal)
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ matrix.platform.enabled }}
+        with:
+          shared-key: release-${{ matrix.platform.name }}
+          target: ${{ matrix.platform.target }}
+
+      - name: Install Zig toolchain
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
+
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Install Ubuntu build deps
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') }}
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential libzstd-dev zlib1g-dev libacl1-dev attr acl libxxhash-dev rpm python3
+          version: 1
+
+      - name: Install cross GCC for aarch64 (Ubuntu)
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'ubuntu') && matrix.platform.needs_cross_gcc }}
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: gcc-aarch64-linux-gnu
+          version: 1
+
+      - name: Install cargo-cyclonedx (SBOM)
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+
+      - name: Build client
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin "${BIN_CLIENT}"
+
+      - name: Build daemon
+        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
+        shell: bash
+        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin "${BIN_DAEMON}"
+
+      - name: Generate target SBOM (best-effort)
+        if: ${{ matrix.platform.enabled && matrix.platform.generate_sbom }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo cyclonedx --help >/dev/null 2>&1; then
+            cargo cyclonedx --format json --all-features \
+              --output target/${{ matrix.platform.target }}/release/${{ env.BIN_CLIENT }}-${{ matrix.platform.name }}-sbom.json || true
+          fi
+
+      - name: Determine version
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Robust version extraction using cargo metadata + Python (available on all runners)
+          VER="$(cargo metadata --format-version 1 --no-deps | python3 - <<'PY'
+import json,sys
+data=json.load(sys.stdin)
+# First package is the workspace root in typical layouts
+print(data["packages"][0]["version"])
+PY
+)"
+          echo "PKG_VERSION=$VER" >> "$GITHUB_ENV"
+
+      - name: Package artifacts (.tar.gz)
+        if: ${{ matrix.platform.enabled }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ matrix.platform.target }}"
+          TRIPLE="${{ matrix.platform.name }}"
+          VER="${PKG_VERSION}"
+
+          root="dist/${TRIPLE}"
+          mkdir -p "$root"
+
+          # Paths to built bins
+          oc="${{ github.workspace }}/target/${TARGET}/release/${BIN_CLIENT}"
+          od="${{ github.workspace }}/target/${TARGET}/release/${BIN_DAEMON}"
+
+          # Windows uses .exe files
+          if [[ "$TRIPLE" == windows-* ]]; then
+            oc="${oc}.exe"
+            od="${od}.exe"
+          fi
+
+          # Create a staging dir for packaging
+          stage="${root}/${{ env.BIN_CLIENT }}-${VER}-${TARGET}"
+          mkdir -p "$stage"
+
+          # Always include client
+          install -m 0755 "$oc" "${stage}/${{ env.BIN_CLIENT }}"
+
+          # Include daemon if built for this target
+          if [[ "${{ matrix.platform.build_daemon }}" == "true" && -f "$od" ]]; then
+            install -m 0755 "$od" "${stage}/${{ env.BIN_DAEMON }}"
+          fi
+
+          # Optional docs
+          for f in README.md CHANGELOG.md LICENSE; do
+            [[ -f "$f" ]] && cp "$f" "$stage/"
+          done
+
+          # Optional SBOM
+          sbom="target/${TARGET}/release/${{ env.BIN_CLIENT }}-${TRIPLE}-sbom.json"
+          [[ -f "$sbom" ]] && cp "$sbom" "$stage/"
+
+          # Tar.gz (even on Windows)
+          (cd "$root" && tar -czf "${{ env.BIN_CLIENT }}-${VER}-${TARGET}.tar.gz" "$(basename "$stage")")
+          echo "TARBALL=${root}/${{ env.BIN_CLIENT }}-${VER}-${TARGET}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload tarball
+        if: ${{ matrix.platform.enabled }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_CLIENT }}-${{ matrix.platform.name }}-tar
+          path: ${{ env.TARBALL }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Gather tarballs & create SHA256SUMS
+        id: sums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          # Find all tar.gz
+          mapfile -t files < <(find dist -type f -name '*.tar.gz' | sort)
+          : > SHA256SUMS.txt
+          for f in "${files[@]}"; do
+            sha256sum "$f" >> SHA256SUMS.txt
+          done
+          echo "FILES=$(printf '%s\n' "${files[@]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release & upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          files: |
+            dist/**/*.tar.gz
+            SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
