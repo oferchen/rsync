@@ -282,6 +282,46 @@ jobs:
         with:
           tool: cargo-cyclonedx
 
+      # ===== Linux packaging (.deb / .rpm) in CI =====
+      - name: Build .deb (cargo-deb)
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build Debian package from crate metadata; binaries auto-installed to /usr/bin
+          cargo deb --profile dist --locked --target ${{ matrix.platform.target }} --no-strip
+          mkdir -p dist/${{ matrix.platform.name }}
+          cp -v target/${{ matrix.platform.target }}/debian/*.deb dist/${{ matrix.platform.name }}/
+
+      - name: Upload .deb artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.platform.name }}
+          path: dist/${{ matrix.platform.name }}/*.deb
+          if-no-files-found: error
+
+      - name: Build .rpm (cargo-rpm)
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure rpmbuild is present (from 'rpm' package) and build all bins per Cargo.toml
+          rpmbuild --version
+          cargo rpm build -v --target ${{ matrix.platform.target }}
+          RPM_DIR="target/${{ matrix.platform.target }}/release/rpmbuild/RPMS"
+          mkdir -p dist/${{ matrix.platform.name }}
+          find "$RPM_DIR" -type f -name '*.rpm' -exec cp -v {} dist/${{ matrix.platform.name }}/ \;
+
+      - name: Upload .rpm artifact
+        if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.platform.name }}
+          path: dist/${{ matrix.platform.name }}/*.rpm
+          if-no-files-found: error
+      # ===== end Linux packaging =====
+
       - name: Build oc-rsync
         if: ${{ matrix.platform.enabled }}
         shell: bash
