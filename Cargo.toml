@@ -149,17 +149,3 @@ rsyncd = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
 
-[package.metadata.rpm.scripts]
-post = """
-if command -v alternatives >/dev/null 2>&1; then
-    alternatives --install /usr/bin/rsync rsync /usr/libexec/oc-rsync/rsync 50
-    alternatives --install /usr/bin/rsyncd rsyncd /usr/libexec/oc-rsync/rsyncd 50
-fi
-"""
-preun = """
-if [ "$1" -eq 0 ] && command -v alternatives >/dev/null 2>&1; then
-    alternatives --remove rsync /usr/libexec/oc-rsync/rsync || true
-    alternatives --remove rsyncd /usr/libexec/oc-rsync/rsyncd || true
-fi
-"""
-
