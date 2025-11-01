@@ -5,11 +5,13 @@ use std::process::ExitCode;
 
 /// Runs the shared client entry point for every branded executable.
 ///
-/// Both the canonical `rsync` binary and the compatibility `oc-rsync`
-/// wrapper call into this helper so tests and packaging only need to
-/// validate a single execution path. The helper forwards its arguments
-/// and I/O handles to the CLI crate and normalises the returned status
-/// via the shared exit-code mapper.
+/// Both branded binaries—the upstream-compatible client exposed as
+/// [`rsync_core::version::PROGRAM_NAME`] and the oc-branded wrapper
+/// published as [`rsync_core::version::OC_PROGRAM_NAME`]—call into this
+/// helper. Centralising the logic keeps tests, packaging, and telemetry
+/// focused on a single execution path. The helper forwards its arguments
+/// and I/O handles to the CLI crate and normalises the returned status via
+/// the shared exit-code mapper.
 #[must_use]
 pub fn run_with<I, Out, Err>(args: I, stdout: &mut Out, stderr: &mut Err) -> ExitCode
 where
