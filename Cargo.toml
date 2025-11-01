@@ -160,6 +160,37 @@ ALT_SLAVE_NAME=rsyncd
 ALT_SLAVE_LINK=/usr/bin/rsyncd
 ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
 ALT_PRIORITY=30
+DEFAULTS_FILE=/etc/default/oc-rsyncd
+
+is_truthy() {
+    case "$1" in
+        [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+should_register_alternatives() {
+    if [ -n "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES:-}" ]; then
+        if is_truthy "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES}"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    if [ -r "${DEFAULTS_FILE}" ]; then
+        . "${DEFAULTS_FILE}"
+    fi
+
+    if is_truthy "${OC_RSYNC_REGISTER_ALTERNATIVES:-}"; then
+        return 0
+    fi
+
+    return 1
+}
 
 detect_alternatives() {
     if command -v update-alternatives >/dev/null 2>&1; then

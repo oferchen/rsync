@@ -8,6 +8,18 @@ ALT_SLAVE_NAME="rsyncd"
 ALT_SLAVE_LINK="/usr/bin/rsyncd"
 ALT_SLAVE_IMPL="/usr/libexec/oc-rsync/rsyncd"
 ALT_PRIORITY=30
+DEFAULTS_FILE="/etc/default/oc-rsyncd"
+
+is_truthy() {
+    case "$1" in
+        [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 have_update_alternatives() {
     command -v update-alternatives >/dev/null 2>&1
