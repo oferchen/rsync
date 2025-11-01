@@ -10,7 +10,10 @@ pub(super) fn validate_ci_cross_compile_matrix(
     branding: &WorkspaceBranding,
     failures: &mut Vec<String>,
 ) -> TaskResult<()> {
-    let ci_path = workspace.join(".github").join("workflows").join("ci.yml");
+    let ci_path = workspace
+        .join(".github")
+        .join("workflows")
+        .join("cross-compile.yml");
     let ci_contents = read_file(&ci_path)?;
     let display_path = ci_path
         .strip_prefix(workspace)
@@ -63,26 +66,6 @@ pub(super) fn validate_ci_cross_compile_matrix(
     );
     if failures.is_empty() {
         expected_entries.insert(String::from("windows-x86"));
-    }
-
-    ensure_matrix_entry(
-        failures,
-        &display_path,
-        &ci_contents,
-        "windows-aarch64",
-        MatrixExpectations {
-            enabled: Some(false),
-            target: expected_target("windows", "aarch64"),
-            build_command: Some("zigbuild"),
-            build_daemon: Some(false),
-            uses_zig: Some(true),
-            generate_sbom: Some(false),
-            needs_cross_gcc: Some(false),
-        },
-    );
-
-    if failures.is_empty() {
-        expected_entries.insert(String::from("windows-aarch64"));
     }
 
     if failures.is_empty() {
@@ -362,8 +345,8 @@ fn expected_target(os: &str, arch: &str) -> Option<&'static str> {
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
-        ("windows", "x86_64") => Some("x86_64-pc-windows-gnu"),
-        ("windows", "x86") => Some("i686-pc-windows-gnu"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        ("windows", "x86") => Some("i686-pc-windows-msvc"),
         ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
         _ => None,
     }

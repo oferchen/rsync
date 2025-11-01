@@ -1,0 +1,61 @@
+name: test-linux
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: ""
+
+jobs:
+  test-linux:
+    name: tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: mozilla-actions/sccache-action@v0.0.4
+        continue-on-error: true
+
+      - name: Configure local sccache dir
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/.sccache" >> "$GITHUB_ENV"
+
+      - name: Enable sccache wrapper if available (non-fatal)
+        shell: bash
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --start-server || true
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "linux-test-core"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Build (debug, locked)
+        run: cargo build --workspace --all-features --locked
+
+      - name: Unit tests (nextest)
+        run: cargo nextest run --workspace --all-features --no-capture --locked
+
+      - name: sccache stats (best-effort)
+        if: always()
+        run: |
+          command -v sccache >/dev/null 2>&1 && sccache --show-stats || true

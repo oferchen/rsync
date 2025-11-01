@@ -14,6 +14,8 @@ pub struct PackageOptions {
     pub build_rpm: bool,
     /// Whether to build the Linux tarball distributions.
     pub build_tarball: bool,
+    /// Optional target triple override for tarball packaging.
+    pub tarball_target: Option<OsString>,
     /// Optional profile override.
     pub profile: Option<OsString>,
 }
@@ -26,6 +28,7 @@ impl PackageOptions {
             build_deb: true,
             build_rpm: true,
             build_tarball: true,
+            tarball_target: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         }
     }
@@ -41,6 +44,7 @@ where
     let mut build_rpm = false;
     let mut build_tarball = false;
     let mut profile = Some(OsString::from(DIST_PROFILE));
+    let mut tarball_target = None;
     let mut profile_explicit = false;
 
     while let Some(arg) = args.next() {
@@ -60,6 +64,29 @@ where
 
         if arg == "--tarball" {
             build_tarball = true;
+            continue;
+        }
+
+        if arg == "--tarball-target" {
+            let value = args.next().ok_or_else(|| {
+                TaskError::Usage(String::from(
+                    "--tarball-target requires a value; see `cargo xtask package --help`",
+                ))
+            })?;
+
+            if value.is_empty() {
+                return Err(TaskError::Usage(String::from(
+                    "--tarball-target requires a non-empty value",
+                )));
+            }
+
+            if tarball_target.is_some() {
+                return Err(TaskError::Usage(String::from(
+                    "--tarball-target specified multiple times",
+                )));
+            }
+
+            tarball_target = Some(value);
             continue;
         }
 
@@ -119,6 +146,7 @@ where
         build_deb,
         build_rpm,
         build_tarball,
+        tarball_target,
         profile,
     })
 }
@@ -142,7 +170,7 @@ fn set_profile_option(
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the Linux tar.gz distributions\n  --release        Build using the dist profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
+        "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the tar.gz distributions\n  --tarball-target TARGET\n                  Restrict tarball generation to the specified target triple\n  --release        Build using the dist profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",
     )
 }
 
@@ -197,9 +225,54 @@ mod tests {
                 build_deb: false,
                 build_rpm: false,
                 build_tarball: true,
+                tarball_target: None,
                 profile: Some(OsString::from(DIST_PROFILE)),
             }
         );
+    }
+
+    #[test]
+    fn parse_args_supports_tarball_target() {
+        let options = parse_args([
+            OsString::from("--tarball"),
+            OsString::from("--tarball-target"),
+            OsString::from("x86_64-unknown-linux-gnu"),
+        ])
+        .expect("parse succeeds");
+        assert_eq!(
+            options,
+            PackageOptions {
+                build_deb: false,
+                build_rpm: false,
+                build_tarball: true,
+                tarball_target: Some(OsString::from("x86_64-unknown-linux-gnu")),
+                profile: Some(OsString::from(DIST_PROFILE)),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_duplicate_tarball_target() {
+        let error = parse_args([
+            OsString::from("--tarball-target"),
+            OsString::from("foo"),
+            OsString::from("--tarball-target"),
+            OsString::from("bar"),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Usage(message) if message.contains("--tarball-target specified multiple times")
+        ));
+    }
+
+    #[test]
+    fn parse_args_requires_tarball_target_value() {
+        let error = parse_args([OsString::from("--tarball-target")]).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Usage(message) if message.contains("--tarball-target requires a value")
+        ));
     }
 
     #[test]

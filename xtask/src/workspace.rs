@@ -275,7 +275,10 @@ source = "https://github.com/oferchen/rsync"
                     String::from("macos"),
                     vec![String::from("x86_64"), String::from("aarch64")],
                 ),
-                (String::from("windows"), vec![String::from("x86_64")]),
+                (
+                    String::from("windows"),
+                    vec![String::from("x86_64"), String::from("aarch64")],
+                ),
             ]),
         };
         assert_eq!(branding, expected);
