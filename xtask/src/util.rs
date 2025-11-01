@@ -4,7 +4,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -51,12 +51,14 @@ fn map_command_error(error: io::Error, program: &str, install_hint: &str) -> Tas
     }
 }
 
+fn tool_missing_error(display: &str, install_hint: &str) -> TaskError {
+    TaskError::ToolMissing(format!("{display} is unavailable; {install_hint}"))
+}
+
 /// Ensures that the provided command is present in `PATH`.
 pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult<()> {
     if should_simulate_missing_tool(program) {
-        return Err(TaskError::ToolMissing(format!(
-            "{program} is unavailable; {install_hint}"
-        )));
+        return Err(tool_missing_error(program, install_hint));
     }
 
     let path_value = env::var_os("PATH").unwrap_or_default();
@@ -87,9 +89,7 @@ pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult
         }
     }
 
-    Err(TaskError::ToolMissing(format!(
-        "{program} is unavailable; {install_hint}"
-    )))
+    Err(tool_missing_error(program, install_hint))
 }
 
 /// Runs `cargo` with the supplied arguments and maps failures to [`TaskError`].
@@ -100,9 +100,7 @@ pub fn run_cargo_tool(
     install_hint: &str,
 ) -> TaskResult<()> {
     if should_simulate_missing_tool(display) {
-        return Err(TaskError::ToolMissing(format!(
-            "{display} is unavailable; {install_hint}"
-        )));
+        return Err(tool_missing_error(display, install_hint));
     }
 
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
@@ -118,15 +116,47 @@ pub fn run_cargo_tool(
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("no such subcommand") || stderr.contains("no such command") {
-        return Err(TaskError::ToolMissing(format!(
-            "{display} is unavailable; {install_hint}"
-        )));
+        return Err(tool_missing_error(display, install_hint));
     }
 
     Err(TaskError::CommandFailed {
         program: display.to_string(),
         status: output.status,
     })
+}
+
+/// Probes a cargo subcommand without executing the full task, returning a
+/// [`TaskError::ToolMissing`] when the tool is unavailable.
+pub fn probe_cargo_tool(
+    workspace: &Path,
+    args: &[&str],
+    display: &str,
+    install_hint: &str,
+) -> TaskResult<()> {
+    if should_simulate_missing_tool(display) {
+        return Err(tool_missing_error(display, install_hint));
+    }
+
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let output = Command::new(cargo)
+        .current_dir(workspace)
+        .args(args)
+        .output()
+        .map_err(|error| map_command_error(error, display, install_hint))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("no such subcommand") || stderr.contains("no such command") {
+        Err(tool_missing_error(display, install_hint))
+    } else {
+        Err(TaskError::CommandFailed {
+            program: format!("{} (probe)", display),
+            status: output.status,
+        })
+    }
 }
 
 /// Lists tracked files using `git ls-files -z`.
