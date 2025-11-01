@@ -41,7 +41,7 @@ pub(super) fn build_amd64_tarball(
     );
     let tarball_path = dist_dir.join(format!("{root_name}.tar.gz"));
     println!(
-        "Building amd64 tarball distribution at {}",
+        "Building amd64 tar.gz distribution at {}",
         tarball_path.display()
     );
 
