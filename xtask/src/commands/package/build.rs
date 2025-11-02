@@ -139,6 +139,10 @@ pub(super) fn build_workspace_binaries(
     linker_override: Option<&LinkerOverride>,
     include_legacy: bool,
 ) -> TaskResult<()> {
+    if let Some(target) = target {
+        ensure_rust_target_installed(target)?;
+    }
+
     if env::var_os("OC_RSYNC_PACKAGE_SKIP_BUILD").is_some() {
         println!("Skipping workspace binary build because OC_RSYNC_PACKAGE_SKIP_BUILD is set");
         return Ok(());
@@ -160,7 +164,6 @@ pub(super) fn build_workspace_binaries(
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 
     if let Some(target) = target {
-        ensure_rust_target_installed(target)?;
         args.push(OsString::from("--target"));
         args.push(OsString::from(target));
         if let Some(linker) = linker_override {

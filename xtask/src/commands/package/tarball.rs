@@ -170,15 +170,14 @@ pub(super) fn tarball_specs(
         )));
     };
 
-    let host_arch = env::consts::ARCH;
     let filtered: Vec<_> = specs
         .into_iter()
-        .filter(|spec| spec.platform == host_platform && spec.metadata_arch == host_arch)
+        .filter(|spec| spec.platform == host_platform)
         .collect();
 
     if filtered.is_empty() {
         return Err(TaskError::Validation(format!(
-            "no tarball specifications available for host platform {} ({host_arch})",
+            "no tarball specifications available for host platform {}",
             host_platform.archive_tag(),
         )));
     }
