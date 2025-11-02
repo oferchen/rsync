@@ -113,8 +113,12 @@ priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
-features = []
+features = ["legacy-binaries"]
 assets = [
+    ["target/dist/oc-rsync", "/usr/bin/oc-rsync", "755"],
+    ["target/dist/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
+    ["target/dist/rsync", "/usr/libexec/oc-rsync/rsync", "755"],
+    ["target/dist/rsyncd", "/usr/libexec/oc-rsync/rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
@@ -285,9 +289,11 @@ fi
 
 [package.metadata.rpm.cargo]
 profile = "dist"
-buildflags = ["--profile", "dist", "--bins"]
+buildflags = ["--profile", "dist", "--bins", "--features", "legacy-binaries"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
+"rsync" = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
+"rsyncd" = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 
