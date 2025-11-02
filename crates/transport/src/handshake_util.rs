@@ -242,11 +242,11 @@ impl fmt::Display for RemoteProtocolAdvertisement {
     /// stability for downstream consumers.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Supported(version) => write!(f, "protocol {}", version),
+            Self::Supported(version) => write!(f, "protocol {version}"),
             Self::Future {
                 advertised,
                 clamped,
-            } => write!(f, "future protocol {} (clamped to {})", advertised, clamped),
+            } => write!(f, "future protocol {advertised} (clamped to {clamped})"),
         }
     }
 }

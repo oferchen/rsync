@@ -69,20 +69,21 @@ impl fmt::Display for NegotiationError {
                 let supported = ProtocolVersion::supported_protocol_numbers();
                 write!(
                     f,
-                    "no mutual rsync protocol version; peer offered {:?}, we support {:?}",
-                    peer_versions, supported
+                    // clippy(uninlined_format_args): inline variables into the format string.
+                    "no mutual rsync protocol version; peer offered {peer_versions:?}, we support {supported:?}"
                 )
             }
             Self::UnsupportedVersion(version) => {
                 let (oldest, newest) = ProtocolVersion::supported_range_bounds();
                 write!(
                     f,
-                    "peer advertised unsupported rsync protocol version {} (valid range {}-{})",
-                    version, oldest, newest,
+                    // clippy(uninlined_format_args): inline variables into the format string.
+                    "peer advertised unsupported rsync protocol version {version} (valid range {oldest}-{newest})"
                 )
             }
             Self::MalformedLegacyGreeting { input } => {
-                write!(f, "malformed legacy rsync daemon greeting: {:?}", input)
+                // clippy(uninlined_format_args): inline variables into the format string.
+                write!(f, "malformed legacy rsync daemon greeting: {input:?}")
             }
         }
     }

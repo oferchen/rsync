@@ -213,8 +213,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         continue;
                     }
                     return Err(map_error(FilterParseError::new(format!(
-                        "list-clearing '{}' is not permitted in this filter file",
-                        trimmed
+                        "list-clearing '{trimmed}' is not permitted in this filter file"
                     ))));
                 }
 

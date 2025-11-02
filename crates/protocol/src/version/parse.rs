@@ -64,8 +64,7 @@ impl fmt::Display for ParseProtocolVersionError {
                 let (oldest, newest) = super::ProtocolVersion::supported_range_bounds();
                 write!(
                     f,
-                    "protocol version {} is outside the supported range {}-{}",
-                    value, oldest, newest
+                    "protocol version {value} is outside the supported range {oldest}-{newest}"
                 )
             }
         }
