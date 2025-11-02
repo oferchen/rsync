@@ -44,15 +44,6 @@
 
 ---
 
-## Status
-
-- **Target:** Full day-to-day parity with rsync@https://rsync.samba.org (protocol 32).
-- **Interoperability:** Client and daemon modes are designed to interop with upstream; see [Interop & Compliance](#interop--compliance).
-- **Rust edition:** **2024**
-- **Toolchain/MSRV:** **1.88** (matches CI)
-
----
-
 ## Project Structure
 
 ```
