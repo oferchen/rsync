@@ -241,8 +241,7 @@ source = "https://github.com/oferchen/rsync"
 
 [workspace.metadata.oc_rsync.cross_compile]
 {entries}
-"#,
-            entries = entries
+"#
         )
     }
 

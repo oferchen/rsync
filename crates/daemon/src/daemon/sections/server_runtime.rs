@@ -1,6 +1,6 @@
 fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io::Error) {
     if let Some(sink) = log {
-        let payload = format!("failed to notify systemd about {}: {}", context, error);
+        let payload = format!("failed to notify systemd about {context}: {error}");
         let message = rsync_warning!(payload).with_role(Role::Daemon);
         log_message(sink, &message);
     }
@@ -92,16 +92,15 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let local_addr = listener.local_addr().unwrap_or(requested_addr);
 
     let notifier = systemd::ServiceNotifier::new();
-    let ready_status = format!("Listening on {}", local_addr);
+    let ready_status = format!("Listening on {local_addr}");
     if let Err(error) = notifier.ready(Some(&ready_status)) {
         log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
     }
 
     if let Some(log) = log_sink.as_ref() {
+        let port = local_addr.port();
         let text = format!(
-            "rsyncd version {} starting, listening on port {}",
-            version,
-            local_addr.port()
+            "rsyncd version {version} starting, listening on port {port}"
         );
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
@@ -197,7 +196,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     if let Some(log) = log_sink.as_ref() {
-        let text = format!("rsyncd version {} shutting down", version);
+        let text = format!("rsyncd version {version} shutting down");
         let message = rsync_info!(text).with_role(Role::Daemon);
         log_message(log, &message);
     }
@@ -225,7 +224,8 @@ impl PidFileGuard {
             .write(true)
             .open(&path)
             .map_err(|error| pid_file_error(&path, error))?;
-        writeln!(file, "{}", std::process::id()).map_err(|error| pid_file_error(&path, error))?;
+        let pid = std::process::id();
+        writeln!(file, "{pid}").map_err(|error| pid_file_error(&path, error))?;
         file.sync_all()
             .map_err(|error| pid_file_error(&path, error))?;
 

@@ -75,8 +75,7 @@ fn message_code_all_is_sorted_by_numeric_value() {
         let second = window[1];
         assert!(
             first.as_u8() <= second.as_u8(),
-            "MessageCode::all() is not sorted: {:?}",
-            all
+            "MessageCode::all() is not sorted: {all:?}"
         );
     }
 }

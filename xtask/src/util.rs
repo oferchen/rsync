@@ -203,7 +203,7 @@ pub fn probe_cargo_tool(
         Err(tool_missing_error(display, install_hint))
     } else {
         Err(TaskError::CommandFailed {
-            program: format!("{} (probe)", display),
+            program: format!("{display} (probe)"),
             status: output.status,
         })
     }

@@ -314,7 +314,7 @@ fn run_upload_command(
     let status = command.status().map_err(|error| {
         TaskError::Io(io::Error::new(
             error.kind(),
-            format!("failed to invoke {}: {error}", display),
+            format!("failed to invoke {display}: {error}"),
         ))
     })?;
 
@@ -322,7 +322,7 @@ fn run_upload_command(
         Ok(())
     } else {
         Err(TaskError::CommandFailed {
-            program: format!("{} release upload", display),
+            program: format!("{display} release upload"),
             status,
         })
     }

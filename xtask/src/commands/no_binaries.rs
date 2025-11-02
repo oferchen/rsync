@@ -70,7 +70,7 @@ mod tests {
             .args(["init", "--quiet"])
             .status()
             .expect("git init runs");
-        assert!(status.success(), "git init failed: {:?}", status);
+        assert!(status.success(), "git init failed: {status:?}");
     }
 
     fn git_add(path: &std::path::Path, file: &std::path::Path) {
@@ -83,9 +83,7 @@ mod tests {
             .expect("git add runs");
         assert!(
             status.success(),
-            "git add failed for {:?}: {:?}",
-            relative,
-            status
+            "git add failed for {relative:?}: {status:?}",
         );
     }
 
@@ -139,7 +137,7 @@ mod tests {
             TaskError::BinaryFiles(paths) => {
                 assert_eq!(paths, vec![std::path::PathBuf::from("artifacts/blob.bin")]);
             }
-            other => panic!("unexpected error: {:?}", other),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 }

@@ -43,7 +43,7 @@ where
             let mut message = rsync_error!(1, "{}", error);
             message = message.with_role(Role::Daemon);
             if write_message(&message, &mut stderr_sink).is_err() {
-                let _ = writeln!(stderr_sink.writer_mut(), "{}", error);
+                let _ = writeln!(stderr_sink.writer_mut(), "{error}");
             }
             1
         }
@@ -90,7 +90,8 @@ where
         Ok(()) => 0,
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
-                let _ = writeln!(stderr.writer_mut(), "{}", error.message());
+                let message = error.message();
+                let _ = writeln!(stderr.writer_mut(), "{message}");
             }
             error.exit_code()
         }
@@ -179,21 +180,16 @@ where
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
+            let binary_display = Path::new(&binary).display();
             let message = rsync_error!(
                 1,
-                format!(
-                    "failed to launch system rsync daemon '{}': {}",
-                    Path::new(&binary).display(),
-                    error
-                )
+                format!("failed to launch system rsync daemon '{binary_display}': {error}")
             )
             .with_role(Role::Daemon);
             if write_message(&message, stderr).is_err() {
                 let _ = writeln!(
                     stderr.writer_mut(),
-                    "failed to launch system rsync daemon '{}': {}",
-                    Path::new(&binary).display(),
-                    error
+                    "failed to launch system rsync daemon '{binary_display}': {error}"
                 );
             }
             return 1;
@@ -208,14 +204,13 @@ where
                 let code = status.code().unwrap_or(MAX_EXIT_CODE);
                 let message = rsync_error!(
                     code,
-                    format!("system rsync daemon exited with status {}", status)
+                    format!("system rsync daemon exited with status {status}")
                 )
                 .with_role(Role::Daemon);
                 if write_message(&message, stderr).is_err() {
                     let _ = writeln!(
                         stderr.writer_mut(),
-                        "system rsync daemon exited with status {}",
-                        status
+                        "system rsync daemon exited with status {status}"
                     );
                 }
                 code
@@ -224,14 +219,13 @@ where
         Err(error) => {
             let message = rsync_error!(
                 1,
-                format!("failed to wait for system rsync daemon: {}", error)
+                format!("failed to wait for system rsync daemon: {error}")
             )
             .with_role(Role::Daemon);
             if write_message(&message, stderr).is_err() {
                 let _ = writeln!(
                     stderr.writer_mut(),
-                    "failed to wait for system rsync daemon: {}",
-                    error
+                    "failed to wait for system rsync daemon: {error}"
                 );
             }
             1

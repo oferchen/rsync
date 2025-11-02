@@ -269,6 +269,6 @@ fn write_server_fallback_error<Err: Write>(stderr: &mut Err, text: impl fmt::Dis
     let mut message = rsync_error!(1, "{}", text);
     message = message.with_role(Role::Client);
     if super::write_message(&message, &mut sink).is_err() {
-        let _ = writeln!(sink.writer_mut(), "{}", text);
+        let _ = writeln!(sink.writer_mut(), "{text}");
     }
 }

@@ -76,7 +76,7 @@ fn render_line_to_writer_appends_newline() {
         .render_line_to_writer(&mut buffer)
         .expect("writing into a vector never fails");
 
-    assert_eq!(buffer, format!("{}\n", message).into_bytes());
+    assert_eq!(buffer, format!("{message}\n").into_bytes());
 }
 
 #[test]

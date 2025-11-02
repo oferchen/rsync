@@ -17,8 +17,7 @@ fn log_module_bandwidth_change(
         LimiterChange::Unchanged => return,
         LimiterChange::Disabled => {
             let text = format!(
-                "removed bandwidth limit for module '{}' requested from {} ({})",
-                module_display, display, peer_ip,
+                "removed bandwidth limit for module '{module_display}' requested from {display} ({peer_ip})"
             );
             rsync_info!(text).with_role(Role::Daemon)
         }
@@ -37,8 +36,7 @@ fn log_module_bandwidth_change(
                 LimiterChange::Disabled | LimiterChange::Unchanged => unreachable!(),
             };
             let text = format!(
-                "{action} bandwidth limit {limit}{burst} for module '{}' requested from {} ({})",
-                module_display, display, peer_ip,
+                "{action} bandwidth limit {limit}{burst} for module '{module_display}' requested from {display} ({peer_ip})"
             );
             rsync_info!(text).with_role(Role::Daemon)
         }
@@ -49,14 +47,16 @@ fn log_module_bandwidth_change(
 
 fn log_connection(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
     let display = format_host(host, peer_addr.ip());
-    let text = format!("connect from {} ({})", display, peer_addr.ip());
+    let ip = peer_addr.ip();
+    let text = format!("connect from {display} ({ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
 fn log_list_request(log: &SharedLogSink, host: Option<&str>, peer_addr: SocketAddr) {
     let display = format_host(host, peer_addr.ip());
-    let text = format!("list request from {} ({})", display, peer_addr.ip());
+    let ip = peer_addr.ip();
+    let text = format!("list request from {display} ({ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
@@ -65,8 +65,7 @@ fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, 
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "module '{}' requested from {} ({})",
-        module_display, display, peer_ip
+        "module '{module_display}' requested from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -82,8 +81,7 @@ fn log_module_limit(
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "refusing module '{}' from {} ({}): max connections {}",
-        module_display, display, peer_ip, limit,
+        "refusing module '{module_display}' from {display} ({peer_ip}): max connections {limit}"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -99,8 +97,7 @@ fn log_module_lock_error(
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "failed to update lock for module '{}' requested from {} ({}): {}",
-        module_display, display, peer_ip, error
+        "failed to update lock for module '{module_display}' requested from {display} ({peer_ip}): {error}"
     );
     let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -116,8 +113,7 @@ fn log_module_refused_option(
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "refusing option '{}' for module '{}' from {} ({})",
-        refused, module_display, display, peer_ip,
+        "refusing option '{refused}' for module '{module_display}' from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -127,8 +123,7 @@ fn log_module_auth_failure(log: &SharedLogSink, host: Option<&str>, peer_ip: IpA
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "authentication failed for module '{}' from {} ({})",
-        module_display, display, peer_ip,
+        "authentication failed for module '{module_display}' from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -138,8 +133,7 @@ fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpA
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "authentication succeeded for module '{}' from {} ({})",
-        module_display, display, peer_ip,
+        "authentication succeeded for module '{module_display}' from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -149,8 +143,7 @@ fn log_module_unavailable(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAd
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "module '{}' transfers unavailable for {} ({})",
-        module_display, display, peer_ip,
+        "module '{module_display}' transfers unavailable for {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -160,8 +153,7 @@ fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, m
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "access denied to module '{}' from {} ({})",
-        module_display, display, peer_ip,
+        "access denied to module '{module_display}' from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -171,8 +163,7 @@ fn log_unknown_module(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, 
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "unknown module '{}' requested from {} ({})",
-        module_display, display, peer_ip,
+        "unknown module '{module_display}' requested from {display} ({peer_ip})"
     );
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);

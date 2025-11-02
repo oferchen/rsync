@@ -212,7 +212,7 @@ mod tests {
         for (value, expected_hex) in cases {
             let mut encoded = Vec::new();
             encode_varint_to_vec(value, &mut encoded);
-            let actual: String = encoded.iter().map(|byte| format!("{:02x}", byte)).collect();
+            let actual: String = encoded.iter().map(|byte| format!("{byte:02x}")).collect();
             assert_eq!(actual, expected_hex);
         }
     }

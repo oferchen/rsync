@@ -106,8 +106,7 @@ impl fmt::Display for LocalCopyError {
                 let noun = if *skipped == 1 { "entry" } else { "entries" };
                 write!(
                     f,
-                    "Deletions stopped due to --max-delete limit ({} {noun} skipped)",
-                    skipped
+                    "Deletions stopped due to --max-delete limit ({skipped} {noun} skipped)"
                 )
             }
         }

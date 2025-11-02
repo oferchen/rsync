@@ -96,7 +96,7 @@ windows = ["x86_64", "aarch64"]
                         .contains("failed to read workspace manifest")
                 );
             }
-            other => panic!("unexpected error: {:?}", other),
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 }

@@ -409,7 +409,7 @@ fn execute_with_dry_run_detects_directory_conflict() {
         LocalCopyErrorKind::InvalidArgument(reason) => {
             assert_eq!(reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
         }
-        other => panic!("unexpected error kind: {:?}", other),
+        other => panic!("unexpected error kind: {other:?}"),
     }
 }
 

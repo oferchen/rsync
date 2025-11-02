@@ -3,7 +3,7 @@
 fn parse_filter_directive_show_is_sender_only() {
     let rule = match parse_filter_directive_line("show images/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(rule.applies_to_sender());
@@ -14,7 +14,7 @@ fn parse_filter_directive_show_is_sender_only() {
 fn parse_filter_directive_hide_is_sender_only() {
     let rule = match parse_filter_directive_line("hide *.tmp").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(rule.applies_to_sender());
@@ -25,7 +25,7 @@ fn parse_filter_directive_hide_is_sender_only() {
 fn parse_filter_directive_shorthand_show_is_sender_only() {
     let rule = match parse_filter_directive_line("S logs/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(rule.applies_to_sender());
@@ -36,7 +36,7 @@ fn parse_filter_directive_shorthand_show_is_sender_only() {
 fn parse_filter_directive_shorthand_hide_is_sender_only() {
     let rule = match parse_filter_directive_line("H *.bak").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(rule.applies_to_sender());
@@ -47,7 +47,7 @@ fn parse_filter_directive_shorthand_hide_is_sender_only() {
 fn parse_filter_directive_shorthand_protect_requires_receiver() {
     let rule = match parse_filter_directive_line("P cache/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(!rule.applies_to_sender());
@@ -58,7 +58,7 @@ fn parse_filter_directive_shorthand_protect_requires_receiver() {
 fn parse_filter_directive_risk_requires_receiver() {
     let rule = match parse_filter_directive_line("risk cache/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(!rule.applies_to_sender());
@@ -69,7 +69,7 @@ fn parse_filter_directive_risk_requires_receiver() {
 fn parse_filter_directive_shorthand_risk_requires_receiver() {
     let rule = match parse_filter_directive_line("R cache/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,
-        other => panic!("expected rule, got {:?}", other),
+        other => panic!("expected rule, got {other:?}"),
     };
 
     assert!(!rule.applies_to_sender());
@@ -98,7 +98,7 @@ fn parse_filter_directive_exclude_if_present_support() {
         ParsedFilterDirective::ExcludeIfPresent(rule) => {
             assert_eq!(rule.marker_path(Path::new(".")), PathBuf::from("./.git"));
         }
-        other => panic!("expected exclude-if-present directive, got {:?}", other),
+        other => panic!("expected exclude-if-present directive, got {other:?}"),
     }
 }
 
@@ -110,7 +110,7 @@ fn parse_filter_directive_dir_merge_without_modifiers() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected dir-merge directive, got {:?}", other),
+        other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from(".rsync-filter"));
@@ -129,7 +129,7 @@ fn parse_filter_directive_dir_merge_with_modifiers() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected dir-merge directive, got {:?}", other),
+        other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from("rules/filter.txt"));
@@ -147,7 +147,7 @@ fn parse_filter_directive_dir_merge_cvs_default_path() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected dir-merge directive, got {:?}", other),
+        other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from(".cvsignore"));
@@ -166,7 +166,7 @@ fn parse_filter_directive_short_merge_inherits_context() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected merge directive, got {:?}", other),
+        other => panic!("expected merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from("per-dir"));
@@ -181,7 +181,7 @@ fn parse_filter_directive_short_merge_cvs_defaults() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected merge directive, got {:?}", other),
+        other => panic!("expected merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from(".cvsignore"));
@@ -199,7 +199,7 @@ fn parse_filter_directive_short_dir_merge_with_modifiers() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected dir-merge directive, got {:?}", other),
+        other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from("per-dir"));
@@ -215,7 +215,7 @@ fn parse_filter_directive_merge_with_modifiers() {
 
     let (path, options) = match directive {
         ParsedFilterDirective::Merge { path, options } => (path, options),
-        other => panic!("expected merge directive, got {:?}", other),
+        other => panic!("expected merge directive, got {other:?}"),
     };
 
     assert_eq!(path, PathBuf::from("rules"));
