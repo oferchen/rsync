@@ -1,0 +1,4 @@
+#!/bin/sh
+/usr/sbin/alternatives --remove rsync /usr/bin/oc-rsync || true
+/usr/sbin/alternatives --remove rsyncd /usr/bin/oc-rsyncd || true
+exit 0
