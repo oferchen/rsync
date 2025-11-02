@@ -1,8 +1,7 @@
-# oc-rsync - Classic rsync implementation in pure rust.
-
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync)](https://github.com/oferchen/rsync/releases)
 
+## oc-rsync - Classic rsync implementation in pure rust.
 - **Parity goal:** CLI UX, negotiation, framing/tags, messages, and exit codes are designed to be **indistinguishable** from rsync@https://rsync.samba.org.
 - **Safety & performance:** Memory-safe Rust, explicit error types, and hot-path IO attention.
 
