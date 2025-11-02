@@ -1,0 +1,4 @@
+#!/bin/sh
+/usr/sbin/alternatives --install /usr/bin/rsync rsync /usr/bin/oc-rsync 10 || true
+/usr/sbin/alternatives --install /usr/bin/rsyncd rsyncd /usr/bin/oc-rsyncd 10 || true
+exit 0

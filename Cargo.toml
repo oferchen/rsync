@@ -41,12 +41,6 @@ rsync-daemon = { path = "crates/daemon" }
 assert_cmd = "2.0"
 rsync-core = { path = "crates/core" }
 
-[profile.dist]
-inherits = "release"
-lto = "thin"
-codegen-units = 1
-strip = "debuginfo"
-
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
 rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
 
@@ -114,11 +108,20 @@ maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
 features = ["legacy-binaries"]
+[package.metadata.deb]
+name = "oc-rsync"
 assets = [
+]
+maintainer-scripts = "packaging/debian"
+conflicts = []
+replaces = []
+
+assets = [
+    ["target/@TARGET@/@PROFILE@/rsync", "usr/bin/oc-rsync", "755"],
+    ["target/@TARGET@/@PROFILE@/rsyncd", "usr/bin/oc-rsyncd", "755"],
+    ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
     ["target/dist/oc-rsync", "/usr/bin/oc-rsync", "755"],
     ["target/dist/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
-    ["target/dist/rsync", "/usr/libexec/oc-rsync/rsync", "755"],
-    ["target/dist/rsyncd", "/usr/libexec/oc-rsync/rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
@@ -296,4 +299,3 @@ buildflags = ["--profile", "dist", "--bins", "--features", "legacy-binaries"]
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
 "rsync" = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
 "rsyncd" = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
-
