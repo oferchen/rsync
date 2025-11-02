@@ -205,7 +205,7 @@ pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskR
     ensure(
         rust_version == "1.88",
         format!(
-            "workspace.package.rust-version must match CI toolchain 1.87; found {:?}",
+            "workspace.package.rust-version must match CI toolchain 1.88; found {:?}",
             rust_version
         ),
     )
