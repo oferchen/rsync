@@ -175,20 +175,6 @@ This README intentionally uses **stable, simple headings** (e.g., `#xtask--docs-
 
 ---
 
-## CI
-
-Typical CI stages:
-
-1. **Formatting** (`cargo fmt --check`)
-2. **Clippy** (`-D warnings`)
-3. **Tests** (workspace, all features)
-4. **Doc validation** (`cargo xtask doc-validate`)
-5. **(Optional)** Interop & packaging smoke tests
-
-CI is configured with **fail-fast hygiene** to keep `main/master` green.
-
----
-
 ## Release & Packaging
 
 ```bash
@@ -218,30 +204,6 @@ cargo run -p oc-rsyncd -- --help
 
 * Structured logs with conventional levels: `error`, `warn`, `info`, `debug`, `trace`.
 * End-user progress output follows rsync UX; diagnostics emphasize actionable context.
-
----
-
-## Design Highlights
-
-* **Layered crates** keep protocol, engine, and UX concerns isolated for testability.
-* **Streaming IO** minimizes copies and bounds allocations.
-* **Checksum traits** allow targeted SIMD acceleration behind stable interfaces.
-* **Error handling** uses explicit enums with context—no panics in libraries.
-
----
-
-## Contributing
-
-1. Create a focused branch off `main/master`.
-2. Keep PRs small and well-scoped.
-3. Run the full hygiene suite:
-
-   ```bash
-   cargo fmt --all -- --check
-   cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
-   cargo test --workspace --all-features
-   cargo xtask doc-validate
-   ```
 
 ---
 
