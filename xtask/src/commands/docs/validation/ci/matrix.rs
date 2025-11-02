@@ -194,7 +194,7 @@ fn ensure_job_parallelism(display_path: &str, section: &str, failures: &mut Vec<
         )),
     }
 
-    match find_yaml_scalar(&section, "fail-fast") {
+    match find_yaml_scalar(section, "fail-fast") {
         Some(value) if value.eq_ignore_ascii_case("false") => {}
         Some(value) => failures.push(format!(
             "{display_path}: cross-compile job must disable fail-fast to keep the matrix running in parallel (found '{value}')"
