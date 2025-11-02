@@ -179,7 +179,7 @@ fn display_path(workspace: &Path, path: &Path) -> String {
 }
 
 fn ensure_job_parallelism(display_path: &str, section: &str, failures: &mut Vec<String>) {
-    match find_yaml_scalar(&section, "max-parallel") {
+    match find_yaml_scalar(section, "max-parallel") {
         Some(value) => match value.parse::<usize>() {
             Ok(parallelism) if parallelism > 1 => {}
             Ok(_) => failures.push(format!(
