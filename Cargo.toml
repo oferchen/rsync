@@ -112,11 +112,11 @@ conflicts = []
 replaces = []
 
 assets = [
-    ["target/@TARGET@/@PROFILE@/rsync", "usr/bin/oc-rsync", "755"],
-    ["target/@TARGET@/@PROFILE@/rsyncd", "usr/bin/oc-rsyncd", "755"],
+    ["target/@TARGET@/@PROFILE@/oc-rsync", "usr/bin/oc-rsync", "755"],
+    ["target/@TARGET@/@PROFILE@/oc-rsyncd", "usr/bin/oc-rsyncd", "755"],
+    ["target/@TARGET@/@PROFILE@/rsync", "usr/libexec/oc-rsync/rsync", "755"],
+    ["target/@TARGET@/@PROFILE@/rsyncd", "usr/libexec/oc-rsync/rsyncd", "755"],
     ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
-    ["target/dist/oc-rsync", "/usr/bin/oc-rsync", "755"],
-    ["target/dist/oc-rsyncd", "/usr/bin/oc-rsyncd", "755"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
@@ -133,6 +133,10 @@ maintainer-scripts = "packaging/deb"
 package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
 assets = [
+    { source = "target/@TARGET@/@PROFILE@/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
+    { source = "target/@TARGET@/@PROFILE@/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
+    { source = "target/@TARGET@/@PROFILE@/rsync", dest = "/usr/libexec/oc-rsync/rsync", mode = "0755" },
+    { source = "target/@TARGET@/@PROFILE@/rsyncd", dest = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" },
     { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
@@ -294,3 +298,9 @@ buildflags = ["--profile", "dist", "--bins", "--features", "legacy-binaries"]
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
 "rsync" = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
 "rsyncd" = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
