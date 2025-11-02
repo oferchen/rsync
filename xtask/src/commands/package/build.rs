@@ -1,7 +1,8 @@
 use super::{DIST_PROFILE, PackageOptions, tarball};
 use crate::error::{TaskError, TaskResult};
 use crate::util::{
-    ensure_command_available, probe_cargo_tool, run_cargo_tool, run_cargo_tool_with_env,
+    ensure_command_available, ensure_rust_target_installed, probe_cargo_tool, run_cargo_tool,
+    run_cargo_tool_with_env,
 };
 use crate::workspace::load_workspace_branding;
 use std::env;
@@ -19,7 +20,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     println!("Preparing {}", branding.summary());
 
     if options.build_deb || options.build_rpm {
-        build_workspace_binaries(workspace, &options.profile, None, None, false)?;
+        build_workspace_binaries(workspace, &options.profile, None, None, true)?;
     }
 
     if options.build_deb {
@@ -159,6 +160,7 @@ pub(super) fn build_workspace_binaries(
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 
     if let Some(target) = target {
+        ensure_rust_target_installed(target)?;
         args.push(OsString::from("--target"));
         args.push(OsString::from(target));
         if let Some(linker) = linker_override {

@@ -92,6 +92,42 @@ pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult
     Err(tool_missing_error(program, install_hint))
 }
 
+/// Ensures that the requested Rust target triple is installed via `rustup`.
+pub fn ensure_rust_target_installed(target: &str) -> TaskResult<()> {
+    const DISPLAY: &str = "rustup target list --installed";
+    let install_hint = format!("install the '{target}' target with `rustup target add {target}`");
+
+    if should_simulate_missing_tool(DISPLAY) {
+        return Err(tool_missing_error(DISPLAY, &install_hint));
+    }
+
+    ensure_command_available(
+        "rustup",
+        "install rustup from https://rustup.rs to manage Rust toolchains",
+    )?;
+
+    let output = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map_err(|error| map_command_error(error, DISPLAY, &install_hint))?;
+
+    if !output.status.success() {
+        return Err(TaskError::CommandFailed {
+            program: DISPLAY.to_string(),
+            status: output.status,
+        });
+    }
+
+    let installed = String::from_utf8_lossy(&output.stdout);
+    if installed.lines().any(|line| line.trim() == target) {
+        return Ok(());
+    }
+
+    Err(TaskError::ToolMissing(format!(
+        "Rust target {target} is not installed; run `rustup target add {target}`",
+    )))
+}
+
 /// Runs `cargo` with the supplied arguments and maps failures to [`TaskError`].
 pub fn run_cargo_tool(
     workspace: &std::path::Path,
@@ -408,6 +444,7 @@ mod tests {
     use crate::error::TaskError;
     use std::io::Write;
     use std::path::Path;
+    use std::process::Command;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
@@ -630,5 +667,32 @@ mod tests {
             parse_positive_usize_from_env("VALUE", "7").expect("parse succeeds"),
             7
         );
+    }
+
+    #[test]
+    fn ensure_rust_target_installed_accepts_available_targets() {
+        let output = Command::new("rustup")
+            .args(["target", "list", "--installed"])
+            .output()
+            .expect("query installed rustup targets");
+        assert!(output.status.success(), "rustup reported an error");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let target = stdout
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .expect("at least one target installed");
+        ensure_rust_target_installed(target)
+            .unwrap_or_else(|error| panic!("target {target} should be installed: {error:?}"));
+    }
+
+    #[test]
+    fn ensure_rust_target_installed_respects_forced_missing_env() {
+        let _guard = EnvGuard::set(FORCE_MISSING_ENV, "rustup target list --installed");
+        let error = ensure_rust_target_installed("x86_64-unknown-linux-gnu").unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::ToolMissing(message) if message.contains("rustup target list --installed")
+        ));
     }
 }
