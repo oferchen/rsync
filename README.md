@@ -1,5 +1,8 @@
 # oc-rsync
 
+[![CI](https://github.com/oferchen/oc-rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/oc-rsync/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/oferchen/oc-rsync)](https://github.com/oferchen/oc-rsync/releases)
+
 oc-rsync is a pure-Rust reimplementation of the rsync protocol (version 32) that
 tracks upstream rsync 3.4.1 while publishing the branded release string
 `3.4.1-rust`. The workspace ships the canonical client/daemon binaries
