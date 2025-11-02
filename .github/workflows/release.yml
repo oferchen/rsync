@@ -283,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo rpm build --target ${{ matrix.platform.target }}
-          RPM_DIR="target/${{ matrix.platform.target }}/release/rpmbuild/RPMS"
+          RPM_DIR="target/${{ matrix.platform.target }}/dist/rpmbuild/RPMS"
           mkdir -p dist/${{ matrix.platform.name }}
           find "$RPM_DIR" -type f -name '*.rpm' -exec cp {} dist/${{ matrix.platform.name }}/ \;
       - name: Upload .rpm

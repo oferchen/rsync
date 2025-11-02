@@ -131,28 +131,44 @@ fn collect_debian_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> Ta
 }
 
 fn collect_rpm_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
-    for profile in [DIST_PROFILE, "release", "debug"] {
-        let rpms_dir = workspace
-            .join("target")
-            .join(profile)
-            .join("rpmbuild")
-            .join("RPMS");
+    let target_dir = workspace.join("target");
+    if !target_dir.is_dir() {
+        return Ok(());
+    }
 
-        if !rpms_dir.is_dir() {
+    for profile in [DIST_PROFILE, "release", "debug"] {
+        let rpms_dir = target_dir.join(profile).join("rpmbuild").join("RPMS");
+        collect_rpms_from_directory(&rpms_dir, artifacts)?;
+    }
+
+    for entry in read_directory(&target_dir)? {
+        let metadata = read_metadata(&entry)?;
+        if !metadata.is_dir() {
             continue;
         }
 
-        for arch_dir in read_directory(&rpms_dir)? {
-            let metadata = read_metadata(&arch_dir)?;
-            if !metadata.is_dir() {
-                continue;
-            }
+        let rpms_dir = entry.join(DIST_PROFILE).join("rpmbuild").join("RPMS");
+        collect_rpms_from_directory(&rpms_dir, artifacts)?;
+    }
 
-            for entry in read_directory(&arch_dir)? {
-                let metadata = read_metadata(&entry)?;
-                if metadata.is_file() && has_suffix(&entry, ".rpm") {
-                    artifacts.push(entry);
-                }
+    Ok(())
+}
+
+fn collect_rpms_from_directory(rpms_dir: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
+    if !rpms_dir.is_dir() {
+        return Ok(());
+    }
+
+    for arch_dir in read_directory(rpms_dir)? {
+        let metadata = read_metadata(&arch_dir)?;
+        if !metadata.is_dir() {
+            continue;
+        }
+
+        for entry in read_directory(&arch_dir)? {
+            let metadata = read_metadata(&entry)?;
+            if metadata.is_file() && has_suffix(&entry, ".rpm") {
+                artifacts.push(entry);
             }
         }
     }
@@ -458,6 +474,7 @@ mod tests {
             .join("oc-rsync_3.4.1-rust_amd64.deb");
         let rpm = workspace
             .join("target")
+            .join("x86_64-unknown-linux-gnu")
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
