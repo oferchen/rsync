@@ -48,28 +48,34 @@ This document defines the internal actors (“agents”), their responsibilities
 - **CI workflow contract**: `.github/workflows/ci.yml` orchestrates the
   reusable workflows in `.github/workflows/lint.yml`,
   `.github/workflows/test-linux.yml`, and
-  `.github/workflows/cross-compile.yml`. The test workflow continues to run
-  exclusively on Linux, while the cross-compilation workflow builds Linux
-  (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
-  artifacts. The Windows x86 entry remains in the matrix as a disabled
-  placeholder for future enablement. Automation inside CI steps must rely on
-  Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or Python
-  scripts, and additional validation/packaging logic should be surfaced via
-  `xtask` subcommands so both local and CI runs stay in sync.
+  `.github/workflows/cross-compile.yml`. The cross-compile dispatcher
+  delegates to platform-specific workflows under
+  `.github/workflows/build-linux.yml`, `.github/workflows/build-macos.yml`,
+  and `.github/workflows/build-windows.yml`, each of which owns the matrix for
+  its operating system. The test workflow continues to run exclusively on
+  Linux, while the platform jobs emit Linux (x86_64/aarch64), macOS
+  (x86_64/aarch64), and Windows (x86_64/aarch64) artifacts. The Windows x86
+  entry remains in the matrix as a disabled placeholder for future enablement.
+  Automation inside CI steps must rely on Rust tooling (`cargo`, `cargo xtask`)
+  rather than ad-hoc shell or Python scripts, and additional
+  validation/packaging logic should be surfaced via `xtask` subcommands so both
+  local and CI runs stay in sync.
 - **Documentation validation guardrail**: `cargo xtask docs --validate` now
-  asserts that `.github/workflows/cross-compile.yml` mirrors the cross-compilation
-  platforms declared under `[workspace.metadata.oc_rsync.cross_compile]`, keeps
-  the Windows x86/aarch64 entries present but disabled, and verifies that each
-  matrix entry advertises the expected `target`, `build_command`,
-  `build_daemon`, `uses_zig`, `needs_cross_gcc`, and `generate_sbom` values for
-  its platform. The cross-compilation job must also disable `fail-fast`, set
-  `max-parallel` to a value greater than one, and expose a `strategy.matrix`
-  block that matches the workspace metadata so builds run in parallel. The
-  validator rejects duplicate matrix entries, flags unexpected targets, and
-  enforces that `test-linux` is the only test job (running on `ubuntu-latest`)
-  to keep the test suite Linux-only as required by CI. Contributors must update
-  both the manifest metadata and CI matrix together so the validation continues
-  to pass. The same validation pass also enforces that `docs/COMPARE.md`
+  asserts that `.github/workflows/cross-compile.yml` references the three
+  platform workflows and that each of those files mirrors the cross-compilation
+  platforms declared under `[workspace.metadata.oc_rsync.cross_compile]`. The
+  validator keeps the Windows x86/aarch64 entries present but disabled, and
+  verifies that every matrix entry advertises the expected `target`,
+  `build_command`, `build_daemon`, `uses_zig`, `needs_cross_gcc`, and
+  `generate_sbom` values for its platform. Each platform job must also disable
+  `fail-fast`, set `max-parallel` to a value greater than one, and expose a
+  `strategy.matrix` block that matches the workspace metadata so builds run in
+  parallel. The validator rejects duplicate matrix entries, flags unexpected
+  targets, and enforces that `test-linux` is the only test job (running on
+  `ubuntu-latest`) to keep the test suite Linux-only as required by CI.
+  Contributors must update both the manifest metadata and CI matrices together
+  so the validation continues to pass. The same validation pass also enforces
+  that `docs/COMPARE.md`
   references the branded `oc-rsync` binaries, daemon configuration path
   (`/etc/oc-rsyncd/oc-rsyncd.conf`), and published version string
   (`3.4.1-rust`) sourced from workspace metadata so release documentation
