@@ -147,15 +147,12 @@ impl NegotiationPrologueSniffer {
                 !decision.is_decided()
                     || observed == decision
                     || (decision.is_legacy() && observed == NegotiationPrologue::NeedMoreData),
-                "rehydrated decision {:?} does not match snapshot {:?}",
-                observed,
-                decision
+                "rehydrated decision {observed:?} does not match snapshot {decision:?}"
             );
         } else {
             debug_assert!(
                 !decision.is_decided(),
-                "non-empty decision {:?} requires at least one sniffed byte",
-                decision
+                "non-empty decision {decision:?} requires at least one sniffed byte"
             );
         }
 
