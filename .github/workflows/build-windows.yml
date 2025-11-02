@@ -146,5 +146,6 @@ jobs:
 
       - name: sccache stats (best-effort)
         if: always()
+        shell: bash
         run: |
           command -v sccache >/dev/null 2>&1 && sccache --show-stats || true

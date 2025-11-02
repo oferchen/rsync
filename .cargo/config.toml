@@ -7,3 +7,6 @@ ar = "tools/cross/bin/aarch64-unknown-linux-gnu-ar"
 
 [target.i686-pc-windows-gnu]
 rustflags = ["-C", "panic=abort"]
+
+[alias]
+xtask = "run --package xtask --"
