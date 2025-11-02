@@ -209,10 +209,10 @@ impl VersionInfoReport {
             match item {
                 InfoItem::Section(name) => {
                     if !buffer.is_empty() {
-                        writeln!(writer, "   {}", buffer)?;
+                        writeln!(writer, "   {buffer}")?;
                         buffer.clear();
                     }
-                    writeln!(writer, "{}:", name)?;
+                    writeln!(writer, "{name}:")?;
                 }
                 InfoItem::Entry(text) => {
                     let needs_comma = matches!(items.peek(), Some(InfoItem::Entry(_)));
@@ -224,7 +224,7 @@ impl VersionInfoReport {
                     }
 
                     if !buffer.is_empty() && buffer.len() + formatted.len() >= 75 {
-                        writeln!(writer, "   {}", buffer)?;
+                        writeln!(writer, "   {buffer}")?;
                         buffer.clear();
                     }
 
@@ -234,7 +234,7 @@ impl VersionInfoReport {
         }
 
         if !buffer.is_empty() {
-            writeln!(writer, "   {}", buffer)?;
+            writeln!(writer, "   {buffer}")?;
         }
 
         Ok(())
@@ -246,7 +246,7 @@ impl VersionInfoReport {
         name: &str,
         entries: &[Cow<'static, str>],
     ) -> fmt::Result {
-        writeln!(writer, "{}:", name)?;
+        writeln!(writer, "{name}:")?;
 
         if entries.is_empty() {
             writeln!(writer, "    none")
@@ -365,13 +365,13 @@ enum InfoItem {
 
 fn bits_entry<T>(label: &'static str) -> InfoItem {
     let bits = mem::size_of::<T>() * 8;
-    InfoItem::Entry(Cow::Owned(format!("{}-bit {}", bits, label)))
+    InfoItem::Entry(Cow::Owned(format!("{bits}-bit {label}")))
 }
 
 fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
     if supported {
         InfoItem::Entry(Cow::Borrowed(label))
     } else {
-        InfoItem::Entry(Cow::Owned(format!("no {}", label)))
+        InfoItem::Entry(Cow::Owned(format!("no {label}")))
     }
 }

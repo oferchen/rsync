@@ -61,8 +61,7 @@ pub(super) fn parse_merge_modifiers(
             '-' => {
                 if saw_include {
                     let message = format!(
-                        "{label} directive '{}' cannot combine '+' and '-' modifiers",
-                        directive
+                        "{label} directive '{directive}' cannot combine '+' and '-' modifiers"
                     );
 
                     return Err(FilterParseError::new(message));
@@ -73,8 +72,7 @@ pub(super) fn parse_merge_modifiers(
             '+' => {
                 if saw_exclude {
                     let message = format!(
-                        "{label} directive '{}' cannot combine '+' and '-' modifiers",
-                        directive
+                        "{label} directive '{directive}' cannot combine '+' and '-' modifiers"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -84,8 +82,7 @@ pub(super) fn parse_merge_modifiers(
             'c' => {
                 if saw_include {
                     let message = format!(
-                        "{label} directive '{}' cannot combine 'C' with '+' or '-'",
-                        directive
+                        "{label} directive '{directive}' cannot combine 'C' with '+' or '-'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -103,8 +100,7 @@ pub(super) fn parse_merge_modifiers(
                     options = options.exclude_filter_file(true);
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -114,8 +110,7 @@ pub(super) fn parse_merge_modifiers(
                     options = options.inherit(false);
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -125,8 +120,7 @@ pub(super) fn parse_merge_modifiers(
                     options = options.use_whitespace().allow_comments(false);
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -136,8 +130,7 @@ pub(super) fn parse_merge_modifiers(
                     options = options.sender_modifier();
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -147,8 +140,7 @@ pub(super) fn parse_merge_modifiers(
                     options = options.receiver_modifier();
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -158,16 +150,14 @@ pub(super) fn parse_merge_modifiers(
                     options = options.anchor_root(true);
                 } else {
                     let message = format!(
-                        "merge directive '{}' uses unsupported modifier '{}'",
-                        directive, modifier
+                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
                     );
                     return Err(FilterParseError::new(message));
                 }
             }
             _ => {
                 let message = format!(
-                    "{label} directive '{}' uses unsupported modifier '{}'",
-                    directive, modifier
+                    "{label} directive '{directive}' uses unsupported modifier '{modifier}'"
                 );
                 return Err(FilterParseError::new(message));
             }

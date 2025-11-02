@@ -233,7 +233,7 @@ where
             let mut message = rsync_error!(1, "{}", error);
             message = message.with_role(Role::Client);
             if write_message(&message, &mut stderr_sink).is_err() {
-                let _ = writeln!(stderr_sink.writer_mut(), "{}", error);
+                let _ = writeln!(stderr_sink.writer_mut(), "{error}");
             }
             1
         }

@@ -24,7 +24,7 @@ fn version_info_report_renders_default_report() {
     };
 
     let build_info = build_info_line();
-    assert!(actual.starts_with(&format!("rsync  version {}", RUST_VERSION)));
+    assert!(actual.starts_with(&format!("rsync  version {RUST_VERSION}")));
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
     )));
@@ -36,23 +36,23 @@ fn version_info_report_renders_default_report() {
     assert!(!actual.contains("no hardlinks"));
     assert!(actual.contains("IPv6, atimes"));
     assert!(actual.contains("optional secluded-args"));
-    let compiled_line = format!("Compiled features:\n    {}\n", compiled_features_text);
+    let compiled_line = format!("Compiled features:\n    {compiled_features_text}\n");
     assert!(actual.contains(&compiled_line));
-    let build_info_line = format!("Build info:\n    {}\n", build_info);
+    let build_info_line = format!("Build info:\n    {build_info}\n");
     assert!(actual.contains(&build_info_line));
     let checksum_algorithms = default_checksum_algorithms()
         .iter()
         .map(|algo| algo.as_ref())
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(actual.contains(&format!("Checksum list:\n    {}\n", checksum_algorithms)));
+    assert!(actual.contains(&format!("Checksum list:\n    {checksum_algorithms}\n")));
 
     let compress_algorithms = default_compress_algorithms()
         .iter()
         .map(|algo| algo.as_ref())
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(actual.contains(&format!("Compress list:\n    {}\n", compress_algorithms)));
+    assert!(actual.contains(&format!("Compress list:\n    {compress_algorithms}\n")));
 
     let daemon_auth_algorithms = default_daemon_auth_algorithms()
         .iter()
@@ -60,8 +60,7 @@ fn version_info_report_renders_default_report() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(actual.contains(&format!(
-        "Daemon auth list:\n    {}\n",
-        daemon_auth_algorithms
+        "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
     assert!(actual.ends_with(
         "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\nare welcome to redistribute it under certain conditions.  See the GNU\nGeneral Public Licence for details.\n"
@@ -82,7 +81,7 @@ fn version_info_report_allows_custom_lists() {
     assert!(rendered.contains("Daemon auth list:\n    gamma\n"));
     assert!(rendered.contains("Compiled features:\n"));
     let build_info = build_info_line();
-    assert!(rendered.contains(&format!("Build info:\n    {}\n", build_info)));
+    assert!(rendered.contains(&format!("Build info:\n    {build_info}\n")));
 }
 
 #[test]
@@ -156,12 +155,12 @@ fn version_info_report_includes_compiled_feature_section() {
     let expected_line = if compiled_features_display.is_empty() {
         "Compiled features:\n    none\n".to_owned()
     } else {
-        format!("Compiled features:\n    {}\n", compiled_features_display)
+        format!("Compiled features:\n    {compiled_features_display}\n")
     };
 
     assert!(rendered.contains(&expected_line));
     let build_info = build_info_line();
-    assert!(rendered.contains(&format!("Build info:\n    {}\n", build_info)));
+    assert!(rendered.contains(&format!("Build info:\n    {build_info}\n")));
 }
 
 #[test]

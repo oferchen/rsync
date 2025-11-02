@@ -255,8 +255,7 @@ fn remote_fallback_reports_disabled_override() {
     assert_eq!(error.exit_code(), 1);
     let message = format!("{error}");
     assert!(message.contains(&format!(
-        "remote transfers are unavailable because {env} is disabled",
-        env = CLIENT_FALLBACK_ENV,
+        "remote transfers are unavailable because {CLIENT_FALLBACK_ENV} is disabled"
     )));
 }
 
@@ -280,7 +279,7 @@ fn run_client_reports_missing_operands() {
     let rendered = error.message().to_string();
     assert!(rendered.contains("missing source operands"));
     assert!(
-        rendered.contains(&format!("[client={}]", RUST_VERSION)),
+        rendered.contains(&format!("[client={RUST_VERSION}]")),
         "expected missing operands error to include client trailer"
     );
 }

@@ -492,7 +492,7 @@ fn parse_bandwidth_limit_rejects_missing_burst_value() {
 proptest! {
     #[test]
     fn parse_round_trips_when_limit_is_multiple_of_1024(value in 1u64..1_000_000u64) {
-        let text = format!("{}K", value);
+        let text = format!("{value}K");
         let parsed = parse_bandwidth_argument(&text).expect("parse succeeds");
         let expected = NonZeroU64::new(value * 1024).expect("non-zero");
         prop_assert_eq!(parsed, Some(expected));

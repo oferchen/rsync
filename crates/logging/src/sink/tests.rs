@@ -6,7 +6,7 @@ use std::io::{self, Cursor, Write};
 #[test]
 fn debug_representation_mentions_writer_and_line_mode() {
     let sink = MessageSink::with_line_mode(Vec::<u8>::new(), LineMode::WithoutNewline);
-    let rendered = format!("{:?}", sink);
+    let rendered = format!("{sink:?}");
     assert!(rendered.starts_with("MessageSink"));
     assert!(
         rendered.contains("writer: []"),

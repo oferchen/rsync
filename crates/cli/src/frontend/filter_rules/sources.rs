@@ -43,20 +43,21 @@ pub(crate) fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Mess
 
     let path_display = path.display().to_string();
     let file = File::open(path).map_err(|error| {
-        let text = format!("failed to read filter file '{}': {}", path_display, error);
+        let text = format!("failed to read filter file '{path_display}': {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })?;
 
     let mut reader = BufReader::new(file);
     read_filter_patterns(&mut reader).map_err(|error| {
-        let text = format!("failed to read filter file '{}': {}", path_display, error);
+        let text = format!("failed to read filter file '{path_display}': {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })
 }
 
 pub(super) fn read_merge_file(path: &Path) -> Result<String, Message> {
+    let display = path.display();
     fs::read_to_string(path).map_err(|error| {
-        let text = format!("failed to read filter file '{}': {}", path.display(), error);
+        let text = format!("failed to read filter file '{display}': {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })
 }
@@ -65,20 +66,14 @@ pub(super) fn read_merge_from_standard_input() -> Result<String, Message> {
     #[cfg(test)]
     if let Some(data) = take_filter_stdin_input() {
         return String::from_utf8(data).map_err(|error| {
-            let text = format!(
-                "failed to read filter patterns from standard input: {}",
-                error
-            );
+            let text = format!("failed to read filter patterns from standard input: {error}");
             rsync_error!(1, text).with_role(Role::Client)
         });
     }
 
     let mut buffer = String::new();
     io::stdin().read_to_string(&mut buffer).map_err(|error| {
-        let text = format!(
-            "failed to read filter patterns from standard input: {}",
-            error
-        );
+        let text = format!("failed to read filter patterns from standard input: {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })?;
     Ok(buffer)
@@ -89,10 +84,7 @@ pub(crate) fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, 
     if let Some(data) = take_filter_stdin_input() {
         let mut cursor = io::Cursor::new(data);
         return read_filter_patterns(&mut cursor).map_err(|error| {
-            let text = format!(
-                "failed to read filter patterns from standard input: {}",
-                error
-            );
+            let text = format!("failed to read filter patterns from standard input: {error}");
             rsync_error!(1, text).with_role(Role::Client)
         });
     }
@@ -100,10 +92,7 @@ pub(crate) fn read_filter_patterns_from_standard_input() -> Result<Vec<String>, 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     read_filter_patterns(&mut reader).map_err(|error| {
-        let text = format!(
-            "failed to read filter patterns from standard input: {}",
-            error
-        );
+        let text = format!("failed to read filter patterns from standard input: {error}");
         rsync_error!(1, text).with_role(Role::Client)
     })
 }

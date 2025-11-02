@@ -5,7 +5,7 @@ fn run_xtask(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(args)
         .output()
-        .unwrap_or_else(|error| panic!("failed to run xtask: {}", error))
+        .unwrap_or_else(|error| panic!("failed to run xtask: {error}"))
 }
 
 #[test]

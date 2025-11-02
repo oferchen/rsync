@@ -381,6 +381,6 @@ fn render_line_to_appends_newline() {
         .render_line_to(&mut rendered)
         .expect("rendering into a string never fails");
 
-    assert_eq!(rendered, format!("{}\n", message));
+    assert_eq!(rendered, format!("{message}\n"));
 }
 

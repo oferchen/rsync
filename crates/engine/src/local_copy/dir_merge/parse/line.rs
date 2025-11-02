@@ -155,7 +155,6 @@ pub(crate) fn parse_filter_directive_line(
     }
 
     Err(FilterParseError::new(format!(
-        "unsupported filter directive '{}'",
-        trimmed
+        "unsupported filter directive '{trimmed}'"
     )))
 }

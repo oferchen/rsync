@@ -127,10 +127,8 @@ pub(crate) fn compute_metadata_settings(
                 }
             }
             Err(error) => {
-                let formatted = format!(
-                    "failed to parse --chmod specification '{}': {}",
-                    spec_text, error
-                );
+                let formatted =
+                    format!("failed to parse --chmod specification '{spec_text}': {error}");
                 return Err(rsync_core::rsync_error!(1, formatted)
                     .with_role(rsync_core::message::Role::Client));
             }

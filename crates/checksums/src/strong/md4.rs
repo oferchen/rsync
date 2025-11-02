@@ -68,7 +68,7 @@ mod tests {
 
         let mut out = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
-            write!(&mut out, "{:02x}", byte).expect("write! to String cannot fail");
+            write!(&mut out, "{byte:02x}").expect("write! to String cannot fail");
         }
         out
     }

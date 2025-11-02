@@ -13,7 +13,7 @@ pub(super) fn emit_message_with_fallback<Err>(
     Err: Write,
 {
     if write_message(message, stderr).is_err() {
-        let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+        let _ = writeln!(stderr.writer_mut(), "{fallback}");
     }
 }
 
