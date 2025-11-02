@@ -336,15 +336,13 @@ fn assert_detector_matches_across_partitions(data: &[u8]) {
             {
                 assert!(
                     detector.is_legacy(),
-                    "detector should cache legacy decision for {:?}",
-                    data
+                    "detector should cache legacy decision for {data:?}"
                 );
                 assert!(detector.requires_more_data());
             } else {
                 assert_eq!(
                     result, expected,
-                    "segmented detection mismatch for {:?} with splits ({}, {})",
-                    data, first_end, second_end
+                    "segmented detection mismatch for {data:?} with splits ({first_end}, {second_end})"
                 );
             }
 
@@ -393,26 +391,22 @@ fn prologue_detector_observe_byte_matches_slice_behavior() {
 
         assert_eq!(
             byte_result, slice_result,
-            "decision mismatch for {:?}",
-            data
+            "decision mismatch for {data:?}"
         );
         assert_eq!(
             byte_detector.decision(),
             slice_detector.decision(),
-            "cached decision mismatch for {:?}",
-            data
+            "cached decision mismatch for {data:?}"
         );
         assert_eq!(
             byte_detector.legacy_prefix_complete(),
             slice_detector.legacy_prefix_complete(),
-            "prefix completion mismatch for {:?}",
-            data
+            "prefix completion mismatch for {data:?}"
         );
         assert_eq!(
             byte_detector.buffered_prefix(),
             slice_detector.buffered_prefix(),
-            "buffered prefix mismatch for {:?}",
-            data
+            "buffered prefix mismatch for {data:?}"
         );
     }
 

@@ -279,8 +279,7 @@ fn parse_config_modules_inner(
                             path,
                             line_number,
                             format!(
-                                "duplicate 'refuse options' directive in global section (previously defined on line {})",
-                                existing_line
+                                "duplicate 'refuse options' directive in global section (previously defined on line {existing_line})"
                             ),
                         ));
                     }
@@ -322,12 +321,12 @@ fn parse_config_modules_inner(
                     if let Some((components, origin)) = included.global_bandwidth_limit {
                         if let Some((existing, existing_origin)) = &global_bwlimit {
                             if existing != &components {
+                                let existing_line = existing_origin.line;
                                 return Err(config_parse_error(
                                     &origin.path,
                                     origin.line,
                                     format!(
-                                        "duplicate 'bwlimit' directive in global section (previously defined on line {})",
-                                        existing_origin.line
+                                        "duplicate 'bwlimit' directive in global section (previously defined on line {existing_line})"
                                     ),
                                 ));
                             }
@@ -339,12 +338,12 @@ fn parse_config_modules_inner(
                     if let Some((secrets_path, origin)) = included.global_secrets_file {
                         if let Some((existing, existing_origin)) = &global_secrets_file {
                             if existing != &secrets_path {
+                                let existing_line = existing_origin.line;
                                 return Err(config_parse_error(
                                     &origin.path,
                                     origin.line,
                                     format!(
-                                        "duplicate 'secrets file' directive in global section (previously defined on line {})",
-                                        existing_origin.line
+                                        "duplicate 'secrets file' directive in global section (previously defined on line {existing_line})"
                                     ),
                                 ));
                             }
@@ -365,14 +364,11 @@ fn parse_config_modules_inner(
 
                     let motd_path = resolve_config_relative_path(path, trimmed);
                     let contents = fs::read_to_string(&motd_path).map_err(|error| {
+                        let motd_display = motd_path.display();
                         config_parse_error(
                             path,
                             line_number,
-                            format!(
-                                "failed to read motd file '{}': {}",
-                                motd_path.display(),
-                                error
-                            ),
+                            format!("failed to read motd file '{motd_display}': {error}"),
                         )
                     })?;
 
@@ -396,12 +392,12 @@ fn parse_config_modules_inner(
                     let resolved = resolve_config_relative_path(path, trimmed);
                     if let Some((existing, origin)) = &pid_file {
                         if existing != &resolved {
+                            let existing_line = origin.line;
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'pid file' directive in global section (previously defined on line {})",
-                                    origin.line
+                                    "duplicate 'pid file' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
@@ -420,7 +416,7 @@ fn parse_config_modules_inner(
                         config_parse_error(
                             path,
                             line_number,
-                            format!("invalid boolean value '{}' for 'reverse lookup'", value),
+                            format!("invalid boolean value '{value}' for 'reverse lookup'"),
                         )
                     })?;
 
@@ -431,12 +427,12 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &reverse_lookup {
                         if *existing != parsed {
+                            let existing_line = existing_origin.line;
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
-                                    existing_origin.line
+                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
@@ -461,12 +457,12 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &global_bwlimit {
                         if existing != &components {
+                            let existing_line = existing_origin.line;
                             return Err(config_parse_error(
                                 &origin.path,
                                 origin.line,
                                 format!(
-                                    "duplicate 'bwlimit' directive in global section (previously defined on line {})",
-                                    existing_origin.line
+                                    "duplicate 'bwlimit' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
@@ -493,12 +489,12 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &global_secrets_file {
                         if existing != &validated {
+                            let existing_line = existing_origin.line;
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'secrets file' directive in global section (previously defined on line {})",
-                                    existing_origin.line
+                                    "duplicate 'secrets file' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }
@@ -524,12 +520,12 @@ fn parse_config_modules_inner(
 
                     if let Some((existing, existing_origin)) = &lock_file {
                         if existing != &resolved {
+                            let existing_line = existing_origin.line;
                             return Err(config_parse_error(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'lock file' directive in global section (previously defined on line {})",
-                                    existing_origin.line
+                                    "duplicate 'lock file' directive in global section (previously defined on line {existing_line})"
                                 ),
                             ));
                         }

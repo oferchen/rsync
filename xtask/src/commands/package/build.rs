@@ -185,7 +185,7 @@ pub(super) fn build_workspace_binaries(
 fn linker_env_var_name(target: &str) -> OsString {
     let mut normalized = target.replace('-', "_");
     normalized.make_ascii_uppercase();
-    OsString::from(format!("CARGO_TARGET_{}_LINKER", normalized))
+    OsString::from(format!("CARGO_TARGET_{normalized}_LINKER"))
 }
 
 #[derive(Clone, Debug)]

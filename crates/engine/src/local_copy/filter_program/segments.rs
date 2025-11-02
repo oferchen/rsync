@@ -166,7 +166,7 @@ impl CompiledRule {
         let mut direct_patterns = HashSet::new();
         direct_patterns.insert(core_pattern.clone());
         if !anchored {
-            direct_patterns.insert(format!("**/{}", core_pattern));
+            direct_patterns.insert(format!("**/{core_pattern}"));
         }
 
         let mut descendant_patterns = HashSet::new();
@@ -176,9 +176,9 @@ impl CompiledRule {
                 FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
             )
         {
-            descendant_patterns.insert(format!("{}/**", core_pattern));
+            descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
-                descendant_patterns.insert(format!("**/{}/**", core_pattern));
+                descendant_patterns.insert(format!("**/{core_pattern}/**"));
             }
         }
 

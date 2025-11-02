@@ -74,7 +74,8 @@ pub(crate) fn load_dir_merge_rules_recursive(
 ) -> Result<DirMergeEntries, LocalCopyError> {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if visited.contains(&canonical) {
-        let message = format!("recursive filter merge detected for '{}'", path.display());
+        let path_display = path.display();
+        let message = format!("recursive filter merge detected for {path_display}");
         return Err(LocalCopyError::io(
             "parse filter file",
             path.to_path_buf(),

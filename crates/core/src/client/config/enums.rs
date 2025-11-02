@@ -146,8 +146,7 @@ impl fmt::Display for HumanReadableModeParseError {
             Self::Empty => f.write_str("human-readable level must not be empty"),
             Self::Invalid { value } => write!(
                 f,
-                "invalid human-readable level '{}': expected 0, 1, or 2",
-                value
+                "invalid human-readable level '{value}': expected 0, 1, or 2"
             ),
         }
     }

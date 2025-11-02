@@ -87,13 +87,11 @@ pub(super) fn parse_short_merge_directive_line(
             ".cvsignore"
         } else if allow_extended {
             return Err(FilterParseError::new(format!(
-                "dir-merge directive '{}' is missing a file name",
-                text
+                "dir-merge directive '{text}' is missing a file name"
             )));
         } else {
             return Err(FilterParseError::new(format!(
-                "merge directive '{}' is missing a file path",
-                text
+                "merge directive '{text}' is missing a file path"
             )));
         }
     } else {

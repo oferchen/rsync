@@ -10,7 +10,7 @@ pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "partial".to_string());
-    let partial_name = format!(".rsync-partial-{}", file_name);
+    let partial_name = format!(".rsync-partial-{file_name}");
     destination.with_file_name(partial_name)
 }
 
