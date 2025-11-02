@@ -82,6 +82,11 @@ jobs:
         with:
           version: 0.11.0
 
+      - name: Install rust-src component
+        if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
+        shell: bash
+        run: rustup component add rust-src
+
       - name: Install cargo-zigbuild
         if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
         uses: taiki-e/install-action@v2
