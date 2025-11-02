@@ -128,9 +128,7 @@ pub fn ensure_rust_target_installed(target: &str) -> TaskResult<()> {
         return Err(tool_missing_error(ADD_DISPLAY, &install_hint));
     }
 
-    println!(
-        "Installing missing Rust target {target} with `rustup target add {target}`"
-    );
+    println!("Installing missing Rust target {target} with `rustup target add {target}`");
 
     let status = Command::new("rustup")
         .args(["target", "add", target])
