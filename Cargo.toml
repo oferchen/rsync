@@ -108,11 +108,6 @@ maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
 extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
 features = ["legacy-binaries"]
-[package.metadata.deb]
-name = "oc-rsync"
-assets = [
-]
-maintainer-scripts = "packaging/debian"
 conflicts = []
 replaces = []
 
