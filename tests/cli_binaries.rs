@@ -27,6 +27,16 @@ fn combined_utf8(output: &std::process::Output) -> String {
 #[test]
 fn client_help_lists_usage() {
     for &binary in CLIENT_BINARIES {
+        if locate_binary(binary).is_none() {
+            if binary == OC_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
         let output = binary_output(binary, &["--help"]);
         assert!(output.status.success(), "{binary} --help should succeed");
         assert!(
@@ -42,6 +52,16 @@ fn client_help_lists_usage() {
 #[test]
 fn client_without_operands_shows_usage() {
     for &binary in CLIENT_BINARIES {
+        if locate_binary(binary).is_none() {
+            if binary == OC_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
         let output = binary_output(binary, &[]);
         assert!(
             !output.status.success(),
@@ -55,6 +75,16 @@ fn client_without_operands_shows_usage() {
 #[test]
 fn daemon_help_lists_usage() {
     for &binary in DAEMON_BINARIES {
+        if locate_binary(binary).is_none() {
+            if binary == OC_DAEMON_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
         let output = binary_output(binary, &["--help"]);
         assert!(output.status.success(), "{binary} --help should succeed");
         assert!(
@@ -70,6 +100,16 @@ fn daemon_help_lists_usage() {
 #[test]
 fn daemon_rejects_unknown_flag() {
     for &binary in DAEMON_BINARIES {
+        if locate_binary(binary).is_none() {
+            if binary == OC_DAEMON_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
         let output = binary_output(binary, &["--definitely-not-a-flag"]);
         assert!(
             !output.status.success(),
@@ -81,10 +121,8 @@ fn daemon_rejects_unknown_flag() {
 }
 
 fn binary_command(name: &str) -> Command {
-    let binary = binary_path(name);
-    if !binary.is_file() {
-        panic!("failed to locate {name}: {}", binary.display());
-    }
+    let binary = locate_binary(name)
+        .unwrap_or_else(|| panic!("failed to locate {name} binary for integration testing"));
 
     if let Some(runner) = cargo_target_runner() {
         let mut runner_iter = runner.into_iter();
@@ -100,14 +138,17 @@ fn binary_command(name: &str) -> Command {
     }
 }
 
-fn binary_path(name: &str) -> PathBuf {
+fn locate_binary(name: &str) -> Option<PathBuf> {
     let env_var = format!("CARGO_BIN_EXE_{name}");
     if let Some(path) = env::var_os(&env_var) {
-        return PathBuf::from(path);
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
     }
 
     let binary_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    let current_exe = env::current_exe().expect("current_exe should be available");
+    let current_exe = env::current_exe().ok()?;
     let mut candidates = BTreeSet::new();
 
     let mut directory = current_exe.parent();
@@ -141,7 +182,7 @@ fn binary_path(name: &str) -> PathBuf {
 
     for candidate in candidates {
         if candidate.is_file() {
-            return candidate;
+            return Some(candidate);
         }
     }
 
@@ -151,7 +192,11 @@ fn binary_path(name: &str) -> PathBuf {
         fallback_dir.pop();
     }
     fallback_dir.push(binary_name);
-    fallback_dir
+    if fallback_dir.is_file() {
+        Some(fallback_dir)
+    } else {
+        None
+    }
 }
 
 fn cargo_target_runner() -> Option<Vec<String>> {

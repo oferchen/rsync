@@ -3,8 +3,9 @@
 oc-rsync is a pure-Rust reimplementation of the rsync protocol (version 32) that
 tracks upstream rsync 3.4.1 while publishing the branded release string
 `3.4.1-rust`. The workspace ships the canonical client/daemon binaries
-`oc-rsync` and `oc-rsyncd` together with compatibility wrappers `rsync` and
-`rsyncd`, so existing deployments can switch between the legacy and branded
+`oc-rsync` and `oc-rsyncd`. The optional `legacy-binaries` feature (enabled for
+packaged releases) additionally builds compatibility wrappers `rsync` and
+`rsyncd`, letting existing deployments switch between the legacy and branded
 entry points without changing behaviour.
 
 The authoritative source repository is hosted at

@@ -29,7 +29,7 @@ name = "oc-rsyncd"
 path = "src/bin/oc-rsyncd.rs"
 
 [features]
-default = ["legacy-binaries"]
+default = []
 legacy-binaries = []
 sd-notify = ["rsync-daemon/sd-notify"]
 
