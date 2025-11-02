@@ -1,4 +1,34 @@
 #!/bin/sh
-/usr/sbin/alternatives --remove rsync /usr/bin/oc-rsync || true
-/usr/sbin/alternatives --remove rsyncd /usr/bin/oc-rsyncd || true
+set -e
+
+ALT_NAME="rsync"
+ALT_MASTER="/usr/bin/rsync"
+ALT_IMPL="/usr/libexec/oc-rsync/rsync"
+
+detect_alternatives() {
+    if command -v update-alternatives >/dev/null 2>&1; then
+        ALT_TOOL=update-alternatives
+    elif command -v alternatives >/dev/null 2>&1; then
+        ALT_TOOL=alternatives
+    else
+        ALT_TOOL=
+    fi
+}
+
+remove_alternatives() {
+    detect_alternatives
+
+    if [ -z "${ALT_TOOL}" ]; then
+        return 0
+    fi
+
+    if "${ALT_TOOL}" --display "${ALT_NAME}" >/dev/null 2>&1; then
+        "${ALT_TOOL}" --remove "${ALT_NAME}" "${ALT_IMPL}" >/dev/null || true
+    fi
+}
+
+if [ "$1" -eq 0 ]; then
+    remove_alternatives
+fi
+
 exit 0

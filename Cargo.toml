@@ -164,6 +164,12 @@ mode = "0644"
 post = '''
 set -e
 
+ALT_NAME=rsync
+ALT_MASTER=/usr/bin/rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+ALT_SLAVE_NAME=rsyncd
+ALT_SLAVE_LINK=/usr/bin/rsyncd
+ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
 ALT_PRIORITY=30
 DEFAULTS_FILE=/etc/default/oc-rsyncd
 
@@ -235,6 +241,13 @@ register_alternatives
 preun = '''
 set -e
 
+ALT_NAME=rsync
+ALT_MASTER=/usr/bin/rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+ALT_SLAVE_NAME=rsyncd
+ALT_SLAVE_LINK=/usr/bin/rsyncd
+ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
+
 detect_alternatives() {
     if command -v update-alternatives >/dev/null 2>&1; then
         ALT_TOOL=update-alternatives
@@ -262,6 +275,13 @@ fi
 '''
 postun = '''
 set -e
+
+ALT_NAME=rsync
+ALT_MASTER=/usr/bin/rsync
+ALT_IMPL=/usr/libexec/oc-rsync/rsync
+ALT_SLAVE_NAME=rsyncd
+ALT_SLAVE_LINK=/usr/bin/rsyncd
+ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
 
 detect_alternatives() {
     if command -v update-alternatives >/dev/null 2>&1; then

@@ -94,11 +94,12 @@ pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult
 
 /// Ensures that the requested Rust target triple is installed via `rustup`.
 pub fn ensure_rust_target_installed(target: &str) -> TaskResult<()> {
-    const DISPLAY: &str = "rustup target list --installed";
+    const LIST_DISPLAY: &str = "rustup target list --installed";
+    const ADD_DISPLAY: &str = "rustup target add";
     let install_hint = format!("install the '{target}' target with `rustup target add {target}`");
 
-    if should_simulate_missing_tool(DISPLAY) {
-        return Err(tool_missing_error(DISPLAY, &install_hint));
+    if should_simulate_missing_tool(LIST_DISPLAY) {
+        return Err(tool_missing_error(LIST_DISPLAY, &install_hint));
     }
 
     ensure_command_available(
@@ -106,26 +107,44 @@ pub fn ensure_rust_target_installed(target: &str) -> TaskResult<()> {
         "install rustup from https://rustup.rs to manage Rust toolchains",
     )?;
 
-    let output = Command::new("rustup")
+    let query = Command::new("rustup")
         .args(["target", "list", "--installed"])
         .output()
-        .map_err(|error| map_command_error(error, DISPLAY, &install_hint))?;
+        .map_err(|error| map_command_error(error, LIST_DISPLAY, &install_hint))?;
 
-    if !output.status.success() {
+    if !query.status.success() {
         return Err(TaskError::CommandFailed {
-            program: DISPLAY.to_string(),
-            status: output.status,
+            program: LIST_DISPLAY.to_string(),
+            status: query.status,
         });
     }
 
-    let installed = String::from_utf8_lossy(&output.stdout);
+    let installed = String::from_utf8_lossy(&query.stdout);
     if installed.lines().any(|line| line.trim() == target) {
         return Ok(());
     }
 
-    Err(TaskError::ToolMissing(format!(
-        "Rust target {target} is not installed; run `rustup target add {target}`",
-    )))
+    if should_simulate_missing_tool(ADD_DISPLAY) {
+        return Err(tool_missing_error(ADD_DISPLAY, &install_hint));
+    }
+
+    println!(
+        "Installing missing Rust target {target} with `rustup target add {target}`"
+    );
+
+    let status = Command::new("rustup")
+        .args(["target", "add", target])
+        .status()
+        .map_err(|error| map_command_error(error, ADD_DISPLAY, &install_hint))?;
+
+    if !status.success() {
+        return Err(TaskError::CommandFailed {
+            program: format!("{ADD_DISPLAY} {target}"),
+            status,
+        });
+    }
+
+    Ok(())
 }
 
 /// Runs `cargo` with the supplied arguments and maps failures to [`TaskError`].
@@ -693,6 +712,16 @@ mod tests {
         assert!(matches!(
             error,
             TaskError::ToolMissing(message) if message.contains("rustup target list --installed")
+        ));
+    }
+
+    #[test]
+    fn ensure_rust_target_installed_respects_missing_add_command() {
+        let _guard = EnvGuard::set(FORCE_MISSING_ENV, "rustup target add");
+        let error = ensure_rust_target_installed("nonexistent-target").unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::ToolMissing(message) if message.contains("rustup target add")
         ));
     }
 }

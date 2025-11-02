@@ -1,4 +1,86 @@
 #!/bin/sh
-/usr/sbin/alternatives --install /usr/bin/rsync rsync /usr/bin/oc-rsync 10 || true
-/usr/sbin/alternatives --install /usr/bin/rsyncd rsyncd /usr/bin/oc-rsyncd 10 || true
+set -e
+
+ALT_NAME="rsync"
+ALT_MASTER="/usr/bin/rsync"
+ALT_IMPL="/usr/libexec/oc-rsync/rsync"
+ALT_SLAVE_NAME="rsyncd"
+ALT_SLAVE_LINK="/usr/bin/rsyncd"
+ALT_SLAVE_IMPL="/usr/libexec/oc-rsync/rsyncd"
+ALT_PRIORITY=30
+DEFAULTS_FILE="/etc/default/oc-rsyncd"
+
+is_truthy() {
+    case "$1" in
+        [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+load_defaults() {
+    if [ -r "${DEFAULTS_FILE}" ]; then
+        # shellcheck disable=SC1090 # configuration file is provided by the package
+        . "${DEFAULTS_FILE}"
+    fi
+}
+
+detect_alternatives() {
+    if command -v update-alternatives >/dev/null 2>&1; then
+        ALT_TOOL=update-alternatives
+    elif command -v alternatives >/dev/null 2>&1; then
+        ALT_TOOL=alternatives
+    else
+        ALT_TOOL=
+    fi
+}
+
+should_register_alternatives() {
+    if is_truthy "${OC_RSYNC_PACKAGE_DISABLE_ALTERNATIVES:-}"; then
+        return 1
+    fi
+
+    if [ -n "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES:-}" ]; then
+        if is_truthy "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES}"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    load_defaults
+
+    if is_truthy "${OC_RSYNC_REGISTER_ALTERNATIVES:-}"; then
+        return 0
+    fi
+
+    return 1
+}
+
+register_alternatives() {
+    detect_alternatives
+
+    if [ -z "${ALT_TOOL}" ]; then
+        return 0
+    fi
+
+    if ! should_register_alternatives; then
+        return 0
+    fi
+
+    if [ -e "${ALT_MASTER}" ] && [ ! -L "${ALT_MASTER}" ]; then
+        if ! "${ALT_TOOL}" --display "${ALT_NAME}" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    "${ALT_TOOL}" \
+        --install "${ALT_MASTER}" "${ALT_NAME}" "${ALT_IMPL}" "${ALT_PRIORITY}" \
+        --slave "${ALT_SLAVE_LINK}" "${ALT_SLAVE_NAME}" "${ALT_SLAVE_IMPL}" \
+        >/dev/null
+}
+
+register_alternatives
 exit 0
