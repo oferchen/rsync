@@ -10,86 +10,175 @@ pub(super) fn validate_ci_cross_compile_matrix(
     branding: &WorkspaceBranding,
     failures: &mut Vec<String>,
 ) -> TaskResult<()> {
-    let ci_path = workspace
-        .join(".github")
-        .join("workflows")
-        .join("cross-compile.yml");
-    let ci_contents = read_file(&ci_path)?;
-    let display_path = ci_path
-        .strip_prefix(workspace)
-        .map(|relative| relative.display().to_string())
-        .unwrap_or_else(|_| ci_path.display().to_string());
-
-    let mut expected_entries = BTreeSet::new();
-
-    for (os, arches) in &branding.cross_compile {
-        for arch in arches {
-            if let Some(name) = expected_matrix_name(os, arch) {
-                ensure_matrix_entry(
-                    failures,
-                    &display_path,
-                    &ci_contents,
-                    &name,
-                    MatrixExpectations {
-                        enabled: Some(true),
-                        target: expected_target(os, arch),
-                        build_command: Some(expected_build_command(os)),
-                        build_daemon: Some(expected_build_daemon(os, arch)),
-                        uses_zig: Some(expected_uses_zig(os)),
-                        generate_sbom: Some(expected_generate_sbom(os)),
-                        needs_cross_gcc: expected_needs_cross_gcc(os, arch),
-                    },
-                );
-                expected_entries.insert(name);
-            } else {
-                failures.push(format!(
-                    "{display_path}: unrecognised cross-compile platform '{os}' in workspace metadata"
-                ));
-            }
-        }
+    for spec in PLATFORM_WORKFLOWS {
+        validate_platform_workflow(workspace, branding, spec, failures)?;
     }
 
-    ensure_matrix_entry(
-        failures,
-        &display_path,
-        &ci_contents,
-        "windows-x86",
-        MatrixExpectations {
-            enabled: Some(false),
-            target: expected_target("windows", "x86"),
-            build_command: Some("zigbuild"),
-            build_daemon: Some(false),
-            uses_zig: Some(true),
-            generate_sbom: Some(false),
-            needs_cross_gcc: Some(false),
-        },
-    );
-    if failures.is_empty() {
-        expected_entries.insert(String::from("windows-x86"));
-    }
-
-    if failures.is_empty() {
-        let names = collect_matrix_platform_names(&ci_contents);
-        check_for_unexpected_matrix_entries(&display_path, &names, &expected_entries, failures);
-    }
-
-    ensure_cross_compile_parallelism(&display_path, &ci_contents, failures);
+    validate_cross_compile_aggregator(workspace, failures)?;
 
     Ok(())
 }
 
-fn ensure_cross_compile_parallelism(
-    display_path: &str,
-    contents: &str,
+const PLATFORM_WORKFLOWS: &[PlatformWorkflow] = &[
+    PlatformWorkflow {
+        os: "linux",
+        workflow: "build-linux.yml",
+        job_name: "build",
+    },
+    PlatformWorkflow {
+        os: "macos",
+        workflow: "build-macos.yml",
+        job_name: "build",
+    },
+    PlatformWorkflow {
+        os: "windows",
+        workflow: "build-windows.yml",
+        job_name: "build",
+    },
+];
+
+struct PlatformWorkflow {
+    os: &'static str,
+    workflow: &'static str,
+    job_name: &'static str,
+}
+
+fn validate_platform_workflow(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    spec: &PlatformWorkflow,
     failures: &mut Vec<String>,
-) {
-    let Some(section) = extract_job_section(contents, "cross-compile") else {
+) -> TaskResult<()> {
+    let path = workflow_path(workspace, spec.workflow);
+    let contents = read_file(&path)?;
+    let display_path = display_path(workspace, &path);
+
+    let Some(section) = extract_job_section(&contents, spec.job_name) else {
         failures.push(format!(
-            "{display_path}: missing cross-compile job definition"
+            "{display_path}: missing job definition '{job}'",
+            job = spec.job_name
         ));
-        return;
+        return Ok(());
     };
 
+    ensure_job_parallelism(&display_path, &section, failures);
+
+    let Some(arches) = branding.cross_compile.get(spec.os) else {
+        failures.push(format!(
+            "{display_path}: workspace metadata missing cross-compile entry for '{}'",
+            spec.os
+        ));
+        return Ok(());
+    };
+
+    let mut expected_entries = BTreeSet::new();
+
+    for arch in arches {
+        if let Some(name) = expected_matrix_name(spec.os, arch) {
+            ensure_matrix_entry(
+                failures,
+                &display_path,
+                &section,
+                &name,
+                MatrixExpectations {
+                    enabled: Some(true),
+                    target: expected_target(spec.os, arch),
+                    build_command: Some(expected_build_command(spec.os)),
+                    build_daemon: Some(expected_build_daemon(spec.os, arch)),
+                    uses_zig: Some(expected_uses_zig(spec.os)),
+                    generate_sbom: Some(expected_generate_sbom(spec.os)),
+                    needs_cross_gcc: expected_needs_cross_gcc(spec.os, arch),
+                },
+            );
+            if failures.is_empty() {
+                expected_entries.insert(name);
+            }
+        } else {
+            failures.push(format!(
+                "{display_path}: unrecognised cross-compile platform '{}'",
+                spec.os
+            ));
+        }
+    }
+
+    if spec.os == "windows" {
+        ensure_matrix_entry(
+            failures,
+            &display_path,
+            &section,
+            "windows-x86",
+            MatrixExpectations {
+                enabled: Some(false),
+                target: expected_target("windows", "x86"),
+                build_command: Some("zigbuild"),
+                build_daemon: Some(false),
+                uses_zig: Some(true),
+                generate_sbom: Some(false),
+                needs_cross_gcc: Some(false),
+            },
+        );
+        if failures.is_empty() {
+            expected_entries.insert(String::from("windows-x86"));
+        }
+    }
+
+    if failures.is_empty() {
+        let names = collect_matrix_platform_names(&section);
+        check_for_unexpected_matrix_entries(&display_path, &names, &expected_entries, failures);
+    }
+
+    Ok(())
+}
+
+fn validate_cross_compile_aggregator(
+    workspace: &Path,
+    failures: &mut Vec<String>,
+) -> TaskResult<()> {
+    let path = workflow_path(workspace, "cross-compile.yml");
+    let contents = read_file(&path)?;
+    let display_path = display_path(workspace, &path);
+
+    const EXPECTED_JOBS: &[(&str, &str)] = &[
+        ("linux", "./.github/workflows/build-linux.yml"),
+        ("macos", "./.github/workflows/build-macos.yml"),
+        ("windows", "./.github/workflows/build-windows.yml"),
+    ];
+
+    for (job, workflow) in EXPECTED_JOBS {
+        match extract_job_section(&contents, job) {
+            Some(section) => {
+                if !section
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("uses:") && line.contains(workflow))
+                {
+                    failures.push(format!(
+                        "{display_path}: job '{job}' must reference '{workflow}'"
+                    ));
+                }
+                if !section.lines().any(|line| {
+                    line.trim_start().starts_with("secrets:") && line.contains("inherit")
+                }) {
+                    failures.push(format!("{display_path}: job '{job}' must inherit secrets"));
+                }
+            }
+            None => failures.push(format!("{display_path}: missing job definition '{job}'")),
+        }
+    }
+
+    Ok(())
+}
+
+fn workflow_path(workspace: &Path, workflow: &str) -> std::path::PathBuf {
+    workspace.join(".github").join("workflows").join(workflow)
+}
+
+fn display_path(workspace: &Path, path: &Path) -> String {
+    path.strip_prefix(workspace)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn ensure_job_parallelism(display_path: &str, section: &str, failures: &mut Vec<String>) {
     match find_yaml_scalar(&section, "max-parallel") {
         Some(value) => match value.parse::<usize>() {
             Ok(parallelism) if parallelism > 1 => {}
@@ -116,12 +205,12 @@ fn ensure_cross_compile_parallelism(
     }
 }
 
-fn collect_matrix_platform_names(contents: &str) -> Vec<String> {
+fn collect_matrix_platform_names(section: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_platform_list = false;
     let mut platform_indent = 0usize;
 
-    for line in contents.lines() {
+    for line in section.lines() {
         if !in_platform_list {
             if let Some(index) = line.find("platform:") {
                 platform_indent = line[..index].chars().take_while(|c| *c == ' ').count();
@@ -187,11 +276,11 @@ fn check_for_unexpected_matrix_entries(
 fn ensure_matrix_entry(
     failures: &mut Vec<String>,
     display_path: &str,
-    contents: &str,
+    section: &str,
     name: &str,
     expectations: MatrixExpectations<'_>,
 ) {
-    match extract_matrix_entry(contents, name) {
+    match extract_matrix_entry(section, name) {
         Some(entry) => {
             if let Some(expected) = expectations.enabled {
                 if entry.enabled != Some(expected) {
