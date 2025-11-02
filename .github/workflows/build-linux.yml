@@ -151,7 +151,7 @@ jobs:
           set -euo pipefail
           rpmbuild --version
           cargo rpm build -v --target ${{ matrix.platform.target }}
-          RPM_DIR="target/${{ matrix.platform.target }}/release/rpmbuild/RPMS"
+          RPM_DIR="target/${{ matrix.platform.target }}/dist/rpmbuild/RPMS"
           mkdir -p dist/${{ matrix.platform.name }}
           find "$RPM_DIR" -type f -name '*.rpm' -exec cp -v {} dist/${{ matrix.platform.name }}/ \;
 
