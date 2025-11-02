@@ -8,71 +8,43 @@ fn validate_ci_cross_compile_matrix_requires_parallelism_settings() {
     }
 
     write_manifest(&workspace);
-    write_ci_file(
+    write_default_workflows(&workspace);
+    write_workflow_file(
         &workspace,
-        r#"name: CI
+        "build-linux.yml",
+        r#"name: build-linux
+
+on:
+  workflow_call:
 
 jobs:
-  cross-compile:
+  build:
     strategy:
       matrix:
         platform:
           - name: linux-x86_64
             enabled: true
+            runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: false
+            package_linux: true
             generate_sbom: true
           - name: linux-aarch64
             enabled: true
+            runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: true
+            package_linux: true
             generate_sbom: true
-          - name: darwin-x86_64
-            enabled: true
-            target: x86_64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: darwin-aarch64
-            enabled: true
-            target: aarch64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: windows-x86_64
-            enabled: true
-            target: x86_64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-x86
-            enabled: false
-            target: i686-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-aarch64
-            enabled: false
-            target: aarch64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - run: echo ok
 "#,
     );
 
@@ -102,12 +74,17 @@ fn validate_ci_cross_compile_matrix_rejects_serial_parallelism() {
     }
 
     write_manifest(&workspace);
-    write_ci_file(
+    write_default_workflows(&workspace);
+    write_workflow_file(
         &workspace,
-        r#"name: CI
+        "build-linux.yml",
+        r#"name: build-linux
+
+on:
+  workflow_call:
 
 jobs:
-  cross-compile:
+  build:
     strategy:
       fail-fast: true
       max-parallel: 1
@@ -115,60 +92,27 @@ jobs:
         platform:
           - name: linux-x86_64
             enabled: true
+            runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             build_command: build
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: false
+            package_linux: true
             generate_sbom: true
           - name: linux-aarch64
             enabled: true
+            runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             build_command: build
             build_daemon: true
             uses_zig: false
             needs_cross_gcc: true
+            package_linux: true
             generate_sbom: true
-          - name: darwin-x86_64
-            enabled: true
-            target: x86_64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: darwin-aarch64
-            enabled: true
-            target: aarch64-apple-darwin
-            build_command: zigbuild
-            build_daemon: true
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: true
-          - name: windows-x86_64
-            enabled: true
-            target: x86_64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-x86
-            enabled: false
-            target: i686-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
-          - name: windows-aarch64
-            enabled: false
-            target: aarch64-pc-windows-msvc
-            build_command: zigbuild
-            build_daemon: false
-            uses_zig: true
-            needs_cross_gcc: false
-            generate_sbom: false
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - run: echo ok
 "#,
     );
 

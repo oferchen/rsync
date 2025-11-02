@@ -3,8 +3,7 @@ use std::collections::BTreeSet;
 
 #[test]
 fn collect_matrix_platform_names_extracts_expected_entries() {
-    let yaml = r#"jobs:
-  cross-compile:
+    let section = r#"  build:
     strategy:
       matrix:
         platform:
@@ -17,7 +16,7 @@ fn collect_matrix_platform_names_extracts_expected_entries() {
             something: else
 "#;
 
-    let names = collect_matrix_platform_names(yaml);
+    let names = collect_matrix_platform_names(section);
     assert_eq!(
         names,
         vec![String::from("linux-x86_64"), String::from("linux-aarch64"),],
