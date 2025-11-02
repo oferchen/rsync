@@ -100,6 +100,15 @@ linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
 windows = ["x86_64", "aarch64"]
 
+[workspace.metadata.oc_rsync.cross_compile_matrix]
+"linux-x86_64" = true
+"linux-aarch64" = true
+"darwin-x86_64" = true
+"darwin-aarch64" = true
+"windows-x86_64" = false
+"windows-aarch64" = false
+"windows-x86" = false
+
 [package.metadata.deb]
 name = "oc-rsync"
 section = "utils"

@@ -81,7 +81,7 @@ fn validate_platform_workflow(
                 &section,
                 &name,
                 MatrixExpectations {
-                    enabled: Some(true),
+                    enabled: matrix_expected_enabled(branding, spec.os, arch),
                     target: expected_target(spec.os, arch),
                     build_command: Some(expected_build_command(spec.os)),
                     build_daemon: Some(expected_build_daemon(spec.os, arch)),
@@ -108,7 +108,7 @@ fn validate_platform_workflow(
             &section,
             "windows-x86",
             MatrixExpectations {
-                enabled: Some(false),
+                enabled: matrix_expected_enabled(branding, "windows", "x86"),
                 target: expected_target("windows", "x86"),
                 build_command: Some("zigbuild"),
                 build_daemon: Some(false),
@@ -426,6 +426,19 @@ fn expected_matrix_name(os: &str, arch: &str) -> Option<String> {
         "windows" => Some(format!("windows-{arch}")),
         _ => None,
     }
+}
+
+fn matrix_expected_enabled(branding: &WorkspaceBranding, os: &str, arch: &str) -> Option<bool> {
+    let name = expected_matrix_name(os, arch)?;
+    if let Some(enabled) = branding.cross_compile_matrix.get(&name) {
+        return Some(*enabled);
+    }
+
+    if os == "windows" && arch == "x86" {
+        return Some(false);
+    }
+
+    Some(true)
 }
 
 fn expected_target(os: &str, arch: &str) -> Option<&'static str> {

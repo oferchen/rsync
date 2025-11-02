@@ -25,7 +25,7 @@ jobs:
       matrix:
         platform:
           - name: windows-aarch64
-            enabled: true
+            enabled: false
             runner: windows-latest
             target: aarch64-pc-windows-msvc
             build_command: zigbuild
