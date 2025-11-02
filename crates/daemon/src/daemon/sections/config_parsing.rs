@@ -279,8 +279,7 @@ fn parse_config_modules_inner(
                             path,
                             line_number,
                             format!(
-                                "duplicate 'refuse options' directive in global section (previously defined on line {})",
-                                existing_line
+                                "duplicate 'refuse options' directive in global section (previously defined on line {existing_line})"
                             ),
                         ));
                     }
@@ -420,7 +419,7 @@ fn parse_config_modules_inner(
                         config_parse_error(
                             path,
                             line_number,
-                            format!("invalid boolean value '{}' for 'reverse lookup'", value),
+                            format!("invalid boolean value '{value}' for 'reverse lookup'"),
                         )
                     })?;
 
@@ -435,8 +434,8 @@ fn parse_config_modules_inner(
                                 path,
                                 line_number,
                                 format!(
-                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {})",
-                                    existing_origin.line
+                                    "duplicate 'reverse lookup' directive in global section (previously defined on line {line})",
+                                    line = existing_origin.line
                                 ),
                             ));
                         }

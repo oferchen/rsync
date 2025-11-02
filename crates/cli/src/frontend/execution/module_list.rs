@@ -9,12 +9,12 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
     suppress_motd: bool,
 ) -> io::Result<()> {
     for warning in list.warnings() {
-        writeln!(stderr, "@WARNING: {}", warning)?;
+        writeln!(stderr, "@WARNING: {warning}")?;
     }
 
     if !suppress_motd {
         for line in list.motd_lines() {
-            writeln!(stdout, "{}", line)?;
+            writeln!(stdout, "{line}")?;
         }
     }
 

@@ -42,8 +42,7 @@ pub(super) fn parse_dir_merge_directive(
             '-' => {
                 if saw_plus {
                     let message = format!(
-                        "dir-merge directive '{}' cannot combine '+' and '-' modifiers",
-                        text
+                        "dir-merge directive '{text}' cannot combine '+' and '-' modifiers"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -53,8 +52,7 @@ pub(super) fn parse_dir_merge_directive(
             '+' => {
                 if saw_minus {
                     let message = format!(
-                        "dir-merge directive '{}' cannot combine '+' and '-' modifiers",
-                        text
+                        "dir-merge directive '{text}' cannot combine '+' and '-' modifiers"
                     );
                     return Err(FilterParseError::new(message));
                 }
@@ -90,8 +88,7 @@ pub(super) fn parse_dir_merge_directive(
             }
             _ => {
                 let message = format!(
-                    "dir-merge directive '{}' uses unsupported modifier '{}'",
-                    text, modifier
+                    "dir-merge directive '{text}' uses unsupported modifier '{modifier}'"
                 );
                 return Err(FilterParseError::new(message));
             }
@@ -102,7 +99,7 @@ pub(super) fn parse_dir_merge_directive(
         if used_cvs_default {
             ".cvsignore"
         } else {
-            let message = format!("dir-merge directive '{}' is missing a file name", text);
+            let message = format!("dir-merge directive '{text}' is missing a file name");
             return Err(FilterParseError::new(message));
         }
     } else {

@@ -205,8 +205,7 @@ pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskR
     ensure(
         rust_version == "1.88",
         format!(
-            "workspace.package.rust-version must match CI toolchain 1.88; found {:?}",
-            rust_version
+            "workspace.package.rust-version must match CI toolchain 1.88; found {rust_version:?}"
         ),
     )
 }
@@ -294,16 +293,17 @@ pub(crate) fn validate_documentation(
             .filter(|snippet| !snippet.is_empty() && !contents.contains(snippet))
             .collect();
 
+        let relative_path = check.relative_path;
+        let missing_snippets = missing
+            .iter()
+            .map(|snippet| format!("'{snippet}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         ensure(
             missing.is_empty(),
             format!(
-                "{} missing required documentation snippets: {}",
-                check.relative_path,
-                missing
-                    .iter()
-                    .map(|snippet| format!("'{}'", snippet))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                "{relative_path} missing required documentation snippets: {missing_snippets}"
             ),
         )?;
     }

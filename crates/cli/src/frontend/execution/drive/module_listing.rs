@@ -60,7 +60,7 @@ where
         Ok(None) => return None,
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
-                let _ = writeln!(stderr.writer_mut(), "{}", error);
+                let _ = writeln!(stderr.writer_mut(), "{error}");
             }
             return Some(error.exit_code());
         }
@@ -77,7 +77,7 @@ where
         Err(message) => {
             if write_message(&message, stderr).is_err() {
                 let fallback = message.to_string();
-                let _ = writeln!(stderr.writer_mut(), "{}", fallback);
+                let _ = writeln!(stderr.writer_mut(), "{fallback}");
             }
             return Some(1);
         }
@@ -105,10 +105,10 @@ where
         }
         Err(error) => {
             if write_message(error.message(), stderr).is_err() {
+                let exit_code = error.exit_code();
                 let _ = writeln!(
                     stderr.writer_mut(),
-                    "rsync error: daemon functionality is unavailable in this build (code {})",
-                    error.exit_code()
+                    "rsync error: daemon functionality is unavailable in this build (code {exit_code})"
                 );
             }
             Some(error.exit_code())

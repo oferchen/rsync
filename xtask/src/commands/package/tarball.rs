@@ -341,7 +341,7 @@ pub(super) fn build_tarball(
             continue;
         }
 
-        let file_name = format!("{}{}", name, extension);
+        let file_name = format!("{name}{extension}");
         let path = target_dir.join(&file_name);
         ensure_tarball_source(&path)?;
         let destination = format!("{root_name}/{relative}");

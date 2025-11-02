@@ -68,11 +68,11 @@ fn main() -> ExitCode {
     match run_with_args(env::args_os().skip(1)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(TaskError::Help(text)) => {
-            println!("{}", text);
+            println!("{text}");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("{}", error);
+            eprintln!("{error}");
             if let TaskError::Usage(_) = error {
                 eprintln!("{}", top_level_usage());
             }

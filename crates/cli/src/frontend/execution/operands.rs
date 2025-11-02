@@ -22,17 +22,15 @@ impl UnsupportedOption {
     pub(crate) fn to_message(&self) -> Message {
         let option = self.option.to_string_lossy();
         let text = format!(
-            "unsupported option '{}': this build currently supports only {}",
-            option, SUPPORTED_OPTIONS_LIST
+            "unsupported option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
         );
         rsync_error!(1, text).with_role(Role::Client)
     }
 
     pub(crate) fn fallback_text(&self) -> String {
+        let option = self.option.to_string_lossy();
         format!(
-            "unsupported option '{}': this build currently supports only {}",
-            self.option.to_string_lossy(),
-            SUPPORTED_OPTIONS_LIST
+            "unsupported option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
         )
     }
 }
@@ -81,7 +79,7 @@ pub(crate) fn parse_bind_address_argument(value: &OsStr) -> Result<BindAddress, 
     match resolve_bind_address(trimmed) {
         Ok(socket) => Ok(BindAddress::new(value.to_os_string(), socket)),
         Err(error) => {
-            let formatted = format!("failed to resolve --address value '{}': {}", trimmed, error);
+            let formatted = format!("failed to resolve --address value '{trimmed}': {error}");
             Err(rsync_error!(1, formatted).with_role(Role::Client))
         }
     }

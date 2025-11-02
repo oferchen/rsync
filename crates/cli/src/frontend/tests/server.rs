@@ -116,9 +116,9 @@ fn server_mode_reports_disabled_fallback_override() {
 
     assert_eq!(exit_code, 1);
     let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
+    let env = CLIENT_FALLBACK_ENV;
     assert!(stderr_text.contains(&format!(
-        "remote server mode is unavailable because {env} is disabled",
-        env = CLIENT_FALLBACK_ENV,
+        "remote server mode is unavailable because {env} is disabled"
     )));
 }
 

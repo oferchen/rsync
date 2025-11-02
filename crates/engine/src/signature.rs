@@ -291,8 +291,7 @@ impl fmt::Display for SignatureError {
                 requested,
             } => write!(
                 f,
-                "requested strong checksum length {} exceeds {:?} digest width",
-                requested, algorithm
+                "requested strong checksum length {requested} exceeds {algorithm:?} digest width"
             ),
             SignatureError::TrailingData { bytes } => write!(
                 f,

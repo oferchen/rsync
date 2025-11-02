@@ -88,7 +88,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let size_field =
                     format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
                 let percent = format_progress_percent(bytes, update.total_bytes());
-                let percent_field = format!("{:>4}", percent);
+                let percent_field = format!("{percent:>4}");
                 let rate_field = format!(
                     "{:>12}",
                     format_progress_rate(bytes, event.elapsed(), self.human_readable)

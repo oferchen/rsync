@@ -42,24 +42,20 @@ fn negotiation_style_helpers_match_protocol_cutoff() {
         if version.as_u8() >= ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.as_u8() {
             assert!(
                 version.uses_binary_negotiation(),
-                "version {} should be binary",
-                version
+                "version {version} should be binary"
             );
             assert!(
                 !version.uses_legacy_ascii_negotiation(),
-                "version {} should not be legacy",
-                version
+                "version {version} should not be legacy"
             );
         } else {
             assert!(
                 !version.uses_binary_negotiation(),
-                "version {} should not be binary",
-                version
+                "version {version} should not be binary"
             );
             assert!(
                 version.uses_legacy_ascii_negotiation(),
-                "version {} should be legacy",
-                version
+                "version {version} should be legacy"
             );
         }
     }

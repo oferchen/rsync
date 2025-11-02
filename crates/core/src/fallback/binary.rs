@@ -77,20 +77,26 @@ pub fn describe_missing_fallback_binary(binary: &OsStr, env_vars: &[&str]) -> St
     let display = Path::new(binary).display();
     let directive = match env_vars.len() {
         0 => String::from("set an override environment variable to an explicit path"),
-        1 => format!("set {} to an explicit path", env_vars[0]),
-        2 => format!("set {} or {} to an explicit path", env_vars[0], env_vars[1]),
+        1 => {
+            let env = env_vars[0];
+            format!("set {env} to an explicit path")
+        }
+        2 => {
+            let first = env_vars[0];
+            let second = env_vars[1];
+            format!("set {first} or {second} to an explicit path")
+        }
         _ => {
             let (head, tail) = env_vars.split_at(env_vars.len() - 1);
             let mut joined = head.join(", ");
             joined.push_str(", or ");
             joined.push_str(tail[0]);
-            format!("set {} to an explicit path", joined)
+            format!("set {joined} to an explicit path")
         }
     };
 
     format!(
-        "fallback rsync binary '{}' is not available on PATH or is not executable; install upstream rsync or {}",
-        display, directive
+        "fallback rsync binary '{display}' is not available on PATH or is not executable; install upstream rsync or {directive}"
     )
 }
 
@@ -303,9 +309,7 @@ mod tests {
             candidates
                 .iter()
                 .any(|candidate| candidate == &expected_path),
-            "expected candidate {:?} missing from {:?}",
-            expected_path,
-            candidates
+            "expected candidate {expected_path:?} missing from {candidates:?}"
         );
 
         let occurrences = candidates

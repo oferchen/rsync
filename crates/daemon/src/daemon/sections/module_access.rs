@@ -324,7 +324,7 @@ fn respond_with_module_request(
             }
 
             if let Some(refused) = refused_option(module, options) {
-                let payload = format!("@ERROR: The server is configured to refuse {}", refused);
+                let payload = format!("@ERROR: The server is configured to refuse {refused}");
                 let stream = reader.get_mut();
                 write_limited(stream, limiter, payload.as_bytes())?;
                 write_limited(stream, limiter, b"\n")?;
@@ -518,7 +518,7 @@ fn format_bandwidth_rate(value: NonZeroU64) -> String {
     } else if bytes.is_multiple_of(KIB) {
         format!("{} KiB/s", bytes / KIB)
     } else {
-        format!("{} bytes/s", bytes)
+        format!("{bytes} bytes/s")
     }
 }
 

@@ -450,8 +450,7 @@ mod tests {
         let path = unique_temp_path("panic_multiline");
         let todo = ["TO", "DO"].concat();
         let content = format!(
-            "fn explode() {{\n    panic!(\n        \"{}: revisit\"\n    );\n}}\n",
-            todo
+            "fn explode() {{\n    panic!(\n        \"{todo}: revisit\"\n    );\n}}\n"
         );
         fs::write(&path, content).expect("write sample");
         let findings = scan_rust_file_for_placeholders(&path).expect("scan succeeds");

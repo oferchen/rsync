@@ -34,17 +34,13 @@ fn execute_with_bandwidth_limit_records_sleep() {
     let diff = total.abs_diff(expected);
     assert!(
         diff <= Duration::from_millis(50),
-        "expected sleep duration near {:?}, got {:?}",
-        expected,
-        total
+        "expected sleep duration near {expected:?}, got {total:?}"
     );
     let summary_sleep = summary.bandwidth_sleep();
     let summary_diff = summary_sleep.abs_diff(total);
     assert!(
         summary_diff <= Duration::from_millis(50),
-        "summary recorded {:?} of throttling while sleeps totalled {:?}",
-        summary_sleep,
-        total
+        "summary recorded {summary_sleep:?} of throttling while sleeps totalled {total:?}"
     );
     assert_eq!(summary.files_copied(), 1);
 }
@@ -250,22 +246,15 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
     let tolerance = expected_compressed * 0.2 + 0.2;
     assert!(
         (total_sleep_secs - expected_compressed).abs() <= tolerance,
-        "sleep {:?}s deviates too far from compressed expectation {:?}s",
-        total_sleep_secs,
-        expected_compressed,
+        "sleep {total_sleep_secs:?}s deviates too far from compressed expectation {expected_compressed:?}s"
     );
     assert!(
         (summary_secs - total_sleep_secs).abs() <= tolerance,
-        "summary tracked {:?}s while recordings totalled {:?}s",
-        summary_secs,
-        total_sleep_secs,
+        "summary tracked {summary_secs:?}s while recordings totalled {total_sleep_secs:?}s"
     );
     assert!(
         (total_sleep_secs - expected_compressed).abs()
             < (total_sleep_secs - expected_uncompressed).abs(),
-        "sleep {:?}s should align with compressed bytes ({:?}s) rather than uncompressed ({:?}s)",
-        total_sleep_secs,
-        expected_compressed,
-        expected_uncompressed,
+        "sleep {total_sleep_secs:?}s should align with compressed bytes ({expected_compressed:?}s) rather than uncompressed ({expected_uncompressed:?}s)"
     );
 }

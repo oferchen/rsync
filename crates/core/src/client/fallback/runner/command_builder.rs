@@ -547,9 +547,9 @@ pub(crate) fn prepare_invocation(
     } else {
         match fallback_override(CLIENT_FALLBACK_ENV) {
             Some(FallbackOverride::Disabled) => {
+                let env = CLIENT_FALLBACK_ENV;
                 return Err(fallback_error(format!(
-                    "remote transfers are unavailable because {env} is disabled; set {env} to point to an upstream rsync binary",
-                    env = CLIENT_FALLBACK_ENV
+                    "remote transfers are unavailable because {env} is disabled; set {env} to point to an upstream rsync binary"
                 )));
             }
             Some(other) => other
@@ -562,9 +562,9 @@ pub(crate) fn prepare_invocation(
     if !fallback_binary_available(binary.as_os_str()) {
         let diagnostic =
             describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        let display = Path::new(binary.as_os_str()).display();
         return Err(fallback_error(format!(
-            "failed to launch fallback rsync binary '{}': {diagnostic}",
-            Path::new(binary.as_os_str()).display()
+            "failed to launch fallback rsync binary '{display}': {diagnostic}"
         )));
     }
 

@@ -138,8 +138,7 @@ fn parse_module_definition(
 
     if module.use_chroot && !module.path.is_absolute() {
         return Err(config_error(format!(
-            "module path '{}' must be absolute when 'use chroot' is enabled",
-            path_text
+            "module path '{path_text}' must be absolute when 'use chroot' is enabled"
         )));
     }
 
@@ -403,12 +402,11 @@ fn parse_config_bwlimit(
 
 fn runtime_bwlimit_error(value: &str, error: BandwidthParseError) -> DaemonError {
     let text = match error {
-        BandwidthParseError::Invalid => format!("--bwlimit={} is invalid", value),
+        BandwidthParseError::Invalid => format!("--bwlimit={value} is invalid"),
         BandwidthParseError::TooSmall => format!(
-            "--bwlimit={} is too small (min: 512 or 0 for unlimited)",
-            value
+            "--bwlimit={value} is too small (min: 512 or 0 for unlimited)"
         ),
-        BandwidthParseError::TooLarge => format!("--bwlimit={} is too large", value),
+        BandwidthParseError::TooLarge => format!("--bwlimit={value} is too large"),
     };
     config_error(text)
 }
@@ -430,7 +428,8 @@ fn config_bwlimit_error(
 }
 
 fn unsupported_option(option: OsString) -> DaemonError {
-    let text = format!("unsupported daemon argument '{}'", option.to_string_lossy());
+    let option = option.to_string_lossy();
+    let text = format!("unsupported daemon argument '{option}'");
     config_error(text)
 }
 

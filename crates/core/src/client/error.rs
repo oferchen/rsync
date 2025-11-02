@@ -87,8 +87,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
             let noun = if skipped == 1 { "entry" } else { "entries" };
             let text = format!(
-                "Deletions stopped due to --max-delete limit ({} {noun} skipped)",
-                skipped
+                "Deletions stopped due to --max-delete limit ({skipped} {noun} skipped)"
             );
             let message = rsync_error!(MAX_DELETE_EXIT_CODE, text).with_role(Role::Client);
             ClientError::new(MAX_DELETE_EXIT_CODE, message)
@@ -97,18 +96,14 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
 }
 
 pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> ClientError {
-    let text = format!("failed to compile filter pattern '{}': {error}", pattern);
+    let text = format!("failed to compile filter pattern '{pattern}': {error}");
     let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
-    let text = format!(
-        "failed to {action} '{path}': {error}",
-        action = action,
-        path = path.display(),
-        error = error
-    );
+    let path_display = path.display();
+    let text = format!("failed to {action} '{path_display}': {error}");
     let message = rsync_error!(PARTIAL_TRANSFER_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
 }

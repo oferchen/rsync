@@ -38,15 +38,14 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
                 ParseProtocolVersionErrorKind::UnsupportedRange(value) => {
                     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
                     format!(
-                        "protocol version {} is outside the supported range {}-{}",
-                        value, oldest, newest
+                        "protocol version {value} is outside the supported range {oldest}-{newest}"
                     )
                 }
             };
             if !detail.is_empty() {
                 detail.push_str("; ");
             }
-            detail.push_str(&format!("supported protocols are {}", supported));
+            detail.push_str(&format!("supported protocols are {supported}"));
 
             Err(rsync_error!(
                 1,

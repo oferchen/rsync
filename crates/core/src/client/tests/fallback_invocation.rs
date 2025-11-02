@@ -431,8 +431,7 @@ fn remote_fallback_forwards_reference_directory_flags() {
             lines
                 .windows(2)
                 .any(|window| window[0] == flag && window[1] == path),
-            "missing pair {flag} {path} in {:?}",
-            lines
+            "missing pair {flag} {path} in {lines:?}"
         );
     }
 }
