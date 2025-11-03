@@ -17,7 +17,9 @@ pub(crate) use compression::{
 pub(crate) use drive::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
 #[cfg(test)]
 pub(crate) use file_list::read_file_list_from_reader;
-pub(crate) use file_list::{load_file_list_operands, transfer_requires_remote};
+pub(crate) use file_list::{
+    load_file_list_operands, resolve_file_list_entries, transfer_requires_remote,
+};
 pub(crate) use flags::{
     DEBUG_HELP_TEXT, INFO_HELP_TEXT, info_flags_include_progress, parse_debug_flags,
     parse_info_flags,

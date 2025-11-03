@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rsync_core::{
     message::{Message, Role},
@@ -65,6 +65,46 @@ pub(crate) fn load_file_list_operands(
     }
 
     Ok(entries)
+}
+
+pub(crate) fn resolve_file_list_entries(
+    entries: &mut [OsString],
+    explicit_operands: &[OsString],
+    relative_enabled: bool,
+) {
+    if entries.is_empty() || explicit_operands.len() <= 1 || relative_enabled {
+        return;
+    }
+
+    let base_sources = &explicit_operands[..explicit_operands.len() - 1];
+    if base_sources.len() != 1 {
+        return;
+    }
+
+    let base = &base_sources[0];
+    if operand_is_remote(base.as_os_str()) {
+        return;
+    }
+
+    let base_path = Path::new(base);
+    for entry in entries.iter_mut() {
+        if entry.is_empty() {
+            continue;
+        }
+
+        if operand_is_remote(entry.as_os_str()) {
+            continue;
+        }
+
+        let entry_path = Path::new(entry);
+        if entry_path.is_absolute() {
+            continue;
+        }
+
+        let mut combined = base_path.to_path_buf();
+        combined.push(entry_path);
+        *entry = combined.into_os_string();
+    }
 }
 
 pub(crate) fn read_file_list_from_reader<R: BufRead>(
