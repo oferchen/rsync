@@ -323,7 +323,7 @@ source = "https://github.com/oferchen/rsync"
                 (String::from("linux-x86_64"), true),
                 (String::from("windows-aarch64"), false),
                 (String::from("windows-x86"), false),
-                (String::from("windows-x86_64"), false),
+                (String::from("windows-x86_64"), true),
             ]),
         };
         assert_eq!(branding, expected);
