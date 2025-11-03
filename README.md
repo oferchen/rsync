@@ -4,7 +4,7 @@
 # oc-rsync - Classic rsync implementation in pure rust.
 
 
-- **Parity goal:** CLI UX, negotiation, framing/tags, messages, and exit codes are designed to be **indistinguishable** from rsync@https://rsync.samba.org.
+- **Parity goal:** CLI UX, negotiation, framing/tags, messages, and exit codes are designed to be **indistinguishable** from [rsync](https://rsync.samba.org/).
 - **Safety & performance:** Memory-safe Rust, explicit error types, and hot-path IO attention.
 
 ---
