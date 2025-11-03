@@ -19,8 +19,8 @@ use rsync_logging::MessageSink;
 use crate::{
     config::DaemonConfig,
     daemon::{
-        parse_args, render_help, run_daemon, write_message, configured_fallback_binary,
-        ParsedArgs, MAX_EXIT_CODE,
+        MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help, run_daemon,
+        write_message,
     },
 };
 
