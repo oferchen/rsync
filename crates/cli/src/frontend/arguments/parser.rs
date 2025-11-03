@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::frontend::arguments::short_options::expand_short_options;
 use crate::frontend::command_builder::clap_command;
 use crate::frontend::execution::{
     parse_checksum_seed_argument, parse_compress_level_argument, parse_human_readable_level,
@@ -25,9 +26,10 @@ where
         args.push(OsString::from(program_name.as_str()));
     }
 
-    let raw_args = args.clone();
-    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&raw_args);
-    let mut matches = clap_command(program_name.as_str()).try_get_matches_from(args)?;
+    let command = clap_command(program_name.as_str());
+    let args = expand_short_options(&command, args);
+    let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
+    let mut matches = command.try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
@@ -89,6 +91,7 @@ where
     };
     let bind_address_raw = matches.remove_one::<OsString>("address");
     let archive = matches.get_flag("archive");
+    let recursive = archive || matches.get_flag("recursive");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
     let delete_during_flag = matches.get_flag("delete-during");
@@ -468,6 +471,7 @@ where
         address_mode,
         bind_address: bind_address_raw,
         archive,
+        recursive,
         delete_mode,
         delete_excluded,
         backup,

@@ -50,6 +50,7 @@ where
         address_mode,
         bind_address: bind_address_raw,
         archive,
+        recursive: _recursive,
         delete_mode,
         delete_excluded,
         backup,

@@ -70,14 +70,14 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: true
             package_linux: false
-          # Windows (GNU) — .tar.gz
+          # Windows (MSVC) — .tar.gz
           - name: windows-x86_64
             enabled: true
             runner: windows-latest
-            target: x86_64-pc-windows-gnu
-            build_command: zigbuild
+            target: x86_64-pc-windows-msvc
+            build_command: build
             build_daemon: false
-            uses_zig: true
+            uses_zig: false
             needs_cross_gcc: false
             generate_sbom: false
             package_linux: false
@@ -93,12 +93,12 @@ jobs:
             generate_sbom: false
             package_linux: false
           - name: windows-aarch64
-            enabled: false
+            enabled: true
             runner: windows-latest
             target: aarch64-pc-windows-msvc
-            build_command: zigbuild
+            build_command: build
             build_daemon: false
-            uses_zig: true
+            uses_zig: false
             needs_cross_gcc: false
             generate_sbom: false
             package_linux: false
@@ -189,12 +189,12 @@ jobs:
       - name: Build client
         if: ${{ matrix.platform.enabled }}
         shell: bash
-        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin "${BIN_CLIENT}"
+        run: cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin "${BIN_CLIENT}"
 
       - name: Build daemon
         if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
         shell: bash
-        run: cargo --locked ${{ matrix.platform.build_command }} --release --target ${{ matrix.platform.target }} --bin "${BIN_DAEMON}"
+        run: cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin "${BIN_DAEMON}"
 
       - name: Derive version from tag v*.*.*-rust (sanitize)
         if: ${{ matrix.platform.enabled }}
@@ -229,8 +229,8 @@ jobs:
           root="dist/${TRIPLE}"
           mkdir -p "$root"
 
-          oc="target/${TARGET}/release/${BIN_CLIENT}"
-          od="target/${TARGET}/release/${BIN_DAEMON}"
+          oc="target/${TARGET}/dist/${BIN_CLIENT}"
+          od="target/${TARGET}/dist/${BIN_DAEMON}"
 
           # Windows uses .exe
           if [[ "$TRIPLE" == windows-* ]]; then
@@ -251,7 +251,7 @@ jobs:
             [[ -f "$f" ]] && cp "$f" "$stage/"
           done
 
-          sbom="target/${TARGET}/release/${BIN_CLIENT}-${TRIPLE}-sbom.json"
+          sbom="target/${TARGET}/dist/${BIN_CLIENT}-${TRIPLE}-sbom.json"
           [[ -f "$sbom" ]] && cp "$sbom" "$stage/"
 
           (cd "$root" && tar -czf "${BIN_CLIENT}-${VER}-${TARGET}.tar.gz" "$(basename "$stage")")
@@ -271,7 +271,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo deb --locked --target ${{ matrix.platform.target }} --no-strip
+          cargo deb --locked --profile dist --target ${{ matrix.platform.target }} --no-strip
           mkdir -p dist/${{ matrix.platform.name }}
           cp target/${{ matrix.platform.target }}/debian/*.deb dist/${{ matrix.platform.name }}/
       - name: Upload .deb
