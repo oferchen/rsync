@@ -7,8 +7,8 @@ use std::process::{Command as ProcessCommand, Stdio};
 use rsync_core::{
     branding::Brand,
     fallback::{
-        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
         describe_missing_fallback_binary, fallback_binary_available, fallback_override,
+        CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
     },
     message::Role,
     rsync_error,
@@ -19,8 +19,8 @@ use rsync_logging::MessageSink;
 use crate::{
     config::DaemonConfig,
     daemon::{
-        MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help, run_daemon,
-        write_message,
+        parse_args, render_help, run_daemon, write_message, configured_fallback_binary,
+        ParsedArgs, MAX_EXIT_CODE,
     },
 };
 
@@ -40,8 +40,7 @@ where
     match parse_args(arguments) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
-            let mut message = rsync_error!(1, "{}", error);
-            message = message.with_role(Role::Daemon);
+            let mut message = rsync_error!(1, "{}", error).with_role(Role::Daemon);
             if write_message(&message, &mut stderr_sink).is_err() {
                 let _ = writeln!(stderr_sink.writer_mut(), "{error}");
             }
@@ -76,12 +75,9 @@ where
 
     // 2) decide if we should delegate
     //
-    // The CI harness always supplies: --config <file> --daemon --no-detach --log-file <file>
-    // and ALSO sets OC_RSYNC_DAEMON_FALLBACK to the upstream rsync for that version.
-    // Older upstream daemons (e.g. 3.1.3) can crash with that combination.
-    //
-    // So: if a real --config was supplied, prefer to run our Rust daemon natively and DO NOT
-    // auto-delegate purely because env says so.
+    // CI supplies: --config <file> --daemon --no-detach --log-file <file>
+    // AND sets OC_RSYNC_DAEMON_FALLBACK. Older upstreams can crash. If we see
+    // a real --config, prefer native Rust daemon over auto-delegate.
     let has_explicit_config = remainder_has_config(&parsed.remainder);
 
     if parsed.delegate_system_rsync {
@@ -117,12 +113,12 @@ where
 
 /// scan the remainder of the CLI args to see if a concrete config file was requested
 fn remainder_has_config(args: &[OsString]) -> bool {
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        // accept both exact matches and --config=<path> style
+    for arg in args {
+        // exact: --config <file>
         if arg == "--config" {
             return true;
         }
+        // inline: --config=/path/to/file
         if let Some(s) = arg.to_str() {
             if let Some(rest) = s.strip_prefix("--config=") {
                 if !rest.trim().is_empty() {
