@@ -142,6 +142,10 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 * **Protocol v32:** Message/tag semantics mirror [rsync](https://rsync.samba.org/).
 * **Client/daemon:** Designed to operate with upstream `rsync` daemons and clients.
 * **Exit codes/messages:** Map to upstream conventions; differences are documented inline when safety/perf requires.
+* **Interop harness:** `tools/ci/run_interop.sh` downloads upstream releases 3.0.9,
+  3.1.3, and 3.4.1 and exercises both directions—upstream client → `oc-rsyncd`
+  and `oc-rsync` → upstream daemon—to verify parity while the native transfer
+  engine is integrated.
 * **Smoke test example:**
 
   ```bash
@@ -176,14 +180,24 @@ This README intentionally uses **stable, simple headings** (e.g., `#xtask--docs-
 ## Release & Packaging
 
 ```bash
-# Standard release artifacts
-cargo build --workspace --release
+# Build optimised binaries (dist profile) used for release packaging
+cargo build --workspace --profile dist --locked
 
-# Optional (if configured): Zig-based cross artifacts
-# cargo zigbuild --release --target x86_64-unknown-linux-gnu
+# Produce Debian, RPM, and tarball artifacts for the host platform
+cargo xtask package --release
+
+# Limit packaging to tarballs (e.g. for macOS cross-build hosts)
+cargo xtask package --release --tarball
+
+# Restrict tarball generation to a specific target triple
+cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 ```
 
-Check repository workflows and packaging directories when present for distro-specific outputs (e.g., RPM/DEB).
+The packaging pipeline installs `oc-rsync`/`oc-rsyncd` under dedicated paths so
+upstream `rsync` packages can remain installed. CI publishes Linux
+(`x86_64`/`aarch64`) `.deb`/`.rpm` packages, macOS and Windows tarballs
+(`x86_64`/`aarch64`), and a CycloneDX SBOM generated from the same `dist`
+builds.
 
 ---
 

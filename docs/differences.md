@@ -77,20 +77,21 @@ referenced functionality ships and parity is verified by tests or goldens.
   - *Removal plan*: Wire the delta pipeline into the client/daemon transfer
     flow, finish the remaining filter semantics, and validate the combined
     behaviour via the parity harness before dropping the fallback dependency.
-- **Interop harness and packaging automation incomplete**
-  - *Impact*: There is still no exit-code oracle, goldens, or CI interop matrix
-    that exercises upstream rsync releases. Packaging metadata for
-    `cargo-deb`/`cargo-rpm` installs the canonical binaries together with the
-    oc-rsync compatibility wrappers, a hardened `oc-rsyncd.service`
-    systemd unit that intentionally omits legacy aliases so it can coexist with
-    upstream packages, and example
-    configuration files installed at `/etc/oc-rsyncd/oc-rsyncd.conf` and
-    `/etc/oc-rsyncd/oc-rsyncd.secrets`; the GitHub Actions workflow builds
-    `.deb`/`.rpm` artifacts and a CycloneDX SBOM for every push. Automated
-    installation tests and cross-version parity checks remain pending.
-  - *Removal plan*: Stand up the parity harness (`tests/goldens`), CI workflows,
-    and finish the packaging pipeline by wiring the remaining install-verification
-    tests once higher-level crates are available.
+- **Parity harness and packaging verification still evolving**
+  - *Impact*: CI now generates `.deb`, `.rpm`, and tarball artifacts for Linux
+    (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
+    using the `dist` profile. Packaging installs `oc-rsync`/`oc-rsyncd` under
+    dedicated paths so upstream rsync packages can remain in place, and
+    optional alternatives registration stays disabled unless explicitly
+    requested. The `tools/ci/run_interop.sh` harness downloads upstream
+    releases 3.0.9, 3.1.3, and 3.4.1 and exercises both directions—upstream
+    client to oc-rsyncd and oc-rsync to upstream daemons—to verify
+    interoperability. Automated installation tests, golden filesystem
+    comparisons, and the exit-code oracle have not landed yet, so production
+    scope gating still depends on manual review for those aspects.
+  - *Removal plan*: Add installation verification, parity goldens, and the
+    exit-code oracle to CI so packaging and interop coverage become
+    self-verifying.
 
 All remaining behaviour currently matches the limited scope implemented in the
 `protocol` crate; additional differences will be documented here as they are

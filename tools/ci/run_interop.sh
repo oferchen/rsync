@@ -89,11 +89,25 @@ stop_oc_daemon() {
     oc_pid=""
   fi
 
-  if [[ -n "${oc_delegate_pid:-}" && ${oc_delegate_pid} =~ ^[0-9]+$ ]]; then
-    kill "${oc_delegate_pid}" >/dev/null 2>&1 || true
-    for attempt in $(seq 1 50); do
-      if ! kill -0 "${oc_delegate_pid}" >/dev/null 2>&1; then
-        break
+  echo "Running interoperability checks against upstream rsync ${version}"
+
+  (
+    set -euo pipefail
+
+    local workdir
+    workdir=$(mktemp -d)
+    local oc_pid_file="${workdir}/oc-rsyncd.pid"
+    local up_pid_file="${workdir}/upstream-rsyncd.pid"
+    local oc_delegate_pid=""
+    local oc_pid=""
+    local up_pid=""
+
+    cleanup() {
+      local status=$?
+
+      if [[ -n "${oc_pid}" ]]; then
+        kill "${oc_pid}" >/dev/null 2>&1 || true
+        wait "${oc_pid}" >/dev/null 2>&1 || true
       fi
       sleep 0.1
     done
@@ -182,7 +196,7 @@ run_interop_case() {
 pid file = ${oc_pid_file}
 port = ${oc_port}
 use chroot = false
-${oc_identity}
+${identity}
 numeric ids = yes
 [interop]
     path = ${oc_dest}
@@ -194,7 +208,7 @@ OC_CONF
 pid file = ${up_pid_file}
 port = ${upstream_port}
 use chroot = false
-${up_identity}
+${identity}
 numeric ids = yes
 [interop]
     path = ${up_dest}
