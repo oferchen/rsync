@@ -136,41 +136,59 @@ impl FallbackOverride {
     }
 }
 
-/// Parses the supplied environment variable into a [`FallbackOverride`].
+/// Interprets an override value using the same precedence rules as
+/// [`fallback_override`].
 ///
-/// The helper returns [`None`] when the variable is unset. When set, the
-/// following interpretations apply:
+/// The function accepts borrowed values so configuration sources besides the
+/// process environment (for example, command-line flags or configuration files)
+/// can reuse the parsing logic without reimplementing the precedence rules.
 ///
-/// - Empty or whitespace-only values disable delegation.
-/// - `0`, `false`, `no`, and `off` (case-insensitive) disable delegation.
-/// - `1`, `true`, `yes`, and `on` (case-insensitive) select the caller-provided default executable.
-/// - `auto` selects the caller-provided default executable.
-/// - `default` selects the caller-provided default executable.
-/// - Any other value is treated as an explicit binary path.
+/// # Examples
+///
+/// ```
+/// use rsync_core::fallback::{interpret_override_value, FallbackOverride};
+/// use std::ffi::OsStr;
+///
+/// assert_eq!(
+///     interpret_override_value(OsStr::new("auto")),
+///     FallbackOverride::Default
+/// );
+/// assert_eq!(
+///     interpret_override_value(OsStr::new("/custom/rsync")),
+///     FallbackOverride::Explicit("/custom/rsync".into())
+/// );
+/// ```
 #[must_use]
-pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
-    let raw = env::var_os(name)?;
-
+pub fn interpret_override_value(raw: &OsStr) -> FallbackOverride {
     if raw.is_empty() {
-        return Some(FallbackOverride::Disabled);
+        return FallbackOverride::Disabled;
     }
 
     if let Some(text) = raw.to_str() {
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return Some(FallbackOverride::Disabled);
+            return FallbackOverride::Disabled;
         }
 
         if matches_ascii_case(trimmed, &DISABLED_OVERRIDES) {
-            return Some(FallbackOverride::Disabled);
+            return FallbackOverride::Disabled;
         }
 
         if matches_ascii_case(trimmed, &DEFAULT_OVERRIDES) {
-            return Some(FallbackOverride::Default);
+            return FallbackOverride::Default;
         }
     }
 
-    Some(FallbackOverride::Explicit(raw))
+    FallbackOverride::Explicit(raw.to_os_string())
+}
+
+/// Parses the supplied environment variable into a [`FallbackOverride`].
+///
+/// The helper returns [`None`] when the variable is unset and otherwise defers
+/// to [`interpret_override_value`] for the precedence rules documented there.
+#[must_use]
+pub fn fallback_override(name: &str) -> Option<FallbackOverride> {
+    env::var_os(name).map(|raw| interpret_override_value(raw.as_os_str()))
 }
 
 fn matches_ascii_case(value: &str, options: &[&str]) -> bool {
@@ -216,6 +234,53 @@ mod tests {
             }
             Self { key, original }
         }
+    }
+
+    #[test]
+    fn interpret_override_value_identifies_disabled_inputs() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("")),
+            FallbackOverride::Disabled
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("   ")),
+            FallbackOverride::Disabled
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("No")),
+            FallbackOverride::Disabled
+        );
+    }
+
+    #[test]
+    fn interpret_override_value_identifies_default_inputs() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("1")),
+            FallbackOverride::Default
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("auto")),
+            FallbackOverride::Default
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new(" Default ")),
+            FallbackOverride::Default
+        );
+    }
+
+    #[test]
+    fn interpret_override_value_preserves_explicit_paths() {
+        let explicit = interpret_override_value(OsStr::new("/usr/bin/rsync"));
+        assert_eq!(
+            explicit,
+            FallbackOverride::Explicit(OsString::from("/usr/bin/rsync"))
+        );
+
+        let spaced = interpret_override_value(OsStr::new("  /opt/rsync  "));
+        assert_eq!(
+            spaced,
+            FallbackOverride::Explicit(OsString::from("  /opt/rsync  "))
+        );
     }
 
     #[test]
