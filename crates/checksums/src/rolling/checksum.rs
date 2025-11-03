@@ -5,10 +5,8 @@ use super::error::RollingError;
 
 /// Rolling checksum used by rsync for weak block matching (often called `rsum`).
 ///
-/// The checksum mirrors upstream rsync's Adler-32 variant where the first component
-/// (`s1`) accumulates the byte sum and the second component (`s2`) tracks the sum of
-/// the running prefix sums. Both components are truncated to 16 bits after every
-/// update to match the canonical algorithm used during delta transfer.
+/// Mirrors upstream rsync's Adler-32 style weak checksum: `s1` accumulates the byte sum,
+/// `s2` accumulates prefix sums, both truncated to 16 bits.
 #[doc(alias = "rsum")]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RollingChecksum {
@@ -24,33 +22,10 @@ impl RollingChecksum {
     /// Creates a new rolling checksum with zeroed state.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            s1: 0,
-            s2: 0,
-            len: 0,
-        }
+        Self { s1: 0, s2: 0, len: 0 }
     }
 
     /// Reconstructs a rolling checksum from a previously captured digest.
-    ///
-    /// The helper mirrors the restoration logic used by upstream rsync when a receiver
-    /// rehydrates the checksum state from the `sum1`/`sum2` pair transmitted over the
-    /// wire. Providing a dedicated constructor avoids repeating the field mapping in
-    /// higher layers and keeps the internal truncation rules encapsulated within the
-    /// type. The returned checksum is immediately ready for further rolling updates.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rsync_checksums::{RollingChecksum, RollingDigest};
-    ///
-    /// let mut checksum = RollingChecksum::new();
-    /// checksum.update(b"delta state");
-    /// let digest = checksum.digest();
-    ///
-    /// let restored = RollingChecksum::from_digest(digest);
-    /// assert_eq!(restored.digest(), digest);
-    /// ```
     #[must_use]
     pub const fn from_digest(digest: RollingDigest) -> Self {
         Self {
@@ -82,35 +57,13 @@ impl RollingChecksum {
     /// Updates the checksum with an additional slice of bytes.
     #[inline]
     pub fn update(&mut self, chunk: &[u8]) {
-        let (s1, s2, len) = Self::accumulate_chunk(self.s1, self.s2, self.len, chunk);
+        let (s1, s2, len) = accumulate_chunk_dispatch(self.s1, self.s2, self.len, chunk);
         self.s1 = s1;
         self.s2 = s2;
         self.len = len;
     }
 
     /// Updates the checksum using a vectored slice of byte buffers.
-    ///
-    /// The method mirrors calling [`update`](Self::update) for each buffer in
-    /// order while avoiding repeated truncation of the internal state. Empty
-    /// buffers are skipped, allowing callers to forward `readv`/`writev` style
-    /// slices directly without preprocessing.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rsync_checksums::RollingChecksum;
-    /// use std::io::IoSlice;
-    ///
-    /// let mut checksum = RollingChecksum::new();
-    /// let chunks = [IoSlice::new(b"hel"), IoSlice::new(b"lo")];
-    /// checksum.update_vectored(&chunks);
-    ///
-    /// let mut reference = RollingChecksum::new();
-    /// reference.update(b"hello");
-    ///
-    /// assert_eq!(checksum.digest(), reference.digest());
-    /// assert_eq!(checksum.value(), reference.value());
-    /// ```
     #[doc(alias = "writev")]
     #[inline]
     pub fn update_vectored(&mut self, buffers: &[IoSlice<'_>]) {
@@ -119,7 +72,7 @@ impl RollingChecksum {
         let mut len = self.len;
 
         for slice in buffers {
-            (s1, s2, len) = Self::accumulate_chunk(s1, s2, len, slice.as_ref());
+            (s1, s2, len) = accumulate_chunk_dispatch(s1, s2, len, slice.as_ref());
         }
 
         self.s1 = s1;
@@ -128,42 +81,6 @@ impl RollingChecksum {
     }
 
     /// Updates the checksum by consuming data from an [`io::Read`] implementation.
-    ///
-    /// The method repeatedly fills `buffer` and forwards the consumed bytes to
-    /// [`update`](Self::update). It returns the total number of bytes read—
-    /// saturating at [`u64::MAX`]—so callers can validate that the expected amount
-    /// of data was processed without observing integer wraparound.
-    ///
-    /// Providing an empty buffer is rejected to avoid an infinite read loop on
-    /// streams that yield zero-byte reads. The buffer is reused for each read
-    /// operation, making the helper allocation-free and suitable for tight
-    /// transfer loops.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`io::ErrorKind::InvalidInput`] when `buffer` is empty and
-    /// otherwise propagates any error reported by the underlying reader.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rsync_checksums::RollingChecksum;
-    /// use std::io::Cursor;
-    ///
-    /// let data = b"streamed input";
-    /// let mut cursor = Cursor::new(&data[..]);
-    /// let mut checksum = RollingChecksum::new();
-    /// let mut buffer = [0u8; 4];
-    /// let read = checksum
-    ///     .update_reader_with_buffer(&mut cursor, &mut buffer)
-    ///     .expect("reader succeeds");
-    /// assert_eq!(read, data.len() as u64);
-    /// assert_eq!(checksum.digest(), {
-    ///     let mut manual = RollingChecksum::new();
-    ///     manual.update(data);
-    ///     manual.digest()
-    /// });
-    /// ```
     #[inline]
     pub fn update_reader_with_buffer<R: Read>(
         &mut self,
@@ -178,44 +95,27 @@ impl RollingChecksum {
         }
 
         let mut total = 0u64;
-
         loop {
             match reader.read(buffer) {
                 Ok(0) => break,
-                Ok(read) => {
-                    self.update(&buffer[..read]);
-                    Self::saturating_increment_total(&mut total, read);
+                Ok(n) => {
+                    self.update(&buffer[..n]);
+                    Self::saturating_increment_total(&mut total, n);
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) => return Err(err),
             }
         }
-
         Ok(total)
     }
 
-    /// Updates the checksum by reading from `reader` using an internal buffer.
-    ///
-    /// This is a convenience wrapper around
-    /// [`update_reader_with_buffer`](Self::update_reader_with_buffer) that
-    /// allocates a stack buffer of
-    /// [`DEFAULT_READER_BUFFER_LEN`](Self::DEFAULT_READER_BUFFER_LEN) bytes.
-    /// The method is useful for tests and simple call sites that do not manage
-    /// their own scratch space.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any [`io::Error`] produced by the underlying reader.
+    /// Convenience wrapper that allocates a stack buffer.
     pub fn update_reader<R: Read>(&mut self, reader: &mut R) -> io::Result<u64> {
         let mut buffer = [0u8; Self::DEFAULT_READER_BUFFER_LEN];
         self.update_reader_with_buffer(reader, &mut buffer)
     }
 
-    /// Updates the checksum by recomputing the state for a fresh block.
-    ///
-    /// This helper clears the internal state before delegating to [`update`](Self::update),
-    /// making it convenient to compute the checksum of a block without manually calling
-    /// [`reset`](Self::reset).
+    /// Clears the state and updates with `block`.
     pub fn update_from_block(&mut self, block: &[u8]) {
         self.reset();
         self.update(block);
@@ -227,14 +127,13 @@ impl RollingChecksum {
         if self.len == 0 {
             return Err(RollingError::EmptyWindow);
         }
-
         u32::try_from(self.len).map_err(|_| RollingError::WindowTooLarge { len: self.len })
     }
 
     #[inline]
     fn saturating_increment_total(total: &mut u64, amount: usize) {
-        let increment = u64::try_from(amount).unwrap_or(u64::MAX);
-        *total = total.saturating_add(increment);
+        let inc = u64::try_from(amount).unwrap_or(u64::MAX);
+        *total = total.saturating_add(inc);
     }
 
     #[cfg(test)]
@@ -242,34 +141,7 @@ impl RollingChecksum {
         Self::saturating_increment_total(total, amount);
     }
 
-    #[inline]
-    fn accumulate_chunk(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
-        if chunk.is_empty() {
-            return (s1, s2, len);
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            if let Some(result) = x86::try_accumulate_chunk(s1, s2, len, chunk) {
-                return mask_result(result);
-            }
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            return mask_result(neon::accumulate_chunk(s1, s2, len, chunk));
-        }
-
-        mask_result(accumulate_chunk_scalar_raw(s1, s2, len, chunk))
-    }
-
-    /// Performs the rolling checksum update by removing `outgoing` and appending `incoming`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RollingError::EmptyWindow`] if the checksum has not been initialised with a
-    /// block and [`RollingError::WindowTooLarge`] when the window length exceeds what the
-    /// upstream algorithm supports (32 bits).
+    /// Rolls the checksum by removing one byte and adding another.
     #[inline]
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
@@ -289,19 +161,7 @@ impl RollingChecksum {
         Ok(())
     }
 
-    /// Rolls the checksum forward by replacing multiple bytes at once.
-    ///
-    /// The method behaves as if [`roll`](Self::roll) were called repeatedly for each pair of
-    /// outgoing and incoming bytes. Providing slices of different lengths is rejected to avoid
-    /// ambiguous state. Passing empty slices is allowed and leaves the checksum unchanged after
-    /// verifying that the checksum has been seeded with an initial window.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RollingError::MismatchedSliceLength`] when the outgoing and incoming slices
-    /// differ in length, [`RollingError::EmptyWindow`] if the checksum has not been seeded with a
-    /// block yet, and [`RollingError::WindowTooLarge`] if the internal window length exceeds the
-    /// upstream limit.
+    /// Rolls multiple bytes at once.
     #[inline]
     pub fn roll_many(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
         if outgoing.len() != incoming.len() {
@@ -320,9 +180,9 @@ impl RollingChecksum {
         let mut s1 = self.s1;
         let mut s2 = self.s2;
 
-        for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
-            let out = u32::from(out);
-            let inn = u32::from(inn);
+        for (&out_b, &in_b) in outgoing.iter().zip(incoming.iter()) {
+            let out = u32::from(out_b);
+            let inn = u32::from(in_b);
 
             s1 = s1.wrapping_sub(out).wrapping_add(inn) & 0xffff;
             s2 = s2
@@ -333,7 +193,6 @@ impl RollingChecksum {
 
         self.s1 = s1;
         self.s2 = s2;
-
         Ok(())
     }
 
@@ -344,12 +203,6 @@ impl RollingChecksum {
     }
 
     /// Returns the current state as a structured digest.
-    ///
-    /// Callers that prefer trait-based conversions may also use
-    /// [`RollingDigest::from`] with either an owned or borrowed
-    /// [`RollingChecksum`] thanks to the blanket [`From`] implementations
-    /// provided by this crate. The method remains the canonical way to extract
-    /// the digest without moving the checksum out of its owner.
     #[must_use]
     pub fn digest(&self) -> RollingDigest {
         RollingDigest::new(self.s1 as u16, self.s2 as u16, self.len)
@@ -364,24 +217,67 @@ impl RollingChecksum {
 }
 
 impl From<RollingDigest> for RollingChecksum {
-    /// Converts a [`RollingDigest`] back into a [`RollingChecksum`] state.
     fn from(digest: RollingDigest) -> Self {
         Self::from_digest(digest)
     }
 }
 
 impl From<RollingChecksum> for RollingDigest {
-    /// Converts an owned [`RollingChecksum`] into its corresponding digest.
     fn from(checksum: RollingChecksum) -> Self {
         checksum.digest()
     }
 }
 
 impl From<&RollingChecksum> for RollingDigest {
-    /// Converts a borrowed [`RollingChecksum`] into its corresponding digest.
     fn from(checksum: &RollingChecksum) -> Self {
         checksum.digest()
     }
+}
+
+/// Architecture-neutral dispatcher:
+/// 1. try arch-accelerated implementation,
+/// 2. fall back to scalar.
+#[inline]
+fn accumulate_chunk_dispatch(
+    s1: u32,
+    s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> (u32, u32, usize) {
+    if chunk.is_empty() {
+        return (s1, s2, len);
+    }
+
+    if let Some(accel) = accumulate_chunk_arch(s1, s2, len, chunk) {
+        return mask_result(accel);
+    }
+
+    mask_result(accumulate_chunk_scalar_raw(s1, s2, len, chunk))
+}
+
+/// Arch-specific strategy: returns `Some(...)` if this arch has a fast path,
+/// otherwise `None`. This keeps the top-level dispatcher linear and avoids
+/// unreachable-code patterns.
+#[inline]
+fn accumulate_chunk_arch(
+    s1: u32,
+    s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> Option<(u32, u32, usize)> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        return Some(neon::accumulate_chunk(s1, s2, len, chunk));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if let Some(result) = x86::try_accumulate_chunk(s1, s2, len, chunk) {
+            return Some(result);
+        }
+    }
+
+    None
 }
 
 #[inline]
@@ -442,6 +338,7 @@ pub(crate) mod x86 {
         __m128i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16, _mm_setzero_si128,
         _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
     };
+
     const BLOCK_LEN: usize = 16;
 
     #[inline]
@@ -520,9 +417,9 @@ pub(crate) mod x86 {
 
         let mut buf = [0u16; 8];
         _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, weighted_high);
-        let mut sum = buf.iter().fold(0u32, |acc, &value| acc + u32::from(value));
+        let mut sum = buf.iter().fold(0u32, |acc, &v| acc + u32::from(v));
         _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, weighted_low);
-        sum += buf.iter().fold(0u32, |acc, &value| acc + u32::from(value));
+        sum += buf.iter().fold(0u32, |acc, &v| acc + u32::from(v));
         sum
     }
 
@@ -539,8 +436,8 @@ pub(crate) mod x86 {
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub(crate) mod neon {
-    #![allow(unsafe_op_in_unsafe_fn)]
     use super::accumulate_chunk_scalar_raw;
     use core::arch::aarch64::{
         uint16x8_t, vaddvq_u16, vget_high_u8, vget_low_u8, vld1q_u8, vld1q_u16, vmovl_u8, vmulq_u16,
@@ -608,5 +505,19 @@ pub(crate) mod neon {
         chunk: &[u8],
     ) -> (u32, u32, usize) {
         unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_reader_buffer_is_rejected() {
+        let mut c = RollingChecksum::new();
+        let mut rdr = &b""[..];
+        let mut buf: [u8; 0] = [];
+        let err = c.update_reader_with_buffer(&mut rdr, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 }
