@@ -336,6 +336,8 @@ mod transfer_request_with_cvs_tests;
 mod transfer_request_with_delete_tests;
 #[path = "transfer_request_with_exclude.rs"]
 mod transfer_request_with_exclude_tests;
+#[path = "transfer_request_with_files_from.rs"]
+mod transfer_request_with_files_from_tests;
 #[path = "transfer_request_with_files.rs"]
 mod transfer_request_with_files_tests;
 #[path = "transfer_request_with_filter.rs"]
