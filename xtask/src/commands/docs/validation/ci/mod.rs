@@ -1,4 +1,5 @@
 mod matrix;
+mod orchestrator;
 mod test_job;
 pub(crate) mod yaml;
 
@@ -12,6 +13,13 @@ pub(super) fn validate_ci_cross_compile_matrix(
     failures: &mut Vec<String>,
 ) -> TaskResult<()> {
     matrix::validate_ci_cross_compile_matrix(workspace, branding, failures)
+}
+
+pub(super) fn validate_ci_orchestrator(
+    workspace: &Path,
+    failures: &mut Vec<String>,
+) -> TaskResult<()> {
+    orchestrator::validate_ci_orchestrator(workspace, failures)
 }
 
 pub(super) fn validate_ci_test_job(workspace: &Path, failures: &mut Vec<String>) -> TaskResult<()> {
