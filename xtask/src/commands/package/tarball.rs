@@ -472,6 +472,7 @@ mod tests {
             legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
             source: String::from("https://example.invalid"),
             cross_compile,
+            cross_compile_matrix: BTreeMap::new(),
         }
     }
 
