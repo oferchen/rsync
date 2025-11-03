@@ -13,6 +13,7 @@ pub(super) fn validate_documents(workspace: &Path) -> TaskResult<()> {
 
     branding::validate_branding_documents(workspace, &branding, &mut failures)?;
     ci::validate_ci_cross_compile_matrix(workspace, &branding, &mut failures)?;
+    ci::validate_ci_orchestrator(workspace, &mut failures)?;
     ci::validate_ci_test_job(workspace, &mut failures)?;
 
     if failures.is_empty() {
