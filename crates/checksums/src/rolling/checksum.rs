@@ -22,7 +22,11 @@ impl RollingChecksum {
     /// Creates a new rolling checksum with zeroed state.
     #[must_use]
     pub const fn new() -> Self {
-        Self { s1: 0, s2: 0, len: 0 }
+        Self {
+            s1: 0,
+            s2: 0,
+            len: 0,
+        }
     }
 
     /// Reconstructs a rolling checksum from a previously captured digest.
@@ -238,12 +242,7 @@ impl From<&RollingChecksum> for RollingDigest {
 /// 1. try arch-accelerated implementation,
 /// 2. fall back to scalar.
 #[inline]
-fn accumulate_chunk_dispatch(
-    s1: u32,
-    s2: u32,
-    len: usize,
-    chunk: &[u8],
-) -> (u32, u32, usize) {
+fn accumulate_chunk_dispatch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
     if chunk.is_empty() {
         return (s1, s2, len);
     }
@@ -259,12 +258,7 @@ fn accumulate_chunk_dispatch(
 /// otherwise `None`. This keeps the top-level dispatcher linear and avoids
 /// unreachable-code patterns.
 #[inline]
-fn accumulate_chunk_arch(
-    s1: u32,
-    s2: u32,
-    len: usize,
-    chunk: &[u8],
-) -> Option<(u32, u32, usize)> {
+fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
     #[cfg(target_arch = "aarch64")]
     {
         return Some(neon::accumulate_chunk(s1, s2, len, chunk));
