@@ -40,7 +40,7 @@ where
     match parse_args(arguments) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
-            let mut message = rsync_error!(1, "{}", error).with_role(Role::Daemon);
+            let message = rsync_error!(1, "{}", error).with_role(Role::Daemon);
             if write_message(&message, &mut stderr_sink).is_err() {
                 let _ = writeln!(stderr_sink.writer_mut(), "{error}");
             }
