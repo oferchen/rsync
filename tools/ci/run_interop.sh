@@ -18,7 +18,6 @@ ensure_workspace_binaries() {
   if [[ -x "${target_dir}/oc-rsync" && -x "${target_dir}/oc-rsyncd" ]]; then
     return
   fi
-
   cargo --locked build --profile dist --bin oc-rsync --bin oc-rsyncd
 }
 
@@ -70,7 +69,6 @@ ensure_upstream_build() {
   configure_help=$(./configure --help)
   local -a configure_args=("--prefix=${install_dir}")
 
-  # Keep your feature probing so builds succeed on older tarballs
   if grep -q -- "--disable-xxhash" <<<"$configure_help"; then
     configure_args+=("--disable-xxhash")
   fi
@@ -93,7 +91,6 @@ stop_oc_daemon() {
     wait "${oc_pid}" >/dev/null 2>&1 || true
     oc_pid=""
   fi
-
   if [[ -n "${oc_pid_file_current:-}" ]]; then
     rm -f "${oc_pid_file_current}"
     oc_pid_file_current=""
@@ -106,7 +103,6 @@ stop_upstream_daemon() {
     wait "${up_pid}" >/dev/null 2>&1 || true
     up_pid=""
   fi
-
   if [[ -n "${up_pid_file_current:-}" ]]; then
     rm -f "${up_pid_file_current}"
     up_pid_file_current=""
@@ -131,11 +127,12 @@ start_oc_daemon() {
 
   oc_pid_file_current="$pid_file"
 
+  # add RUST_BACKTRACE for better CI logs if it crashes
+  RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
-    OC_RSYNC_FALLBACK="$fallback_client" \
+  OC_RSYNC_FALLBACK="$fallback_client" \
     "$oc_daemon" --config "$config" --daemon --no-detach --log-file "$log_file" &
   oc_pid=$!
-  # Give it a moment to write pid file / listen
   sleep 1
 }
 
@@ -196,33 +193,50 @@ UP_CONF
 
   echo "Testing upstream rsync ${version} client -> oc-rsyncd"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file"
-  "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null
+  if ! "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
+    echo "FAIL: upstream rsync ${version} -> oc-rsyncd"
+    echo "--- oc-rsyncd log (${oc_log}) ---"
+    cat "$oc_log" || true
+    stop_oc_daemon
+    return 1
+  fi
 
   if [[ ! -f "${oc_dest}/payload.txt" ]]; then
-    echo "Upstream rsync ${version} client failed to transfer to oc-rsyncd" >&2
-    exit 1
+    echo "FAIL: upstream rsync ${version} reported success but file missing in oc dest"
+    echo "--- oc-rsyncd log (${oc_log}) ---"
+    cat "$oc_log" || true
+    stop_oc_daemon
+    return 1
   fi
 
   stop_oc_daemon
 
   echo "Testing oc-rsync client -> upstream rsync ${version} daemon"
   start_upstream_daemon "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
-  "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null
+  if ! "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null 2>>"$up_log"; then
+    echo "FAIL: oc-rsync -> upstream rsync ${version} daemon"
+    echo "--- upstream rsyncd log (${up_log}) ---"
+    cat "$up_log" || true
+    stop_upstream_daemon
+    return 1
+  fi
 
   if [[ ! -f "${up_dest}/payload.txt" ]]; then
-    echo "oc-rsync client failed to transfer to upstream rsync ${version} daemon" >&2
-    exit 1
+    echo "FAIL: oc-rsync client -> upstream rsync ${version} daemon: file missing"
+    echo "--- upstream rsyncd log (${up_log}) ---"
+    cat "$up_log" || true
+    stop_upstream_daemon
+    return 1
   fi
 
   stop_upstream_daemon
+  return 0
 }
 
 # ----- main flow -----
-
 ensure_workspace_binaries
 
 mkdir -p "$upstream_src_root" "$upstream_install_root"
-
 for version in "${versions[@]}"; do
   ensure_upstream_build "$version"
 done
@@ -243,23 +257,31 @@ gid=$(id -g)
 oc_identity=""
 up_identity=""
 if [[ ${uid} -eq 0 ]]; then
-  # only set uid/gid when running as root to match your original logic
   printf -v oc_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
   printf -v up_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
 fi
 
 port_base=2873
+failed=()
 
 for version in "${versions[@]}"; do
   upstream_binary="${upstream_install_root}/${version}/bin/rsync"
   if [[ ! -x "$upstream_binary" ]]; then
     echo "Missing upstream rsync binary for version ${version}" >&2
-    exit 1
+    failed+=("$version (missing binary)")
+    continue
   fi
 
   echo "Running interoperability checks against upstream rsync ${version}"
-  run_interop_case "$version" "$upstream_binary" "$port_base" $((port_base + 1))
+  if ! run_interop_case "$version" "$upstream_binary" "$port_base" $((port_base + 1)); then
+    failed+=("$version")
+  fi
   port_base=$((port_base + 2))
 done
+
+if (( ${#failed[@]} > 0 )); then
+  echo "Interop failures: ${failed[*]}" >&2
+  exit 1
+fi
 
 echo "All interoperability checks succeeded."
