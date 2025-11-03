@@ -19,8 +19,8 @@ use rsync_logging::MessageSink;
 use crate::{
     config::DaemonConfig,
     daemon::{
-        configured_fallback_binary, parse_args, render_help, run_daemon, write_message, MAX_EXIT_CODE,
-        ParsedArgs,
+        MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help, run_daemon,
+        write_message,
     },
 };
 
@@ -405,7 +405,10 @@ mod tests {
         ];
         assert!(remainder_has_config(&args));
 
-        let args2 = [OsString::from("--config=/tmp/file"), OsString::from("--daemon")];
+        let args2 = [
+            OsString::from("--config=/tmp/file"),
+            OsString::from("--daemon"),
+        ];
         assert!(remainder_has_config(&args2));
 
         let args3 = [OsString::from("--daemon"), OsString::from("--no-detach")];
