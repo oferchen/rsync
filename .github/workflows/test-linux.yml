@@ -53,7 +53,7 @@ jobs:
         run: cargo build --workspace --all-features --locked
 
       - name: Unit tests (nextest)
-        run: cargo nextest run --workspace --all-features --no-capture --locked || true
+        run: cargo nextest run --workspace --all-features --no-capture --locked
 
       - name: sccache stats (best-effort)
         if: always()
