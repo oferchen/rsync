@@ -110,7 +110,6 @@ stop_oc_daemon() {
         wait "${oc_pid}" >/dev/null 2>&1 || true
       fi
       sleep 0.1
-    done
     oc_delegate_pid=""
   fi
 
