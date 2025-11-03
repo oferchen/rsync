@@ -20,7 +20,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
     let direct_path = Path::new(binary);
     if has_explicit_path(direct_path) {
-        return vec![direct_path.to_path_buf()];
+        return candidates_for_explicit_path(direct_path);
     }
 
     let Some(path_env) = env::var_os("PATH") else {
@@ -41,26 +41,62 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
             continue;
         }
 
-        #[allow(clippy::needless_borrow)]
+        let base = dir.join(direct_path);
         for ext in &extensions {
-            let mut candidate = dir.join(direct_path);
-            if !ext.is_empty() {
-                let ext_text = ext.to_string_lossy();
-                let trimmed = ext_text.trim();
-                if trimmed.is_empty() {
-                    continue;
+            if let Some(candidate) = apply_extension(&base, ext) {
+                if seen.insert(candidate.clone()) {
+                    results.push(candidate);
                 }
-                let ext_without_dot = trimmed.strip_prefix('.').unwrap_or(trimmed);
-                candidate.set_extension(ext_without_dot);
-            }
-
-            if seen.insert(candidate.clone()) {
-                results.push(candidate);
             }
         }
     }
 
     results
+}
+
+#[cfg(windows)]
+fn candidates_for_explicit_path(path: &Path) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+
+    push_candidate(path.to_path_buf(), &mut seen, &mut results);
+
+    for ext in collect_windows_extensions(path.extension()) {
+        if let Some(candidate) = apply_extension(path, &ext) {
+            push_candidate(candidate, &mut seen, &mut results);
+        }
+    }
+
+    results
+}
+
+#[cfg(not(windows))]
+fn candidates_for_explicit_path(path: &Path) -> Vec<PathBuf> {
+    vec![path.to_path_buf()]
+}
+
+#[cfg(windows)]
+fn push_candidate(candidate: PathBuf, seen: &mut HashSet<PathBuf>, results: &mut Vec<PathBuf>) {
+    if seen.insert(candidate.clone()) {
+        results.push(candidate);
+    }
+}
+
+fn apply_extension(base: &Path, ext: &OsStr) -> Option<PathBuf> {
+    if ext.is_empty() {
+        return Some(base.to_path_buf());
+    }
+
+    let ext_text = ext.to_string_lossy();
+    let trimmed = ext_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let ext_without_dot = trimmed.strip_prefix('.').unwrap_or(trimmed);
+    let mut candidate = base.to_path_buf();
+    candidate.set_extension(ext_without_dot);
+    Some(candidate)
 }
 
 /// Reports whether the provided fallback executable exists and is runnable.
@@ -319,6 +355,32 @@ mod tests {
         assert_eq!(
             occurrences, 1,
             "candidate should only appear once even when PATH repeats entries"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fallback_binary_candidates_expand_explicit_windows_paths() {
+        use std::fs;
+
+        let temp_dir = TempDir::new().expect("tempdir");
+        let base_path = temp_dir.path().join("bin").join("rsync");
+        fs::create_dir_all(base_path.parent().expect("parent")).expect("create parent directory");
+
+        let exe_path = base_path.with_extension("exe");
+        fs::write(&exe_path, b"echo rsync").expect("write fallback binary candidate");
+
+        let _pathext_guard = EnvGuard::set("PATHEXT", ".exe;.cmd");
+
+        let candidates = fallback_binary_candidates(base_path.as_os_str());
+
+        assert!(
+            candidates.iter().any(|candidate| candidate == &base_path),
+            "explicit path without extension should remain in candidate list"
+        );
+        assert!(
+            candidates.iter().any(|candidate| candidate == &exe_path),
+            "explicit Windows path should expand to include PATHEXT variants"
         );
     }
 }
