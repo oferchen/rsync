@@ -40,6 +40,17 @@ This document defines the internal actors (“agents”), their responsibilities
   library and well-supported crates that are actively maintained. Avoid
   deprecated APIs, pseudo-code, or placeholder logic; every change must ship
   production-ready behaviour with comprehensive tests or parity checks.
+- **CPU-accelerated hot paths**: The rolling checksum pipeline uses
+  architecture-specific SIMD fast paths (SSE2 on `x86_64`, NEON on
+  `aarch64`) that fall back to the scalar implementation for other targets.
+  Any updates to `crates/checksums`—especially
+  `rolling::checksum::accumulate_chunk`—must keep the SIMD and scalar
+  implementations in lockstep, reuse the shared scalar helper for edge cases,
+  and extend the parity tests (`sse2_accumulate_matches_scalar_reference` and
+  `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
+  introduced. Additional CPU offloading should follow the same pattern of
+  runtime feature detection (where applicable) paired with deterministic tests
+  that compare against the scalar reference implementation.
 - **Environment guardrails for tests**: When exercising fallback overrides or
   other environment-sensitive logic in unit tests, use the existing
   `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
