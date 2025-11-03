@@ -12,7 +12,8 @@ use preflight::{
 };
 
 use super::super::{
-    extract_operands, load_file_list_operands, parse_chown_argument, transfer_requires_remote,
+    extract_operands, load_file_list_operands, parse_chown_argument, resolve_file_list_entries,
+    transfer_requires_remote,
 };
 use super::messages::{fail_with_custom_fallback, fail_with_message};
 use super::module_listing::{ModuleListingInputs, maybe_handle_module_listing};
@@ -258,6 +259,12 @@ where
         Ok(operands) => operands,
         Err(message) => return fail_with_message(message, stderr),
     };
+
+    resolve_file_list_entries(
+        &mut file_list_operands,
+        &remainder,
+        relative.unwrap_or(false),
+    );
 
     if let Some(exit_code) = maybe_handle_module_listing(
         stdout,
