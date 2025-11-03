@@ -207,6 +207,16 @@ printf 'fallback stderr\n' >&2
 exit 42
 "#;
 
+#[cfg(unix)]
+const SIGNAL_EXIT_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+
+kill -TERM "$$"
+while :; do
+  sleep 1
+done
+"#;
+
 static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn env_lock() -> &'static Mutex<()> {
@@ -217,6 +227,17 @@ fn env_lock() -> &'static Mutex<()> {
 fn write_fallback_script(dir: &Path) -> PathBuf {
     let path = dir.join("fallback.sh");
     fs::write(&path, FALLBACK_SCRIPT).expect("script written");
+    let metadata = fs::metadata(&path).expect("script metadata");
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("script permissions set");
+    path
+}
+
+#[cfg(unix)]
+fn write_signal_script(dir: &Path) -> PathBuf {
+    let path = dir.join("signal.sh");
+    fs::write(&path, SIGNAL_EXIT_SCRIPT).expect("script written");
     let metadata = fs::metadata(&path).expect("script metadata");
     let mut permissions = metadata.permissions();
     permissions.set_mode(0o755);

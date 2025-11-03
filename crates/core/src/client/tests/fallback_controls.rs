@@ -241,6 +241,28 @@ fn remote_fallback_reports_stdout_forward_errors() {
     assert!(message.contains("failed to forward fallback stdout"));
 }
 
+#[cfg(unix)]
+#[test]
+fn remote_fallback_propagates_signal_exit_code() {
+    use libc::SIGTERM;
+
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+    let temp = tempdir().expect("tempdir created");
+    let script = write_signal_script(temp.path());
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut args = baseline_fallback_args();
+    args.fallback_binary = Some(script.into_os_string());
+
+    let exit = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+        .expect("fallback invocation succeeds");
+
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    assert_eq!(exit, 128 + SIGTERM);
+}
+
 #[test]
 fn remote_fallback_reports_disabled_override() {
     let _lock = env_lock().lock().expect("env mutex poisoned");
