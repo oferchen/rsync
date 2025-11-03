@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# Changes made:
+# 1. Repaired daemon lifecycle logic: stop_oc_daemon() and stop_upstream_daemon() are now simple, self-contained
+#    functions using global state (oc_pid, up_pid, *_pid_file_current) instead of an incomplete subshell block.
+# 2. Fixed config generation in run_interop_case(): it now uses the correct per-daemon identity variables
+#    (oc_identity, up_identity) instead of the non-existent ${identity}.
+# 3. Ensured a single global workdir with a single EXIT trap that cleans up both daemons and the temp directory.
+# 4. Kept your original build flow (workspace bins → upstream rsync builds) and preserved feature-disable
+#    probing during ./configure.
+# 5. Kept everything POSIX-safe under bash with set -euo pipefail and explicit return paths.
+
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -6,6 +16,13 @@ target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
 versions=(3.0.9 3.1.3 3.4.1)
+
+# Global daemon state
+oc_pid=""
+up_pid=""
+oc_pid_file_current=""
+up_pid_file_current=""
+workdir=""
 
 ensure_workspace_binaries() {
   if [[ -x "${target_dir}/oc-rsync" && -x "${target_dir}/oc-rsyncd" ]]; then
@@ -37,7 +54,6 @@ ensure_upstream_build() {
     if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
       return
     fi
-
     rm -rf "$install_dir"
   fi
 
@@ -64,15 +80,14 @@ ensure_upstream_build() {
   configure_help=$(./configure --help)
   local -a configure_args=("--prefix=${install_dir}")
 
-  if grep -q "--disable-xxhash" <<<"$configure_help"; then
+  # Keep your feature probing so builds succeed on older tarballs
+  if grep -q -- "--disable-xxhash" <<<"$configure_help"; then
     configure_args+=("--disable-xxhash")
   fi
-
-  if grep -q "--disable-lz4" <<<"$configure_help"; then
+  if grep -q -- "--disable-lz4" <<<"$configure_help"; then
     configure_args+=("--disable-lz4")
   fi
-
-  if grep -q "--disable-md2man" <<<"$configure_help"; then
+  if grep -q -- "--disable-md2man" <<<"$configure_help"; then
     configure_args+=("--disable-md2man")
   fi
 
@@ -83,61 +98,39 @@ ensure_upstream_build() {
 }
 
 stop_oc_daemon() {
-  if [[ -n "${oc_pid:-}" ]]; then
+  if [[ -n "${oc_pid}" ]]; then
     kill "${oc_pid}" >/dev/null 2>&1 || true
     wait "${oc_pid}" >/dev/null 2>&1 || true
     oc_pid=""
   fi
 
-  echo "Running interoperability checks against upstream rsync ${version}"
-
-  (
-    set -euo pipefail
-
-    local workdir
-    workdir=$(mktemp -d)
-    local oc_pid_file="${workdir}/oc-rsyncd.pid"
-    local up_pid_file="${workdir}/upstream-rsyncd.pid"
-    local oc_delegate_pid=""
-    local oc_pid=""
-    local up_pid=""
-
-    cleanup() {
-      local status=$?
-
-      if [[ -n "${oc_pid}" ]]; then
-        kill "${oc_pid}" >/dev/null 2>&1 || true
-        wait "${oc_pid}" >/dev/null 2>&1 || true
-      fi
-      sleep 0.1
-    oc_delegate_pid=""
-  fi
-
   if [[ -n "${oc_pid_file_current:-}" ]]; then
-    rm -f "$oc_pid_file_current"
+    rm -f "${oc_pid_file_current}"
     oc_pid_file_current=""
   fi
 }
 
 stop_upstream_daemon() {
-  if [[ -n "${up_pid:-}" ]]; then
+  if [[ -n "${up_pid}" ]]; then
     kill "${up_pid}" >/dev/null 2>&1 || true
     wait "${up_pid}" >/dev/null 2>&1 || true
     up_pid=""
   fi
 
   if [[ -n "${up_pid_file_current:-}" ]]; then
-    rm -f "$up_pid_file_current"
+    rm -f "${up_pid_file_current}"
     up_pid_file_current=""
   fi
 }
 
 cleanup() {
-  local exit_code=$1
+  local exit_code=$?
   stop_oc_daemon
   stop_upstream_daemon
-  rm -rf "$workdir"
-  return "$exit_code"
+  if [[ -n "${workdir:-}" && -d "${workdir:-}" ]]; then
+    rm -rf "${workdir}"
+  fi
+  exit "$exit_code"
 }
 
 start_oc_daemon() {
@@ -147,17 +140,13 @@ start_oc_daemon() {
   local pid_file=$4
 
   oc_pid_file_current="$pid_file"
-  oc_delegate_pid=""
 
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
     OC_RSYNC_FALLBACK="$fallback_client" \
     "$oc_daemon" --config "$config" --daemon --no-detach --log-file "$log_file" &
   oc_pid=$!
+  # Give it a moment to write pid file / listen
   sleep 1
-
-  if [[ -f "$pid_file" ]]; then
-    oc_delegate_pid=$(<"$pid_file")
-  fi
 }
 
 start_upstream_daemon() {
@@ -195,7 +184,7 @@ run_interop_case() {
 pid file = ${oc_pid_file}
 port = ${oc_port}
 use chroot = false
-${identity}
+${oc_identity}
 numeric ids = yes
 [interop]
     path = ${oc_dest}
@@ -207,7 +196,7 @@ OC_CONF
 pid file = ${up_pid_file}
 port = ${upstream_port}
 use chroot = false
-${identity}
+${up_identity}
 numeric ids = yes
 [interop]
     path = ${up_dest}
@@ -217,7 +206,7 @@ UP_CONF
 
   echo "Testing upstream rsync ${version} client -> oc-rsyncd"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file"
-  "$upstream_binary" -av --timeout=10 "${src}/" rsync://127.0.0.1:${oc_port}/interop >/dev/null
+  "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null
 
   if [[ ! -f "${oc_dest}/payload.txt" ]]; then
     echo "Upstream rsync ${version} client failed to transfer to oc-rsyncd" >&2
@@ -228,7 +217,7 @@ UP_CONF
 
   echo "Testing oc-rsync client -> upstream rsync ${version} daemon"
   start_upstream_daemon "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
-  "$oc_client" -av --timeout=10 "${src}/" rsync://127.0.0.1:${upstream_port}/interop >/dev/null
+  "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null
 
   if [[ ! -f "${up_dest}/payload.txt" ]]; then
     echo "oc-rsync client failed to transfer to upstream rsync ${version} daemon" >&2
@@ -237,6 +226,8 @@ UP_CONF
 
   stop_upstream_daemon
 }
+
+# ----- main flow -----
 
 ensure_workspace_binaries
 
@@ -250,7 +241,7 @@ oc_client="${target_dir}/oc-rsync"
 oc_daemon="${target_dir}/oc-rsyncd"
 
 workdir=$(mktemp -d)
-trap 'status=$?; cleanup "$status"; exit "$status"' EXIT
+trap cleanup EXIT
 
 src="${workdir}/source"
 mkdir -p "$src"
@@ -262,6 +253,7 @@ gid=$(id -g)
 oc_identity=""
 up_identity=""
 if [[ ${uid} -eq 0 ]]; then
+  # only set uid/gid when running as root to match your original logic
   printf -v oc_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
   printf -v up_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
 fi
@@ -275,6 +267,9 @@ for version in "${versions[@]}"; do
     exit 1
   fi
 
+  echo "Running interoperability checks against upstream rsync ${version}"
   run_interop_case "$version" "$upstream_binary" "$port_base" $((port_base + 1))
   port_base=$((port_base + 2))
 done
+
+echo "All interoperability checks succeeded."
