@@ -192,6 +192,13 @@ pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("recursive")
+                    .long("recursive")
+                    .short('r')
+                    .help("Recurse into directories when processing source operands.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("checksum")
                     .long("checksum")
                     .short('c')

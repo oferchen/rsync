@@ -28,3 +28,8 @@ jobs:
     needs: lint
     uses: ./.github/workflows/cross-compile.yml
     secrets: inherit
+
+  interop:
+    needs: lint
+    uses: ./.github/workflows/interop.yml
+    secrets: inherit

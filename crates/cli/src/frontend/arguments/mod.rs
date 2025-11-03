@@ -3,6 +3,7 @@ mod env;
 mod parsed_args;
 mod parser;
 mod program_name;
+mod short_options;
 
 pub(crate) use bandwidth::BandwidthArgument;
 pub(crate) use env::env_protect_args_default;
