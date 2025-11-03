@@ -44,6 +44,13 @@
 
 ---
 
+## Status
+
+- **Compatibility**: Mirrors upstream rsync 3.4.1 (protocol 32) with Rust-branded release `3.4.1-rust`.
+- **Daemon defaults**: Ships `/etc/oc-rsyncd/oc-rsyncd.conf` as the primary configuration file, matching packaging and systemd units.
+
+---
+
 ## Project Structure
 
 ```

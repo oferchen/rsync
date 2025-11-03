@@ -40,6 +40,8 @@ pub struct WorkspaceBranding {
     pub source: String,
     /// Cross-compilation targets grouped by operating system.
     pub cross_compile: BTreeMap<String, Vec<String>>,
+    /// Expected matrix availability flags keyed by platform identifier.
+    pub cross_compile_matrix: BTreeMap<String, bool>,
 }
 
 impl WorkspaceBranding {
@@ -138,6 +140,7 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         legacy_daemon_secrets: metadata_path(oc, "legacy_daemon_secrets")?,
         source: metadata_str(oc, "source")?,
         cross_compile: metadata_cross_compile(oc)?,
+        cross_compile_matrix: metadata_cross_compile_matrix(oc)?,
     })
 }
 
@@ -203,6 +206,40 @@ fn metadata_cross_compile(table: &Value) -> TaskResult<BTreeMap<String, Vec<Stri
         return Err(metadata_error(
             "cross_compile metadata must contain at least one platform",
         ));
+    }
+
+    Ok(result)
+}
+
+fn metadata_cross_compile_matrix(table: &Value) -> TaskResult<BTreeMap<String, bool>> {
+    let Some(matrix_value) = table.get("cross_compile_matrix") else {
+        return Ok(BTreeMap::new());
+    };
+
+    let matrix_table = matrix_value
+        .as_table()
+        .ok_or_else(|| metadata_error("cross_compile_matrix metadata must be a table"))?;
+
+    let mut result = BTreeMap::new();
+    for (platform, value) in matrix_table {
+        let enabled = match value {
+            Value::Boolean(flag) => *flag,
+            Value::Table(inner) => inner
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    metadata_error(format!(
+                        "cross_compile_matrix entry '{platform}' must provide a boolean 'enabled' field"
+                    ))
+                })?,
+            _ => {
+                return Err(metadata_error(format!(
+                    "cross_compile_matrix entry '{platform}' must be a boolean or table"
+                )))
+            }
+        };
+
+        result.insert(platform.to_owned(), enabled);
     }
 
     Ok(result)
@@ -278,6 +315,15 @@ source = "https://github.com/oferchen/rsync"
                     String::from("windows"),
                     vec![String::from("x86_64"), String::from("aarch64")],
                 ),
+            ]),
+            cross_compile_matrix: BTreeMap::from([
+                (String::from("darwin-aarch64"), true),
+                (String::from("darwin-x86_64"), true),
+                (String::from("linux-aarch64"), true),
+                (String::from("linux-x86_64"), true),
+                (String::from("windows-aarch64"), false),
+                (String::from("windows-x86"), false),
+                (String::from("windows-x86_64"), false),
             ]),
         };
         assert_eq!(branding, expected);

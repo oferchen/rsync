@@ -61,6 +61,12 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
         .map(|(os, archs)| (os.clone(), archs.clone()))
         .collect();
 
+    let cross_compile_matrix: BTreeMap<_, _> = branding
+        .cross_compile_matrix
+        .iter()
+        .map(|(platform, enabled)| (platform.clone(), *enabled))
+        .collect();
+
     let value = json!({
         "brand": branding.brand,
         "upstream_version": branding.upstream_version,
@@ -87,6 +93,7 @@ fn render_branding_json(branding: &WorkspaceBranding) -> TaskResult<String> {
             .to_string(),
         "source": branding.source,
         "cross_compile": cross_compile,
+        "cross_compile_matrix": cross_compile_matrix,
     });
 
     serde_json::to_string_pretty(&value).map_err(|error| {
@@ -149,6 +156,13 @@ mod tests {
                     vec![String::from("x86_64"), String::from("aarch64")],
                 ),
                 (String::from("windows"), vec![String::from("x86_64")]),
+            ]),
+            cross_compile_matrix: BTreeMap::from([
+                (String::from("linux-x86_64"), true),
+                (String::from("linux-aarch64"), true),
+                (String::from("darwin-x86_64"), true),
+                (String::from("darwin-aarch64"), true),
+                (String::from("windows-x86_64"), true),
             ]),
         }
     }

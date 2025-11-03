@@ -27,6 +27,14 @@ source = "https://github.com/oferchen/rsync"
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
 windows = ["x86_64", "aarch64"]
+[workspace.metadata.oc_rsync.cross_compile_matrix]
+"linux-x86_64" = true
+"linux-aarch64" = true
+"darwin-x86_64" = true
+"darwin-aarch64" = true
+"windows-x86_64" = false
+"windows-aarch64" = false
+"windows-x86" = false
 "#;
 
 fn write_manifest(workspace: &Path) {
@@ -167,7 +175,7 @@ jobs:
       matrix:
         platform:
           - name: windows-x86_64
-            enabled: true
+            enabled: false
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             build_command: zigbuild
@@ -177,7 +185,7 @@ jobs:
             package_linux: false
             generate_sbom: false
           - name: windows-aarch64
-            enabled: true
+            enabled: false
             runner: windows-latest
             target: aarch64-pc-windows-msvc
             build_command: zigbuild

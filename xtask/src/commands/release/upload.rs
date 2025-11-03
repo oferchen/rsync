@@ -434,6 +434,11 @@ mod tests {
                 (String::from("macos"), vec![String::from("x86_64")]),
                 (String::from("windows"), vec![String::from("x86_64")]),
             ]),
+            cross_compile_matrix: BTreeMap::from([
+                (String::from("linux-x86_64"), true),
+                (String::from("darwin-x86_64"), true),
+                (String::from("windows-x86_64"), true),
+            ]),
         }
     }
 
