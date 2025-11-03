@@ -28,9 +28,9 @@ jobs:
             enabled: false
             runner: windows-latest
             target: aarch64-pc-windows-msvc
-            build_command: zigbuild
+            build_command: build
             build_daemon: false
-            uses_zig: true
+            uses_zig: false
             needs_cross_gcc: false
             package_linux: false
             generate_sbom: false
@@ -38,9 +38,9 @@ jobs:
             enabled: false
             runner: windows-latest
             target: i686-pc-windows-msvc
-            build_command: zigbuild
+            build_command: build
             build_daemon: false
-            uses_zig: true
+            uses_zig: false
             needs_cross_gcc: false
             package_linux: false
             generate_sbom: false

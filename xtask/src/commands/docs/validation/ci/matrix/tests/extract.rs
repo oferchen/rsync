@@ -14,9 +14,9 @@ fn extract_matrix_entry_parses_enabled_flag() {
       - name: windows-x86
         enabled: false
         target: i686-pc-windows-msvc
-        build_command: zigbuild
+        build_command: build
         build_daemon: false
-        uses_zig: true
+        uses_zig: false
         needs_cross_gcc: false
         generate_sbom: false
     "#;
@@ -33,9 +33,9 @@ fn extract_matrix_entry_parses_enabled_flag() {
     let windows = extract_matrix_entry(contents, "windows-x86").expect("windows entry");
     assert_eq!(windows.enabled, Some(false));
     assert_eq!(windows.target.as_deref(), Some("i686-pc-windows-msvc"));
-    assert_eq!(windows.build_command.as_deref(), Some("zigbuild"));
+    assert_eq!(windows.build_command.as_deref(), Some("build"));
     assert_eq!(windows.build_daemon, Some(false));
-    assert_eq!(windows.uses_zig, Some(true));
+    assert_eq!(windows.uses_zig, Some(false));
     assert_eq!(windows.needs_cross_gcc, Some(false));
     assert_eq!(windows.generate_sbom, Some(false));
 }

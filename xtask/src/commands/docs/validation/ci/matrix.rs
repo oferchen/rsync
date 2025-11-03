@@ -110,9 +110,9 @@ fn validate_platform_workflow(
             MatrixExpectations {
                 enabled: matrix_expected_enabled(branding, "windows", "x86"),
                 target: expected_target("windows", "x86"),
-                build_command: Some("zigbuild"),
+                build_command: Some("build"),
                 build_daemon: Some(false),
-                uses_zig: Some(true),
+                uses_zig: Some(false),
                 generate_sbom: Some(false),
                 needs_cross_gcc: Some(false),
             },
@@ -456,8 +456,8 @@ fn expected_target(os: &str, arch: &str) -> Option<&'static str> {
 
 fn expected_build_command(os: &str) -> &'static str {
     match os {
-        "linux" => "build",
-        "macos" | "windows" => "zigbuild",
+        "linux" | "windows" => "build",
+        "macos" => "zigbuild",
         _ => "build",
     }
 }
@@ -467,7 +467,7 @@ fn expected_build_daemon(os: &str, _arch: &str) -> bool {
 }
 
 fn expected_uses_zig(os: &str) -> bool {
-    matches!(os, "macos" | "windows")
+    matches!(os, "macos")
 }
 
 fn expected_generate_sbom(os: &str) -> bool {
