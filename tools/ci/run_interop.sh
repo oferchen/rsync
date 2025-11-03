@@ -14,12 +14,13 @@ mkdir -p "${upstream_dir}" "${upstream_install}"
 
 if [[ ! -x "${upstream_install}/bin/rsync" ]]; then
   rm -rf "${upstream_dir}"/*
-  upstream_url="https://github.com/RsyncProject/rsync/archive/refs/tags/v3.4.1.tar.gz"
+  upstream_url="https://rsync.samba.org/ftp/rsync/src/rsync-3.4.1.tar.gz"
   curl -L --fail --silent --show-error --retry 5 --retry-delay 2 "$upstream_url" | tar -xz -C "${upstream_dir}"
   src_dir=$(find "${upstream_dir}" -maxdepth 1 -mindepth 1 -type d | head -n1)
   pushd "$src_dir" >/dev/null
-  if [[ ! -f configure ]]; then
-    ./prepare-source >/dev/null
+  if [[ ! -x configure ]]; then
+    echo "Upstream rsync source tree is missing a configure script" >&2
+    exit 1
   fi
   ./configure --prefix="${upstream_install}" --disable-md2man --disable-xxhash --disable-lz4 >/dev/null
   make -j"$(nproc)" >/dev/null
@@ -79,13 +80,23 @@ printf 'interop-test\n' >"${src}/payload.txt"
 uid=$(id -u)
 gid=$(id -g)
 
+oc_identity=""
+up_identity=""
+# Upstream rsync attempts to adjust process credentials when `uid`/`gid` are
+# present in the configuration file. Non-root users lack permission to call
+# setgroups(2), so omit those directives unless the harness is executing with
+# effective UID 0.
+if [[ ${uid} -eq 0 ]]; then
+  printf -v oc_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
+  printf -v up_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
+fi
+
 oc_conf="${workdir}/oc-rsyncd.conf"
 cat >"$oc_conf" <<OC_CONF
 pid file = ${workdir}/oc-rsyncd.pid
 port = 2873
 use chroot = false
-uid = ${uid}
-gid = ${gid}
+${oc_identity}
 numeric ids = yes
 [interop]
     path = ${oc_dest}
@@ -98,8 +109,7 @@ cat >"$up_conf" <<UP_CONF
 pid file = ${workdir}/upstream-rsyncd.pid
 port = 2874
 use chroot = false
-uid = ${uid}
-gid = ${gid}
+${up_identity}
 numeric ids = yes
 [interop]
     path = ${up_dest}
