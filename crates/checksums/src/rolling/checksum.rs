@@ -435,14 +435,13 @@ pub(crate) fn accumulate_chunk_scalar_for_tests(
 
 #[cfg(target_arch = "x86_64")]
 #[allow(unsafe_code)]
+#[allow(unsafe_op_in_unsafe_fn)]
 pub(crate) mod x86 {
-    #![allow(unsafe_op_in_unsafe_fn)]
     use super::accumulate_chunk_scalar_raw;
     use core::arch::x86_64::{
         __m128i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16, _mm_setzero_si128,
         _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
     };
-
     const BLOCK_LEN: usize = 16;
 
     #[inline]
