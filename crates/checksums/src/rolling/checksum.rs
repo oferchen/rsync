@@ -243,32 +243,24 @@ impl RollingChecksum {
     }
 
     #[inline]
-    fn accumulate_chunk(mut s1: u32, mut s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
+    fn accumulate_chunk(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
         if chunk.is_empty() {
             return (s1, s2, len);
         }
 
-        let mut iter = chunk.chunks_exact(4);
-        for block in &mut iter {
-            s1 = s1.wrapping_add(u32::from(block[0]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[1]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[2]));
-            s2 = s2.wrapping_add(s1);
-
-            s1 = s1.wrapping_add(u32::from(block[3]));
-            s2 = s2.wrapping_add(s1);
+        #[cfg(target_arch = "x86_64")]
+        {
+            if let Some(result) = x86::try_accumulate_chunk(s1, s2, len, chunk) {
+                return mask_result(result);
+            }
         }
 
-        for &byte in iter.remainder() {
-            s1 = s1.wrapping_add(u32::from(byte));
-            s2 = s2.wrapping_add(s1);
+        #[cfg(target_arch = "aarch64")]
+        {
+            return mask_result(neon::accumulate_chunk(s1, s2, len, chunk));
         }
 
-        (s1 & 0xffff, s2 & 0xffff, len.saturating_add(chunk.len()))
+        mask_result(accumulate_chunk_scalar_raw(s1, s2, len, chunk))
     }
 
     /// Performs the rolling checksum update by removing `outgoing` and appending `incoming`.
@@ -389,5 +381,233 @@ impl From<&RollingChecksum> for RollingDigest {
     /// Converts a borrowed [`RollingChecksum`] into its corresponding digest.
     fn from(checksum: &RollingChecksum) -> Self {
         checksum.digest()
+    }
+}
+
+#[inline]
+fn mask_result((s1, s2, len): (u32, u32, usize)) -> (u32, u32, usize) {
+    (s1 & 0xffff, s2 & 0xffff, len)
+}
+
+#[inline]
+fn accumulate_chunk_scalar_raw(
+    mut s1: u32,
+    mut s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> (u32, u32, usize) {
+    if chunk.is_empty() {
+        return (s1, s2, len);
+    }
+
+    let mut iter = chunk.chunks_exact(4);
+    for block in &mut iter {
+        s1 = s1.wrapping_add(u32::from(block[0]));
+        s2 = s2.wrapping_add(s1);
+
+        s1 = s1.wrapping_add(u32::from(block[1]));
+        s2 = s2.wrapping_add(s1);
+
+        s1 = s1.wrapping_add(u32::from(block[2]));
+        s2 = s2.wrapping_add(s1);
+
+        s1 = s1.wrapping_add(u32::from(block[3]));
+        s2 = s2.wrapping_add(s1);
+    }
+
+    for &byte in iter.remainder() {
+        s1 = s1.wrapping_add(u32::from(byte));
+        s2 = s2.wrapping_add(s1);
+    }
+
+    (s1, s2, len.saturating_add(chunk.len()))
+}
+
+#[cfg(test)]
+pub(crate) fn accumulate_chunk_scalar_for_tests(
+    s1: u32,
+    s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> (u32, u32, usize) {
+    accumulate_chunk_scalar_raw(s1, s2, len, chunk)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+pub(crate) mod x86 {
+    #![allow(unsafe_op_in_unsafe_fn)]
+    use super::accumulate_chunk_scalar_raw;
+    use core::arch::x86_64::{
+        __m128i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16, _mm_setzero_si128,
+        _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+    };
+
+    const BLOCK_LEN: usize = 16;
+
+    #[inline]
+    pub(super) fn try_accumulate_chunk(
+        s1: u32,
+        s2: u32,
+        len: usize,
+        chunk: &[u8],
+    ) -> Option<(u32, u32, usize)> {
+        if chunk.len() < BLOCK_LEN {
+            return None;
+        }
+
+        if !std::arch::is_x86_feature_detected!("sse2") {
+            return None;
+        }
+
+        Some(unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) })
+    }
+
+    #[target_feature(enable = "sse2")]
+    unsafe fn accumulate_chunk_sse2(
+        mut s1: u32,
+        mut s2: u32,
+        mut len: usize,
+        mut chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        let zero = _mm_setzero_si128();
+        let high_weights = _mm_set_epi16(9, 10, 11, 12, 13, 14, 15, 16);
+        let low_weights = _mm_set_epi16(1, 2, 3, 4, 5, 6, 7, 8);
+
+        while chunk.len() >= BLOCK_LEN {
+            let block = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
+            let block_sum = sum_block(block, zero);
+            let block_prefix = prefix_sum(block, zero, high_weights, low_weights);
+
+            s2 = s2.wrapping_add(block_prefix);
+            s2 = s2.wrapping_add(s1.wrapping_mul(BLOCK_LEN as u32));
+            s1 = s1.wrapping_add(block_sum);
+            len = len.saturating_add(BLOCK_LEN);
+            chunk = &chunk[BLOCK_LEN..];
+        }
+
+        if !chunk.is_empty() {
+            let (ns1, ns2, nlen) = accumulate_chunk_scalar_raw(s1, s2, len, chunk);
+            s1 = ns1;
+            s2 = ns2;
+            len = nlen;
+        }
+
+        (s1, s2, len)
+    }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    unsafe fn sum_block(block: __m128i, zero: __m128i) -> u32 {
+        let sad = _mm_sad_epu8(block, zero);
+        let mut sums = [0i64; 2];
+        _mm_storeu_si128(sums.as_mut_ptr() as *mut __m128i, sad);
+        (sums[0] as u64 + sums[1] as u64) as u32
+    }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    unsafe fn prefix_sum(
+        block: __m128i,
+        zero: __m128i,
+        high_weights: __m128i,
+        low_weights: __m128i,
+    ) -> u32 {
+        let high = _mm_unpacklo_epi8(block, zero);
+        let low = _mm_unpackhi_epi8(block, zero);
+
+        let weighted_high = _mm_mullo_epi16(high, high_weights);
+        let weighted_low = _mm_mullo_epi16(low, low_weights);
+
+        let mut buf = [0u16; 8];
+        _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, weighted_high);
+        let mut sum = buf.iter().fold(0u32, |acc, &value| acc + u32::from(value));
+        _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, weighted_low);
+        sum += buf.iter().fold(0u32, |acc, &value| acc + u32::from(value));
+        sum
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accumulate_chunk_sse2_for_tests(
+        s1: u32,
+        s2: u32,
+        len: usize,
+        chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[allow(unsafe_code)]
+pub(crate) mod neon {
+    #![allow(unsafe_op_in_unsafe_fn)]
+    use super::accumulate_chunk_scalar_raw;
+    use core::arch::aarch64::{
+        uint16x8_t, vaddvq_u16, vget_high_u8, vget_low_u8, vld1q_u8, vld1q_u16, vmovl_u8, vmulq_u16,
+    };
+
+    const BLOCK_LEN: usize = 16;
+    const HIGH_WEIGHTS: [u16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
+    const LOW_WEIGHTS: [u16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
+
+    #[inline]
+    pub(super) fn accumulate_chunk(
+        s1: u32,
+        s2: u32,
+        len: usize,
+        chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
+    }
+
+    #[target_feature(enable = "neon")]
+    unsafe fn accumulate_chunk_neon_impl(
+        mut s1: u32,
+        mut s2: u32,
+        mut len: usize,
+        mut chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        let high_weights: uint16x8_t = vld1q_u16(HIGH_WEIGHTS.as_ptr());
+        let low_weights: uint16x8_t = vld1q_u16(LOW_WEIGHTS.as_ptr());
+
+        while chunk.len() >= BLOCK_LEN {
+            let bytes = vld1q_u8(chunk.as_ptr());
+            let high = vmovl_u8(vget_low_u8(bytes));
+            let low = vmovl_u8(vget_high_u8(bytes));
+
+            let sum_high = vaddvq_u16(high);
+            let sum_low = vaddvq_u16(low);
+            let block_sum = (sum_high + sum_low) as u32;
+
+            let weighted_high = vmulq_u16(high, high_weights);
+            let weighted_low = vmulq_u16(low, low_weights);
+            let block_prefix = (vaddvq_u16(weighted_high) + vaddvq_u16(weighted_low)) as u32;
+
+            s2 = s2.wrapping_add(block_prefix);
+            s2 = s2.wrapping_add(s1.wrapping_mul(BLOCK_LEN as u32));
+            s1 = s1.wrapping_add(block_sum);
+            len = len.saturating_add(BLOCK_LEN);
+            chunk = &chunk[BLOCK_LEN..];
+        }
+
+        if !chunk.is_empty() {
+            let (ns1, ns2, nlen) = accumulate_chunk_scalar_raw(s1, s2, len, chunk);
+            s1 = ns1;
+            s2 = ns2;
+            len = nlen;
+        }
+
+        (s1, s2, len)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accumulate_chunk_neon_for_tests(
+        s1: u32,
+        s2: u32,
+        len: usize,
+        chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
     }
 }
