@@ -76,7 +76,7 @@ pub(crate) fn establish_proxy_tunnel(
 
     if let Some(header) = proxy.authorization_header() {
         request.push_str("Proxy-Authorization: Basic ");
-        request.push_str(&header);
+        request.push_str(header);
         request.push_str("\r\n");
     }
 
@@ -306,29 +306,31 @@ impl ProxyConfig {
         }
     }
 
-    pub(crate) fn authorization_header(&self) -> Option<String> {
+    pub(crate) fn authorization_header(&self) -> Option<&str> {
         self.credentials
             .as_ref()
             .map(ProxyCredentials::authorization_value)
     }
 }
 
+/// HTTP proxy credentials with a cached `Proxy-Authorization` header value.
 pub(crate) struct ProxyCredentials {
-    username: String,
-    password: String,
+    authorization: String,
 }
 
 impl ProxyCredentials {
     fn new(username: String, password: String) -> Self {
-        Self { username, password }
+        let mut bytes = Vec::with_capacity(username.len() + password.len() + 1);
+        bytes.extend_from_slice(username.as_bytes());
+        bytes.push(b':');
+        bytes.extend_from_slice(password.as_bytes());
+        let authorization = STANDARD.encode(bytes);
+        Self { authorization }
     }
 
-    fn authorization_value(&self) -> String {
-        let mut bytes = Vec::with_capacity(self.username.len() + self.password.len() + 1);
-        bytes.extend_from_slice(self.username.as_bytes());
-        bytes.push(b':');
-        bytes.extend_from_slice(self.password.as_bytes());
-        STANDARD.encode(bytes)
+    /// Returns the cached `Proxy-Authorization` header payload.
+    fn authorization_value(&self) -> &str {
+        &self.authorization
     }
 }
 
