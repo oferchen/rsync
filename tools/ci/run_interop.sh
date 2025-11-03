@@ -5,9 +5,9 @@ workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
+
 versions=(3.0.9 3.1.3 3.4.1)
 
-# Global daemon state
 oc_pid=""
 up_pid=""
 oc_pid_file_current=""
@@ -85,6 +85,49 @@ ensure_upstream_build() {
   popd >/dev/null
 }
 
+# rust daemon is stricter: it wants directives in a module/section
+write_rust_daemon_conf() {
+  local path=$1
+  local pid_file=$2
+  local port=$3
+  local dest=$4
+  local comment=$5
+
+  cat >"$path" <<CONF
+[daemon]
+pid file = ${pid_file}
+port = ${port}
+use chroot = false
+numeric ids = yes
+
+[interop]
+path = ${dest}
+comment = ${comment}
+read only = false
+CONF
+}
+
+# upstream classic rsyncd layout, still accepts top-level directives
+write_upstream_conf() {
+  local path=$1
+  local pid_file=$2
+  local port=$3
+  local dest=$4
+  local comment=$5
+  local identity=$6
+
+  cat >"$path" <<CONF
+pid file = ${pid_file}
+port = ${port}
+use chroot = false
+${identity}numeric ids = yes
+[interop]
+    path = ${dest}
+    comment = ${comment}
+    read only = false
+CONF
+}
+
 stop_oc_daemon() {
   if [[ -n "${oc_pid}" ]]; then
     kill "${oc_pid}" >/dev/null 2>&1 || true
@@ -127,7 +170,6 @@ start_oc_daemon() {
 
   oc_pid_file_current="$pid_file"
 
-  # add RUST_BACKTRACE for better CI logs if it crashes
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
   OC_RSYNC_FALLBACK="$fallback_client" \
@@ -167,32 +209,12 @@ run_interop_case() {
   rm -rf "$oc_dest" "$up_dest"
   mkdir -p "$oc_dest" "$up_dest"
 
-  cat >"$oc_conf" <<OC_CONF
-pid file = ${oc_pid_file}
-port = ${oc_port}
-use chroot = false
-${oc_identity}
-numeric ids = yes
-[interop]
-    path = ${oc_dest}
-    comment = oc interop target (${version})
-    read only = false
-OC_CONF
-
-  cat >"$up_conf" <<UP_CONF
-pid file = ${up_pid_file}
-port = ${upstream_port}
-use chroot = false
-${up_identity}
-numeric ids = yes
-[interop]
-    path = ${up_dest}
-    comment = upstream interop target (${version})
-    read only = false
-UP_CONF
+  write_rust_daemon_conf "$oc_conf" "$oc_pid_file" "$oc_port" "$oc_dest" "oc interop target (${version})"
+  write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
   echo "Testing upstream rsync ${version} client -> oc-rsyncd"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file"
+
   if ! "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
     echo "FAIL: upstream rsync ${version} -> oc-rsyncd"
     echo "--- oc-rsyncd log (${oc_log}) ---"
@@ -213,6 +235,7 @@ UP_CONF
 
   echo "Testing oc-rsync client -> upstream rsync ${version} daemon"
   start_upstream_daemon "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
+
   if ! "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null 2>>"$up_log"; then
     echo "FAIL: oc-rsync -> upstream rsync ${version} daemon"
     echo "--- upstream rsyncd log (${up_log}) ---"
@@ -233,7 +256,6 @@ UP_CONF
   return 0
 }
 
-# ----- main flow -----
 ensure_workspace_binaries
 
 mkdir -p "$upstream_src_root" "$upstream_install_root"
@@ -244,20 +266,22 @@ done
 oc_client="${target_dir}/oc-rsync"
 oc_daemon="${target_dir}/oc-rsyncd"
 
-workdir=$(mktemp -d)
+workdir
+= $(mktemp -d)
 trap cleanup EXIT
 
 src="${workdir}/source"
 mkdir -p "$src"
 printf 'interop-test\n' >"${src}/payload.txt"
 
-uid=$(id -u)
-gid=$(id -g)
+uid
+= $(id -u)
+gid
+= $(id -g)
 
 oc_identity=""
 up_identity=""
 if [[ ${uid} -eq 0 ]]; then
-  printf -v oc_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
   printf -v up_identity 'uid = %s\ngid = %s\n' "${uid}" "${gid}"
 fi
 
