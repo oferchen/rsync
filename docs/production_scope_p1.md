@@ -85,7 +85,7 @@ This document freezes the mandatory scope that must reach green status before th
   oc-rsync without file conflicts
 - Default daemon configuration installed at `/etc/oc-rsyncd/oc-rsyncd.conf` with secrets stored in `/etc/oc-rsyncd/oc-rsyncd.secrets`
 - CycloneDX SBOM at `target/sbom/rsync.cdx.json`
-- Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64, aarch64) produced by the CI matrix (the legacy Windows x86 target remains disabled to avoid conflicting toolchains)
+- Cross-compiled release binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64, aarch64) produced by the CI matrix, with the Windows aarch64 lane intentionally disabled until the Zig-based toolchain stabilises while the legacy Windows x86 target remains disabled to avoid conflicting toolchains
 
 ## Deterministic Test Environment
 - `LC_ALL=C`
