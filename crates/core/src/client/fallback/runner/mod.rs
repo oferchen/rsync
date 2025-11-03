@@ -6,6 +6,9 @@ use std::sync::mpsc;
 use super::super::{ClientError, MAX_EXIT_CODE};
 use super::args::RemoteFallbackArgs;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 mod command_builder;
 pub(crate) mod helpers;
 
@@ -143,5 +146,19 @@ where
 
     drop(files_from_temp);
 
-    Ok(status.code().unwrap_or(MAX_EXIT_CODE))
+    let exit_code = match status.code() {
+        Some(code) => code,
+        None => {
+            #[cfg(unix)]
+            {
+                if let Some(signal) = status.signal() {
+                    return Ok((128 + signal).min(MAX_EXIT_CODE));
+                }
+            }
+
+            MAX_EXIT_CODE
+        }
+    };
+
+    Ok(exit_code)
 }
