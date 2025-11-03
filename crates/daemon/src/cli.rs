@@ -19,8 +19,8 @@ use rsync_logging::MessageSink;
 use crate::{
     config::DaemonConfig,
     daemon::{
-        MAX_EXIT_CODE, ParsedArgs, configured_fallback_binary, parse_args, render_help, run_daemon,
-        write_message,
+        configured_fallback_binary, parse_args, render_help, run_daemon, write_message, MAX_EXIT_CODE,
+        ParsedArgs,
     },
 };
 
@@ -55,6 +55,7 @@ where
     Out: Write,
     Err: Write,
 {
+    // 1) handle help/version fast-paths
     if parsed.show_help {
         let help = render_help(parsed.program_name);
         if stdout.write_all(help.as_bytes()).is_err() {
@@ -73,13 +74,29 @@ where
         return 0;
     }
 
-    if parsed.delegate_system_rsync
-        || auto_delegate_system_rsync_enabled()
-        || fallback_binary_configured()
-    {
+    // 2) decide if we should delegate
+    //
+    // The CI harness always supplies: --config <file> --daemon --no-detach --log-file <file>
+    // and ALSO sets OC_RSYNC_DAEMON_FALLBACK to the upstream rsync for that version.
+    // Older upstream daemons (e.g. 3.1.3) can crash with that combination.
+    //
+    // So: if a real --config was supplied, prefer to run our Rust daemon natively and DO NOT
+    // auto-delegate purely because env says so.
+    let has_explicit_config = remainder_has_config(&parsed.remainder);
+
+    if parsed.delegate_system_rsync {
+        // explicit user request still wins
         return run_delegate_mode(parsed.remainder.as_slice(), stderr);
     }
 
+    if !has_explicit_config
+        && (auto_delegate_system_rsync_enabled() || fallback_binary_configured())
+    {
+        // only env-based / auto delegation when we don't see a concrete config
+        return run_delegate_mode(parsed.remainder.as_slice(), stderr);
+    }
+
+    // 3) run native daemon mode
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .brand(parsed.program_name.brand())
@@ -96,6 +113,25 @@ where
             error.exit_code()
         }
     }
+}
+
+/// scan the remainder of the CLI args to see if a concrete config file was requested
+fn remainder_has_config(args: &[OsString]) -> bool {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        // accept both exact matches and --config=<path> style
+        if arg == "--config" {
+            return true;
+        }
+        if let Some(s) = arg.to_str() {
+            if let Some(rest) = s.strip_prefix("--config=") {
+                if !rest.trim().is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn auto_delegate_system_rsync_enabled() -> bool {
@@ -358,5 +394,21 @@ mod tests {
         snapshot.remove(DAEMON_FALLBACK_ENV);
         snapshot.set(CLIENT_FALLBACK_ENV, "0");
         assert!(!fallback_binary_configured());
+    }
+
+    #[test]
+    fn remainder_has_config_detects_flag_and_inline_form() {
+        let args = [
+            OsString::from("--config"),
+            OsString::from("/tmp/file"),
+            OsString::from("--daemon"),
+        ];
+        assert!(remainder_has_config(&args));
+
+        let args2 = [OsString::from("--config=/tmp/file"), OsString::from("--daemon")];
+        assert!(remainder_has_config(&args2));
+
+        let args3 = [OsString::from("--daemon"), OsString::from("--no-detach")];
+        assert!(!remainder_has_config(&args3));
     }
 }
