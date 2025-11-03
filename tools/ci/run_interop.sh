@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Changes made:
-# 1. Repaired daemon lifecycle logic: stop_oc_daemon() and stop_upstream_daemon() are now simple, self-contained
-#    functions using global state (oc_pid, up_pid, *_pid_file_current) instead of an incomplete subshell block.
-# 2. Fixed config generation in run_interop_case(): it now uses the correct per-daemon identity variables
-#    (oc_identity, up_identity) instead of the non-existent ${identity}.
-# 3. Ensured a single global workdir with a single EXIT trap that cleans up both daemons and the temp directory.
-# 4. Kept your original build flow (workspace bins → upstream rsync builds) and preserved feature-disable
-#    probing during ./configure.
-# 5. Kept everything POSIX-safe under bash with set -euo pipefail and explicit return paths.
-
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
