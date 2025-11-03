@@ -2,16 +2,17 @@
 
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
-what must land to eliminate the difference. The canonical binaries ship as
-**rsync 3.4.1-rust** and **rsyncd 3.4.1-rust**; compatibility wrappers
-(**oc-rsync**, **oc-rsyncd**) share the same execution paths for environments
-that still depend on the legacy branding. Items remain in this list until the
-referenced functionality ships and parity is verified by tests or goldens.
+what must land to eliminate the difference. The canonical binaries ship under
+the branded names **oc-rsync 3.4.1-rust** and **oc-rsyncd 3.4.1-rust** as
+declared in `Cargo.toml`; compatibility wrappers (**rsync**, **rsyncd**) share
+the same execution paths for environments that still depend on the legacy
+branding. Items remain in this list until the referenced functionality ships
+and parity is verified by tests or goldens.
 
 ## Blocking Differences
 
-- **`rsync` client uses native local copies and a fallback for remote transfers**
-  - *Impact*: `rsync` performs deterministic local filesystem copies for
+- **`oc-rsync` client uses native local copies and a fallback for remote transfers**
+  - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, hard links, block/character
     devices, FIFOs, and sparse files while preserving permissions, timestamps,
     optional ownership metadata, and—when compiled in—POSIX ACLs and extended
@@ -27,7 +28,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     contact an `rsync://` daemon to list available modules and, when remote
     operands are supplied, spawns the system `rsync` binary (configurable via
     `OC_RSYNC_FALLBACK`) so full network functionality remains available while
-    the native transport and delta engine are built. The `oc-rsync`
+    the native transport and delta engine are built. The `rsync`
     compatibility wrapper reuses the same execution path. Filter handling via
     `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
     with `+`/`-` actions, `show`/`hide`, `protect`/`risk`,
@@ -43,8 +44,8 @@ referenced functionality ships and parity is verified by tests or goldens.
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, remove the fallback dependency, and
     validate the resulting behaviour via the parity harness.
-- **Daemon functionality incomplete (`rsyncd`)**
-  - *Impact*: The `rsyncd` binary binds a TCP listener, performs the legacy
+- **Daemon functionality incomplete (`oc-rsyncd`)**
+  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config`. When the upstream
     `rsync` binary is available, the daemon now delegates authenticated module
@@ -53,7 +54,7 @@ referenced functionality ships and parity is verified by tests or goldens.
     `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
     override); when disabled or when the helper binary is missing the daemon
     explains that transfers are unavailable after completing authentication.
-    The `oc-rsyncd` compatibility wrapper exposes the same behaviour through the
+    The `rsyncd` compatibility wrapper exposes the same behaviour through the
     legacy binary name.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
