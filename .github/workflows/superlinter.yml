@@ -24,4 +24,5 @@ jobs:
           VALIDATE_BASH: true
           VALIDATE_GITHUB_ACTIONS: true
           VALIDATE_SHELL_SHFMT: true
+#           FILTER_REGEX_EXCLUDE: "(^|/)(target|dist|docs/goldens|tests/goldens)/"
           FILTER_REGEX_EXCLUDE: ".*/target/.*"

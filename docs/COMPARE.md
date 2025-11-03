@@ -59,8 +59,10 @@ The following parity milestones remain unmet and are tracked in
 - CLI, core orchestration, and daemon server binaries.
 - Delta-transfer engine integration with transports, expanded filter grammar,
   and end-to-end compression for networked transfers.
-- Golden parity harness, interop matrix, packaging artifacts, and coverage gate
-  defined in the production scope.
+- Golden parity harness, exit-code oracle, SSH transport coverage, and
+  automated installation verification. CI now produces multi-platform
+  packages/tarballs and exercises upstream interoperability, but these
+  remaining gates still require manual review.
 
 These items will transition into the sections above once implemented and backed
 by reproducible parity evidence.
