@@ -89,10 +89,7 @@ fn parse_proxy_spec_accepts_http_scheme() {
         parse_proxy_spec("http://user:secret@proxy.example:8080").expect("http proxy parses");
     assert_eq!(proxy.host, "proxy.example");
     assert_eq!(proxy.port, 8080);
-    assert_eq!(
-        proxy.authorization_header(),
-        Some(String::from("dXNlcjpzZWNyZXQ="))
-    );
+    assert_eq!(proxy.authorization_header(), Some("dXNlcjpzZWNyZXQ="));
 }
 
 #[test]
@@ -103,7 +100,20 @@ fn parse_proxy_spec_decodes_percent_encoded_credentials() {
     assert_eq!(proxy.port, 1080);
     assert_eq!(
         proxy.authorization_header(),
-        Some(String::from("dXNlcjpuYW1lOnBAc3Mld29yZA=="))
+        Some("dXNlcjpuYW1lOnBAc3Mld29yZA==")
+    );
+}
+
+#[test]
+fn parse_proxy_spec_caches_authorization_header() {
+    let proxy = parse_proxy_spec("http://user:secret@proxy.example:1080").expect("proxy parses");
+    let first = proxy.authorization_header().expect("header value");
+    let second = proxy
+        .authorization_header()
+        .expect("header value reused");
+    assert!(
+        std::ptr::eq(first, second),
+        "authorization header should reuse cached storage"
     );
 }
 
