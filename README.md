@@ -34,19 +34,19 @@
 
 ## Features
 
-- **Protocol 32**: Negotiation, tags, framing & multiplexing modeled after rsync@https://rsync.samba.org.
+- **Protocol 32**: Negotiation, tags, framing & multiplexing modeled after [rsync](https://rsync.samba.org/).
 - **Functional parity**: Exit codes, progress/prose, and CLI help emulate upstream behavior.
 - **Checksums**: Rolling + strong checksums with clear traits for future SIMD paths.
 - **Composed crates**: Separation of protocol, engine, daemon, CLI, filters, checksums, bandwidth.
 - **Strict hygiene**: Clippy `-D warnings`, rustfmt checks, and doc validation via `xtask`.
 
-> Note: rsync@https://rsync.samba.org error lines reference C source files. Here, diagnostics map to **Rust module/function paths** with equivalent fidelity.
+> Note: [rsync](https://rsync.samba.org/) error lines reference C source files. Here, diagnostics map to **Rust module/function paths** with equivalent fidelity.
 
 ---
 
 ## Status
 
-- **Compatibility**: Mirrors upstream rsync 3.4.1 (protocol 32) with Rust-branded release `3.4.1-rust`.
+- **Compatibility**: Mirrors [rsync](https://rsync.samba.org/) (protocol 32) with Rust-branded release `3.4.1-rust`.
 - **Daemon defaults**: Ships `/etc/oc-rsyncd/oc-rsyncd.conf` as the primary configuration file, matching packaging and systemd units.
 
 ---
@@ -139,7 +139,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 
 ## Interop & Compliance
 
-* **Protocol v32:** Message/tag semantics mirror rsync@https://rsync.samba.org.
+* **Protocol v32:** Message/tag semantics mirror [rsync](https://rsync.samba.org/).
 * **Client/daemon:** Designed to operate with upstream `rsync` daemons and clients.
 * **Exit codes/messages:** Map to upstream conventions; differences are documented inline when safety/perf requires.
 * **Smoke test example:**
@@ -189,7 +189,7 @@ Check repository workflows and packaging directories when present for distro-spe
 
 ## Configuration & Environment
 
-Defaults aim to **mirror rsync@https://rsync.samba.org** semantics. Flags/envs follow upstream names where feasible.
+Defaults aim to **mirror [rsync](https://rsync.samba.org/)** semantics. Flags/envs follow upstream names where feasible.
 
 ```bash
 cargo run -p oc-rsync -- --help
@@ -211,8 +211,7 @@ This project is available under the GPL-3.0-or-later license. See `LICENSE` for 
 
 ---
 
-## Acknowledgments
+## Acknowledgements
 
-* The **rsync@https://rsync.samba.org** project and maintainers.
-* The Rust community and ecosystem crates enabling safe, fast systems programming.
+Inspired by the original [rsync](https://rsync.samba.org/) by Andrew Tridgell and the Samba team. Thanks to the Rust community that made this possible.
 
