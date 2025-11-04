@@ -111,8 +111,8 @@ fn version_info_report_with_daemon_brand_updates_banner() {
 
 #[test]
 fn version_info_report_for_client_brand_matches_builder() {
-    let expected =
-        VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
+    let expected = VersionInfoReport::new(VersionInfoConfig::with_runtime_capabilities())
+        .with_client_brand(Brand::Oc);
     let actual = VersionInfoReport::for_client_brand(Brand::Oc);
 
     assert_eq!(actual.human_readable(), expected.human_readable());
@@ -120,8 +120,8 @@ fn version_info_report_for_client_brand_matches_builder() {
 
 #[test]
 fn version_info_report_for_daemon_brand_matches_builder() {
-    let expected =
-        VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
+    let expected = VersionInfoReport::new(VersionInfoConfig::with_runtime_capabilities())
+        .with_daemon_brand(Brand::Oc);
     let actual = VersionInfoReport::for_daemon_brand(Brand::Oc);
 
     assert_eq!(actual.human_readable(), expected.human_readable());

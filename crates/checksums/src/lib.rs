@@ -7,4 +7,6 @@
 mod rolling;
 pub mod strong;
 
-pub use rolling::{RollingChecksum, RollingDigest, RollingError, RollingSliceError};
+pub use rolling::{
+    RollingChecksum, RollingDigest, RollingError, RollingSliceError, simd_acceleration_available,
+};

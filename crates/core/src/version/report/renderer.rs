@@ -31,7 +31,7 @@ pub struct VersionInfoReport {
 
 impl Default for VersionInfoReport {
     fn default() -> Self {
-        Self::new(VersionInfoConfig::default())
+        Self::new(VersionInfoConfig::with_runtime_capabilities())
     }
 }
 
