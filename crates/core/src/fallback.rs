@@ -28,6 +28,9 @@
 //!
 //! - Whitespace-only values are treated as disabled overrides, matching the
 //!   daemon's historical behaviour.
+//! - Matching single or double quotes are stripped from values before
+//!   interpretation so environment overrides such as `"/usr/bin/rsync"` are
+//!   accepted without manual trimming.
 //! - The case-insensitive strings `0`, `false`, `no`, and `off` disable
 //!   delegation.
 //! - The special value `auto` resolves to the default executable supplied by
@@ -170,12 +173,25 @@ pub fn interpret_override_value(raw: &OsStr) -> FallbackOverride {
             return FallbackOverride::Disabled;
         }
 
-        if matches_ascii_case(trimmed, &DISABLED_OVERRIDES) {
+        let (candidate, quoted) = match strip_enclosing_quotes(trimmed) {
+            Some(inner) => (inner, true),
+            None => (trimmed, false),
+        };
+
+        if candidate.trim().is_empty() {
             return FallbackOverride::Disabled;
         }
 
-        if matches_ascii_case(trimmed, &DEFAULT_OVERRIDES) {
+        if matches_ascii_case(candidate, &DISABLED_OVERRIDES) {
+            return FallbackOverride::Disabled;
+        }
+
+        if matches_ascii_case(candidate, &DEFAULT_OVERRIDES) {
             return FallbackOverride::Default;
+        }
+
+        if quoted {
+            return FallbackOverride::Explicit(OsString::from(candidate));
         }
     }
 
@@ -195,6 +211,21 @@ fn matches_ascii_case(value: &str, options: &[&str]) -> bool {
     options
         .iter()
         .any(|candidate| value.eq_ignore_ascii_case(candidate))
+}
+
+fn strip_enclosing_quotes(value: &str) -> Option<&str> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 {
+        return None;
+    }
+
+    let first = bytes[0];
+    let last = *bytes.last().expect("value has at least two bytes");
+    if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+        return Some(&value[1..value.len() - 1]);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -281,6 +312,40 @@ mod tests {
             spaced,
             FallbackOverride::Explicit(OsString::from("  /opt/rsync  "))
         );
+    }
+
+    #[test]
+    fn interpret_override_value_handles_quoted_defaults() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("\"auto\"")),
+            FallbackOverride::Default
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("'FALSE'")),
+            FallbackOverride::Disabled
+        );
+    }
+
+    #[test]
+    fn interpret_override_value_strips_matching_quotes() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("\"/usr/bin/rsync\"")),
+            FallbackOverride::Explicit(OsString::from("/usr/bin/rsync"))
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("  'C:\\Program Files\\Rsync\\rsync.exe'  ")),
+            FallbackOverride::Explicit(OsString::from("C:\\Program Files\\Rsync\\rsync.exe"))
+        );
+    }
+
+    #[test]
+    fn interpret_override_value_rejects_empty_quoted_values() {
+        for value in ["\"\"", "'   '"] {
+            assert_eq!(
+                interpret_override_value(OsStr::new(value)),
+                FallbackOverride::Disabled
+            );
+        }
     }
 
     #[test]
