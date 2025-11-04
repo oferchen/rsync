@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
+# Adapted to prefer prebuilt rsync binaries from Alpine/Debian/Ubuntu package repos
+# before building from source. This reduces CI time/cost. We still verify the exact
+# rsync version; if the downloaded binary doesn't match, we fall back to source build.
+# Mirrors are configurable via environment variables. All original interop logic is preserved.
 set -euo pipefail
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required to build upstream rsync releases for interop tests" >&2
   exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required to fetch prebuilt rsync packages (Alpine/Debian/Ubuntu)" >&2
+  exit 1
+fi
+
+# Optional, but handy for .deb extraction
+if ! command -v ar >/dev/null 2>&1; then
+  echo "ar (from binutils) is recommended to extract .deb packages; will fall back to source build when missing" >&2
 fi
 
 export GIT_TERMINAL_PROMPT=0
@@ -13,8 +27,25 @@ target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
 
+# You wanted these exact versions in the original script
 versions=(3.0.9 3.1.3 3.4.1)
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
+
+# Mirrors can be overridden in CI to point to local artifact caches
+ALPINE_MIRROR="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}"
+# We'll try a reasonably recent Alpine branch; change if your CI caches a different one
+ALPINE_BRANCHES=(
+  "v3.20/main"   # adjust to what your CI caches
+  "v3.19/main"
+  "edge/main"
+)
+
+DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
+UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}"
+
+# Architectures: assume x86_64 CI runner
+ALPINE_ARCH="${ALPINE_ARCH:-x86_64}"
+DEB_ARCH="${DEB_ARCH:-amd64}"
 
 oc_pid=""
 up_pid=""
@@ -39,18 +70,107 @@ build_jobs() {
   fi
 }
 
-ensure_upstream_build() {
+# ---------- binary-first helpers ----------
+
+# Try to fetch an Alpine .apk that matches rsync-${version}-r0.apk (or nearby)
+# If successful, install it into install_dir/bin/rsync
+try_fetch_alpine_rsync() {
+  local version=$1
+  local install_dir=$2
+  local apk_name="rsync-${version}-r0.apk"
+  local tmp_apk
+
+  tmp_apk=$(mktemp)
+  for branch in "${ALPINE_BRANCHES[@]}"; do
+    local url="${ALPINE_MIRROR}/${branch}/${ALPINE_ARCH}/${apk_name}"
+    if curl -fsSL "$url" -o "$tmp_apk" 2>/dev/null; then
+      mkdir -p "${install_dir}"
+      # Alpine .apk is just a tar archive with control+data
+      # extract data.tar* into install_dir
+      tar -xzf "$tmp_apk" -C "$install_dir" || {
+        rm -f "$tmp_apk"
+        return 1
+      }
+      rm -f "$tmp_apk"
+      # Alpine usually drops binaries into ./usr/bin
+      if [[ -x "${install_dir}/usr/bin/rsync" ]]; then
+        mkdir -p "${install_dir}/bin"
+        cp "${install_dir}/usr/bin/rsync" "${install_dir}/bin/rsync"
+        return 0
+      fi
+      return 1
+    fi
+  done
+  return 1
+}
+
+# Try to fetch a Debian/Ubuntu .deb; we cannot know exact naming for every distro/version,
+# so we attempt a small set of likely names. If none match, we return 1 and fall back to source build.
+try_fetch_deb_rsync() {
+  local version=$1
+  local install_dir=$2
+  local tmp_deb
+  tmp_deb=$(mktemp)
+
+  # candidate names: rsync_${version}-1_${DEB_ARCH}.deb etc.
+  # You can add more patterns here if your mirror uses different revisions.
+  local candidates=(
+    "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${DEB_ARCH}.deb"
+    "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${DEB_ARCH}.deb"
+  )
+
+  for url in "${candidates[@]}"; do
+    if curl -fsSL "$url" -o "$tmp_deb" 2>/dev/null; then
+      if ! command -v ar >/dev/null 2>&1; then
+        rm -f "$tmp_deb"
+        return 1
+      fi
+      mkdir -p "${install_dir}"
+      (
+        cd "${install_dir}"
+        ar x "$tmp_deb" >/dev/null 2>&1 || true
+        # data.tar.xz or data.tar.gz
+        if [[ -f data.tar.xz ]]; then
+          tar -xf data.tar.xz
+          rm -f data.tar.xz
+        elif [[ -f data.tar.gz ]]; then
+          tar -xzf data.tar.gz
+          rm -f data.tar.gz
+        fi
+      )
+      rm -f "$tmp_deb"
+      if [[ -x "${install_dir}/usr/bin/rsync" ]]; then
+        mkdir -p "${install_dir}/bin"
+        cp "${install_dir}/usr/bin/rsync" "${install_dir}/bin/rsync"
+        return 0
+      fi
+      return 1
+    fi
+  done
+
+  return 1
+}
+
+# ---------- original source build, kept intact ----------
+
+clone_upstream_source() {
+  local version=$1
+  local destination=$2
+  local tag_candidates=("v${version}" "${version}")
+
+  for tag in "${tag_candidates[@]}"; do
+    if git clone --depth 1 --branch "$tag" "$rsync_repo_url" "$destination" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+build_upstream_from_source() {
   local version=$1
   local src_dir="${upstream_src_root}/rsync-${version}"
   local install_dir="${upstream_install_root}/${version}"
-  local binary="${install_dir}/bin/rsync"
-
-  if [[ -x "$binary" ]]; then
-    if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
-      return
-    fi
-    rm -rf "$install_dir"
-  fi
 
   rm -rf "$src_dir"
   mkdir -p "$upstream_src_root" "$upstream_install_root"
@@ -95,18 +215,48 @@ ensure_upstream_build() {
   popd >/dev/null
 }
 
-clone_upstream_source() {
+# Ensure we have an rsync of the exact version; try binary first, then source.
+ensure_upstream_build() {
   local version=$1
-  local destination=$2
-  local tag_candidates=("v${version}" "${version}")
+  local install_dir="${upstream_install_root}/${version}"
+  local binary="${install_dir}/bin/rsync"
 
-  for tag in "${tag_candidates[@]}"; do
-    if git clone --depth 1 --branch "$tag" "$rsync_repo_url" "$destination" >/dev/null 2>&1; then
-      return 0
+  # If we already have a matching binary, keep it
+  if [[ -x "$binary" ]]; then
+    if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
+      return
     fi
-  done
+    rm -rf "$install_dir"
+  fi
 
-  return 1
+  mkdir -p "$install_dir"
+
+  echo "Trying to fetch prebuilt rsync ${version} (Alpine) ..."
+  if try_fetch_alpine_rsync "$version" "$install_dir"; then
+    if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
+      echo "Using Alpine prebuilt rsync ${version}"
+      return
+    else
+      echo "Alpine prebuilt rsync did not match exact version ${version}, discarding"
+      rm -rf "$install_dir"
+      mkdir -p "$install_dir"
+    fi
+  fi
+
+  echo "Trying to fetch prebuilt rsync ${version} (Debian/Ubuntu) ..."
+  if try_fetch_deb_rsync "$version" "$install_dir"; then
+    if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
+      echo "Using Debian/Ubuntu prebuilt rsync ${version}"
+      return
+    else
+      echo "Debian/Ubuntu prebuilt rsync did not match exact version ${version}, discarding"
+      rm -rf "$install_dir"
+    fi
+  fi
+
+  # Fall back to source build
+  echo "No matching prebuilt rsync ${version} found, building from source ..."
+  build_upstream_from_source "$version"
 }
 
 # rust daemon is stricter: it wants directives in a module/section
