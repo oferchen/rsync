@@ -29,6 +29,7 @@ jobs:
             uses_zig: false
             needs_cross_gcc: false
             package_linux: false
+            package_brew: false
             generate_sbom: false
           - name: windows-aarch64
             enabled: false
@@ -39,6 +40,7 @@ jobs:
             uses_zig: false
             needs_cross_gcc: false
             package_linux: false
+            package_brew: false
             generate_sbom: false
           - name: windows-x86
             enabled: false
@@ -49,6 +51,7 @@ jobs:
             uses_zig: false
             needs_cross_gcc: false
             package_linux: false
+            package_brew: false
             generate_sbom: false
 
     runs-on: ${{ matrix.platform.runner }}
