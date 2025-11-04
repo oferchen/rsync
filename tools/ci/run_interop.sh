@@ -504,8 +504,7 @@ done
 oc_client="${target_dir}/oc-rsync"
 oc_daemon="${target_dir}/oc-rsyncd"
 
-workdir
-=$(mktemp -d)
+workdir=$(mktemp -d)
 trap cleanup EXIT
 
 src="${workdir}/source"
