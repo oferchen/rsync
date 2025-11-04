@@ -209,21 +209,17 @@ impl RollingChecksum {
         }
 
         let count = outgoing.len();
-        let count_i128 = match i128::try_from(count) {
-            Ok(value) => value,
-            Err(_) => {
-                for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
-                    self.roll(out, inn)?;
-                }
-                return Ok(());
-            }
+        let (count_i128, count_u32) = match (i128::try_from(count), u32::try_from(count)) {
+            (Ok(ci), Ok(cu)) => (ci, cu),
+            _ => return self.roll_many_scalar(outgoing, incoming),
         };
 
         let mut sum_outgoing = 0i128;
         let mut sum_delta = 0i128;
         let mut weighted_delta = 0i128;
 
-        for (idx, (&out_b, &in_b)) in outgoing.iter().zip(incoming.iter()).enumerate() {
+        let mut weight = count_i128;
+        for (&out_b, &in_b) in outgoing.iter().zip(incoming.iter()) {
             let outgoing_val = i128::from(out_b);
             let incoming_val = i128::from(in_b);
             let delta = incoming_val - outgoing_val;
@@ -231,18 +227,11 @@ impl RollingChecksum {
             sum_outgoing += outgoing_val;
             sum_delta += delta;
 
-            let idx_i128 = match i128::try_from(idx) {
-                Ok(value) => value,
-                Err(_) => {
-                    for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
-                        self.roll(out, inn)?;
-                    }
-                    return Ok(());
-                }
-            };
-            let weight = count_i128 - idx_i128;
             weighted_delta += delta * weight;
+            weight -= 1;
         }
+
+        debug_assert!(weight >= 0);
 
         let original_s1 = self.s1;
 
@@ -251,12 +240,20 @@ impl RollingChecksum {
         let new_s2 = self
             .s2
             .wrapping_sub(window_len.wrapping_mul(sum_outgoing as u32))
-            .wrapping_add(original_s1.wrapping_mul(count as u32))
+            .wrapping_add(original_s1.wrapping_mul(count_u32))
             .wrapping_add(weighted_delta as u32)
             & 0xffff;
 
         self.s1 = new_s1;
         self.s2 = new_s2;
+        Ok(())
+    }
+
+    #[inline]
+    fn roll_many_scalar(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
+        for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+            self.roll(out, inn)?;
+        }
         Ok(())
     }
 
