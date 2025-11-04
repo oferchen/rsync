@@ -164,27 +164,29 @@ fn candidate_is_executable(path: &Path) -> bool {
 #[cfg(windows)]
 fn collect_windows_extensions(current_ext: Option<&OsStr>) -> Vec<OsString> {
     let mut exts = Vec::new();
+    let mut seen = HashSet::new();
 
     if let Some(ext) = current_ext {
-        exts.push(ext.to_os_string());
+        let encoded: Vec<u16> = ext.encode_wide().collect();
+        push_segment(&encoded, &mut exts, &mut seen);
     }
 
     if let Some(path_ext) = env::var_os("PATHEXT") {
-        push_pathext_segments(&path_ext, &mut exts);
+        push_pathext_segments(&path_ext, &mut exts, &mut seen);
     }
 
     if exts.is_empty() {
-        exts.push(OsString::from(".exe"));
-        exts.push(OsString::from(".com"));
-        exts.push(OsString::from(".bat"));
-        exts.push(OsString::from(".cmd"));
+        for default in [".exe", ".com", ".bat", ".cmd"] {
+            let encoded: Vec<u16> = default.encode_utf16().collect();
+            push_segment(&encoded, &mut exts, &mut seen);
+        }
     }
 
     exts
 }
 
 #[cfg(windows)]
-fn push_pathext_segments(value: &OsStr, exts: &mut Vec<OsString>) {
+fn push_pathext_segments(value: &OsStr, exts: &mut Vec<OsString>, seen: &mut HashSet<Vec<u16>>) {
     let units: Vec<u16> = value.encode_wide().collect();
     if units.is_empty() {
         return;
@@ -193,16 +195,16 @@ fn push_pathext_segments(value: &OsStr, exts: &mut Vec<OsString>) {
     let mut start = 0;
     for (idx, unit) in units.iter().enumerate() {
         if *unit == b';' as u16 {
-            push_segment(&units[start..idx], exts);
+            push_segment(&units[start..idx], exts, seen);
             start = idx + 1;
         }
     }
 
-    push_segment(&units[start..], exts);
+    push_segment(&units[start..], exts, seen);
 }
 
 #[cfg(windows)]
-fn push_segment(segment: &[u16], exts: &mut Vec<OsString>) {
+fn push_segment(segment: &[u16], exts: &mut Vec<OsString>, seen: &mut HashSet<Vec<u16>>) {
     let mut start = 0;
     let mut end = segment.len();
 
@@ -218,7 +220,13 @@ fn push_segment(segment: &[u16], exts: &mut Vec<OsString>) {
         return;
     }
 
-    exts.push(OsString::from_wide(&segment[start..end]));
+    let trimmed = &segment[start..end];
+    let mut normalized = Vec::with_capacity(trimmed.len());
+    normalized.extend(trimmed.iter().copied().map(ascii_uppercase_u16));
+
+    if seen.insert(normalized) {
+        exts.push(OsString::from_wide(trimmed));
+    }
 }
 
 #[cfg(windows)]
@@ -229,6 +237,19 @@ fn is_windows_whitespace(unit: u16) -> bool {
     const CARRIAGE_RETURN: u16 = b'\r' as u16;
 
     matches!(unit, SPACE | TAB | NEWLINE | CARRIAGE_RETURN)
+}
+
+#[cfg(windows)]
+fn ascii_uppercase_u16(unit: u16) -> u16 {
+    const LOWER_A: u16 = b'a' as u16;
+    const LOWER_Z: u16 = b'z' as u16;
+    const CASE_DIFF: u16 = (b'a' - b'A') as u16;
+
+    if (LOWER_A..=LOWER_Z).contains(&unit) {
+        unit - CASE_DIFF
+    } else {
+        unit
+    }
 }
 
 #[cfg(test)]
@@ -389,6 +410,34 @@ mod tests {
         assert!(
             candidates.iter().any(|candidate| candidate == expected),
             "current-directory candidate missing from {candidates:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fallback_binary_candidates_deduplicate_pathext_variants() {
+        use std::fs;
+
+        let _lock = env_lock().lock().expect("lock env");
+
+        let temp_dir = TempDir::new().expect("tempdir");
+        let joined = env::join_paths([temp_dir.path()]).expect("join paths");
+        let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+        let _pathext_guard = EnvGuard::set("PATHEXT", ".EXE;.exe;.Com");
+
+        let expected_path = temp_dir.path().join("rsync.EXE");
+        fs::write(&expected_path, b"echo rsync").expect("write fallback binary candidate");
+
+        let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+        let occurrences = candidates
+            .iter()
+            .filter(|candidate| *candidate == &expected_path)
+            .count();
+
+        assert_eq!(
+            occurrences, 1,
+            "PATHEXT entries that differ only by case should not duplicate candidates"
         );
     }
 
