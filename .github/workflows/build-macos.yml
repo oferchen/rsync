@@ -29,6 +29,7 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             package_linux: false
+            package_brew: true
             generate_sbom: true
           - name: darwin-aarch64
             enabled: true
@@ -39,6 +40,7 @@ jobs:
             uses_zig: true
             needs_cross_gcc: false
             package_linux: false
+            package_brew: true
             generate_sbom: true
 
     runs-on: ${{ matrix.platform.runner }}

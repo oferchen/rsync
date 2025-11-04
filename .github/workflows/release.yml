@@ -39,6 +39,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: true
             package_linux: true
+            package_brew: true
           - name: linux-aarch64
             enabled: true
             runner: ubuntu-latest
@@ -49,6 +50,7 @@ jobs:
             needs_cross_gcc: true
             generate_sbom: true
             package_linux: true
+            package_brew: true
           # macOS (Apple targets) — .tar.gz
           - name: darwin-x86_64
             enabled: true
@@ -60,6 +62,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: true
             package_linux: false
+            package_brew: true
           - name: darwin-aarch64
             enabled: true
             runner: macos-14
@@ -70,6 +73,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: true
             package_linux: false
+            package_brew: true
           # Windows (MSVC) — .tar.gz
           - name: windows-x86_64
             enabled: true
@@ -92,6 +96,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
             package_linux: false
+            package_brew: false
           - name: windows-aarch64
             enabled: true
             runner: windows-latest
@@ -102,6 +107,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
             package_linux: false
+            package_brew: false
 
     steps:
       - name: Skip disabled target
@@ -264,6 +270,17 @@ jobs:
           name: ${{ env.BIN_CLIENT }}-${{ matrix.platform.name }}-tar
           path: ${{ env.TARBALL }}
           if-no-files-found: error
+
+      - name: Create PR with formula
+        if: ${{ matrix.platform.enabled && matrix.platform.package_brew }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: update Homebrew formula for ${{ env.PKG_VERSION }}"
+          title: "Update Homebrew formula for ${{ env.PKG_VERSION }}"
+          body: "Auto-generated from release assets."
+          branch: "ci/brew-formula-${{ env.PKG_VERSION }}"
+          add-paths: |
+             Formula/oc-rsync.rb
 
       # ===== Linux packaging (.deb / .rpm) =====
       - name: Build .deb (cargo-deb)

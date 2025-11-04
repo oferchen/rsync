@@ -1,0 +1,126 @@
+name: brew-formula
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  generate-brew-formula:
+    runs-on: ubuntu-latest
+    env:
+      REPO: oferchen/rsync
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install GitHub CLI + jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          # gh is preinstalled on ubuntu-latest, but ensure login
+        shell: bash
+
+      - name: Detect tag and version
+        id: detect
+        run: |
+          # On release we get the tag name here:
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            # fallback for manual runs
+            TAG="v3.4.1a-rust"
+          fi
+          # strip leading v for VERSION
+          VERSION="${TAG#v}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Fetch release JSON from GitHub
+        id: fetch
+        env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ env.REPO }}/releases/tags/${TAG}" > release.json
+          cat release.json
+        shell: bash
+
+      - name: Extract asset URLs and categorize
+        id: assets
+        run: |
+          # We will look at actual asset names returned by CI,
+          # not guess them.
+          MACOS_ARM_URL=""
+          MACOS_INTEL_URL=""
+          LINUX_ARM_URL=""
+          LINUX_INTEL_URL=""
+
+          # iterate over assets array
+          ASSET_COUNT=$(jq '.assets | length' release.json)
+          for i in $(seq 0 $((ASSET_COUNT - 1))); do
+            NAME=$(jq -r ".assets[$i].name" release.json)
+            URL=$(jq -r ".assets[$i].browser_download_url" release.json)
+
+            # normalize
+            lname=$(echo "$NAME" | tr '[:upper:]' '[:lower:]')
+
+            # macOS
+            if echo "$lname" | grep -q "darwin"; then
+              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+                MACOS_ARM_URL="$URL"
+              else
+                MACOS_INTEL_URL="$URL"
+              fi
+            # linux
+            elif echo "$lname" | grep -q "linux"; then
+              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+                LINUX_ARM_URL="$URL"
+              else
+                LINUX_INTEL_URL="$URL"
+              fi
+            fi
+          done
+
+          # export to env
+          echo "MACOS_ARM_URL=$MACOS_ARM_URL" >> $GITHUB_ENV
+          echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
+          echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
+          echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Download assets and compute sha256
+        id: hashes
+        run: |
+          mkdir -p dl
+          # for each URL we have, download and sha
+          for kind in MACOS_ARM MACOS_INTEL LINUX_ARM LINUX_INTEL; do
+            url=$(eval echo "\$$kind"_URL)
+            [ -z "$url" ] && continue
+            fname="dl/$(basename "$url")"
+            curl -L "$url" -o "$fname"
+            sha=$(sha256sum "$fname" | awk '{print $1}')
+            echo "${kind}_SHA=$sha" >> $GITHUB_ENV
+          done
+        shell: bash
+
+      - name: Generate Homebrew formula
+        env:
+          VERSION: ${{ env.VERSION }}
+          MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
+          MACOS_ARM_SHA: ${{ env.MACOS_ARM_SHA }}
+          MACOS_INTEL_URL: ${{ env.MACOS_INTEL_URL }}
+          MACOS_INTEL_SHA: ${{ env.MACOS_INTEL_SHA }}
+          LINUX_ARM_URL: ${{ env.LINUX_ARM_URL }}
+          LINUX_ARM_SHA: ${{ env.LINUX_ARM_SHA }}
+          LINUX_INTEL_URL: ${{ env.LINUX_INTEL_URL }}
+          LINUX_INTEL_SHA: ${{ env.LINUX_INTEL_SHA }}
+        run: |
+          python3 tools/gen_brew_formula.py
+        shell: bash
+
+      - name: Upload formula artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: Formula/oc-rsync.rb
+
