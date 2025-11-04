@@ -104,8 +104,7 @@ mod tests {
             assert_eq!(
                 zero_run_length(case),
                 zero_run_length_scalar(case),
-                "zero-run length mismatch for {:?}",
-                case
+                "zero-run length mismatch for {case:?}"
             );
         }
 
