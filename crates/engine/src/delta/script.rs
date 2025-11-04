@@ -101,7 +101,12 @@ where
     R: Read + Seek,
     W: Write,
 {
-    let mut buffer = vec![0u8; index.block_length().max(8 * 1024)];
+    let block_length = index.block_length();
+    let block_length_u64 = u64::try_from(block_length)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "block length overflow"))?;
+    let mut buffer = vec![0u8; block_length.max(8 * 1024)];
+    let mut basis_position: Option<u64> = None;
+
     for token in script.tokens() {
         match token {
             DeltaToken::Literal(bytes) => {
@@ -111,14 +116,33 @@ where
                 index: block_index,
                 len,
             } => {
-                let offset = block_index.saturating_mul(index.block_length() as u64);
-                basis.seek(SeekFrom::Start(offset))?;
+                let offset = block_index.checked_mul(block_length_u64).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "delta block offset overflow")
+                })?;
+
+                if basis_position != Some(offset) {
+                    basis.seek(SeekFrom::Start(offset))?;
+                    basis_position = Some(offset);
+                }
+
                 let mut remaining = *len;
                 while remaining > 0 {
                     let chunk = min(remaining, buffer.len());
                     basis.read_exact(&mut buffer[..chunk])?;
                     output.write_all(&buffer[..chunk])?;
                     remaining -= chunk;
+
+                    if let Some(position) = basis_position {
+                        let advanced = u64::try_from(chunk).map_err(|_| {
+                            io::Error::new(io::ErrorKind::InvalidInput, "chunk length overflow")
+                        })?;
+                        basis_position = Some(position.checked_add(advanced).ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "delta block offset overflow",
+                            )
+                        })?);
+                    }
                 }
             }
         }
@@ -132,7 +156,7 @@ mod tests {
     use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
     use crate::signature::{SignatureAlgorithm, generate_file_signature};
     use rsync_protocol::ProtocolVersion;
-    use std::io::Cursor;
+    use std::io::{Cursor, ErrorKind};
     use std::num::NonZeroU8;
 
     #[test]
@@ -196,5 +220,36 @@ mod tests {
         let mut expected = index_data[..block_len].to_vec();
         expected.extend_from_slice(b"tail");
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn apply_delta_rejects_offset_overflow() {
+        let index_data = vec![0u8; 4096];
+        let params = SignatureLayoutParams::new(
+            index_data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(index_data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let script = DeltaScript::new(
+            vec![DeltaToken::Copy {
+                index: u64::MAX,
+                len: index.block_length(),
+            }],
+            index.block_length() as u64,
+            0,
+        );
+
+        let mut basis = Cursor::new(index_data);
+        let mut output = Vec::new();
+        let error = apply_delta(&mut basis, &mut output, &index, &script).expect_err("overflow");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
 }

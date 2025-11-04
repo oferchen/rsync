@@ -268,6 +268,12 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
   * Block-match/literal emission per upstream heuristics.
   * `--inplace/--partial` behavior; temp-file commit.
 * **Perf**: buffer reuse; vectored I/O; cache-friendly layouts.
+  * `delta/script.rs::apply_delta` caches the current basis offset so
+    sequential `COPY` tokens avoid redundant seeks. The helper advances the
+    tracked position with `u64::checked_add` on every buffered read and
+    returns an `InvalidInput` error on overflow. Future optimisations must keep
+    this monotonic tracking intact and continue reusing the shared copy buffer
+    to minimise syscall churn on large delta streams.
 
 #### Local Copy Module Layout
 
