@@ -57,7 +57,11 @@ This document defines the internal actors (“agents”), their responsibilities
   `memchr` crate to delegate zero-byte detection to the CPU's SIMD
   instructions on all supported platforms; changes to that routine must
   preserve the single seek-per-zero-run invariant and keep coverage tests for
-  sparse file handling green. Additional CPU offloading should follow the same
+  sparse file handling green. The bandwidth parser in `crates/bandwidth`
+  likewise leans on `memchr` to locate decimal separators and exponent markers
+  so ASCII scans stay vectorised; updates must keep the byte-oriented fast path
+  aligned with the exhaustive parser tests. Additional CPU offloading should
+  follow the same
   pattern of runtime feature detection (where applicable) paired with
   deterministic tests that compare against the scalar reference implementation.
   The vectored rolling checksum updater coalesces small `IoSlice` buffers into
