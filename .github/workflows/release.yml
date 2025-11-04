@@ -272,15 +272,19 @@ jobs:
           if-no-files-found: error
 
       - name: Create PR with formula
-        if: ${{ matrix.platform.enabled && matrix.platform.package_brew }}
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: update Homebrew formula for ${{ env.PKG_VERSION }}"
-          title: "Update Homebrew formula for ${{ env.PKG_VERSION }}"
+          commit-message: "chore: update Homebrew formula for ${{ env.VERSION }}"
+          title: "Update Homebrew formula for ${{ env.VERSION }}"
           body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ env.PKG_VERSION }}"
+          branch: "ci/brew-formula-${{ env.VERSION }}"
           add-paths: |
-             Formula/oc-rsync.rb
+            Formula/oc-rsync.rb
+          base: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: oferchen <2673257+oferchen@users.noreply.github.com>
+          delete-branch: false
 
       # ===== Linux packaging (.deb / .rpm) =====
       - name: Build .deb (cargo-deb)
