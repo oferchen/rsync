@@ -2,9 +2,9 @@
 # Ubuntu/Debian-first rsync interop harness
 # - Detects platform architecture and aligns Debian/Ubuntu package arch names
 # - Tries real, validated package locations for:
-#     3.0.9  -> old-releases.ubuntu.com (confirmed index)
-#     3.1.3  -> archive-style Ubuntu path (as seen on mirrors)
-#     3.4.1  -> deb.debian.org with +ds1-6 (current Debian naming)
+#     3.0.9  -> old-releases.ubuntu.com
+#     3.1.3  -> archive.ubuntu.com
+#     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
 # - Falls back to source build if the exact .deb for this arch is missing
 # - Keeps original interop logic intact
 set -euo pipefail
@@ -53,7 +53,6 @@ detect_deb_arch() {
     ppc64le) echo "ppc64el" ;;
     riscv64) echo "riscv64" ;;
     *)
-      # fallback — user can override by exporting DEB_ARCH
       echo "amd64"
       ;;
   esac
@@ -76,24 +75,21 @@ build_jobs() {
   fi
 }
 
-# Build the most realistic URL for this version+arch using actually listed names
-# 3.0.9: confirmed here:
-#   https://old-releases.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_amd64.deb
-# 3.1.3: ubuntu focal update name:
-#   rsync_3.1.3-8ubuntu0.9_<arch>.deb
-# 3.4.1: Debian sid:
-#   rsync_3.4.1+ds1-6_<arch>.deb
+# Build the most realistic URL for this version+arch using actual distro naming
 build_version_url() {
   local version=$1
   local arch=$2
   case "$version" in
     3.0.9)
+      # precise-era package on old-releases
       echo "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_${arch}.deb"
       ;;
     3.1.3)
+      # focal update
       echo "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_${arch}.deb"
       ;;
     3.4.1)
+      # Debian sid/trixie style
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-6_${arch}.deb"
       ;;
     *)
@@ -142,7 +138,6 @@ try_fetch_deb() {
   return 1
 }
 
-# Generic fallback per version — here we add extra candidates we saw traces of
 try_fetch_deb_generic() {
   local version=$1
   local arch=$2
@@ -150,25 +145,22 @@ try_fetch_deb_generic() {
   local tmp_deb
   tmp_deb=$(mktemp)
 
-  # start with an empty list and fill by version
   local candidates=()
 
   case "$version" in
     3.0.9)
-      # older ubuntu builds we saw in the index (1ubuntu1_amd64, 1ubuntu1.1_armhf, etc.)
       candidates+=(
         "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1_${arch}.deb"
         "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.1_${arch}.deb"
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.0.9-4_${arch}.deb"
       )
       ;;
     3.1.3)
-      # mirrors sometimes keep this path too
       candidates+=(
         "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.8_${arch}.deb"
       )
       ;;
     3.4.1)
-      # if Debian bumps revision, allow a nearby one
       candidates+=(
         "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb"
       )
@@ -222,7 +214,6 @@ clone_upstream_source() {
       return 0
     fi
   done
-
   return 1
 }
 
@@ -254,7 +245,8 @@ build_upstream_from_source() {
   fi
 
   local configure_help
-  configure_help=$(./configure --help)
+  configure_help
+=$(./configure --help)
   local -a configure_args=("--prefix=${install_dir}")
 
   if grep -q -- "--disable-xxhash" <<<"$configure_help"; then
@@ -280,7 +272,6 @@ ensure_upstream_build() {
   local binary="${install_dir}/bin/rsync"
   local arch="${DEB_ARCH:-$(detect_deb_arch)}"
 
-  # re-use if already correct
   if [[ -x "$binary" ]]; then
     if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
       return
@@ -290,7 +281,6 @@ ensure_upstream_build() {
 
   mkdir -p "$install_dir"
 
-  # 1. try exact validated URL
   local url
   url=$(build_version_url "$version" "$arch")
   echo "Trying ${url}"
@@ -305,7 +295,6 @@ ensure_upstream_build() {
     fi
   fi
 
-  # 2. try generic fallbacks per version
   echo "Trying generic pool for ${version} (${arch}) ..."
   if try_fetch_deb_generic "$version" "$arch" "$install_dir"; then
     if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
@@ -317,7 +306,6 @@ ensure_upstream_build() {
     fi
   fi
 
-  # 3. source fallback
   echo "No suitable .deb found for rsync ${version} (${arch}); building from source ..."
   build_upstream_from_source "$version"
 }
@@ -398,6 +386,7 @@ cleanup() {
   exit "$exit_code"
 }
 
+# FIX: oc-rsyncd doesn’t accept classic '--daemon' flags, so just run it.
 start_oc_daemon() {
   local config=$1
   local log_file=$2
@@ -409,7 +398,7 @@ start_oc_daemon() {
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
   OC_RSYNC_FALLBACK="$fallback_client" \
-    "$oc_daemon" --config "$config" --daemon --no-detach --log-file "$log_file" &
+    "$oc_daemon" --config "$config" --log-file "$log_file" &
   oc_pid=$!
   sleep 1
 }
