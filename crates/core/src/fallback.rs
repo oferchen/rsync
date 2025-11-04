@@ -178,15 +178,17 @@ pub fn interpret_override_value(raw: &OsStr) -> FallbackOverride {
             None => (trimmed, false),
         };
 
-        if candidate.trim().is_empty() {
+        let normalized_candidate = candidate.trim();
+
+        if normalized_candidate.is_empty() {
             return FallbackOverride::Disabled;
         }
 
-        if matches_ascii_case(candidate, &DISABLED_OVERRIDES) {
+        if matches_ascii_case(normalized_candidate, &DISABLED_OVERRIDES) {
             return FallbackOverride::Disabled;
         }
 
-        if matches_ascii_case(candidate, &DEFAULT_OVERRIDES) {
+        if matches_ascii_case(normalized_candidate, &DEFAULT_OVERRIDES) {
             return FallbackOverride::Default;
         }
 
@@ -327,6 +329,18 @@ mod tests {
     }
 
     #[test]
+    fn interpret_override_value_trims_keywords_within_quotes() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("\" auto \"")),
+            FallbackOverride::Default
+        );
+        assert_eq!(
+            interpret_override_value(OsStr::new("' off  '")),
+            FallbackOverride::Disabled
+        );
+    }
+
+    #[test]
     fn interpret_override_value_strips_matching_quotes() {
         assert_eq!(
             interpret_override_value(OsStr::new("\"/usr/bin/rsync\"")),
@@ -335,6 +349,14 @@ mod tests {
         assert_eq!(
             interpret_override_value(OsStr::new("  'C:\\Program Files\\Rsync\\rsync.exe'  ")),
             FallbackOverride::Explicit(OsString::from("C:\\Program Files\\Rsync\\rsync.exe"))
+        );
+    }
+
+    #[test]
+    fn interpret_override_value_preserves_inner_whitespace_for_quoted_paths() {
+        assert_eq!(
+            interpret_override_value(OsStr::new("\" /opt/rsync  \"")),
+            FallbackOverride::Explicit(OsString::from(" /opt/rsync  "))
         );
     }
 
