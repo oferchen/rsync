@@ -457,7 +457,7 @@ fn roll_many_matches_single_rolls_for_long_sequences() {
     assert_eq!(batched.value(), reference.value());
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[test]
 fn sse2_accumulate_matches_scalar_reference() {
     if !std::arch::is_x86_feature_detected!("sse2") {
@@ -495,7 +495,7 @@ fn sse2_accumulate_matches_scalar_reference() {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[test]
 fn avx2_accumulate_matches_scalar_reference() {
     if !std::arch::is_x86_feature_detected!("avx2") {
