@@ -412,19 +412,19 @@ pub(crate) mod x86 {
     use super::accumulate_chunk_scalar_raw;
     #[cfg(target_arch = "x86")]
     use core::arch::x86::{
-        __m128i, __m256i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16,
-        _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
-        _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepu8_epi16, _mm256_extracti128_si256,
-        _mm256_loadu_si256, _mm256_madd_epi16, _mm256_sad_epu8, _mm256_set_epi16,
-        _mm256_setzero_si256, _mm256_storeu_si256,
+        __m128i, __m256i, _mm_add_epi64, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8,
+        _mm_set_epi16, _mm_setzero_si128, _mm_srli_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
+        _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepu8_epi16,
+        _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_sad_epu8,
+        _mm256_set_epi16, _mm256_setzero_si256, _mm256_storeu_si256,
     };
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::{
-        __m128i, __m256i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16,
-        _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
-        _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepu8_epi16, _mm256_extracti128_si256,
-        _mm256_loadu_si256, _mm256_madd_epi16, _mm256_sad_epu8, _mm256_set_epi16,
-        _mm256_setzero_si256, _mm256_storeu_si256,
+        __m128i, __m256i, _mm_add_epi64, _mm_cvtsi128_si64, _mm_loadu_si128, _mm_mullo_epi16,
+        _mm_sad_epu8, _mm_set_epi16, _mm_setzero_si128, _mm_srli_si128, _mm_storeu_si128,
+        _mm_unpackhi_epi8, _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128,
+        _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16,
+        _mm256_sad_epu8, _mm256_set_epi16, _mm256_setzero_si256, _mm256_storeu_si256,
     };
 
     use std::sync::OnceLock;
@@ -556,10 +556,10 @@ pub(crate) mod x86 {
     #[target_feature(enable = "avx2")]
     unsafe fn sum_block_avx2(block: __m256i, zero: __m256i) -> u32 {
         let sad = _mm256_sad_epu8(block, zero);
-        let mut sums = [0i64; 4];
-        _mm256_storeu_si256(sums.as_mut_ptr() as *mut __m256i, sad);
-        sums.iter()
-            .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+        let lower = _mm256_castsi256_si128(sad);
+        let upper = _mm256_extracti128_si256(sad, 1);
+        let combined = _mm_add_epi64(lower, upper);
+        horizontal_sum_epi64(combined) as u32
     }
 
     #[target_feature(enable = "avx2")]
@@ -590,9 +590,7 @@ pub(crate) mod x86 {
     #[target_feature(enable = "sse2")]
     unsafe fn sum_block(block: __m128i, zero: __m128i) -> u32 {
         let sad = _mm_sad_epu8(block, zero);
-        let mut sums = [0i64; 2];
-        _mm_storeu_si128(sums.as_mut_ptr() as *mut __m128i, sad);
-        (sums[0] as u64 + sums[1] as u64) as u32
+        horizontal_sum_epi64(sad) as u32
     }
 
     #[inline]
@@ -615,6 +613,23 @@ pub(crate) mod x86 {
         _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, weighted_low);
         sum += buf.iter().fold(0u32, |acc, &v| acc + u32::from(v));
         sum
+    }
+
+    #[inline]
+    #[target_feature(enable = "sse2")]
+    unsafe fn horizontal_sum_epi64(values: __m128i) -> u64 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let low = _mm_cvtsi128_si64(values) as u64;
+            let high = _mm_cvtsi128_si64(_mm_srli_si128(values, 8)) as u64;
+            low.wrapping_add(high)
+        }
+        #[cfg(target_arch = "x86")]
+        {
+            let mut buf = [0i64; 2];
+            _mm_storeu_si128(buf.as_mut_ptr() as *mut __m128i, values);
+            buf[0] as u64 + buf[1] as u64
+        }
     }
 
     #[cfg(test)]

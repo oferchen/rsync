@@ -56,7 +56,10 @@ This document defines the internal actors (“agents”), their responsibilities
   (`avx2_accumulate_matches_scalar_reference`,
   `sse2_accumulate_matches_scalar_reference`, and
   `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
-  introduced. The sparse-writer fast path in
+  introduced. The SIMD reducers rely on `horizontal_sum_epi64` to collapse
+  64-bit partial sums without spilling to the stack; any future changes to the
+  AVX2/SSE2 accumulation paths should reuse that helper so the scalar and SIMD
+  implementations remain identical. The sparse-writer fast path in
   `crates/engine/src/local_copy/executor/file/sparse.rs` now batches zero-run
   detection into 16-byte `u128` comparisons before falling back to the scalar
   prefix scan; `zero_run_length_matches_scalar_reference` keeps the vectorised
