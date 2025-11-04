@@ -85,6 +85,7 @@ jobs:
             needs_cross_gcc: false
             generate_sbom: false
             package_linux: false
+            package_brew: false
           # (disabled placeholders)
           - name: windows-x86
             enabled: false
