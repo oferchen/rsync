@@ -18,33 +18,35 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y jq
 
-      # 1. decide the tag
-      - name: Detect tag and version
-        id: detect
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 1. Decide TAG and VERSION from event (preferred) or latest (fallback)
+      - name: Determine tag and version
+        id: tag
         run: |
-          if [ -n "${{ github.event.release.tag_name }}" ]; then
+          if [ "${{ github.event_name }}" = "release" ] && [ -n "${{ github.event.release.tag_name }}" ]; then
             TAG="${{ github.event.release.tag_name }}"
           else
-            TAG=$(gh api "repos/${{ env.REPO }}/releases/latest" --jq .tag_name)
+            TAG=$(curl -fsSL \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ env.REPO }}/releases/latest" \
+              | jq -r .tag_name)
           fi
           VERSION="${TAG#v}"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "TAG=$TAG"
-          echo "VERSION=$VERSION"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-      # 2. fetch the actual release JSON from https://github.com/oferchen/rsync
+      # 2. Fetch the actual release JSON from your repo
       - name: Fetch release JSON
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api "repos/${{ env.REPO }}/releases/tags/${TAG}" > release.json
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ env.REPO }}/releases/tags/${TAG}" \
+            -o release.json
           cat release.json
 
-      # 3. pick the real assets that CI uploaded
-      - name: Extract asset URLs from actual release
+      # 3. Extract the real asset URLs with robust pattern matching
+      - name: Extract asset URLs
         run: |
           MACOS_ARM_URL=""
           MACOS_INTEL_URL=""
@@ -55,23 +57,27 @@ jobs:
           for i in $(seq 0 $((count - 1))); do
             name=$(jq -r ".assets[$i].name" release.json)
             url=$(jq -r ".assets[$i].browser_download_url" release.json)
-            # skip nulls
-            if [ "$url" = "null" ] || [ -z "$url" ]; then
+
+            # skip empty/null
+            if [ -z "$url" ] || [ "$url" = "null" ]; then
               continue
             fi
+
             lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
-            # your CI names contain darwin / linux + arch, we'll match that
-            if echo "$lname" | grep -q "darwin"; then
-              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+            # macOS detection: darwin, apple-darwin, macos, macos-universal
+            if echo "$lname" | grep -Eq 'darwin|macos'; then
+              if echo "$lname" | grep -Eq 'aarch64|arm64'; then
                 MACOS_ARM_URL="$url"
               else
                 MACOS_INTEL_URL="$url"
               fi
-            elif echo "$lname" | grep -q "linux"; then
-              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+            # linux detection: linux, unknown-linux-gnu, unknown-linux-musl
+            elif echo "$lname" | grep -Eq 'linux|unknown-linux-gnu|unknown-linux-musl'; then
+              if echo "$lname" | grep -Eq 'aarch64|arm64'; then
                 LINUX_ARM_URL="$url"
               else
+                # x86_64, amd64, plain linux
                 LINUX_INTEL_URL="$url"
               fi
             fi
@@ -82,19 +88,18 @@ jobs:
           echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
           echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
 
-      # 4. download only what really exists and hash it
+      # 4. Download the actual assets and compute sha256
       - name: Download assets and compute sha256
         run: |
           mkdir -p dl
 
-          download_and_sha () {
+          download_and_sha() {
             local url="$1"
             local outvar="$2"
             if [ -z "$url" ]; then
               return 0
             fi
             local fname="dl/$(basename "$url")"
-            # release assets redirect to S3, so -L
             curl -fsSL "$url" -o "$fname"
             local sha
             sha=$(sha256sum "$fname" | awk '{print $1}')
@@ -106,8 +111,8 @@ jobs:
           download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
           download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
 
-      # 5. generate Formula/oc-rsync.rb using the real URLs+SHAs we just gathered
-      - name: Generate Homebrew formula from actual values
+      # 5. Generate the formula using the values from the actual release
+      - name: Generate Homebrew formula
         env:
           VERSION: ${{ env.VERSION }}
           MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
