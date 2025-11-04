@@ -1,99 +1,134 @@
-#!/usr/bin/env python3
-"""
-tools/gen_brew_formula.py
+name: brew-formula
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
 
-Generate Formula/oc-rsync.rb from env vars that the CI extracted from the
-actual release assets of https://github.com/oferchen/rsync.
+jobs:
+  generate-brew-formula:
+    runs-on: ubuntu-latest
+    env:
+      REPO: oferchen/rsync
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-We only emit platform blocks (macOS/Linux, arm/intel) that actually have both
-a URL and a SHA. That way, if a release only ships darwin and not linux, the
-formula is still valid.
-"""
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
 
-from pathlib import Path
-import os
+      # 1. Determine TAG and VERSION
+      - name: Determine tag and version
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            # workflow_dispatch fallback: fetch latest release from your repo
+            TAG=$(curl -fsSL \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ env.REPO }}/releases/latest" \
+              | jq -r .tag_name)
+          fi
 
-version = os.environ.get("VERSION")
-if not version:
-    raise SystemExit("VERSION env is required")
+          VERSION="${TAG#v}"
 
-def have(name: str) -> bool:
-    return bool(os.environ.get(name))
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
-macos_arm_url = os.environ.get("MACOS_ARM_URL")
-macos_arm_sha = os.environ.get("MACOS_ARM_SHA")
+      # 2. Fetch the actual release JSON from YOUR repo
+      - name: Fetch release JSON
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ env.REPO }}/releases/tags/${TAG}" \
+            -o release.json
 
-macos_intel_url = os.environ.get("MACOS_INTEL_URL")
-macos_intel_sha = os.environ.get("MACOS_INTEL_SHA")
+          cat release.json
 
-linux_arm_url = os.environ.get("LINUX_ARM_URL")
-linux_arm_sha = os.environ.get("LINUX_ARM_SHA")
+      # 3. Extract the real asset URLs
+      - name: Extract asset URLs
+        run: |
+          MACOS_ARM_URL=""
+          MACOS_INTEL_URL=""
+          LINUX_ARM_URL=""
+          LINUX_INTEL_URL=""
 
-linux_intel_url = os.environ.get("LINUX_INTEL_URL")
-linux_intel_sha = os.environ.get("LINUX_INTEL_SHA")
+          count=$(jq '.assets | length' release.json)
+          for i in $(seq 0 $((count - 1))); do
+            name=$(jq -r ".assets[$i].name" release.json)
+            url=$(jq -r ".assets[$i].browser_download_url" release.json)
 
-lines = []
-lines.append("# frozen_string_literal: true")
-lines.append("")
-lines.append("class OcRsync < Formula")
-lines.append('  desc "Rust-based rsync 3.4.1-compatible client/daemon from github.com/oferchen/rsync"')
-lines.append('  homepage "https://github.com/oferchen/rsync"')
-lines.append(f'  version "{version}"')
-lines.append('  license "GPL-3.0-or-later"')
-lines.append("")
+            # skip empty
+            if [ -z "$url" ] || [ "$url" = "null" ]; then
+              continue
+            fi
 
-# macOS
-if (macos_arm_url and macos_arm_sha) or (macos_intel_url and macos_intel_sha):
-    lines.append("  on_macos do")
-    if macos_arm_url and macos_arm_sha:
-        lines.append("    on_arm do")
-        lines.append(f'      url "{macos_arm_url}"')
-        lines.append(f'      sha256 "{macos_arm_sha}"')
-        lines.append("    end")
-    if macos_intel_url and macos_intel_sha:
-        lines.append("    on_intel do")
-        lines.append(f'      url "{macos_intel_url}"')
-        lines.append(f'      sha256 "{macos_intel_sha}"')
-        lines.append("    end")
-    lines.append("  end")
-    lines.append("")
+            lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
-# Linux
-if (linux_arm_url and linux_arm_sha) or (linux_intel_url and linux_intel_sha):
-    lines.append("  on_linux do")
-    if linux_arm_url and linux_arm_sha:
-        lines.append("    on_arm do")
-        lines.append(f'      url "{linux_arm_url}"')
-        lines.append(f'      sha256 "{linux_arm_sha}"')
-        lines.append("    end")
-    if linux_intel_url and linux_intel_sha:
-        lines.append("    on_intel do")
-        lines.append(f'      url "{linux_intel_url}"')
-        lines.append(f'      sha256 "{linux_intel_sha}"')
-        lines.append("    end")
-    lines.append("  end")
-    lines.append("")
+            if echo "$lname" | grep -q darwin; then
+              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+                MACOS_ARM_URL="$url"
+              else
+                MACOS_INTEL_URL="$url"
+              fi
+            elif echo "$lname" | grep -q linux; then
+              if echo "$lname" | grep -Eq "aarch64|arm64"; then
+                LINUX_ARM_URL="$url"
+              else
+                LINUX_INTEL_URL="$url"
+              fi
+            fi
+          done
 
-lines.append("  def install")
-lines.append('    dir = Dir["*"].find { |f| File.directory?(f) && f.downcase.include?("oc-rsync") }')
-lines.append("    if dir")
-lines.append("      Dir.chdir(dir) do")
-lines.append('        bin.install "oc-rsync" if File.exist?("oc-rsync")')
-lines.append('        bin.install "oc-rsyncd" if File.exist?("oc-rsyncd")')
-lines.append("      end")
-lines.append("    else")
-lines.append('      bin.install "oc-rsync" if File.exist?("oc-rsync")')
-lines.append('      bin.install "oc-rsyncd" if File.exist?("oc-rsyncd")')
-lines.append("    end")
-lines.append("  end")
-lines.append("")
-lines.append("  test do")
-lines.append('    assert_match "3.4.1", shell_output("#{bin}/oc-rsync --version")')
-lines.append("  end")
-lines.append("end")
-lines.append("")
+          echo "MACOS_ARM_URL=$MACOS_ARM_URL" >> $GITHUB_ENV
+          echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
+          echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
+          echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
 
-outdir = Path("Formula")
-outdir.mkdir(parents=True, exist_ok=True)
-(outdir / "oc-rsync.rb").write_text("\n".join(lines), encoding="utf-8")
-print("wrote Formula/oc-rsync.rb")
+      # 4. Download actual assets and compute sha256
+      - name: Download assets and compute sha256
+        run: |
+          mkdir -p dl
+
+          download_and_sha() {
+            local url="$1"
+            local outvar="$2"
+            if [ -z "$url" ]; then
+              return 0
+            fi
+            local fname="dl/$(basename "$url")"
+            curl -fsSL "$url" -o "$fname"
+            local sha
+            sha=$(sha256sum "$fname" | awk '{print $1}')
+            echo "${outvar}=${sha}" >> $GITHUB_ENV
+          }
+
+          download_and_sha "${MACOS_ARM_URL}"   "MACOS_ARM_SHA"
+          download_and_sha "${MACOS_INTEL_URL}" "MACOS_INTEL_SHA"
+          download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
+          download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
+
+      # 5. Generate the formula using the REAL values we just fetched
+      - name: Generate Homebrew formula
+        env:
+          VERSION: ${{ env.VERSION }}
+          MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
+          MACOS_ARM_SHA: ${{ env.MACOS_ARM_SHA }}
+          MACOS_INTEL_URL: ${{ env.MACOS_INTEL_URL }}
+          MACOS_INTEL_SHA: ${{ env.MACOS_INTEL_SHA }}
+          LINUX_ARM_URL: ${{ env.LINUX_ARM_URL }}
+          LINUX_ARM_SHA: ${{ env.LINUX_ARM_SHA }}
+          LINUX_INTEL_URL: ${{ env.LINUX_INTEL_URL }}
+          LINUX_INTEL_SHA: ${{ env.LINUX_INTEL_SHA }}
+        run: |
+          python3 tools/gen_brew_formula.py
+
+      - name: Upload formula artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: Formula/oc-rsync.rb
