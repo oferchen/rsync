@@ -789,6 +789,7 @@ dependencies = [
  "filetime",
  "globset",
  "libc",
+ "memchr",
  "rsync-bandwidth",
  "rsync-checksums",
  "rsync-compress",
