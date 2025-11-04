@@ -259,23 +259,13 @@ fn accumulate_chunk_dispatch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32
 /// unreachable-code patterns.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn accumulate_chunk_arch(
-    s1: u32,
-    s2: u32,
-    len: usize,
-    chunk: &[u8],
-) -> Option<(u32, u32, usize)> {
+fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
     Some(neon::accumulate_chunk(s1, s2, len, chunk))
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-fn accumulate_chunk_arch(
-    s1: u32,
-    s2: u32,
-    len: usize,
-    chunk: &[u8],
-) -> Option<(u32, u32, usize)> {
+fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
     x86::try_accumulate_chunk(s1, s2, len, chunk)
 }
 
