@@ -257,20 +257,36 @@ fn accumulate_chunk_dispatch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32
 /// Arch-specific strategy: returns `Some(...)` if this arch has a fast path,
 /// otherwise `None`. This keeps the top-level dispatcher linear and avoids
 /// unreachable-code patterns.
+#[cfg(target_arch = "aarch64")]
 #[inline]
-fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return Some(neon::accumulate_chunk(s1, s2, len, chunk));
-    }
+fn accumulate_chunk_arch(
+    s1: u32,
+    s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> Option<(u32, u32, usize)> {
+    Some(neon::accumulate_chunk(s1, s2, len, chunk))
+}
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if let Some(result) = x86::try_accumulate_chunk(s1, s2, len, chunk) {
-            return Some(result);
-        }
-    }
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn accumulate_chunk_arch(
+    s1: u32,
+    s2: u32,
+    len: usize,
+    chunk: &[u8],
+) -> Option<(u32, u32, usize)> {
+    x86::try_accumulate_chunk(s1, s2, len, chunk)
+}
 
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[inline]
+fn accumulate_chunk_arch(
+    _s1: u32,
+    _s2: u32,
+    _len: usize,
+    _chunk: &[u8],
+) -> Option<(u32, u32, usize)> {
     None
 }
 
