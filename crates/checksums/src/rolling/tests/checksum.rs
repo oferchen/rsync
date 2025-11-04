@@ -208,6 +208,27 @@ fn saturating_increment_total_handles_large_usize_values() {
     }
 }
 
+#[test]
+fn simd_availability_matches_architecture_capabilities() {
+    let available = simd_acceleration_available();
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        assert!(
+            available,
+            "SIMD acceleration should be reported on architectures with dedicated fast paths"
+        );
+    }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        assert!(
+            !available,
+            "SIMD acceleration must be disabled on unsupported architectures"
+        );
+    }
+}
+
 struct InterruptingReader<'a> {
     inner: Cursor<&'a [u8]>,
     interrupted: bool,

@@ -83,7 +83,11 @@ This document defines the internal actors (“agents”), their responsibilities
   the scalar `roll` path for exotic slice lengths. Future optimisations must
   preserve the aggregated arithmetic and extend the long-sequence regression
   test (`roll_many_matches_single_rolls_for_long_sequences`) so both code paths
-  remain in parity.
+  remain in parity. The `VersionInfoConfig::with_runtime_capabilities` helper
+  surfaces the SIMD detection result (via
+  `rsync_checksums::simd_acceleration_available`) so `--version` output tracks
+  the acceleration active at runtime; update the helper whenever new
+  architecture-specific paths are introduced.
 - **Environment guardrails for tests**: When exercising fallback overrides or
   other environment-sensitive logic in unit tests, use the existing
   `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
