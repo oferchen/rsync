@@ -104,6 +104,19 @@ impl VersionInfoConfig {
     pub const fn to_builder(self) -> VersionInfoConfigBuilder {
         VersionInfoConfigBuilder::from_config(self)
     }
+
+    /// Returns a configuration that reflects runtime-detected capabilities.
+    ///
+    /// The helper starts from [`VersionInfoConfig::new`] and toggles fields that
+    /// depend on CPU feature detection (currently SIMD rolling checksums) so the
+    /// rendered version report advertises the same optimisations that the
+    /// transfer engine selects.
+    #[must_use]
+    pub fn with_runtime_capabilities() -> Self {
+        let mut config = Self::new();
+        config.supports_simd_roll = rsync_checksums::simd_acceleration_available();
+        config
+    }
 }
 
 impl Default for VersionInfoConfig {

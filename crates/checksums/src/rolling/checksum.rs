@@ -5,6 +5,37 @@ use super::error::RollingError;
 
 const VECTORED_STACK_CAPACITY: usize = 128;
 
+/// Reports whether SIMD acceleration is currently available for the rolling
+/// checksum implementation.
+///
+/// The function inspects the active architecture at runtime (or compile time
+/// for platforms where the presence of SIMD is guaranteed) and mirrors the
+/// dispatch logic used by [`RollingChecksum::update`]. Callers such as the
+/// version banner renderer surface the result to users so the advertised
+/// capabilities match the code paths selected during checksum updates.
+#[must_use]
+pub fn simd_acceleration_available() -> bool {
+    simd_available_arch()
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn simd_available_arch() -> bool {
+    neon::simd_available()
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+fn simd_available_arch() -> bool {
+    x86::simd_available()
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+#[inline]
+fn simd_available_arch() -> bool {
+    false
+}
+
 /// Rolling checksum used by rsync for weak block matching (often called `rsum`).
 ///
 /// Mirrors upstream rsync's Adler-32 style weak checksum: `s1` accumulates the byte sum,
@@ -449,6 +480,12 @@ pub(crate) mod x86 {
     }
 
     #[inline]
+    pub(super) fn simd_available() -> bool {
+        let features = cpu_features();
+        features.avx2 || features.sse2
+    }
+
+    #[inline]
     pub(super) fn try_accumulate_chunk(
         s1: u32,
         s2: u32,
@@ -665,6 +702,11 @@ pub(crate) mod neon {
     const BLOCK_LEN: usize = 16;
     const HIGH_WEIGHTS: [u16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
     const LOW_WEIGHTS: [u16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
+
+    #[inline]
+    pub(super) fn simd_available() -> bool {
+        true
+    }
 
     #[inline]
     pub(super) fn accumulate_chunk(
