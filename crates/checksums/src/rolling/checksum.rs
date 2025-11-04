@@ -384,8 +384,26 @@ pub(crate) mod x86 {
         _mm256_setzero_si256, _mm256_storeu_si256,
     };
 
+    use std::sync::OnceLock;
+
     const SSE2_BLOCK_LEN: usize = 16;
     const AVX2_BLOCK_LEN: usize = 32;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct FeatureLevel {
+        avx2: bool,
+        sse2: bool,
+    }
+
+    static FEATURES: OnceLock<FeatureLevel> = OnceLock::new();
+
+    #[inline]
+    fn cpu_features() -> FeatureLevel {
+        *FEATURES.get_or_init(|| FeatureLevel {
+            avx2: std::arch::is_x86_feature_detected!("avx2"),
+            sse2: std::arch::is_x86_feature_detected!("sse2"),
+        })
+    }
 
     #[inline]
     pub(super) fn try_accumulate_chunk(
@@ -394,15 +412,27 @@ pub(crate) mod x86 {
         len: usize,
         chunk: &[u8],
     ) -> Option<(u32, u32, usize)> {
-        if chunk.len() >= AVX2_BLOCK_LEN && std::arch::is_x86_feature_detected!("avx2") {
+        let features = cpu_features();
+
+        if chunk.len() >= AVX2_BLOCK_LEN && features.avx2 {
             return Some(unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) });
         }
 
-        if chunk.len() >= SSE2_BLOCK_LEN && std::arch::is_x86_feature_detected!("sse2") {
+        if chunk.len() >= SSE2_BLOCK_LEN && features.sse2 {
             return Some(unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) });
         }
 
         None
+    }
+
+    #[cfg(test)]
+    pub(super) fn load_cpu_features_for_tests() {
+        let _ = cpu_features();
+    }
+
+    #[cfg(test)]
+    pub(super) fn cpu_features_cached_for_tests() -> bool {
+        FEATURES.get().is_some()
     }
 
     #[target_feature(enable = "sse2")]
@@ -650,5 +680,12 @@ mod tests {
         let mut buf: [u8; 0] = [];
         let err = c.update_reader_with_buffer(&mut rdr, &mut buf).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn x86_cpu_feature_detection_is_cached() {
+        x86::load_cpu_features_for_tests();
+        assert!(x86::cpu_features_cached_for_tests());
     }
 }

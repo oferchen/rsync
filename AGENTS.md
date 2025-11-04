@@ -43,10 +43,13 @@ This document defines the internal actors (“agents”), their responsibilities
 - **CPU-accelerated hot paths**: The rolling checksum pipeline uses
   architecture-specific SIMD fast paths (AVX2 and SSE2 on `x86`/`x86_64`, NEON on
   `aarch64`) that fall back to the scalar implementation for other targets.
-  Any updates to `crates/checksums`—especially
-  `rolling::checksum::accumulate_chunk`—must keep the SIMD and scalar
-  implementations in lockstep, reuse the shared scalar helper for edge cases,
-  and extend the parity tests (`avx2_accumulate_matches_scalar_reference`,
+  Runtime feature detection is cached via `OnceLock` so repeated checksum calls
+  avoid the overhead of re-querying `is_x86_feature_detected!`, and any updates
+  must preserve that memoisation alongside the scalar fallback. Any updates to
+  `crates/checksums`—especially `rolling::checksum::accumulate_chunk`—must keep
+  the SIMD and scalar implementations in lockstep, reuse the shared scalar
+  helper for edge cases, and extend the parity tests
+  (`avx2_accumulate_matches_scalar_reference`,
   `sse2_accumulate_matches_scalar_reference`, and
   `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
   introduced. The sparse-writer fast path in
