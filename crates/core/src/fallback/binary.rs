@@ -1,13 +1,39 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct CacheKey {
+    binary: OsString,
+    path: Option<OsString>,
+    #[cfg(windows)]
+    pathext: Option<OsString>,
+}
+
+impl CacheKey {
+    #[inline]
+    fn new(binary: &OsStr) -> Self {
+        Self {
+            binary: binary.to_os_string(),
+            path: env::var_os("PATH"),
+            #[cfg(windows)]
+            pathext: env::var_os("PATHEXT"),
+        }
+    }
+}
+
+fn availability_cache() -> &'static Mutex<HashMap<CacheKey, bool>> {
+    static CACHE: OnceLock<Mutex<HashMap<CacheKey, bool>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Returns the set of candidate executable paths derived from `binary`.
 ///
@@ -100,11 +126,34 @@ fn apply_extension(base: &Path, ext: &OsStr) -> Option<PathBuf> {
 }
 
 /// Reports whether the provided fallback executable exists and is runnable.
+///
+/// The computation memoises its result for the current `PATH` (and `PATHEXT`
+/// on Windows) so repeated availability checks avoid re-walking identical
+/// search paths.
 #[must_use]
 pub fn fallback_binary_available(binary: &OsStr) -> bool {
-    fallback_binary_candidates(binary)
+    let key = CacheKey::new(binary);
+
+    let cache = availability_cache();
+
+    if let Some(result) = cache
+        .lock()
+        .expect("fallback availability cache lock poisoned")
+        .get(&key)
+        .copied()
+    {
+        return result;
+    }
+
+    let available = fallback_binary_candidates(binary)
         .into_iter()
-        .any(|candidate| candidate_is_executable(&candidate))
+        .any(|candidate| candidate_is_executable(&candidate));
+
+    let mut guard = cache
+        .lock()
+        .expect("fallback availability cache lock poisoned");
+    guard.entry(key).or_insert(available);
+    available
 }
 
 /// Formats a diagnostic explaining that a fallback executable is unavailable.
@@ -256,7 +305,8 @@ fn ascii_uppercase_u16(unit: u16) -> u16 {
 mod tests {
     use super::*;
     use std::env;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
+    use std::fs::File;
     #[cfg(not(unix))]
     use std::io::Write;
     use std::path::PathBuf;
@@ -354,6 +404,45 @@ mod tests {
     fn fallback_binary_available_rejects_missing_file() {
         let missing = Path::new("/nonexistent/path/to/rsync-binary");
         assert!(!fallback_binary_available(missing.as_os_str()));
+    }
+
+    #[test]
+    fn fallback_binary_available_respects_path_changes() {
+        let _lock = env_lock().lock().expect("lock env");
+
+        let temp_dir = TempDir::new().expect("tempdir");
+        let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+        let binary_path = temp_dir.path().join(binary_name);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let file = File::create(&binary_path).expect("create helper placeholder");
+            let mut permissions = file.metadata().expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            file.set_permissions(permissions).expect("chmod");
+        }
+
+        #[cfg(not(unix))]
+        {
+            File::create(&binary_path).expect("create helper placeholder");
+        }
+
+        {
+            let _path_guard = EnvGuard::set_os("PATH", OsStr::new(""));
+            assert!(
+                !fallback_binary_available(OsStr::new("rsync")),
+                "empty PATH should not locate the fallback binary"
+            );
+        }
+
+        let joined = env::join_paths([temp_dir.path()]).expect("join paths");
+        let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+        assert!(
+            fallback_binary_available(OsStr::new("rsync")),
+            "updated PATH should locate the fallback binary"
+        );
     }
 
     #[test]
