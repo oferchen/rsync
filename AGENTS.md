@@ -393,6 +393,11 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 ## Interop & Determinism
 
 * Loopback CI matrix across protocols 32–28 with upstream versions 3.0.9/3.1.3/3.4.1.
+* Upstream references are cloned from `https://github.com/RsyncProject/rsync` tags
+  (`v3.0.9`, `v3.1.3`, `v3.4.1`) by `tools/ci/run_interop.sh`, which runs
+  `./prepare-source` when necessary before configuring and installing the
+  binaries. Contributors must keep the tag list in sync with the versions tested
+  by the parity harness.
 * Deterministic output: `LC_ALL=C`, `COLUMNS=80`; normalized metadata ordering; stable progress formatting.
 * Error messages include Rust source suffix as specified; snapshot tests assert presence/shape, not specific line numbers.
 
