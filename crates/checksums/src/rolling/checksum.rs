@@ -181,22 +181,55 @@ impl RollingChecksum {
             return Ok(());
         }
 
-        let mut s1 = self.s1;
-        let mut s2 = self.s2;
+        let count = outgoing.len();
+        let count_i128 = match i128::try_from(count) {
+            Ok(value) => value,
+            Err(_) => {
+                for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+                    self.roll(out, inn)?;
+                }
+                return Ok(());
+            }
+        };
 
-        for (&out_b, &in_b) in outgoing.iter().zip(incoming.iter()) {
-            let out = u32::from(out_b);
-            let inn = u32::from(in_b);
+        let mut sum_outgoing = 0i128;
+        let mut sum_delta = 0i128;
+        let mut weighted_delta = 0i128;
 
-            s1 = s1.wrapping_sub(out).wrapping_add(inn) & 0xffff;
-            s2 = s2
-                .wrapping_sub(window_len.wrapping_mul(out))
-                .wrapping_add(s1)
-                & 0xffff;
+        for (idx, (&out_b, &in_b)) in outgoing.iter().zip(incoming.iter()).enumerate() {
+            let outgoing_val = i128::from(out_b);
+            let incoming_val = i128::from(in_b);
+            let delta = incoming_val - outgoing_val;
+
+            sum_outgoing += outgoing_val;
+            sum_delta += delta;
+
+            let idx_i128 = match i128::try_from(idx) {
+                Ok(value) => value,
+                Err(_) => {
+                    for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+                        self.roll(out, inn)?;
+                    }
+                    return Ok(());
+                }
+            };
+            let weight = count_i128 - idx_i128;
+            weighted_delta += delta * weight;
         }
 
-        self.s1 = s1;
-        self.s2 = s2;
+        let original_s1 = self.s1;
+
+        let new_s1 = original_s1.wrapping_add(sum_delta as u32) & 0xffff;
+
+        let new_s2 = self
+            .s2
+            .wrapping_sub(window_len.wrapping_mul(sum_outgoing as u32))
+            .wrapping_add(original_s1.wrapping_mul(count as u32))
+            .wrapping_add(weighted_delta as u32)
+            & 0xffff;
+
+        self.s1 = new_s1;
+        self.s2 = new_s2;
         Ok(())
     }
 
