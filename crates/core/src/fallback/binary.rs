@@ -37,11 +37,11 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
     let extensions: Vec<OsString> = vec![OsString::new()];
 
     for dir in env::split_paths(&path_env) {
-        if dir.as_os_str().is_empty() {
-            continue;
-        }
-
-        let base = dir.join(direct_path);
+        let base = if dir.as_os_str().is_empty() {
+            direct_path.to_path_buf()
+        } else {
+            dir.join(direct_path)
+        };
         for ext in &extensions {
             if let Some(candidate) = apply_extension(&base, ext) {
                 if seen.insert(candidate.clone()) {
@@ -238,6 +238,8 @@ mod tests {
     use std::ffi::OsString;
     #[cfg(not(unix))]
     use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::{NamedTempFile, TempDir};
 
     struct EnvGuard {
@@ -280,6 +282,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     #[test]
@@ -330,6 +337,8 @@ mod tests {
 
     #[test]
     fn fallback_binary_candidates_deduplicates_duplicate_path_entries() {
+        let _lock = env_lock().lock().expect("lock env");
+
         let temp_dir = TempDir::new().expect("tempdir");
         let joined = env::join_paths([temp_dir.path(), temp_dir.path()]).expect("join paths");
         let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
@@ -358,9 +367,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn fallback_binary_candidates_include_current_directory_for_empty_path_entries() {
+        let _lock = env_lock().lock().expect("lock env");
+
+        let temp_dir = TempDir::new().expect("tempdir");
+        let joined =
+            env::join_paths([PathBuf::new(), temp_dir.path().to_path_buf()]).expect("join paths");
+        let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+        #[cfg(windows)]
+        let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+        let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+        #[cfg(not(windows))]
+        let expected = Path::new("rsync");
+        #[cfg(windows)]
+        let expected = Path::new("rsync.exe");
+
+        assert!(
+            candidates.iter().any(|candidate| candidate == expected),
+            "current-directory candidate missing from {candidates:?}"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn fallback_binary_candidates_expand_explicit_windows_paths() {
+        let _lock = env_lock().lock().expect("lock env");
+
         use std::fs;
 
         let temp_dir = TempDir::new().expect("tempdir");
