@@ -1,4 +1,5 @@
 
+## compression encapsulation using identical algorthms as upstream, validate hashing use the same algo as upstream. 
 ## ci interop exit code is omitted using || true
 
 ## UPSTREAM-CONSISTENT DAEMON MODEL
