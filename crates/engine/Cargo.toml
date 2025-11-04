@@ -24,6 +24,7 @@ rsync-bandwidth = { path = "../bandwidth" }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }
+memchr = "2.7"
 
 [features]
 default = []
