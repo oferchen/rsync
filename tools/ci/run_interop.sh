@@ -6,7 +6,7 @@
 #     3.1.3  -> archive.ubuntu.com
 #     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
 # - Falls back to source build if the exact .deb for this arch is missing
-# - Keeps original interop logic intact
+# - Starts oc-rsyncd on a non-privileged port by passing --port on the CLI
 set -euo pipefail
 
 if ! command -v git >/dev/null 2>&1; then
@@ -81,15 +81,12 @@ build_version_url() {
   local arch=$2
   case "$version" in
     3.0.9)
-      # precise-era package on old-releases
       echo "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_${arch}.deb"
       ;;
     3.1.3)
-      # focal update
       echo "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_${arch}.deb"
       ;;
     3.4.1)
-      # Debian sid/trixie style
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-6_${arch}.deb"
       ;;
     *)
@@ -245,8 +242,7 @@ build_upstream_from_source() {
   fi
 
   local configure_help
-  configure_help
-=$(./configure --help)
+  configure_help=$(./configure --help)
   local -a configure_args=("--prefix=${install_dir}")
 
   if grep -q -- "--disable-xxhash" <<<"$configure_help"; then
@@ -386,19 +382,20 @@ cleanup() {
   exit "$exit_code"
 }
 
-# FIX: oc-rsyncd doesn’t accept classic '--daemon' flags, so just run it.
+# IMPORTANT: oc-rsyncd needs the port on CLI, otherwise it binds to 873 (privileged)
 start_oc_daemon() {
   local config=$1
   local log_file=$2
   local fallback_client=$3
   local pid_file=$4
+  local port=$5
 
   oc_pid_file_current="$pid_file"
 
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
   OC_RSYNC_FALLBACK="$fallback_client" \
-    "$oc_daemon" --config "$config" --log-file "$log_file" &
+    "$oc_daemon" --config "$config" --port "$port" --log-file "$log_file" &
   oc_pid=$!
   sleep 1
 }
@@ -438,7 +435,7 @@ run_interop_case() {
   write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
   echo "Testing upstream rsync ${version} client -> oc-rsyncd"
-  start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file"
+  start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
 
   if ! "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
     echo "FAIL: upstream rsync ${version} -> oc-rsyncd"
