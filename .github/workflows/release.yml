@@ -292,10 +292,10 @@ jobs:
         if: ${{ matrix.platform.enabled && matrix.platform.package_brew }}
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: update Homebrew formula for ${{ env.VERSION }}"
-          title: "Update Homebrew formula for ${{ env.VERSION }}"
+          commit-message: "chore: update Homebrew formula for ${{ env.PKG_VERSION }}"
+          title: "Update Homebrew formula for ${{ env.PKG_VERSION }}"
           body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ env.VERSION }}"
+          branch: "ci/brew-formula-${{ env.PKG_VERSION }}"
           base: ${{ env.DEF_BRANCH }}
           add-paths: |
             Formula/oc-rsync.rb
