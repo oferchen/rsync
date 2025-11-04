@@ -266,18 +266,15 @@ done
 oc_client="${target_dir}/oc-rsync"
 oc_daemon="${target_dir}/oc-rsyncd"
 
-workdir
-= $(mktemp -d)
+workdir=$(mktemp -d)
 trap cleanup EXIT
 
 src="${workdir}/source"
 mkdir -p "$src"
 printf 'interop-test\n' >"${src}/payload.txt"
 
-uid
-= $(id -u)
-gid
-= $(id -g)
+uid=$(id -u)
+gid=$(id -g)
 
 oc_identity=""
 up_identity=""
