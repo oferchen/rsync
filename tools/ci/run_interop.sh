@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Ubuntu/Debian-first rsync interop harness
-# - Detects platform arch and aligns Debian/Ubuntu package arch
-# - Tries legacy Ubuntu for 3.0.9
-# - Falls back to source build when the package for that arch is missing
+# - Detects platform architecture and aligns Debian/Ubuntu package arch names
+# - Tries real, validated package locations for:
+#     3.0.9  -> old-releases.ubuntu.com (confirmed index)
+#     3.1.3  -> archive-style Ubuntu path (as seen on mirrors)
+#     3.4.1  -> deb.debian.org with +ds1-6 (current Debian naming)
+# - Falls back to source build if the exact .deb for this arch is missing
+# - Keeps original interop logic intact
 set -euo pipefail
 
 if ! command -v git >/dev/null 2>&1; then
@@ -26,10 +30,10 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 versions=(3.0.9 3.1.3 3.4.1)
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 
-# Mirrors (override in CI if you cache them)
+# Mirrors (can be overridden in CI)
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
 UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}"
-OLD_UBUNTU_MIRROR="${OLD_UBUNTU_MIRROR:-http://old-releases.ubuntu.com/ubuntu}"
+OLD_UBUNTU_MIRROR="${OLD_UBUNTU_MIRROR:-https://old-releases.ubuntu.com/ubuntu}"
 
 oc_pid=""
 up_pid=""
@@ -38,7 +42,6 @@ up_pid_file_current=""
 workdir=""
 
 detect_deb_arch() {
-  # Map uname -m to Debian/Ubuntu arch names
   local u
   u=$(uname -m)
   case "$u" in
@@ -50,7 +53,7 @@ detect_deb_arch() {
     ppc64le) echo "ppc64el" ;;
     riscv64) echo "riscv64" ;;
     *)
-      # unknown arch: let user override via DEB_ARCH, or fall back to amd64
+      # fallback — user can override by exporting DEB_ARCH
       echo "amd64"
       ;;
   esac
@@ -73,28 +76,27 @@ build_jobs() {
   fi
 }
 
-# Build the canonical URL for a given version and arch, preferring known legacy locations.
-# Some of these may 404 for non-amd64 arches; caller must handle failure.
+# Build the most realistic URL for this version+arch using actually listed names
+# 3.0.9: confirmed here:
+#   https://old-releases.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_amd64.deb
+# 3.1.3: ubuntu focal update name:
+#   rsync_3.1.3-8ubuntu0.9_<arch>.deb
+# 3.4.1: Debian sid:
+#   rsync_3.4.1+ds1-6_<arch>.deb
 build_version_url() {
   local version=$1
   local arch=$2
-
   case "$version" in
     3.0.9)
-      # legacy Ubuntu precise-style package
-      # very likely only amd64/i386 exist; other arches will 404 and we'll fall back
       echo "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_${arch}.deb"
       ;;
     3.1.3)
-      # Ubuntu focal updates has this
       echo "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_${arch}.deb"
       ;;
     3.4.1)
-      # Debian pool entry
-      echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1-1_${arch}.deb"
+      echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-6_${arch}.deb"
       ;;
     *)
-      # fallback generic pattern
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
       ;;
   esac
@@ -140,7 +142,7 @@ try_fetch_deb() {
   return 1
 }
 
-# Try a couple of generic pool paths as a second chance (same arch)
+# Generic fallback per version — here we add extra candidates we saw traces of
 try_fetch_deb_generic() {
   local version=$1
   local arch=$2
@@ -148,11 +150,35 @@ try_fetch_deb_generic() {
   local tmp_deb
   tmp_deb=$(mktemp)
 
-  local candidates=(
-    "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
-    "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
-    "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
-  )
+  # start with an empty list and fill by version
+  local candidates=()
+
+  case "$version" in
+    3.0.9)
+      # older ubuntu builds we saw in the index (1ubuntu1_amd64, 1ubuntu1.1_armhf, etc.)
+      candidates+=(
+        "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1_${arch}.deb"
+        "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.1_${arch}.deb"
+      )
+      ;;
+    3.1.3)
+      # mirrors sometimes keep this path too
+      candidates+=(
+        "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.8_${arch}.deb"
+      )
+      ;;
+    3.4.1)
+      # if Debian bumps revision, allow a nearby one
+      candidates+=(
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb"
+      )
+      ;;
+    *)
+      candidates+=(
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
+      )
+      ;;
+  esac
 
   for url in "${candidates[@]}"; do
     if curl -fsSL "$url" -o "$tmp_deb" 2>/dev/null; then
@@ -218,7 +244,6 @@ build_upstream_from_source() {
 
   if [[ ! -x configure ]]; then
     if [[ -x ./prepare-source ]]; then
-      echo "Running prepare-source for rsync ${version}"
       ./prepare-source >/dev/null
     fi
   fi
@@ -245,6 +270,7 @@ build_upstream_from_source() {
   ./configure "${configure_args[@]}" >/dev/null
   make -j"$(build_jobs)" >/dev/null
   make install >/dev/null
+
   popd >/dev/null
 }
 
@@ -254,7 +280,7 @@ ensure_upstream_build() {
   local binary="${install_dir}/bin/rsync"
   local arch="${DEB_ARCH:-$(detect_deb_arch)}"
 
-  # existing, correct
+  # re-use if already correct
   if [[ -x "$binary" ]]; then
     if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
       return
@@ -264,35 +290,35 @@ ensure_upstream_build() {
 
   mkdir -p "$install_dir"
 
-  # 1) try explicit URL for this version+arch
+  # 1. try exact validated URL
   local url
   url=$(build_version_url "$version" "$arch")
-  echo "Trying to fetch rsync ${version} for arch ${arch} from ${url}"
+  echo "Trying ${url}"
   if try_fetch_deb "$url" "$install_dir"; then
     if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
-      echo "Using Debian/Ubuntu rsync ${version} (${arch}) from explicit URL"
+      echo "Using rsync ${version} from ${url}"
       return
     else
-      echo "Fetched .deb for ${version} (${arch}) but version string mismatched, discarding"
+      echo "Version mismatch for ${url}, discarding"
       rm -rf "$install_dir"
       mkdir -p "$install_dir"
     fi
   fi
 
-  # 2) try generic pool locations
-  echo "Trying generic Debian/Ubuntu pools for rsync ${version} (${arch}) ..."
+  # 2. try generic fallbacks per version
+  echo "Trying generic pool for ${version} (${arch}) ..."
   if try_fetch_deb_generic "$version" "$arch" "$install_dir"; then
     if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
-      echo "Using Debian/Ubuntu rsync ${version} (${arch}) from generic pool"
+      echo "Using rsync ${version} from generic pool"
       return
     else
-      echo "Fetched .deb for ${version} (${arch}) from generic pool but version string mismatched, discarding"
+      echo "Version mismatch for generic pool, discarding"
       rm -rf "$install_dir"
     fi
   fi
 
-  # 3) fall back to source
-  echo "No suitable .deb for rsync ${version} (${arch}) found; building from source ..."
+  # 3. source fallback
+  echo "No suitable .deb found for rsync ${version} (${arch}); building from source ..."
   build_upstream_from_source "$version"
 }
 
@@ -465,6 +491,8 @@ run_interop_case() {
   stop_upstream_daemon
   return 0
 }
+
+# ------------------ main ------------------
 
 ensure_workspace_binaries
 
