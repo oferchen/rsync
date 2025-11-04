@@ -17,35 +17,34 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y jq
-        shell: bash
 
+      # 1. decide the tag
       - name: Detect tag and version
         id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "${{ github.event.release.tag_name }}" ]; then
             TAG="${{ github.event.release.tag_name }}"
           else
-            # manual run fallback: latest release
             TAG=$(gh api "repos/${{ env.REPO }}/releases/latest" --jq .tag_name)
           fi
           VERSION="${TAG#v}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
+          echo "TAG=$TAG"
+          echo "VERSION=$VERSION"
 
+      # 2. fetch the actual release JSON from https://github.com/oferchen/rsync
       - name: Fetch release JSON
-        id: fetch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api "repos/${{ env.REPO }}/releases/tags/${TAG}" > release.json
           cat release.json
-        shell: bash
 
+      # 3. pick the real assets that CI uploaded
       - name: Extract asset URLs from actual release
-        id: assets
         run: |
           MACOS_ARM_URL=""
           MACOS_INTEL_URL=""
@@ -56,9 +55,13 @@ jobs:
           for i in $(seq 0 $((count - 1))); do
             name=$(jq -r ".assets[$i].name" release.json)
             url=$(jq -r ".assets[$i].browser_download_url" release.json)
+            # skip nulls
+            if [ "$url" = "null" ] || [ -z "$url" ]; then
+              continue
+            fi
             lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
-            # real matching from your actual artifacts
+            # your CI names contain darwin / linux + arch, we'll match that
             if echo "$lname" | grep -q "darwin"; then
               if echo "$lname" | grep -Eq "aarch64|arm64"; then
                 MACOS_ARM_URL="$url"
@@ -78,32 +81,32 @@ jobs:
           echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
           echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
           echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
-        shell: bash
 
+      # 4. download only what really exists and hash it
       - name: Download assets and compute sha256
-        id: hashes
         run: |
           mkdir -p dl
 
           download_and_sha () {
             local url="$1"
-            local varname="$2"
-            if [ -z "$url" ] || [ "$url" = "null" ]; then
-              return
+            local outvar="$2"
+            if [ -z "$url" ]; then
+              return 0
             fi
             local fname="dl/$(basename "$url")"
+            # release assets redirect to S3, so -L
             curl -fsSL "$url" -o "$fname"
             local sha
             sha=$(sha256sum "$fname" | awk '{print $1}')
-            echo "${varname}=${sha}" >> $GITHUB_ENV
+            echo "${outvar}=${sha}" >> $GITHUB_ENV
           }
 
           download_and_sha "${MACOS_ARM_URL}"   "MACOS_ARM_SHA"
           download_and_sha "${MACOS_INTEL_URL}" "MACOS_INTEL_SHA"
           download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
           download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
-        shell: bash
 
+      # 5. generate Formula/oc-rsync.rb using the real URLs+SHAs we just gathered
       - name: Generate Homebrew formula from actual values
         env:
           VERSION: ${{ env.VERSION }}
@@ -117,7 +120,6 @@ jobs:
           LINUX_INTEL_SHA: ${{ env.LINUX_INTEL_SHA }}
         run: |
           python3 tools/gen_brew_formula.py
-        shell: bash
 
       - name: Upload formula artifact
         uses: actions/upload-artifact@v4
