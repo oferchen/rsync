@@ -27,10 +27,8 @@ pub(crate) fn write_sparse_chunk(
                     written = written.saturating_add(rel_zero);
                 }
 
-                let mut zero_end = zero_index + 1;
-                while zero_end < chunk.len() && chunk[zero_end] == 0 {
-                    zero_end += 1;
-                }
+                let zero_run = zero_run_length(&chunk[zero_index..]);
+                let zero_end = zero_index + zero_run;
 
                 let span = zero_end - zero_index;
                 if span > 0 {
@@ -58,4 +56,65 @@ pub(crate) fn write_sparse_chunk(
     }
 
     Ok(written)
+}
+
+#[inline]
+fn zero_run_length(bytes: &[u8]) -> usize {
+    let mut offset = 0usize;
+    let mut buffer = [0u8; 16];
+    let mut iter = bytes.chunks_exact(16);
+
+    for chunk in &mut iter {
+        buffer.copy_from_slice(chunk);
+        if u128::from_ne_bytes(buffer) == 0 {
+            offset += 16;
+            continue;
+        }
+
+        let position = chunk.iter().position(|&byte| byte != 0).unwrap_or(16);
+        return offset + position;
+    }
+
+    offset + zero_run_length_scalar(iter.remainder())
+}
+
+#[inline]
+fn zero_run_length_scalar(bytes: &[u8]) -> usize {
+    bytes.iter().take_while(|&&byte| byte == 0).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{zero_run_length, zero_run_length_scalar};
+
+    #[test]
+    fn zero_run_length_matches_scalar_reference() {
+        let cases: &[&[u8]] = &[
+            &[],
+            &[0],
+            &[0, 0, 0],
+            &[0, 0, 1, 0, 0],
+            &[0, 7, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[0, 1],
+        ];
+
+        for case in cases {
+            assert_eq!(
+                zero_run_length(case),
+                zero_run_length_scalar(case),
+                "zero-run length mismatch for {:?}",
+                case
+            );
+        }
+
+        let mut long = vec![0u8; 512];
+        assert_eq!(zero_run_length(&long), long.len());
+        long[511] = 42;
+        assert_eq!(zero_run_length(&long), 511);
+        long.push(0);
+        assert_eq!(zero_run_length(&long[511..]), 0);
+        assert_eq!(zero_run_length(&long[512..]), 1);
+    }
 }

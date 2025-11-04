@@ -53,11 +53,12 @@ This document defines the internal actors (“agents”), their responsibilities
   `sse2_accumulate_matches_scalar_reference`, and
   `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
   introduced. The sparse-writer fast path in
-  `crates/engine/src/local_copy/executor/file/sparse.rs` uses the
-  `memchr` crate to delegate zero-byte detection to the CPU's SIMD
-  instructions on all supported platforms; changes to that routine must
-  preserve the single seek-per-zero-run invariant and keep coverage tests for
-  sparse file handling green. The bandwidth parser in `crates/bandwidth`
+  `crates/engine/src/local_copy/executor/file/sparse.rs` now batches zero-run
+  detection into 16-byte `u128` comparisons before falling back to the scalar
+  prefix scan; `zero_run_length_matches_scalar_reference` keeps the vectorised
+  path and scalar reference in lockstep. Updates must preserve the single
+  seek-per-zero-run invariant and keep those tests (and the sparse copy
+  integrations) green. The bandwidth parser in `crates/bandwidth`
   likewise leans on `memchr` to locate decimal separators and exponent markers
   so ASCII scans stay vectorised; updates must keep the byte-oriented fast path
   aligned with the exhaustive parser tests. Additional CPU offloading should
