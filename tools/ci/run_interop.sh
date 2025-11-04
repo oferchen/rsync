@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required to build upstream rsync releases for interop tests" >&2
+  exit 1
+fi
+
+export GIT_TERMINAL_PROMPT=0
+
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
 
 versions=(3.0.9 3.1.3 3.4.1)
+rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 
 oc_pid=""
 up_pid=""
@@ -33,8 +41,6 @@ build_jobs() {
 
 ensure_upstream_build() {
   local version=$1
-  local archive="rsync-${version}.tar.gz"
-  local url="https://rsync.samba.org/ftp/rsync/src/${archive}"
   local src_dir="${upstream_src_root}/rsync-${version}"
   local install_dir="${upstream_install_root}/${version}"
   local binary="${install_dir}/bin/rsync"
@@ -49,16 +55,20 @@ ensure_upstream_build() {
   rm -rf "$src_dir"
   mkdir -p "$upstream_src_root" "$upstream_install_root"
 
-  echo "Building upstream rsync ${version}"
-  curl -L --fail --silent --show-error --retry 5 --retry-delay 2 "$url" \
-    | tar -xz -C "$upstream_src_root"
-
-  if [[ ! -d "$src_dir" ]]; then
-    echo "Failed to extract upstream rsync ${version}" >&2
+  echo "Cloning upstream rsync ${version} from ${rsync_repo_url}"
+  if ! clone_upstream_source "$version" "$src_dir"; then
+    echo "Failed to clone upstream rsync ${version} from ${rsync_repo_url}" >&2
     exit 1
   fi
 
   pushd "$src_dir" >/dev/null
+
+  if [[ ! -x configure ]]; then
+    if [[ -x ./prepare-source ]]; then
+      echo "Running prepare-source for rsync ${version}"
+      ./prepare-source >/dev/null
+    fi
+  fi
 
   if [[ ! -x configure ]]; then
     echo "Upstream rsync ${version} source tree is missing a configure script" >&2
@@ -83,6 +93,20 @@ ensure_upstream_build() {
   make -j"$(build_jobs)" >/dev/null
   make install >/dev/null
   popd >/dev/null
+}
+
+clone_upstream_source() {
+  local version=$1
+  local destination=$2
+  local tag_candidates=("v${version}" "${version}")
+
+  for tag in "${tag_candidates[@]}"; do
+    if git clone --depth 1 --branch "$tag" "$rsync_repo_url" "$destination" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 # rust daemon is stricter: it wants directives in a module/section
