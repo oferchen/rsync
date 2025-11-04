@@ -30,7 +30,11 @@ This document defines the internal actors (“agents”), their responsibilities
   set `OC_RSYNC_FALLBACK` appropriately. Use the shared
   `rsync_core::fallback::fallback_binary_available` and
   `rsync_core::fallback::describe_missing_fallback_binary` helpers to keep the
-  guard rails consistent across binaries.
+  guard rails consistent across binaries. The availability helper now caches
+  its result for each `(binary, PATH[, PATHEXT])` tuple to avoid repeated
+  filesystem scans; any updates must preserve this memoisation and ensure
+  tests adjust environment variables via the existing `EnvGuard` utilities so
+  cache entries stay coherent.
 - **Workspace-wide nextest configuration**: `.config/nextest.toml` pins
   `[profile.default.package] graph = "workspace"` so a bare
   `cargo nextest run` executes the entire workspace without additional flags.
