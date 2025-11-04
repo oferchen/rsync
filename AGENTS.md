@@ -60,6 +60,10 @@ This document defines the internal actors (“agents”), their responsibilities
   sparse file handling green. Additional CPU offloading should follow the same
   pattern of runtime feature detection (where applicable) paired with
   deterministic tests that compare against the scalar reference implementation.
+  The vectored rolling checksum updater coalesces small `IoSlice` buffers into
+  a 128-byte stack scratch space before dispatching so SIMD back-ends can run on
+  aggregated input; any regression must keep that scratch path and its
+  associated unit test (`update_vectored_coalesces_small_slices`) intact.
   Multi-byte rolling updates (`RollingChecksum::roll_many`) now rely on the
   weighted-delta aggregation introduced in
   `crates/checksums/src/rolling/checksum.rs`, which collapses per-byte loops

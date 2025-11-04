@@ -3,6 +3,8 @@ use std::io::{self, IoSlice, Read};
 use super::digest::RollingDigest;
 use super::error::RollingError;
 
+const VECTORED_STACK_CAPACITY: usize = 128;
+
 /// Rolling checksum used by rsync for weak block matching (often called `rsum`).
 ///
 /// Mirrors upstream rsync's Adler-32 style weak checksum: `s1` accumulates the byte sum,
@@ -74,10 +76,35 @@ impl RollingChecksum {
         let mut s1 = self.s1;
         let mut s2 = self.s2;
         let mut len = self.len;
+        let mut scratch = [0u8; VECTORED_STACK_CAPACITY];
+        let mut scratch_len = 0usize;
 
         for slice in buffers {
-            (s1, s2, len) = accumulate_chunk_dispatch(s1, s2, len, slice.as_ref());
+            let chunk = slice.as_ref();
+
+            if chunk.is_empty() {
+                continue;
+            }
+
+            if chunk.len() >= VECTORED_STACK_CAPACITY {
+                flush_vectored_scratch(&mut s1, &mut s2, &mut len, &mut scratch, &mut scratch_len);
+                (s1, s2, len) = accumulate_chunk_dispatch(s1, s2, len, chunk);
+                continue;
+            }
+
+            if scratch_len + chunk.len() > VECTORED_STACK_CAPACITY {
+                flush_vectored_scratch(&mut s1, &mut s2, &mut len, &mut scratch, &mut scratch_len);
+            }
+
+            scratch[scratch_len..scratch_len + chunk.len()].copy_from_slice(chunk);
+            scratch_len += chunk.len();
+
+            if scratch_len == VECTORED_STACK_CAPACITY {
+                flush_vectored_scratch(&mut s1, &mut s2, &mut len, &mut scratch, &mut scratch_len);
+            }
         }
+
+        flush_vectored_scratch(&mut s1, &mut s2, &mut len, &mut scratch, &mut scratch_len);
 
         self.s1 = s1;
         self.s2 = s2;
@@ -350,6 +377,25 @@ fn accumulate_chunk_scalar_raw(
     }
 
     (s1, s2, len.saturating_add(chunk.len()))
+}
+
+#[inline]
+fn flush_vectored_scratch(
+    s1: &mut u32,
+    s2: &mut u32,
+    len: &mut usize,
+    scratch: &mut [u8; VECTORED_STACK_CAPACITY],
+    scratch_len: &mut usize,
+) {
+    if *scratch_len == 0 {
+        return;
+    }
+
+    let (ns1, ns2, nlen) = accumulate_chunk_dispatch(*s1, *s2, *len, &scratch[..*scratch_len]);
+    *s1 = ns1;
+    *s2 = ns2;
+    *len = nlen;
+    *scratch_len = 0;
 }
 
 #[cfg(test)]

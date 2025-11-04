@@ -310,6 +310,23 @@ fn update_vectored_noop_for_empty_buffer_list() {
     assert_eq!(checksum.digest(), digest);
 }
 
+#[test]
+fn update_vectored_coalesces_small_slices() {
+    let payload = vec![0xabu8; 1024];
+    let mut sequential = RollingChecksum::new();
+    for chunk in payload.chunks(7) {
+        sequential.update(chunk);
+    }
+
+    let slices: Vec<IoSlice<'_>> = payload.chunks(7).map(IoSlice::new).collect();
+
+    let mut vectored = RollingChecksum::new();
+    vectored.update_vectored(&slices);
+
+    assert_eq!(vectored.digest(), sequential.digest());
+    assert_eq!(vectored.value(), sequential.value());
+}
+
 proptest! {
     #[test]
     fn rolling_update_matches_single_pass(chunks in chunked_sequences()) {
