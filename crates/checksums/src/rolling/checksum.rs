@@ -296,13 +296,13 @@ fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(
     Some(neon::accumulate_chunk(s1, s2, len, chunk))
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
 fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
     x86::try_accumulate_chunk(s1, s2, len, chunk)
 }
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "x86")))]
 #[inline]
 fn accumulate_chunk_arch(
     _s1: u32,
@@ -362,11 +362,20 @@ pub(crate) fn accumulate_chunk_scalar_for_tests(
     accumulate_chunk_scalar_raw(s1, s2, len, chunk)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[allow(unsafe_code)]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub(crate) mod x86 {
     use super::accumulate_chunk_scalar_raw;
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::{
+        __m128i, __m256i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16,
+        _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+        _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepu8_epi16, _mm256_extracti128_si256,
+        _mm256_loadu_si256, _mm256_madd_epi16, _mm256_sad_epu8, _mm256_set_epi16,
+        _mm256_setzero_si256, _mm256_storeu_si256,
+    };
+    #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::{
         __m128i, __m256i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16,
         _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,

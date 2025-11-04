@@ -41,7 +41,7 @@ This document defines the internal actors (“agents”), their responsibilities
   deprecated APIs, pseudo-code, or placeholder logic; every change must ship
   production-ready behaviour with comprehensive tests or parity checks.
 - **CPU-accelerated hot paths**: The rolling checksum pipeline uses
-  architecture-specific SIMD fast paths (AVX2 and SSE2 on `x86_64`, NEON on
+  architecture-specific SIMD fast paths (AVX2 and SSE2 on `x86`/`x86_64`, NEON on
   `aarch64`) that fall back to the scalar implementation for other targets.
   Any updates to `crates/checksums`—especially
   `rolling::checksum::accumulate_chunk`—must keep the SIMD and scalar
