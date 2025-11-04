@@ -2,6 +2,7 @@ use super::super::*;
 use super::{chunked_sequences, random_data_and_window, roll_many_sequences};
 
 use proptest::prelude::*;
+use std::collections::VecDeque;
 use std::io::{self, Cursor, IoSlice, Read};
 
 #[test]
@@ -396,6 +397,7 @@ proptest! {
         prop_assert_eq!(optimized.value(), reference.value());
     }
 
+
     #[test]
     fn from_digest_round_trips(data in prop::collection::vec(any::<u8>(), 0..=256)) {
         let mut checksum = RollingChecksum::new();
@@ -408,6 +410,51 @@ proptest! {
         prop_assert_eq!(restored.value(), checksum.value());
         prop_assert_eq!(restored.len(), checksum.len());
     }
+}
+
+#[test]
+fn roll_many_matches_single_rolls_for_long_sequences() {
+    let seed: Vec<u8> = (0..128)
+        .map(|value| {
+            let byte = value as u8;
+            byte.wrapping_mul(13).wrapping_add(5)
+        })
+        .collect();
+
+    let mut batched = RollingChecksum::new();
+    batched.update(&seed);
+
+    let mut reference = batched.clone();
+
+    let mut window = VecDeque::from(seed.clone());
+    let mut outgoing = Vec::with_capacity(4096);
+    let mut incoming = Vec::with_capacity(4096);
+
+    for step in 0..4096 {
+        let leaving = window
+            .pop_front()
+            .expect("rolling checksum window must contain data");
+        let step_byte = step as u8;
+        let entering = step_byte
+            .wrapping_mul(17)
+            .wrapping_add(23)
+            .wrapping_add(step_byte >> 3);
+
+        outgoing.push(leaving);
+        incoming.push(entering);
+        window.push_back(entering);
+    }
+
+    batched
+        .roll_many(&outgoing, &incoming)
+        .expect("batched roll succeeds");
+
+    for (&out, &inn) in outgoing.iter().zip(incoming.iter()) {
+        reference.roll(out, inn).expect("sequential roll succeeds");
+    }
+
+    assert_eq!(batched.digest(), reference.digest());
+    assert_eq!(batched.value(), reference.value());
 }
 
 #[cfg(target_arch = "x86_64")]

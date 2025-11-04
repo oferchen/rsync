@@ -57,6 +57,14 @@ This document defines the internal actors (“agents”), their responsibilities
   sparse file handling green. Additional CPU offloading should follow the same
   pattern of runtime feature detection (where applicable) paired with
   deterministic tests that compare against the scalar reference implementation.
+  Multi-byte rolling updates (`RollingChecksum::roll_many`) now rely on the
+  weighted-delta aggregation introduced in
+  `crates/checksums/src/rolling/checksum.rs`, which collapses per-byte loops
+  into a handful of arithmetic reductions while retaining an escape hatch to
+  the scalar `roll` path for exotic slice lengths. Future optimisations must
+  preserve the aggregated arithmetic and extend the long-sequence regression
+  test (`roll_many_matches_single_rolls_for_long_sequences`) so both code paths
+  remain in parity.
 - **Environment guardrails for tests**: When exercising fallback overrides or
   other environment-sensitive logic in unit tests, use the existing
   `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
