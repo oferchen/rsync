@@ -329,11 +329,15 @@ pub(crate) fn accumulate_chunk_scalar_for_tests(
 pub(crate) mod x86 {
     use super::accumulate_chunk_scalar_raw;
     use core::arch::x86_64::{
-        __m128i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16, _mm_setzero_si128,
-        _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+        __m128i, __m256i, _mm_loadu_si128, _mm_mullo_epi16, _mm_sad_epu8, _mm_set_epi16,
+        _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8, _mm_unpacklo_epi8,
+        _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepu8_epi16, _mm256_extracti128_si256,
+        _mm256_loadu_si256, _mm256_madd_epi16, _mm256_sad_epu8, _mm256_set_epi16,
+        _mm256_setzero_si256, _mm256_storeu_si256,
     };
 
-    const BLOCK_LEN: usize = 16;
+    const SSE2_BLOCK_LEN: usize = 16;
+    const AVX2_BLOCK_LEN: usize = 32;
 
     #[inline]
     pub(super) fn try_accumulate_chunk(
@@ -342,15 +346,15 @@ pub(crate) mod x86 {
         len: usize,
         chunk: &[u8],
     ) -> Option<(u32, u32, usize)> {
-        if chunk.len() < BLOCK_LEN {
-            return None;
+        if chunk.len() >= AVX2_BLOCK_LEN && std::arch::is_x86_feature_detected!("avx2") {
+            return Some(unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) });
         }
 
-        if !std::arch::is_x86_feature_detected!("sse2") {
-            return None;
+        if chunk.len() >= SSE2_BLOCK_LEN && std::arch::is_x86_feature_detected!("sse2") {
+            return Some(unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) });
         }
 
-        Some(unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) })
+        None
     }
 
     #[target_feature(enable = "sse2")]
@@ -364,16 +368,16 @@ pub(crate) mod x86 {
         let high_weights = _mm_set_epi16(9, 10, 11, 12, 13, 14, 15, 16);
         let low_weights = _mm_set_epi16(1, 2, 3, 4, 5, 6, 7, 8);
 
-        while chunk.len() >= BLOCK_LEN {
+        while chunk.len() >= SSE2_BLOCK_LEN {
             let block = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
             let block_sum = sum_block(block, zero);
             let block_prefix = prefix_sum(block, zero, high_weights, low_weights);
 
             s2 = s2.wrapping_add(block_prefix);
-            s2 = s2.wrapping_add(s1.wrapping_mul(BLOCK_LEN as u32));
+            s2 = s2.wrapping_add(s1.wrapping_mul(SSE2_BLOCK_LEN as u32));
             s1 = s1.wrapping_add(block_sum);
-            len = len.saturating_add(BLOCK_LEN);
-            chunk = &chunk[BLOCK_LEN..];
+            len = len.saturating_add(SSE2_BLOCK_LEN);
+            chunk = &chunk[SSE2_BLOCK_LEN..];
         }
 
         if !chunk.is_empty() {
@@ -384,6 +388,81 @@ pub(crate) mod x86 {
         }
 
         (s1, s2, len)
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn accumulate_chunk_avx2(
+        mut s1: u32,
+        mut s2: u32,
+        mut len: usize,
+        mut chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        let zero = _mm256_setzero_si256();
+        let first_half_weights = _mm256_set_epi16(
+            17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+        );
+        let second_half_weights =
+            _mm256_set_epi16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+
+        while chunk.len() >= AVX2_BLOCK_LEN {
+            let block = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+
+            let block_sum = sum_block_avx2(block, zero);
+            let block_prefix = prefix_sum_avx2(block, first_half_weights, second_half_weights);
+
+            s2 = s2.wrapping_add(block_prefix);
+            s2 = s2.wrapping_add(s1.wrapping_mul(AVX2_BLOCK_LEN as u32));
+            s1 = s1.wrapping_add(block_sum);
+            len = len.saturating_add(AVX2_BLOCK_LEN);
+            chunk = &chunk[AVX2_BLOCK_LEN..];
+        }
+
+        if chunk.len() >= SSE2_BLOCK_LEN {
+            let (ns1, ns2, nlen) = accumulate_chunk_sse2(s1, s2, len, chunk);
+            s1 = ns1;
+            s2 = ns2;
+            len = nlen;
+        } else if !chunk.is_empty() {
+            let (ns1, ns2, nlen) = accumulate_chunk_scalar_raw(s1, s2, len, chunk);
+            s1 = ns1;
+            s2 = ns2;
+            len = nlen;
+        }
+
+        (s1, s2, len)
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn sum_block_avx2(block: __m256i, zero: __m256i) -> u32 {
+        let sad = _mm256_sad_epu8(block, zero);
+        let mut sums = [0i64; 4];
+        _mm256_storeu_si256(sums.as_mut_ptr() as *mut __m256i, sad);
+        sums.iter()
+            .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+    }
+
+    #[target_feature(enable = "avx2")]
+    unsafe fn prefix_sum_avx2(
+        block: __m256i,
+        first_half_weights: __m256i,
+        second_half_weights: __m256i,
+    ) -> u32 {
+        let lower_bytes = _mm256_castsi256_si128(block);
+        let upper_bytes = _mm256_extracti128_si256(block, 1);
+
+        let lower_extended = _mm256_cvtepu8_epi16(lower_bytes);
+        let upper_extended = _mm256_cvtepu8_epi16(upper_bytes);
+
+        let lower_weighted = _mm256_madd_epi16(lower_extended, first_half_weights);
+        let upper_weighted = _mm256_madd_epi16(upper_extended, second_half_weights);
+
+        let combined = _mm256_add_epi32(lower_weighted, upper_weighted);
+        let mut buffer = [0i32; 8];
+        _mm256_storeu_si256(buffer.as_mut_ptr() as *mut __m256i, combined);
+
+        buffer
+            .iter()
+            .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
     }
 
     #[inline]
@@ -425,6 +504,16 @@ pub(crate) mod x86 {
         chunk: &[u8],
     ) -> (u32, u32, usize) {
         unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accumulate_chunk_avx2_for_tests(
+        s1: u32,
+        s2: u32,
+        len: usize,
+        chunk: &[u8],
+    ) -> (u32, u32, usize) {
+        unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) }
     }
 }
 
