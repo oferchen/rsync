@@ -13,75 +13,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install GitHub CLI + jq
+      - name: Install jq
         run: |
           sudo apt-get update -y
           sudo apt-get install -y jq
-          # gh is preinstalled on ubuntu-latest, but ensure login
         shell: bash
 
       - name: Detect tag and version
         id: detect
         run: |
-          # On release we get the tag name here:
           if [ -n "${{ github.event.release.tag_name }}" ]; then
             TAG="${{ github.event.release.tag_name }}"
           else
-            # fallback for manual runs
-            TAG="v3.4.1a-rust"
+            # manual run fallback: latest release
+            TAG=$(gh api "repos/${{ env.REPO }}/releases/latest" --jq .tag_name)
           fi
-          # strip leading v for VERSION
           VERSION="${TAG#v}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
 
-      - name: Fetch release JSON from GitHub
+      - name: Fetch release JSON
         id: fetch
         env:
-            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api "repos/${{ env.REPO }}/releases/tags/${TAG}" > release.json
           cat release.json
         shell: bash
 
-      - name: Extract asset URLs and categorize
+      - name: Extract asset URLs from actual release
         id: assets
         run: |
-          # We will look at actual asset names returned by CI,
-          # not guess them.
           MACOS_ARM_URL=""
           MACOS_INTEL_URL=""
           LINUX_ARM_URL=""
           LINUX_INTEL_URL=""
 
-          # iterate over assets array
-          ASSET_COUNT=$(jq '.assets | length' release.json)
-          for i in $(seq 0 $((ASSET_COUNT - 1))); do
-            NAME=$(jq -r ".assets[$i].name" release.json)
-            URL=$(jq -r ".assets[$i].browser_download_url" release.json)
+          count=$(jq '.assets | length' release.json)
+          for i in $(seq 0 $((count - 1))); do
+            name=$(jq -r ".assets[$i].name" release.json)
+            url=$(jq -r ".assets[$i].browser_download_url" release.json)
+            lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
-            # normalize
-            lname=$(echo "$NAME" | tr '[:upper:]' '[:lower:]')
-
-            # macOS
+            # real matching from your actual artifacts
             if echo "$lname" | grep -q "darwin"; then
               if echo "$lname" | grep -Eq "aarch64|arm64"; then
-                MACOS_ARM_URL="$URL"
+                MACOS_ARM_URL="$url"
               else
-                MACOS_INTEL_URL="$URL"
+                MACOS_INTEL_URL="$url"
               fi
-            # linux
             elif echo "$lname" | grep -q "linux"; then
               if echo "$lname" | grep -Eq "aarch64|arm64"; then
-                LINUX_ARM_URL="$URL"
+                LINUX_ARM_URL="$url"
               else
-                LINUX_INTEL_URL="$URL"
+                LINUX_INTEL_URL="$url"
               fi
             fi
           done
 
-          # export to env
           echo "MACOS_ARM_URL=$MACOS_ARM_URL" >> $GITHUB_ENV
           echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
           echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
@@ -92,18 +84,27 @@ jobs:
         id: hashes
         run: |
           mkdir -p dl
-          # for each URL we have, download and sha
-          for kind in MACOS_ARM MACOS_INTEL LINUX_ARM LINUX_INTEL; do
-            url=$(eval echo "\$$kind"_URL)
-            [ -z "$url" ] && continue
-            fname="dl/$(basename "$url")"
-            curl -L "$url" -o "$fname"
+
+          download_and_sha () {
+            local url="$1"
+            local varname="$2"
+            if [ -z "$url" ] || [ "$url" = "null" ]; then
+              return
+            fi
+            local fname="dl/$(basename "$url")"
+            curl -fsSL "$url" -o "$fname"
+            local sha
             sha=$(sha256sum "$fname" | awk '{print $1}')
-            echo "${kind}_SHA=$sha" >> $GITHUB_ENV
-          done
+            echo "${varname}=${sha}" >> $GITHUB_ENV
+          }
+
+          download_and_sha "${MACOS_ARM_URL}"   "MACOS_ARM_SHA"
+          download_and_sha "${MACOS_INTEL_URL}" "MACOS_INTEL_SHA"
+          download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
+          download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
         shell: bash
 
-      - name: Generate Homebrew formula
+      - name: Generate Homebrew formula from actual values
         env:
           VERSION: ${{ env.VERSION }}
           MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
@@ -123,4 +124,3 @@ jobs:
         with:
           name: homebrew-formula
           path: Formula/oc-rsync.rb
-
