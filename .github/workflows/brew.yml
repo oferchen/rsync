@@ -135,16 +135,21 @@ jobs:
           name: homebrew-formula
           path: Formula/oc-rsync.rb
 
-      # 1) make sure we have the default branch locally
       - name: Ensure default branch is present
         run: |
-          # figure out default branch from event, fall back to master
-          DEF_BRANCH="${{ github.event.repository.default_branch || 'master' }}"
-          git fetch origin "${DEF_BRANCH}:${DEF_BRANCH}"
-          git checkout "${DEF_BRANCH}"
-          echo "DEF_BRANCH=${DEF_BRANCH}" >> $GITHUB_ENV
+          # GitHub gives us the repo default branch in the event for pushes/releases
+          DEF_BRANCH="${{ github.event.repository.default_branch }}"
+          if [ -z "$DEF_BRANCH" ] || [ "$DEF_BRANCH" = "null" ]; then
+            # fallback for older events or manual runs
+            DEF_BRANCH=master
+          fi
 
-      # 2) create the PR from the generated file
+          # make sure we have it locally and switch to it
+          git fetch origin "$DEF_BRANCH":"$DEF_BRANCH"
+          git checkout "$DEF_BRANCH"
+
+          echo "DEF_BRANCH=$DEF_BRANCH" >> $GITHUB_ENV
+
       - name: Create PR with formula
         uses: peter-evans/create-pull-request@v6
         with:
@@ -157,6 +162,9 @@ jobs:
           base: ${{ env.DEF_BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: oferchen <2673257+oferchen@users.noreply.github.com>
+          delete-branch: false
+
           author: oferchen <2673257+oferchen@users.noreply.github.com>
           delete-branch: false
           
