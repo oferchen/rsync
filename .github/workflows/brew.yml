@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   generate-brew-formula:
@@ -68,20 +69,25 @@ jobs:
 
             lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
 
-            # macOS detection: darwin, apple-darwin, macos, macos-universal
+            # only consider real installable tarballs
+            case "$lname" in
+              *oc-rsync*.tar.gz) ;;
+              *) continue ;;
+            esac
+
+            # macOS detection
             if echo "$lname" | grep -Eq 'darwin|macos'; then
               if echo "$lname" | grep -Eq 'aarch64|arm64'; then
-                MACOS_ARM_URL="$url"
+                [ -z "$MACOS_ARM_URL" ] && MACOS_ARM_URL="$url"
               else
-                MACOS_INTEL_URL="$url"
+                [ -z "$MACOS_INTEL_URL" ] && MACOS_INTEL_URL="$url"
               fi
-            # linux detection: linux, unknown-linux-gnu, unknown-linux-musl
+            # linux detection
             elif echo "$lname" | grep -Eq 'linux|unknown-linux-gnu|unknown-linux-musl'; then
               if echo "$lname" | grep -Eq 'aarch64|arm64'; then
-                LINUX_ARM_URL="$url"
+                [ -z "$LINUX_ARM_URL" ] && LINUX_ARM_URL="$url"
               else
-                # x86_64, amd64, plain linux
-                LINUX_INTEL_URL="$url"
+                [ -z "$LINUX_INTEL_URL" ] && LINUX_INTEL_URL="$url"
               fi
             fi
           done
@@ -137,14 +143,11 @@ jobs:
 
       - name: Ensure default branch is present
         run: |
-          # GitHub gives us the repo default branch in the event for pushes/releases
           DEF_BRANCH="${{ github.event.repository.default_branch }}"
           if [ -z "$DEF_BRANCH" ] || [ "$DEF_BRANCH" = "null" ]; then
-            # fallback for older events or manual runs
             DEF_BRANCH=master
           fi
 
-          # make sure we have it locally and switch to it
           git fetch origin "$DEF_BRANCH":"$DEF_BRANCH"
           git checkout "$DEF_BRANCH"
 
@@ -164,7 +167,3 @@ jobs:
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           author: oferchen <2673257+oferchen@users.noreply.github.com>
           delete-branch: false
-
-          author: oferchen <2673257+oferchen@users.noreply.github.com>
-          delete-branch: false
-          
