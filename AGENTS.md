@@ -49,9 +49,14 @@ This document defines the internal actors (“agents”), their responsibilities
   and extend the parity tests (`avx2_accumulate_matches_scalar_reference`,
   `sse2_accumulate_matches_scalar_reference`, and
   `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
-  introduced. Additional CPU offloading should follow the same pattern of
-  runtime feature detection (where applicable) paired with deterministic tests
-  that compare against the scalar reference implementation.
+  introduced. The sparse-writer fast path in
+  `crates/engine/src/local_copy/executor/file/sparse.rs` uses the
+  `memchr` crate to delegate zero-byte detection to the CPU's SIMD
+  instructions on all supported platforms; changes to that routine must
+  preserve the single seek-per-zero-run invariant and keep coverage tests for
+  sparse file handling green. Additional CPU offloading should follow the same
+  pattern of runtime feature detection (where applicable) paired with
+  deterministic tests that compare against the scalar reference implementation.
 - **Environment guardrails for tests**: When exercising fallback overrides or
   other environment-sensitive logic in unit tests, use the existing
   `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
