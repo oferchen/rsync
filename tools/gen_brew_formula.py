@@ -1,134 +1,197 @@
-name: brew-formula
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
+#!/usr/bin/env python3
+"""
+tools/gen_brew_formula.py
 
-jobs:
-  generate-brew-formula:
-    runs-on: ubuntu-latest
-    env:
-      REPO: oferchen/rsync
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+Generate a Homebrew formula (Formula/oc-rsync.rb) for the rsync project at
+https://github.com/oferchen/rsync based on *actual* CI-provided environment
+variables.
 
-      - name: Install jq
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+Environment variables expected (CI should set them):
+- VERSION (required)
+- MACOS_ARM_URL / MACOS_ARM_SHA
+- MACOS_INTEL_URL / MACOS_INTEL_SHA
+- LINUX_ARM_URL / LINUX_ARM_SHA
+- LINUX_INTEL_URL / LINUX_INTEL_SHA
 
-      # 1. Determine TAG and VERSION
-      - name: Determine tag and version
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            # workflow_dispatch fallback: fetch latest release from your repo
-            TAG=$(curl -fsSL \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ env.REPO }}/releases/latest" \
-              | jq -r .tag_name)
-          fi
+If a pair is missing (e.g. MACOS_ARM_URL without MACOS_ARM_SHA), that block
+will not be emitted.
 
-          VERSION="${TAG#v}"
+Output:
+- Creates ./Formula/oc-rsync.rb relative to repository root.
+"""
 
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+from __future__ import annotations
 
-      # 2. Fetch the actual release JSON from YOUR repo
-      - name: Fetch release JSON
-        run: |
-          curl -fsSL \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ env.REPO }}/releases/tags/${TAG}" \
-            -o release.json
+import os
+from pathlib import Path
+from typing import Dict, Optional, List, Tuple
 
-          cat release.json
 
-      # 3. Extract the real asset URLs
-      - name: Extract asset URLs
-        run: |
-          MACOS_ARM_URL=""
-          MACOS_INTEL_URL=""
-          LINUX_ARM_URL=""
-          LINUX_INTEL_URL=""
+class EnvReader:
+    """
+    Small helper to read environment variables in a controlled way.
+    This keeps knowledge about env var names in one place.
+    """
 
-          count=$(jq '.assets | length' release.json)
-          for i in $(seq 0 $((count - 1))); do
-            name=$(jq -r ".assets[$i].name" release.json)
-            url=$(jq -r ".assets[$i].browser_download_url" release.json)
+    REQUIRED = ("VERSION",)
 
-            # skip empty
-            if [ -z "$url" ] || [ "$url" = "null" ]; then
-              continue
-            fi
+    PLATFORM_ENV_MAP: Dict[str, Tuple[str, str]] = {
+        "macos_arm": ("MACOS_ARM_URL", "MACOS_ARM_SHA"),
+        "macos_intel": ("MACOS_INTEL_URL", "MACOS_INTEL_SHA"),
+        "linux_arm": ("LINUX_ARM_URL", "LINUX_ARM_SHA"),
+        "linux_intel": ("LINUX_INTEL_URL", "LINUX_INTEL_SHA"),
+    }
 
-            lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    def __init__(self) -> None:
+        self._env = os.environ
 
-            if echo "$lname" | grep -q darwin; then
-              if echo "$lname" | grep -Eq "aarch64|arm64"; then
-                MACOS_ARM_URL="$url"
-              else
-                MACOS_INTEL_URL="$url"
-              fi
-            elif echo "$lname" | grep -q linux; then
-              if echo "$lname" | grep -Eq "aarch64|arm64"; then
-                LINUX_ARM_URL="$url"
-              else
-                LINUX_INTEL_URL="$url"
-              fi
-            fi
-          done
+    def ensure_required(self) -> None:
+        for key in self.REQUIRED:
+            if key not in self._env or not self._env[key]:
+                raise SystemExit("missing required env: {}".format(key))
 
-          echo "MACOS_ARM_URL=$MACOS_ARM_URL" >> $GITHUB_ENV
-          echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
-          echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
-          echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
+    def version(self) -> str:
+        return self._env["VERSION"]
 
-      # 4. Download actual assets and compute sha256
-      - name: Download assets and compute sha256
-        run: |
-          mkdir -p dl
+    def platform_value(self, key: str) -> Optional[Dict[str, str]]:
+        """
+        Return a mapping {"url": ..., "sha": ...} if both exist and are non-empty,
+        otherwise return None to signal "do not emit this platform".
+        """
+        if key not in self.PLATFORM_ENV_MAP:
+            return None
+        url_env, sha_env = self.PLATFORM_ENV_MAP[key]
+        url = self._env.get(url_env, "").strip()
+        sha = self._env.get(sha_env, "").strip()
+        if not url or not sha:
+            return None
+        return {"url": url, "sha": sha}
 
-          download_and_sha() {
-            local url="$1"
-            local outvar="$2"
-            if [ -z "$url" ]; then
-              return 0
-            fi
-            local fname="dl/$(basename "$url")"
-            curl -fsSL "$url" -o "$fname"
-            local sha
-            sha=$(sha256sum "$fname" | awk '{print $1}')
-            echo "${outvar}=${sha}" >> $GITHUB_ENV
-          }
 
-          download_and_sha "${MACOS_ARM_URL}"   "MACOS_ARM_SHA"
-          download_and_sha "${MACOS_INTEL_URL}" "MACOS_INTEL_SHA"
-          download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
-          download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
+class FormulaBuilder:
+    """
+    Usage:
+        fb = FormulaBuilder("3.4.1a-rust")
+        fb.add_macos_block(arm=..., intel=...)
+        fb.add_linux_block(arm=..., intel=...)
+        formula_text = fb.build()
+    """
 
-      # 5. Generate the formula using the REAL values we just fetched
-      - name: Generate Homebrew formula
-        env:
-          VERSION: ${{ env.VERSION }}
-          MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
-          MACOS_ARM_SHA: ${{ env.MACOS_ARM_SHA }}
-          MACOS_INTEL_URL: ${{ env.MACOS_INTEL_URL }}
-          MACOS_INTEL_SHA: ${{ env.MACOS_INTEL_SHA }}
-          LINUX_ARM_URL: ${{ env.LINUX_ARM_URL }}
-          LINUX_ARM_SHA: ${{ env.LINUX_ARM_SHA }}
-          LINUX_INTEL_URL: ${{ env.LINUX_INTEL_URL }}
-          LINUX_INTEL_SHA: ${{ env.LINUX_INTEL_SHA }}
-        run: |
-          python3 tools/gen_brew_formula.py
+    def __init__(self, version: str) -> None:
+        self.version = version
+        self._lines: List[str] = []
+        self._header_written = False
+        self._footer_written = False
 
-      - name: Upload formula artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: homebrew-formula
-          path: Formula/oc-rsync.rb
+    def _write_header(self) -> None:
+        if self._header_written:
+            return
+        self._lines.append("# frozen_string_literal: true")
+        self._lines.append("")
+        self._lines.append("class OcRsync < Formula")
+        self._lines.append('  desc "Rust-based rsync 3.4.1-compatible client/daemon from github.com/oferchen/rsync"')
+        self._lines.append('  homepage "https://github.com/oferchen/rsync"')
+        self._lines.append(f'  version "{self.version}"')
+        self._lines.append('  license "GPL-3.0-or-later"')
+        self._lines.append("")
+        self._header_written = True
+
+    def add_macos_block(
+        self,
+        arm: Optional[Dict[str, str]] = None,
+        intel: Optional[Dict[str, str]] = None,
+    ) -> None:
+        self._write_header()
+        if not arm and not intel:
+            return
+        self._lines.append("  on_macos do")
+        if arm:
+            self._lines.append("    on_arm do")
+            self._lines.append(f'      url "{arm["url"]}"')
+            self._lines.append(f'      sha256 "{arm["sha"]}"')
+            self._lines.append("    end")
+        if intel:
+            self._lines.append("    on_intel do")
+            self._lines.append(f'      url "{intel["url"]}"')
+            self._lines.append(f'      sha256 "{intel["sha"]}"')
+            self._lines.append("    end")
+        self._lines.append("  end")
+        self._lines.append("")
+
+    def add_linux_block(
+        self,
+        arm: Optional[Dict[str, str]] = None,
+        intel: Optional[Dict[str, str]] = None,
+    ) -> None:
+        self._write_header()
+        if not arm and not intel:
+            return
+        self._lines.append("  on_linux do")
+        if arm:
+            self._lines.append("    on_arm do")
+            self._lines.append(f'      url "{arm["url"]}"')
+            self._lines.append(f'      sha256 "{arm["sha"]}"')
+            self._lines.append("    end")
+        if intel:
+            self._lines.append("    on_intel do")
+            self._lines.append(f'      url "{intel["url"]}"')
+            self._lines.append(f'      sha256 "{intel["sha"]}"')
+            self._lines.append("    end")
+        self._lines.append("  end")
+        self._lines.append("")
+
+    def add_install_and_test(self) -> None:
+        self._write_header()
+        self._lines.append("  def install")
+        self._lines.append('    dir = Dir["*"].find { |f| File.directory?(f) && f.downcase.include?("oc-rsync") }')
+        self._lines.append("    if dir")
+        self._lines.append("      Dir.chdir(dir) do")
+        self._lines.append('        bin.install "oc-rsync" if File.exist?("oc-rsync")')
+        self._lines.append('        bin.install "oc-rsyncd" if File.exist?("oc-rsyncd")')
+        self._lines.append("      end")
+        self._lines.append("    else")
+        self._lines.append('      bin.install "oc-rsync" if File.exist?("oc-rsync")')
+        self._lines.append('      bin.install "oc-rsyncd" if File.exist?("oc-rsyncd")')
+        self._lines.append("    end")
+        self._lines.append("  end")
+        self._lines.append("")
+        self._lines.append("  test do")
+        self._lines.append('    assert_match "3.4.1", shell_output("#{bin}/oc-rsync --version")')
+        self._lines.append("  end")
+
+    def build(self) -> str:
+        if not self._footer_written:
+            if "def install" not in "\n".join(self._lines):
+                self.add_install_and_test()
+            self._lines.append("end")
+            self._footer_written = True
+        return "\n".join(self._lines) + "\n"
+
+
+def main() -> None:
+    env = EnvReader()
+    env.ensure_required()
+
+    version = env.version()
+
+    macos_arm = env.platform_value("macos_arm")
+    macos_intel = env.platform_value("macos_intel")
+    linux_arm = env.platform_value("linux_arm")
+    linux_intel = env.platform_value("linux_intel")
+
+    builder = FormulaBuilder(version)
+    builder.add_macos_block(arm=macos_arm, intel=macos_intel)
+    builder.add_linux_block(arm=linux_arm, intel=linux_intel)
+    builder.add_install_and_test()
+
+    formula_text = builder.build()
+
+    outdir = Path("Formula")
+    outdir.mkdir(parents=True, exist_ok=True)
+    outfile = outdir / "oc-rsync.rb"
+    outfile.write_text(formula_text, encoding="utf-8")
+    print(f"wrote {outfile}")
+
+
+if __name__ == "__main__":
+    main()
