@@ -90,6 +90,29 @@ fn skip_compress_invalid_reports_error() {
 }
 
 #[test]
+fn force_no_compress_invalid_env_reports_error() {
+    use assert_cmd::prelude::*;
+    use predicates::prelude::*;
+    use predicates::str::contains;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("file.txt");
+    let destination = tmp.path().join("dest.txt");
+    std::fs::write(&source, b"payload").expect("write source");
+
+    #[allow(deprecated)]
+    let mut cmd = assert_cmd::Command::cargo_bin(OC_RSYNC).expect("locate binary");
+    cmd.env("OC_RSYNC_FORCE_NO_COMPRESS", "maybe")
+        .arg(source)
+        .arg(destination)
+        .assert()
+        .failure()
+        .stderr(contains("OC_RSYNC_FORCE_NO_COMPRESS"))
+        .stderr(contains("invalid"));
+}
+
+#[test]
 fn compress_flag_is_accepted_for_local_copies() {
     use tempfile::tempdir;
 

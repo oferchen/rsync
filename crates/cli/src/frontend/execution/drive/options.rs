@@ -6,8 +6,8 @@ use std::num::NonZeroU32;
 
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::client::{
-    BandwidthLimit, CompressionSetting, SkipCompressList, parse_skip_compress_list,
-    skip_compress_from_env,
+    BandwidthLimit, CompressionSetting, SkipCompressList, force_no_compress_from_env,
+    parse_skip_compress_list, skip_compress_from_env,
 };
 use rsync_logging::MessageSink;
 
@@ -230,7 +230,7 @@ where
 
     let mut compress = inputs.compress_flag;
     let mut compression_level_override = None;
-    let compress_level_setting = match inputs.compress_level {
+    let mut compress_level_setting = match inputs.compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
             Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
@@ -252,8 +252,21 @@ where
         }
     }
 
-    let compress_disabled =
+    let mut compress_disabled =
         inputs.no_compress || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
+
+    let force_no_compress = match force_no_compress_from_env("OC_RSYNC_FORCE_NO_COMPRESS") {
+        Ok(value) => value,
+        Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+    };
+
+    if force_no_compress == Some(true) {
+        compress = false;
+        compression_level_override = None;
+        compress_level_setting = Some(CompressLevelArg::Disable);
+        compress_disabled = true;
+    }
+
     let compress_level_cli = match (compress_level_setting.as_ref(), compress_disabled) {
         (Some(CompressLevelArg::Level(level)), false) => {
             Some(OsString::from(level.get().to_string()))

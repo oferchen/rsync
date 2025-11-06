@@ -11,6 +11,7 @@
 mod bandwidth;
 mod builder;
 mod client;
+mod compress_env;
 mod enums;
 mod filters;
 mod network;
@@ -20,6 +21,7 @@ mod skip_compress;
 pub use bandwidth::BandwidthLimit;
 pub use builder::ClientConfigBuilder;
 pub use client::ClientConfig;
+pub use compress_env::force_no_compress_from_env;
 pub use enums::{
     AddressMode, CompressionSetting, DeleteMode, HumanReadableMode, HumanReadableModeParseError,
     StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout,
