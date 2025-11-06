@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::MetadataExt;
 
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -241,13 +241,95 @@ fn candidate_is_executable(path: &Path) -> bool {
 
     #[cfg(unix)]
     {
-        let mode = metadata.permissions().mode();
-        mode & 0o111 != 0
+        return unix_can_execute(&metadata);
     }
 
     #[cfg(not(unix))]
     {
         true
+    }
+}
+
+#[cfg(unix)]
+fn unix_can_execute(metadata: &std::fs::Metadata) -> bool {
+    let identity = UnixProcessIdentity::current();
+    unix_mode_allows_execution(metadata.mode(), metadata.uid(), metadata.gid(), &identity)
+}
+
+#[cfg(unix)]
+fn unix_mode_allows_execution(
+    mode: u32,
+    owner: u32,
+    group: u32,
+    identity: &UnixProcessIdentity,
+) -> bool {
+    if mode & 0o111 == 0 {
+        return false;
+    }
+
+    if identity.is_root() {
+        return true;
+    }
+
+    if owner == identity.euid {
+        return mode & 0o100 != 0;
+    }
+
+    if identity.in_group(group) {
+        return mode & 0o010 != 0;
+    }
+
+    mode & 0o001 != 0
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+struct UnixProcessIdentity {
+    euid: u32,
+    egid: u32,
+    groups: Vec<u32>,
+}
+
+#[cfg(unix)]
+impl UnixProcessIdentity {
+    fn current() -> Self {
+        let euid = nix::unistd::geteuid().as_raw() as u32;
+        let egid = nix::unistd::getegid().as_raw() as u32;
+        let groups = collect_supplementary_groups();
+        Self { euid, egid, groups }
+    }
+
+    #[inline]
+    fn is_root(&self) -> bool {
+        self.euid == 0
+    }
+
+    #[inline]
+    fn in_group(&self, gid: u32) -> bool {
+        if self.egid == gid {
+            return true;
+        }
+
+        self.groups.iter().copied().any(|group| group == gid)
+    }
+}
+
+#[cfg(all(unix, test))]
+impl UnixProcessIdentity {
+    fn for_tests(euid: u32, egid: u32, groups: &[u32]) -> Self {
+        Self {
+            euid,
+            egid,
+            groups: groups.to_vec(),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn collect_supplementary_groups() -> Vec<u32> {
+    match nix::unistd::getgroups() {
+        Ok(groups) => groups.into_iter().map(|gid| gid.as_raw() as u32).collect(),
+        Err(_) => Vec::new(),
     }
 }
 
@@ -439,6 +521,55 @@ mod tests {
         }
 
         assert!(fallback_binary_available(temp.path().as_os_str()));
+    }
+
+    #[cfg(unix)]
+    fn identity(euid: u32, egid: u32, groups: &[u32]) -> super::UnixProcessIdentity {
+        super::UnixProcessIdentity::for_tests(euid, egid, groups)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_mode_respects_owner_permissions() {
+        let subject = identity(1_000, 1_000, &[]);
+        assert!(super::unix_mode_allows_execution(
+            0o700, 1_000, 2_000, &subject
+        ));
+        assert!(!super::unix_mode_allows_execution(
+            0o070, 2_000, 2_000, &subject
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_mode_respects_group_membership() {
+        let subject = identity(2_000, 100, &[200, 300]);
+        assert!(super::unix_mode_allows_execution(
+            0o070, 3_000, 200, &subject
+        ));
+        assert!(!super::unix_mode_allows_execution(
+            0o070, 3_000, 500, &subject
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_mode_considers_other_permissions() {
+        let subject = identity(2_000, 100, &[]);
+        assert!(super::unix_mode_allows_execution(
+            0o001, 3_000, 500, &subject
+        ));
+        assert!(!super::unix_mode_allows_execution(
+            0o000, 3_000, 500, &subject
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_mode_treats_root_as_universal_executor() {
+        let root = identity(0, 0, &[]);
+        assert!(super::unix_mode_allows_execution(0o100, 3_000, 500, &root));
+        assert!(!super::unix_mode_allows_execution(0o000, 3_000, 500, &root));
     }
 
     #[test]
