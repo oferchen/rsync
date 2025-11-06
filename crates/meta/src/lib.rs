@@ -68,7 +68,25 @@
 //! - `rsync_core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
-#[cfg(feature = "acl")]
+#[cfg(all(
+    feature = "acl",
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+    )
+))]
+mod acl_stub;
+#[cfg(all(
+    feature = "acl",
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+    ))
+))]
 mod acl_support;
 mod apply;
 mod chmod;
@@ -82,7 +100,25 @@ mod special;
 #[cfg(feature = "xattr")]
 mod xattr;
 
-#[cfg(feature = "acl")]
+#[cfg(all(
+    feature = "acl",
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+    )
+))]
+pub use acl_stub::sync_acls;
+#[cfg(all(
+    feature = "acl",
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+    ))
+))]
 pub use acl_support::sync_acls;
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
