@@ -8,7 +8,8 @@ use std::time::Duration;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
     LocalCopyMetadata, LocalCopyRecord, copy_directory_recursive, copy_file,
-    follow_symlink_metadata, map_metadata_error, remove_source_entry_if_requested,
+    follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
+    remove_source_entry_if_requested,
 };
 
 #[cfg(feature = "acl")]
@@ -43,6 +44,7 @@ pub(crate) fn copy_fifo(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_fifo_total();
+    let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -90,13 +92,22 @@ pub(crate) fn copy_fifo(
             }
         }
 
-        context.summary_mut().record_fifo();
+        if existing_hard_link_target.is_some() {
+            context.summary_mut().record_hard_link();
+        } else {
+            context.summary_mut().record_fifo();
+        }
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
+            let action = if existing_hard_link_target.is_some() {
+                LocalCopyAction::HardLink
+            } else {
+                LocalCopyAction::FifoCopied
+            };
             context.record(LocalCopyRecord::new(
                 path.clone(),
-                LocalCopyAction::FifoCopied,
+                action,
                 0,
                 total_bytes,
                 Duration::default(),
@@ -131,6 +142,64 @@ pub(crate) fn copy_fifo(
         }
     }
 
+    if let Some(link_source) = existing_hard_link_target.take() {
+        match create_hard_link(&link_source, destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination(destination)?;
+                create_hard_link(&link_source, destination).map_err(|link_error| {
+                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                })?;
+            }
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(code) if code == crate::local_copy::CROSS_DEVICE_ERROR_CODE
+                ) =>
+            {
+                existing_hard_link_target = Some(link_source);
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "create hard link",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        if existing_hard_link_target.is_none() {
+            apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
+                .map_err(map_metadata_error)?;
+            #[cfg(feature = "xattr")]
+            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            #[cfg(feature = "acl")]
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+            context.record_hard_link(metadata, destination);
+            context.summary_mut().record_hard_link();
+            if let Some(path) = &record_path {
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let total_bytes = Some(metadata_snapshot.len());
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            }
+            context.register_created_path(
+                destination,
+                CreatedEntryKind::HardLink,
+                destination_previously_existed,
+            );
+            context.register_progress();
+            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            return Ok(());
+        }
+    }
+
     create_fifo(destination, metadata).map_err(map_metadata_error)?;
     context.register_created_path(
         destination,
@@ -143,6 +212,7 @@ pub(crate) fn copy_fifo(
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+    context.record_hard_link(metadata, destination);
     context.summary_mut().record_fifo();
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
@@ -180,6 +250,7 @@ pub(crate) fn copy_device(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_device_total();
+    let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -227,13 +298,22 @@ pub(crate) fn copy_device(
             }
         }
 
-        context.summary_mut().record_device();
+        if existing_hard_link_target.is_some() {
+            context.summary_mut().record_hard_link();
+        } else {
+            context.summary_mut().record_device();
+        }
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
+            let action = if existing_hard_link_target.is_some() {
+                LocalCopyAction::HardLink
+            } else {
+                LocalCopyAction::DeviceCopied
+            };
             context.record(LocalCopyRecord::new(
                 path.clone(),
-                LocalCopyAction::DeviceCopied,
+                action,
                 0,
                 total_bytes,
                 Duration::default(),
@@ -268,6 +348,64 @@ pub(crate) fn copy_device(
         }
     }
 
+    if let Some(link_source) = existing_hard_link_target.take() {
+        match create_hard_link(&link_source, destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination(destination)?;
+                create_hard_link(&link_source, destination).map_err(|link_error| {
+                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                })?;
+            }
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(code) if code == crate::local_copy::CROSS_DEVICE_ERROR_CODE
+                ) =>
+            {
+                existing_hard_link_target = Some(link_source);
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "create hard link",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        if existing_hard_link_target.is_none() {
+            apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
+                .map_err(map_metadata_error)?;
+            #[cfg(feature = "xattr")]
+            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            #[cfg(feature = "acl")]
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+            context.record_hard_link(metadata, destination);
+            context.summary_mut().record_hard_link();
+            if let Some(path) = &record_path {
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let total_bytes = Some(metadata_snapshot.len());
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            }
+            context.register_created_path(
+                destination,
+                CreatedEntryKind::HardLink,
+                destination_previously_existed,
+            );
+            context.register_progress();
+            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            return Ok(());
+        }
+    }
+
     create_device_node(destination, metadata).map_err(map_metadata_error)?;
     context.register_created_path(
         destination,
@@ -280,6 +418,7 @@ pub(crate) fn copy_device(
     sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+    context.record_hard_link(metadata, destination);
     context.summary_mut().record_device();
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
