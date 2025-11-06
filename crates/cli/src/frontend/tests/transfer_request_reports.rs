@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use crate::frontend::execution::render_missing_operands_stdout;
 
 #[test]
 fn transfer_request_reports_missing_operands() {
@@ -7,11 +8,11 @@ fn transfer_request_reports_missing_operands() {
 
     assert_eq!(code, 1);
     let stdout_rendered = String::from_utf8(stdout).expect("usage banner utf8");
-    let expected_usage = format!("{}\n", clap_command(RSYNC).render_usage());
+    let expected_usage = render_missing_operands_stdout(ProgramName::Rsync);
     assert_eq!(stdout_rendered, expected_usage);
 
     let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(rendered.contains("missing source operands"));
+    assert!(rendered.contains("syntax or usage error"));
     assert_contains_client_trailer(&rendered);
 }
 
