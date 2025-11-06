@@ -32,7 +32,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [features]
-default = ["zstd", "lz4"]
+default = ["zstd", "lz4", "acl", "xattr"]
 acl = ["rsync-meta/acl", "rsync-engine/acl"]
 xattr = ["rsync-meta/xattr", "rsync-engine/xattr"]
 zstd = ["rsync-engine/zstd", "rsync-compress/zstd"]

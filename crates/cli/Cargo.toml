@@ -13,7 +13,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["zstd", "lz4"]
+default = ["zstd", "lz4", "acl", "xattr"]
 xattr = ["rsync-core/xattr"]
 acl = ["rsync-core/acl"]
 zstd = ["rsync-core/zstd", "rsync-compress/zstd"]
