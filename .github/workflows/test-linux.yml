@@ -55,6 +55,9 @@ jobs:
       - name: Unit tests (nextest)
         run: cargo nextest run --workspace --all-features --no-capture --locked
 
+      - name: Validate Homebrew formula
+        run: ./tools/validate-brew-formula.sh Formula/oc-rsync.rb
+
       - name: sccache stats (best-effort)
         if: always()
         run: |
