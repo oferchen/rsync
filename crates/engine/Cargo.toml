@@ -27,10 +27,11 @@ libc = { version = "0.2", optional = true }
 memchr = "2.7"
 
 [features]
-default = ["zstd"]
+default = ["zstd", "lz4"]
 xattr = ["rsync-meta/xattr"]
 acl = ["rsync-meta/acl", "dep:libc"]
 zstd = ["rsync-compress/zstd"]
+lz4 = ["rsync-compress/lz4"]
 
 [dev-dependencies]
 filetime = "0.2"

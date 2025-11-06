@@ -117,12 +117,21 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     } else {
         trimmed
     };
-    rsync_error!(
-        1,
-        "invalid compression algorithm '{}': supported values include zlib and zstd",
-        display
-    )
-    .with_role(Role::Client)
+    let mut supported = vec!["zlib", "zlibx"];
+    #[cfg(feature = "lz4")]
+    {
+        supported.push("lz4");
+    }
+    #[cfg(feature = "zstd")]
+    {
+        supported.push("zstd");
+    }
+    let supported_list = supported.join(", ");
+    let rendered = format!(
+        "invalid compression algorithm '{}': supported values include {}",
+        display, supported_list
+    );
+    rsync_error!(1, rendered).with_role(Role::Client)
 }
 
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
@@ -180,6 +189,13 @@ mod tests {
     fn parse_compress_choice_accepts_zstd() {
         let parsed = parse_compress_choice(OsStr::new("zstd"));
         assert!(matches!(parsed, Ok(Some(CompressionAlgorithm::Zstd))));
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn parse_compress_choice_accepts_lz4() {
+        let parsed = parse_compress_choice(OsStr::new("lz4"));
+        assert!(matches!(parsed, Ok(Some(CompressionAlgorithm::Lz4))));
     }
 
     #[test]

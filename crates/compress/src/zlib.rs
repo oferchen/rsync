@@ -519,8 +519,8 @@ mod tests {
     #[test]
     fn counting_writer_saturating_add_prevents_overflow() {
         let mut writer = CountingWriter::new(CountingSink);
-        writer.bytes = u64::MAX - 1;
-        writer.saturating_add_bytes(5);
+        writer.saturating_add_bytes(usize::MAX);
+        writer.saturating_add_bytes(usize::MAX);
         assert_eq!(writer.bytes(), u64::MAX);
     }
 }

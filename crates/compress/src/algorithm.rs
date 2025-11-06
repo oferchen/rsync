@@ -8,6 +8,9 @@ use core::str::FromStr;
 pub enum CompressionAlgorithm {
     /// Classic zlib/deflate compression.
     Zlib,
+    /// LZ4 frame compression (`--compress-choice=lz4`).
+    #[cfg(feature = "lz4")]
+    Lz4,
     /// Zstandard compression (`--compress-choice=zstd`).
     #[cfg(feature = "zstd")]
     Zstd,
@@ -19,6 +22,8 @@ impl CompressionAlgorithm {
     pub const fn name(self) -> &'static str {
         match self {
             CompressionAlgorithm::Zlib => "zlib",
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => "lz4",
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => "zstd",
         }
@@ -33,14 +38,31 @@ impl CompressionAlgorithm {
     /// Returns the set of algorithms available in the current build.
     #[must_use]
     pub fn available() -> &'static [CompressionAlgorithm] {
-        #[cfg(feature = "zstd")]
+        #[cfg(all(feature = "zstd", feature = "lz4"))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] = &[
+                CompressionAlgorithm::Zlib,
+                CompressionAlgorithm::Lz4,
+                CompressionAlgorithm::Zstd,
+            ];
+            ALGORITHMS
+        }
+
+        #[cfg(all(feature = "zstd", not(feature = "lz4")))]
         {
             const ALGORITHMS: &[CompressionAlgorithm] =
                 &[CompressionAlgorithm::Zlib, CompressionAlgorithm::Zstd];
             ALGORITHMS
         }
 
-        #[cfg(not(feature = "zstd"))]
+        #[cfg(all(feature = "lz4", not(feature = "zstd")))]
+        {
+            const ALGORITHMS: &[CompressionAlgorithm] =
+                &[CompressionAlgorithm::Zlib, CompressionAlgorithm::Lz4];
+            ALGORITHMS
+        }
+
+        #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
         {
             const ALGORITHMS: &[CompressionAlgorithm] = &[CompressionAlgorithm::Zlib];
             ALGORITHMS
@@ -71,9 +93,16 @@ mod tests {
         assert!(available.contains(&CompressionAlgorithm::Zstd));
     }
 
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(feature = "lz4")]
     #[test]
-    fn available_algorithms_exclude_zstd_when_feature_disabled() {
+    fn available_algorithms_include_lz4_when_feature_enabled() {
+        let available = CompressionAlgorithm::available();
+        assert!(available.contains(&CompressionAlgorithm::Lz4));
+    }
+
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+    #[test]
+    fn available_algorithms_only_include_zlib_when_no_optional_features_enabled() {
         let available = CompressionAlgorithm::available();
         assert_eq!(available, &[CompressionAlgorithm::Zlib]);
     }
@@ -87,6 +116,15 @@ mod tests {
         assert_eq!(
             "zlibx".parse::<CompressionAlgorithm>().unwrap(),
             CompressionAlgorithm::Zlib
+        );
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn parsing_accepts_lz4() {
+        assert_eq!(
+            "lz4".parse::<CompressionAlgorithm>().unwrap(),
+            CompressionAlgorithm::Lz4
         );
     }
 
@@ -144,6 +182,8 @@ impl FromStr for CompressionAlgorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
             "zlib" | "zlibx" => Ok(CompressionAlgorithm::Zlib),
+            #[cfg(feature = "lz4")]
+            "lz4" => Ok(CompressionAlgorithm::Lz4),
             #[cfg(feature = "zstd")]
             "zstd" => Ok(CompressionAlgorithm::Zstd),
             other => Err(CompressionAlgorithmParseError::new(other.to_string())),
