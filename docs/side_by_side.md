@@ -7,19 +7,20 @@ Debian/Ubuntu, RPM-based systems, and Homebrew installs.
 
 ## Binaries and version output
 
-* Client binary: `/usr/bin/oc-rsync`
-* Daemon binary: `/usr/sbin/oc-rsyncd`
-* Version string: `oc-rsync 3.4.1-rust` / `oc-rsyncd 3.4.1-rust`
+* Client + daemon entrypoint: `/usr/bin/oc-rsync`
+* Optional compatibility wrapper: `/usr/sbin/oc-rsyncd` (shell script calling `oc-rsync --daemon`)
+* Version string: `oc-rsync 3.4.1-rust`
 
-Run both binaries to confirm the install and to show that they are distinct from
-`/usr/bin/rsync`:
+Run the client once and confirm the daemon help path to show that the install is
+distinct from `/usr/bin/rsync`:
 
 ```sh
 /usr/bin/rsync --version
 /usr/bin/oc-rsync --version
+/usr/bin/oc-rsync --daemon --help
 ```
 
-Both commands succeed because oc-rsync does not touch the system-provided
+All commands succeed because oc-rsync does not touch the system-provided
 `rsync` binary.
 
 ## Configuration files
@@ -43,18 +44,18 @@ brew install ./Formula/oc-rsync.rb
 brew list oc-rsync
 ```
 
-The install places `oc-rsync` and `oc-rsyncd` under `$(brew --prefix)/bin` and
-creates the daemon configuration directory at
-`$(brew --prefix)/etc/oc-rsyncd`. The Homebrew audit job verifies that the
-formula points at the current release tarball and that the installed binaries
-use the `oc-` prefix. Existing Homebrew `rsync` installations are unaffected
-because no conflicting files are installed.
+The install places `oc-rsync` under `$(brew --prefix)/bin`, adds the wrapper
+script `oc-rsyncd` in the same directory, and creates the daemon configuration
+directory at `$(brew --prefix)/etc/oc-rsyncd`. The Homebrew audit job verifies
+that the formula points at the current release tarball and that the installed
+entrypoints use the `oc-` prefix. Existing Homebrew `rsync` installations are
+unaffected because no conflicting files are installed.
 
 ## Systemd unit
 
 The packaged systemd unit is `oc-rsyncd.service` and starts the daemon with
-`/usr/sbin/oc-rsyncd`. It does **not** replace or conflict with any existing
-`rsync.service` units. Enable or start it with:
+`/usr/bin/oc-rsync --daemon`. It does **not** replace or conflict with any
+existing `rsync.service` units. Enable or start it with:
 
 ```sh
 sudo systemctl enable --now oc-rsyncd.service
