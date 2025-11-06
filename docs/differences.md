@@ -2,10 +2,11 @@
 
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
-what must land to eliminate the difference. The canonical binaries ship under
-the branded names **oc-rsync 3.4.1-rust** and **oc-rsyncd 3.4.1-rust** as
-declared in `Cargo.toml`; compatibility wrappers (**rsync**, **rsyncd**) share
-the same execution paths for environments that still depend on the legacy
+what must land to eliminate the difference. The canonical entrypoint ships under
+the branded name **oc-rsync 3.4.1-rust** as declared in `Cargo.toml`, with an
+optional shell wrapper installed as **oc-rsyncd** that forwards directly to
+`oc-rsync --daemon`. Compatibility wrappers (**rsync**, **rsyncd**) share the
+same execution paths for environments that still depend on the legacy
 branding. Items remain in this list until the referenced functionality ships
 and parity is verified by tests or goldens.
 
@@ -44,8 +45,8 @@ and parity is verified by tests or goldens.
     extend `core::client::run_client` to orchestrate protocol negotiation and
     comprehensive metadata handling, remove the fallback dependency, and
     validate the resulting behaviour via the parity harness.
-- **Daemon functionality incomplete (`oc-rsyncd`)**
-  - *Impact*: The `oc-rsyncd` binary binds a TCP listener, performs the legacy
+- **Daemon functionality incomplete (`oc-rsync --daemon`)**
+  - *Impact*: Invoking `oc-rsync --daemon` binds a TCP listener, performs the legacy
     `@RSYNCD:` handshake, and lists modules defined via `--module` arguments or
     a subset of `rsyncd.conf` supplied through `--config`. When the upstream
     `rsync` binary is available, the daemon now delegates authenticated module
@@ -54,8 +55,8 @@ and parity is verified by tests or goldens.
     `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
     override); when disabled or when the helper binary is missing the daemon
     explains that transfers are unavailable after completing authentication.
-    The `rsyncd` compatibility wrapper exposes the same behaviour through the
-    legacy binary name.
+    The `oc-rsyncd` and `rsyncd` compatibility wrappers expose the same behaviour
+    through the branded and legacy binary names.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
     module serving and the broader directive matrix remain unimplemented when
@@ -83,8 +84,8 @@ and parity is verified by tests or goldens.
     (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
     using the `dist` profile with the Windows aarch64 lane currently disabled
     while the toolchain stabilises. Packaging installs `oc-rsync` under
-    `/usr/bin` and `oc-rsyncd` under `/usr/sbin` so upstream rsync packages can
-    remain in place, and
+    `/usr/bin` together with the shell wrapper `/usr/sbin/oc-rsyncd` so upstream
+    rsync packages can remain in place, and
     optional alternatives registration stays disabled unless explicitly
     requested. The `tools/ci/run_interop.sh` harness downloads upstream
     releases 3.0.9, 3.1.3, and 3.4.1 and exercises both directions—upstream

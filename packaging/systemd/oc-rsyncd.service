@@ -10,7 +10,7 @@ Environment="OC_RSYNC_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
 Environment="RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
 Environment="RSYNCD_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
 EnvironmentFile=-/etc/default/oc-rsyncd
-ExecStart=/usr/sbin/oc-rsyncd --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
+ExecStart=/usr/bin/oc-rsync --daemon --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
