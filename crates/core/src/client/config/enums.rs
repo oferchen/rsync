@@ -163,6 +163,8 @@ pub enum StrongChecksumAlgorithm {
     Md4,
     /// MD5 strong checksum.
     Md5,
+    /// SHA-1 strong checksum.
+    Sha1,
     /// XXH64 strong checksum.
     Xxh64,
     /// XXH3/64 strong checksum.
@@ -178,6 +180,7 @@ impl StrongChecksumAlgorithm {
         match self {
             StrongChecksumAlgorithm::Auto | StrongChecksumAlgorithm::Md5 => SignatureAlgorithm::Md5,
             StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
+            StrongChecksumAlgorithm::Sha1 => SignatureAlgorithm::Sha1,
             StrongChecksumAlgorithm::Xxh64 => SignatureAlgorithm::Xxh64 { seed: 0 },
             StrongChecksumAlgorithm::Xxh3 => SignatureAlgorithm::Xxh3 { seed: 0 },
             StrongChecksumAlgorithm::Xxh128 => SignatureAlgorithm::Xxh3_128 { seed: 0 },
@@ -191,6 +194,7 @@ impl StrongChecksumAlgorithm {
             StrongChecksumAlgorithm::Auto => "auto",
             StrongChecksumAlgorithm::Md4 => "md4",
             StrongChecksumAlgorithm::Md5 => "md5",
+            StrongChecksumAlgorithm::Sha1 => "sha1",
             StrongChecksumAlgorithm::Xxh64 => "xxh64",
             StrongChecksumAlgorithm::Xxh3 => "xxh3",
             StrongChecksumAlgorithm::Xxh128 => "xxh128",
@@ -233,6 +237,7 @@ impl StrongChecksumChoice {
             "auto" => Ok(StrongChecksumAlgorithm::Auto),
             "md4" => Ok(StrongChecksumAlgorithm::Md4),
             "md5" => Ok(StrongChecksumAlgorithm::Md5),
+            "sha1" => Ok(StrongChecksumAlgorithm::Sha1),
             "xxh64" | "xxhash" => Ok(StrongChecksumAlgorithm::Xxh64),
             "xxh3" | "xxh3-64" => Ok(StrongChecksumAlgorithm::Xxh3),
             "xxh128" | "xxh3-128" => Ok(StrongChecksumAlgorithm::Xxh128),

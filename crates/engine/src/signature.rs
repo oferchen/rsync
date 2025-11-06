@@ -22,7 +22,7 @@
 //!   recomputing metadata. The structure also records the total number of bytes
 //!   consumed from the input to simplify validation in integration tests.
 //! - [`SignatureAlgorithm`] enumerates the strong checksum algorithms supported
-//!   by upstream rsync today (MD4/MD5/XXH64/XXH3). Each variant exposes the
+//!   by upstream rsync today (MD4/MD5/SHA1/XXH64/XXH3). Each variant exposes the
 //!   digest width, allowing the generator to truncate outputs in the same way
 //!   rsync applies `checksum_len`.
 //!
@@ -101,7 +101,7 @@ use std::io::{self, Read};
 use std::num::NonZeroUsize;
 
 use rsync_checksums::RollingDigest;
-use rsync_checksums::strong::{Md4, Md5, Xxh3, Xxh3_128, Xxh64};
+use rsync_checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
 use crate::delta::SignatureLayout;
 
@@ -112,6 +112,8 @@ pub enum SignatureAlgorithm {
     Md4,
     /// MD5, negotiated when both peers enable the checksum.
     Md5,
+    /// SHA-1, available when both peers advertise it.
+    Sha1,
     /// XXH64, available in newer protocol combinations with an explicit seed.
     Xxh64 {
         /// Seed applied to the XXH64 instance.
@@ -135,6 +137,7 @@ impl SignatureAlgorithm {
     pub const fn digest_len(self) -> usize {
         match self {
             SignatureAlgorithm::Md4 | SignatureAlgorithm::Md5 => 16,
+            SignatureAlgorithm::Sha1 => Sha1::DIGEST_LEN,
             SignatureAlgorithm::Xxh64 { .. } | SignatureAlgorithm::Xxh3 { .. } => 8,
             SignatureAlgorithm::Xxh3_128 { .. } => 16,
         }
@@ -145,6 +148,7 @@ impl SignatureAlgorithm {
         match self {
             SignatureAlgorithm::Md4 => Md4::digest(data).as_ref().to_vec(),
             SignatureAlgorithm::Md5 => Md5::digest(data).as_ref().to_vec(),
+            SignatureAlgorithm::Sha1 => Sha1::digest(data).as_ref().to_vec(),
             SignatureAlgorithm::Xxh64 { seed } => Xxh64::digest(seed, data).as_ref().to_vec(),
             SignatureAlgorithm::Xxh3 { seed } => Xxh3::digest(seed, data).as_ref().to_vec(),
             SignatureAlgorithm::Xxh3_128 { seed } => Xxh3_128::digest(seed, data).as_ref().to_vec(),

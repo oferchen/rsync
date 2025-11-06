@@ -8,7 +8,7 @@ use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signatu
 use crate::local_copy::LocalCopyError;
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
-use rsync_checksums::strong::{Md4, Md5, Xxh3, Xxh3_128, Xxh64};
+use rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
 use rsync_meta::MetadataOptions;
 use rsync_protocol::ProtocolVersion;
 
@@ -195,6 +195,7 @@ mod tests {
 pub(crate) enum StrongHasher {
     Md4(Md4),
     Md5(Md5),
+    Sha1(Sha1),
     Xxh64(Xxh64),
     Xxh3(Xxh3),
     Xxh128(Xxh3_128),
@@ -205,6 +206,7 @@ impl StrongHasher {
         match algorithm {
             SignatureAlgorithm::Md4 => StrongHasher::Md4(Md4::new()),
             SignatureAlgorithm::Md5 => StrongHasher::Md5(Md5::new()),
+            SignatureAlgorithm::Sha1 => StrongHasher::Sha1(Sha1::new()),
             SignatureAlgorithm::Xxh64 { seed } => StrongHasher::Xxh64(Xxh64::new(seed)),
             SignatureAlgorithm::Xxh3 { seed } => StrongHasher::Xxh3(Xxh3::new(seed)),
             SignatureAlgorithm::Xxh3_128 { seed } => StrongHasher::Xxh128(Xxh3_128::new(seed)),
@@ -215,6 +217,7 @@ impl StrongHasher {
         match self {
             StrongHasher::Md4(state) => state.update(data),
             StrongHasher::Md5(state) => state.update(data),
+            StrongHasher::Sha1(state) => state.update(data),
             StrongHasher::Xxh64(state) => state.update(data),
             StrongHasher::Xxh3(state) => state.update(data),
             StrongHasher::Xxh128(state) => state.update(data),
@@ -225,6 +228,7 @@ impl StrongHasher {
         match self {
             StrongHasher::Md4(state) => state.finalize().as_ref().to_vec(),
             StrongHasher::Md5(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Sha1(state) => state.finalize().as_ref().to_vec(),
             StrongHasher::Xxh64(state) => state.finalize().as_ref().to_vec(),
             StrongHasher::Xxh3(state) => state.finalize().as_ref().to_vec(),
             StrongHasher::Xxh128(state) => state.finalize().as_ref().to_vec(),
