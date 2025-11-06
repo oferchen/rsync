@@ -1,6 +1,8 @@
 use std::collections::TryReserveError;
 use std::io::{self, Read};
 
+use memchr::memchr;
+
 use crate::legacy::{
     LegacyDaemonGreeting, parse_legacy_daemon_greeting_bytes,
     parse_legacy_daemon_greeting_bytes_details,
@@ -37,7 +39,7 @@ pub fn read_legacy_daemon_line<R: Read>(
         .take_buffered_into(line)
         .map_err(map_reserve_error_for_io)?;
 
-    if let Some(newline_index) = line.iter().position(|&byte| byte == b'\n') {
+    if let Some(newline_index) = memchr(b'\n', line) {
         let remainder_start = newline_index + 1;
         let remainder_len = line.len() - remainder_start;
         let drain = line.drain(remainder_start..);

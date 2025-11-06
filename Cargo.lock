@@ -866,6 +866,7 @@ dependencies = [
 name = "rsync-protocol"
 version = "3.4.1-rust"
 dependencies = [
+ "memchr",
  "proptest",
 ]
 
@@ -873,6 +874,7 @@ dependencies = [
 name = "rsync-transport"
 version = "3.4.1-rust"
 dependencies = [
+ "memchr",
  "proptest",
  "rsync-protocol",
 ]
