@@ -355,6 +355,9 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         fallback_binary: None,
         rsync_path: None,
         remainder: Vec::new(),
+        write_batch: None,
+        only_write_batch: None,
+        read_batch: None,
         #[cfg(feature = "acl")]
         acls: None,
         #[cfg(feature = "xattr")]

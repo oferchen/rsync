@@ -14,7 +14,8 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
+    ClientError, compile_filter_error, fallback_context_missing_error, map_local_copy_error,
+    missing_operands_error,
 };
 use super::fallback::{RemoteFallbackContext, run_remote_transfer_fallback};
 use super::outcome::{ClientOutcome, FallbackSummary};
@@ -79,6 +80,13 @@ where
     }
 
     let mut fallback = fallback;
+
+    if config.force_fallback() {
+        return fallback
+            .take()
+            .map(invoke_fallback)
+            .unwrap_or_else(|| Err(fallback_context_missing_error()));
+    }
 
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
         Ok(plan) => plan,

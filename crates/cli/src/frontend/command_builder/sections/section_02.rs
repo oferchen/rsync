@@ -33,6 +33,30 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("write-batch")
+                    .long("write-batch")
+                    .value_name("PREFIX")
+                    .help("Store updated data in batch files named PREFIX for later replay.")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["read-batch", "only-write-batch"]),
+            )
+            .arg(
+                Arg::new("only-write-batch")
+                    .long("only-write-batch")
+                    .value_name("PREFIX")
+                    .help("Write batch files named PREFIX without applying the updates locally.")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["read-batch", "write-batch"]),
+            )
+            .arg(
+                Arg::new("read-batch")
+                    .long("read-batch")
+                    .value_name("PREFIX")
+                    .help("Apply updates stored in batch files named PREFIX.")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["write-batch", "only-write-batch"]),
+            )
+            .arg(
                 Arg::new("whole-file")
                     .long("whole-file")
                     .short('W')
