@@ -90,16 +90,27 @@ mod tests {
         assert_eq!(exit, ExitCode::FAILURE);
 
         let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
-        assert!(stdout_text.contains("Usage:"));
         assert!(
-            stdout_text.contains(PROGRAM_NAME),
-            "usage banner should mention the canonical program name"
+            stdout_text.starts_with(&format!("{PROGRAM_NAME}  version")),
+            "usage preamble should begin with the canonical version banner"
+        );
+        assert!(
+            stdout_text.contains("\nCapabilities:\n"),
+            "version banner should include the capabilities section"
+        );
+        assert!(
+            stdout_text.contains(&format!("Usage: {PROGRAM_NAME} [OPTION]")),
+            "usage synopsis should list transfer forms for the canonical program name"
         );
 
         let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
         assert!(
-            stderr_text.contains("missing source operands"),
-            "diagnostic should explain that operands are required"
+            stderr_text.contains("rsync error: syntax or usage error (code 1)"),
+            "diagnostic should use the canonical syntax-or-usage error wording"
+        );
+        assert!(
+            stderr_text.contains("[client=3.4.1-rust]"),
+            "diagnostic should include the branded role trailer"
         );
     }
 }

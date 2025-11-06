@@ -21,3 +21,6 @@
 - Replace the short custom “missing source operands” banner with the **full upstream-shaped** preamble+usage, then (optionally) append our specific hint; exit with **code 1**.
 - Snapshot test compares `oc-rsync` (no args) output to an upstream **golden** (allowing only binary name & branding/path differences). :contentReference[oaicite:15]{index=15}
 
+**Status:**
+- ✅ Enforced by `src/bin/client.rs::tests::empty_argument_list_defaults_to_usage_error`, which now asserts the full banner sections and canonical syntax-or-usage diagnostic trailer.
+
