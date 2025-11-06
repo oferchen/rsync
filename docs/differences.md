@@ -16,8 +16,8 @@ and parity is verified by tests or goldens.
   - *Impact*: `oc-rsync` performs deterministic local filesystem copies for
     regular files, directory trees, symbolic links, hard links, block/character
     devices, FIFOs, and sparse files while preserving permissions, timestamps,
-    optional ownership metadata, and—when compiled in—POSIX ACLs and extended
-    attributes. It can proactively create parent directories via `--mkpath`
+    optional ownership metadata, and—when the default `acl`/`xattr` features are enabled—POSIX ACLs and extended
+    attributes (these toggles remain configurable for custom builds). It can proactively create parent directories via `--mkpath`
     even when implied directories are disabled. Append-only updates via
     `--append` and `--append-verify` reuse the native verification logic when the
     destination already contains a prefix of the incoming file, and

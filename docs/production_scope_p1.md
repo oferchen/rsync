@@ -47,8 +47,8 @@ This document freezes the mandatory scope that must reach green status before th
 - Permission bits
 - Nanosecond-resolution modification times
 - Symlink targets
-- Extended attributes (when compiled in)
-- POSIX ACLs (when compiled in)
+- Extended attributes (enabled by default; build-time feature toggle available)
+- POSIX ACLs (enabled by default; build-time feature toggle available)
 
 ## Daemon Configuration Parity
 - Module definitions
