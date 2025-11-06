@@ -349,6 +349,8 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         timeout: TransferTimeout::Default,
         connect_timeout: TransferTimeout::Default,
         out_format: None,
+        log_file: None,
+        log_file_format: None,
         no_motd: false,
         fallback_binary: None,
         rsync_path: None,

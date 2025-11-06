@@ -1,23 +1,30 @@
 #![deny(unsafe_code)]
 
+use std::fs::File;
 use std::io::{self, Write};
 
 use rsync_core::{
     client::{
-        ClientConfig, ClientOutcome, ClientProgressObserver, HumanReadableMode, RemoteFallbackArgs,
-        RemoteFallbackContext, run_client_or_fallback,
+        ClientConfig, ClientOutcome, ClientProgressObserver, ClientSummary, HumanReadableMode,
+        RemoteFallbackArgs, RemoteFallbackContext, run_client_or_fallback,
     },
     message::Message,
 };
 use rsync_logging::MessageSink;
 
 use crate::frontend::{
-    out_format::OutFormatContext,
+    out_format::{OutFormat, OutFormatContext},
     progress::{LiveProgress, NameOutputLevel, ProgressMode, emit_transfer_summary},
 };
 
 use super::messages::emit_message_with_fallback;
 use super::with_output_writer;
+
+/// Configuration for writing transfer output to a log file.
+pub(crate) struct LogFileConfig {
+    pub(crate) file: File,
+    pub(crate) format: OutFormat,
+}
 
 pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) config: ClientConfig,
@@ -32,6 +39,7 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) out_format_template: Option<&'a crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
+    pub(crate) log_file: Option<LogFileConfig>,
 }
 
 /// Drives the client transfer, handling optional fallback execution and final summaries.
@@ -57,6 +65,7 @@ where
         out_format_template,
         name_level,
         name_overridden,
+        log_file,
     } = inputs;
 
     if let Some(args) = fallback_args {
@@ -135,6 +144,23 @@ where
                     )
                 });
             }
+
+            if let Some(mut log) = log_file {
+                if let Err(error) = emit_log_output(
+                    &summary,
+                    &mut log,
+                    verbosity,
+                    stats,
+                    list_only,
+                    name_level,
+                    name_overridden,
+                    human_readable_mode,
+                ) {
+                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                        writeln!(writer, "warning: failed to append to log file: {error}")
+                    });
+                }
+            }
             0
         }
         Ok(ClientOutcome::Fallback(_)) => {
@@ -158,4 +184,33 @@ where
             error.exit_code()
         }
     }
+}
+
+fn emit_log_output(
+    summary: &ClientSummary,
+    log: &mut LogFileConfig,
+    verbosity: u8,
+    stats: bool,
+    list_only: bool,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
+    human_readable_mode: HumanReadableMode,
+) -> io::Result<()> {
+    let context = OutFormatContext::default();
+    emit_transfer_summary(
+        summary,
+        verbosity,
+        None,
+        stats,
+        false,
+        list_only,
+        Some(&log.format),
+        &context,
+        name_level,
+        name_overridden,
+        human_readable_mode,
+        false,
+        &mut log.file,
+    )?;
+    log.file.flush()
 }

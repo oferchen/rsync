@@ -98,6 +98,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) itemize_changes: bool,
     pub(crate) out_format_template: Option<crate::frontend::out_format::OutFormat>,
+    pub(crate) log_file_template: Option<crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
 }
 
@@ -221,6 +222,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
 
     let force_event_collection = inputs.itemize_changes
         || inputs.out_format_template.is_some()
+        || inputs.log_file_template.is_some()
         || !matches!(inputs.name_level, NameOutputLevel::Disabled);
 
     builder.force_event_collection(force_event_collection)

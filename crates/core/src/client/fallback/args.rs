@@ -220,6 +220,10 @@ pub struct RemoteFallbackArgs {
     pub connect_timeout: TransferTimeout,
     /// Optional `--out-format` template.
     pub out_format: Option<OsString>,
+    /// Optional log file path forwarded via `--log-file`.
+    pub log_file: Option<PathBuf>,
+    /// Optional log template forwarded via `--log-file-format`.
+    pub log_file_format: Option<OsString>,
     /// Enables `--no-motd`.
     pub no_motd: bool,
     /// Preferred address family forwarded via `--ipv4`/`--ipv6`.

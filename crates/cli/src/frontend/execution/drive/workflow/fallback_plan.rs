@@ -119,6 +119,8 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     #[cfg(feature = "xattr")]
     pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
+    pub(crate) log_file_path: Option<&'a PathBuf>,
+    pub(crate) log_file_format: Option<&'a OsString>,
 }
 
 pub(crate) fn build_fallback_arguments<Err>(
@@ -248,6 +250,8 @@ where
         timeout: context.timeout,
         connect_timeout: context.connect_timeout,
         out_format: context.fallback_out_format.cloned(),
+        log_file_path: context.log_file_path.cloned(),
+        log_file_format: context.log_file_format.cloned(),
         no_motd: context.no_motd,
         address_mode: context.address_mode,
         rsync_path: context.rsync_path.cloned(),

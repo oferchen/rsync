@@ -307,6 +307,8 @@ where
     let temp_dir = matches
         .remove_one::<OsString>("temp-dir")
         .map(PathBuf::from);
+    let log_file = matches.remove_one::<OsString>("log-file");
+    let log_file_format = matches.remove_one::<OsString>("log-file-format");
     let link_dest_args: Vec<OsString> = matches
         .remove_many::<OsString>("link-dest")
         .map(|values| values.collect())
@@ -536,6 +538,8 @@ where
         delay_updates,
         partial_dir,
         temp_dir,
+        log_file,
+        log_file_format,
         link_dests,
         remove_source_files,
         inplace,
