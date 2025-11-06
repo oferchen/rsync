@@ -11,7 +11,26 @@ use super::DaemonAddress;
 
 pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
-    let bytes = reader.read_line(&mut line)?;
+
+    let bytes = loop {
+        match reader.read_line(&mut line) {
+            Ok(bytes) => break bytes,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                line.clear();
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        }
+    };
 
     if bytes == 0 {
         return Ok(None);
@@ -22,6 +41,127 @@ pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option
     }
 
     Ok(Some(line))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_trimmed_line;
+    use std::io::{self, BufRead, Cursor, Read};
+
+    #[test]
+    fn read_trimmed_line_treats_connection_reset_as_eof() {
+        let mut reader = ErrorReader::new(io::ErrorKind::ConnectionReset);
+        let result = read_trimmed_line(&mut reader).expect("connection reset treated as eof");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_trimmed_line_treats_connection_aborted_as_eof() {
+        let mut reader = ErrorReader::new(io::ErrorKind::ConnectionAborted);
+        let result = read_trimmed_line(&mut reader).expect("connection aborted treated as eof");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_trimmed_line_retries_on_interrupted_errors() {
+        let mut reader = InterruptedThenLine::new("payload\n");
+        let result = read_trimmed_line(&mut reader).expect("interrupted call should retry");
+        assert_eq!(result.as_deref(), Some("payload"));
+    }
+
+    #[test]
+    fn read_trimmed_line_trims_newline_terminators() {
+        let mut reader = Cursor::new(b"hello world\r\n");
+        let result = read_trimmed_line(&mut reader).expect("cursor read should succeed");
+        assert_eq!(result.as_deref(), Some("hello world"));
+    }
+
+    struct ErrorReader {
+        kind: io::ErrorKind,
+        emitted: bool,
+    }
+
+    impl ErrorReader {
+        fn new(kind: io::ErrorKind) -> Self {
+            Self {
+                kind,
+                emitted: false,
+            }
+        }
+    }
+
+    impl Read for ErrorReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            if self.emitted {
+                Ok(0)
+            } else {
+                self.emitted = true;
+                Err(io::Error::new(self.kind, "synthetic read failure"))
+            }
+        }
+    }
+
+    impl BufRead for ErrorReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.emitted {
+                Ok(&[])
+            } else {
+                self.emitted = true;
+                Err(io::Error::new(self.kind, "synthetic buffer failure"))
+            }
+        }
+
+        fn consume(&mut self, _amt: usize) {}
+    }
+
+    struct InterruptedThenLine {
+        bytes: Vec<u8>,
+        offset: usize,
+        interrupted: bool,
+    }
+
+    impl InterruptedThenLine {
+        fn new(line: &str) -> Self {
+            Self {
+                bytes: line.as_bytes().to_vec(),
+                offset: 0,
+                interrupted: false,
+            }
+        }
+    }
+
+    impl Read for InterruptedThenLine {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.fill_buf() {
+                Ok(data) => {
+                    if data.is_empty() {
+                        return Ok(0);
+                    }
+
+                    let len = data.len().min(buf.len());
+                    buf[..len].copy_from_slice(&data[..len]);
+                    self.consume(len);
+                    Ok(len)
+                }
+                Err(error) => Err(error),
+            }
+        }
+    }
+
+    impl BufRead for InterruptedThenLine {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if !self.interrupted {
+                self.interrupted = true;
+                Err(io::Error::new(io::ErrorKind::Interrupted, "synthetic"))
+            } else {
+                Ok(&self.bytes[self.offset..])
+            }
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.offset = usize::min(self.bytes.len(), self.offset.saturating_add(amt));
+        }
+    }
 }
 
 pub(crate) fn legacy_daemon_error_payload(line: &str) -> Option<String> {
