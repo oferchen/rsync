@@ -3,7 +3,7 @@
 The oc-rsync packages install the Rust client and daemon alongside any
 system-provided rsync packages without overwriting upstream binaries. This
 reference explains the layout, verification steps, and coexistence behavior on
-Debian/Ubuntu and RPM-based systems.
+Debian/Ubuntu, RPM-based systems, and Homebrew installs.
 
 ## Binaries and version output
 
@@ -31,6 +31,24 @@ configuration so local changes survive upgrades.
 A copy of the default configuration is also provided at
 `/usr/share/doc/oc-rsync/examples/oc-rsyncd.conf` for quick reference or for
 bootstrapping new deployments.
+
+## Homebrew installation
+
+The repository ships a Homebrew formula at `Formula/oc-rsync.rb`. Homebrew
+builds install the binaries under the Homebrew prefix, so the system `rsync`
+package remains untouched:
+
+```sh
+brew install ./Formula/oc-rsync.rb
+brew list oc-rsync
+```
+
+The install places `oc-rsync` and `oc-rsyncd` under `$(brew --prefix)/bin` and
+creates the daemon configuration directory at
+`$(brew --prefix)/etc/oc-rsyncd`. The Homebrew audit job verifies that the
+formula points at the current release tarball and that the installed binaries
+use the `oc-` prefix. Existing Homebrew `rsync` installations are unaffected
+because no conflicting files are installed.
 
 ## Systemd unit
 
