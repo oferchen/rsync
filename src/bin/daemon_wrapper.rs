@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 /// Wraps daemon wrapper invocations so they behave like `program --daemon ARGS...`.
 ///
@@ -15,19 +15,38 @@ where
     S: Into<OsString>,
 {
     let mut iter = arguments.into_iter();
-    let (lower_bound, _) = iter.size_hint();
+    let (lower_bound, upper_bound) = iter.size_hint();
     let program = iter
         .next()
         .map(Into::into)
         .unwrap_or_else(|| OsString::from(fallback_program));
 
-    // Reserve enough space for the program name, the injected `--daemon` flag,
-    // and any remaining arguments so we avoid reallocations for the common
-    // case of long daemon launches that mirror upstream wrappers.
-    let mut forwarded = Vec::with_capacity(lower_bound.saturating_add(2));
+    let rest_capacity = upper_bound.unwrap_or(lower_bound);
+    let mut forwarded = Vec::with_capacity(rest_capacity.saturating_add(2));
     forwarded.push(program);
-    forwarded.push(OsString::from("--daemon"));
-    forwarded.extend(iter.map(Into::into));
+
+    let mut rest = Vec::with_capacity(rest_capacity);
+    let mut saw_daemon_flag = false;
+    let mut reached_double_dash = false;
+
+    for argument in iter {
+        let argument = argument.into();
+        if !reached_double_dash {
+            let value = argument.as_os_str();
+            if value == OsStr::new("--") {
+                reached_double_dash = true;
+            } else if value == OsStr::new("--daemon") {
+                saw_daemon_flag = true;
+            }
+        }
+        rest.push(argument);
+    }
+
+    if !saw_daemon_flag {
+        forwarded.push(OsString::from("--daemon"));
+    }
+
+    forwarded.extend(rest);
     forwarded
 }
 
@@ -59,6 +78,51 @@ mod tests {
         assert_eq!(
             wrapped,
             vec![OsString::from("rsyncd"), OsString::from("--daemon")]
+        );
+    }
+
+    #[test]
+    fn wrap_daemon_arguments_does_not_duplicate_daemon_flag() {
+        let wrapped = wrap_daemon_arguments(
+            [
+                OsString::from("oc-rsyncd"),
+                OsString::from("--daemon"),
+                OsString::from("--config"),
+                OsString::from("/tmp/conf"),
+            ],
+            "oc-rsyncd",
+        );
+
+        assert_eq!(
+            wrapped,
+            vec![
+                OsString::from("oc-rsyncd"),
+                OsString::from("--daemon"),
+                OsString::from("--config"),
+                OsString::from("/tmp/conf"),
+            ]
+        );
+    }
+
+    #[test]
+    fn wrap_daemon_arguments_inserts_daemon_flag_after_double_dash() {
+        let wrapped = wrap_daemon_arguments(
+            [
+                OsString::from("oc-rsyncd"),
+                OsString::from("--"),
+                OsString::from("--daemon"),
+            ],
+            "oc-rsyncd",
+        );
+
+        assert_eq!(
+            wrapped,
+            vec![
+                OsString::from("oc-rsyncd"),
+                OsString::from("--daemon"),
+                OsString::from("--"),
+                OsString::from("--daemon"),
+            ]
         );
     }
 }
