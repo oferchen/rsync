@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::line_mode::LineMode;
-use rsync_core::message::MessageScratch;
+use rsync_core::{branding::Brand, message::MessageScratch};
 
 /// Streaming sink that renders [`rsync_core::message::Message`] values into an
 /// [`std::io::Write`] target.
@@ -52,7 +52,8 @@ use rsync_core::message::MessageScratch;
 ///
 /// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
 /// sink.write(Message::info("phase one"))?;
-/// let (writer, scratch, mode) = sink.into_parts();
+/// let (writer, scratch, mode, brand) = sink.into_parts();
+/// assert_eq!(brand, rsync_core::branding::Brand::Upstream);
 /// assert_eq!(mode, LineMode::WithoutNewline);
 ///
 /// let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
@@ -67,6 +68,7 @@ pub struct MessageSink<W> {
     writer: W,
     scratch: MessageScratch,
     line_mode: LineMode,
+    brand: Brand,
 }
 
 mod accessors;
@@ -82,6 +84,7 @@ where
         f.debug_struct("MessageSink")
             .field("writer", &self.writer)
             .field("line_mode", &self.line_mode)
+            .field("brand", &self.brand)
             .finish()
     }
 }

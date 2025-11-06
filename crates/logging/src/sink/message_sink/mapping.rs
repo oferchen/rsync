@@ -19,8 +19,9 @@ impl<W> MessageSink<W> {
             writer,
             scratch,
             line_mode,
+            brand,
         } = self;
-        MessageSink::with_parts(f(writer), scratch, line_mode)
+        MessageSink::with_parts_and_brand(f(writer), scratch, line_mode, brand)
     }
 
     /// Attempts to map the sink's writer into a different type, preserving the original sink on failure.
@@ -37,12 +38,15 @@ impl<W> MessageSink<W> {
             writer,
             scratch,
             line_mode,
+            brand,
         } = self;
 
         match f(writer) {
-            Ok(mapped) => Ok(MessageSink::with_parts(mapped, scratch, line_mode)),
+            Ok(mapped) => Ok(MessageSink::with_parts_and_brand(
+                mapped, scratch, line_mode, brand,
+            )),
             Err((writer, error)) => Err(TryMapWriterError::new(
-                MessageSink::with_parts(writer, scratch, line_mode),
+                MessageSink::with_parts_and_brand(writer, scratch, line_mode, brand),
                 error,
             )),
         }

@@ -32,6 +32,7 @@ use std::cell::RefCell;
 pub struct MessageScratch {
     pub(super) code_digits: [u8; 20],
     pub(super) line_digits: [u8; 20],
+    pub(super) prefix_buffer: [u8; 48],
 }
 
 impl MessageScratch {
@@ -42,7 +43,16 @@ impl MessageScratch {
         Self {
             code_digits: [0; 20],
             line_digits: [0; 20],
+            prefix_buffer: [0; 48],
         }
+    }
+
+    pub(super) fn prefix_buffer(&self) -> &[u8; 48] {
+        &self.prefix_buffer
+    }
+
+    pub(super) fn prefix_buffer_mut(&mut self) -> &mut [u8; 48] {
+        &mut self.prefix_buffer
     }
 
     /// Executes a closure with the thread-local scratch buffer.
