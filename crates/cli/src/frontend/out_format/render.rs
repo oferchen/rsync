@@ -11,7 +11,10 @@ use rsync_checksums::strong::Md5;
 use rsync_core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use time::OffsetDateTime;
 
-use super::tokens::{OutFormat, OutFormatContext, OutFormatPlaceholder, OutFormatToken};
+use super::tokens::{
+    HumanizeMode, MAX_PLACEHOLDER_WIDTH, OutFormat, OutFormatContext, OutFormatPlaceholder,
+    OutFormatToken, PlaceholderAlignment, PlaceholderFormat, PlaceholderToken,
+};
 
 impl OutFormat {
     /// Renders an event according to the parsed `--out-format` tokens.
@@ -21,122 +24,16 @@ impl OutFormat {
         context: &OutFormatContext,
         writer: &mut W,
     ) -> io::Result<()> {
-        use std::fmt::Write as _;
-
         let mut buffer = String::new();
         for token in self.tokens() {
             match token {
                 OutFormatToken::Literal(text) => buffer.push_str(text),
-                OutFormatToken::Placeholder(placeholder) => match placeholder {
-                    OutFormatPlaceholder::FileName
-                    | OutFormatPlaceholder::FileNameWithSymlinkTarget
-                    | OutFormatPlaceholder::FullPath => {
-                        append_rendered_path(
-                            &mut buffer,
-                            event,
-                            matches!(
-                                placeholder,
-                                OutFormatPlaceholder::FileName
-                                    | OutFormatPlaceholder::FileNameWithSymlinkTarget,
-                            ),
-                        );
-                        if matches!(placeholder, OutFormatPlaceholder::FileNameWithSymlinkTarget) {
-                            if let Some(metadata) = event.metadata() {
-                                if let Some(target) = metadata.symlink_target() {
-                                    buffer.push_str(" -> ");
-                                    buffer.push_str(&target.to_string_lossy());
-                                }
-                            }
-                        }
+                OutFormatToken::Placeholder(spec) => {
+                    if let Some(rendered) = render_placeholder_value(event, context, spec) {
+                        let formatted = apply_placeholder_format(rendered, &spec.format);
+                        buffer.push_str(&formatted);
                     }
-                    OutFormatPlaceholder::ItemizedChanges => {
-                        buffer.push_str(&format_itemized_changes(event));
-                    }
-                    OutFormatPlaceholder::FileLength => {
-                        let length = event
-                            .metadata()
-                            .map(ClientEntryMetadata::length)
-                            .unwrap_or(0);
-                        let _ = write!(&mut buffer, "{length}");
-                    }
-                    OutFormatPlaceholder::BytesTransferred => {
-                        let bytes = event.bytes_transferred();
-                        let _ = write!(&mut buffer, "{bytes}");
-                    }
-                    OutFormatPlaceholder::ChecksumBytes => {
-                        let checksum_bytes = match event.kind() {
-                            ClientEventKind::DataCopied => event.bytes_transferred(),
-                            _ => 0,
-                        };
-                        let _ = write!(&mut buffer, "{checksum_bytes}");
-                    }
-                    OutFormatPlaceholder::Operation => {
-                        buffer.push_str(describe_event_kind(event.kind()));
-                    }
-                    OutFormatPlaceholder::ModifyTime => {
-                        buffer.push_str(&format_out_format_mtime(event.metadata()));
-                    }
-                    OutFormatPlaceholder::PermissionString => {
-                        buffer.push_str(&format_out_format_permissions(event.metadata()));
-                    }
-                    OutFormatPlaceholder::SymlinkTarget => {
-                        if let Some(target) = event
-                            .metadata()
-                            .and_then(ClientEntryMetadata::symlink_target)
-                        {
-                            buffer.push_str(" -> ");
-                            buffer.push_str(&target.to_string_lossy());
-                        }
-                    }
-                    OutFormatPlaceholder::CurrentTime => {
-                        buffer.push_str(&format_current_timestamp());
-                    }
-                    OutFormatPlaceholder::OwnerName => {
-                        buffer.push_str(&format_owner_name(event.metadata()));
-                    }
-                    OutFormatPlaceholder::GroupName => {
-                        buffer.push_str(&format_group_name(event.metadata()));
-                    }
-                    OutFormatPlaceholder::OwnerUid => {
-                        let uid = event
-                            .metadata()
-                            .and_then(ClientEntryMetadata::uid)
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "0".to_string());
-                        buffer.push_str(&uid);
-                    }
-                    OutFormatPlaceholder::OwnerGid => {
-                        let gid = event
-                            .metadata()
-                            .and_then(ClientEntryMetadata::gid)
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "0".to_string());
-                        buffer.push_str(&gid);
-                    }
-                    OutFormatPlaceholder::ProcessId => {
-                        let pid = std::process::id();
-                        let _ = write!(&mut buffer, "{pid}");
-                    }
-                    OutFormatPlaceholder::RemoteHost => {
-                        append_remote_placeholder(&mut buffer, context.remote_host.as_deref(), 'h');
-                    }
-                    OutFormatPlaceholder::RemoteAddress => {
-                        append_remote_placeholder(
-                            &mut buffer,
-                            context.remote_address.as_deref(),
-                            'a',
-                        );
-                    }
-                    OutFormatPlaceholder::ModuleName => {
-                        append_remote_placeholder(&mut buffer, context.module_name.as_deref(), 'm');
-                    }
-                    OutFormatPlaceholder::ModulePath => {
-                        append_remote_placeholder(&mut buffer, context.module_path.as_deref(), 'P');
-                    }
-                    OutFormatPlaceholder::FullChecksum => {
-                        buffer.push_str(&format_full_checksum(event));
-                    }
-                },
+                }
             }
         }
 
@@ -162,16 +59,96 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
     Ok(())
 }
 
-fn append_remote_placeholder(buffer: &mut String, value: Option<&str>, token: char) {
-    if let Some(text) = value {
-        buffer.push_str(text);
-    } else {
-        buffer.push('%');
-        buffer.push(token);
+fn render_placeholder_value(
+    event: &ClientEvent,
+    context: &OutFormatContext,
+    spec: &PlaceholderToken,
+) -> Option<String> {
+    match spec.kind {
+        OutFormatPlaceholder::FileName => Some(render_path(event, true)),
+        OutFormatPlaceholder::FileNameWithSymlinkTarget => {
+            let mut rendered = render_path(event, true);
+            if let Some(target) = event
+                .metadata()
+                .and_then(ClientEntryMetadata::symlink_target)
+            {
+                rendered.push_str(" -> ");
+                rendered.push_str(&target.to_string_lossy());
+            }
+            Some(rendered)
+        }
+        OutFormatPlaceholder::FullPath => Some(render_path(event, false)),
+        OutFormatPlaceholder::ItemizedChanges => Some(format_itemized_changes(event)),
+        OutFormatPlaceholder::FileLength => {
+            let length = event
+                .metadata()
+                .map(ClientEntryMetadata::length)
+                .unwrap_or(0);
+            Some(format_numeric_value(length as i64, &spec.format))
+        }
+        OutFormatPlaceholder::BytesTransferred => Some(format_numeric_value(
+            event.bytes_transferred() as i64,
+            &spec.format,
+        )),
+        OutFormatPlaceholder::ChecksumBytes => {
+            let checksum_bytes = match event.kind() {
+                ClientEventKind::DataCopied => event.bytes_transferred(),
+                _ => 0,
+            };
+            Some(format_numeric_value(checksum_bytes as i64, &spec.format))
+        }
+        OutFormatPlaceholder::Operation => Some(describe_event_kind(event.kind()).to_string()),
+        OutFormatPlaceholder::ModifyTime => Some(format_out_format_mtime(event.metadata())),
+        OutFormatPlaceholder::PermissionString => {
+            Some(format_out_format_permissions(event.metadata()))
+        }
+        OutFormatPlaceholder::SymlinkTarget => event
+            .metadata()
+            .and_then(ClientEntryMetadata::symlink_target)
+            .map(|target| {
+                let mut rendered = String::from(" -> ");
+                rendered.push_str(&target.to_string_lossy());
+                rendered
+            }),
+        OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp()),
+        OutFormatPlaceholder::OwnerName => Some(format_owner_name(event.metadata())),
+        OutFormatPlaceholder::GroupName => Some(format_group_name(event.metadata())),
+        OutFormatPlaceholder::OwnerUid => Some(
+            event
+                .metadata()
+                .and_then(ClientEntryMetadata::uid)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+        ),
+        OutFormatPlaceholder::OwnerGid => Some(
+            event
+                .metadata()
+                .and_then(ClientEntryMetadata::gid)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+        ),
+        OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string()),
+        OutFormatPlaceholder::RemoteHost => Some(remote_placeholder_value(
+            context.remote_host.as_deref(),
+            'h',
+        )),
+        OutFormatPlaceholder::RemoteAddress => Some(remote_placeholder_value(
+            context.remote_address.as_deref(),
+            'a',
+        )),
+        OutFormatPlaceholder::ModuleName => Some(remote_placeholder_value(
+            context.module_name.as_deref(),
+            'm',
+        )),
+        OutFormatPlaceholder::ModulePath => Some(remote_placeholder_value(
+            context.module_path.as_deref(),
+            'P',
+        )),
+        OutFormatPlaceholder::FullChecksum => Some(format_full_checksum(event)),
     }
 }
 
-fn append_rendered_path(buffer: &mut String, event: &ClientEvent, ensure_trailing_slash: bool) {
+fn render_path(event: &ClientEvent, ensure_trailing_slash: bool) -> String {
     let mut rendered = event.relative_path().to_string_lossy().into_owned();
     if ensure_trailing_slash
         && !rendered.ends_with('/')
@@ -183,7 +160,118 @@ fn append_rendered_path(buffer: &mut String, event: &ClientEvent, ensure_trailin
     {
         rendered.push('/');
     }
-    buffer.push_str(&rendered);
+    rendered
+}
+
+fn format_numeric_value(value: i64, format: &PlaceholderFormat) -> String {
+    match format.humanize() {
+        HumanizeMode::None => value.to_string(),
+        HumanizeMode::Separator => format_with_separator(value),
+        HumanizeMode::DecimalUnits => {
+            format_with_units(value, 1000).unwrap_or_else(|| format_with_separator(value))
+        }
+        HumanizeMode::BinaryUnits => {
+            format_with_units(value, 1024).unwrap_or_else(|| format_with_separator(value))
+        }
+    }
+}
+
+fn format_with_units(value: i64, base: i64) -> Option<String> {
+    if value.abs() < base {
+        return None;
+    }
+
+    let mut magnitude = value as f64 / base as f64;
+    let negative = magnitude.is_sign_negative();
+    if negative {
+        magnitude = -magnitude;
+    }
+
+    let units = if magnitude < base as f64 {
+        'K'
+    } else if {
+        magnitude /= base as f64;
+        magnitude < base as f64
+    } {
+        'M'
+    } else if {
+        magnitude /= base as f64;
+        magnitude < base as f64
+    } {
+        'G'
+    } else if {
+        magnitude /= base as f64;
+        magnitude < base as f64
+    } {
+        'T'
+    } else {
+        magnitude /= base as f64;
+        'P'
+    };
+
+    if negative {
+        magnitude = -magnitude;
+    }
+
+    Some(format!("{magnitude:.2}{units}"))
+}
+
+fn format_with_separator(value: i64) -> String {
+    let separator = ',';
+    let mut magnitude = if value < 0 {
+        -(value as i128)
+    } else {
+        value as i128
+    };
+
+    if magnitude == 0 {
+        return "0".to_string();
+    }
+
+    let mut groups = Vec::new();
+    while magnitude > 0 {
+        groups.push((magnitude % 1000) as i16);
+        magnitude /= 1000;
+    }
+
+    let mut rendered = String::new();
+    if value < 0 {
+        rendered.push('-');
+    }
+
+    if let Some(last) = groups.pop() {
+        rendered.push_str(&last.to_string());
+    }
+
+    for group in groups.iter().rev() {
+        rendered.push(separator);
+        rendered.push_str(&format!("{group:03}"));
+    }
+
+    rendered
+}
+
+fn apply_placeholder_format(mut value: String, format: &PlaceholderFormat) -> String {
+    if let Some(width) = format.width() {
+        let capped_width = width.min(MAX_PLACEHOLDER_WIDTH);
+        let len = value.chars().count();
+        if len < capped_width {
+            let padding = " ".repeat(capped_width - len);
+            if format.align() == PlaceholderAlignment::Left {
+                value.push_str(&padding);
+            } else {
+                value.insert_str(0, &padding);
+            }
+        }
+    }
+
+    value
+}
+
+fn remote_placeholder_value(value: Option<&str>, token: char) -> String {
+    value
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("%{token}"))
 }
 
 fn format_out_format_mtime(metadata: Option<&ClientEntryMetadata>) -> String {
