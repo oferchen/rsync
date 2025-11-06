@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use super::{
@@ -20,6 +21,7 @@ pub struct ClientConfigBuilder {
     max_delete: Option<u64>,
     min_file_size: Option<u64>,
     max_file_size: Option<u64>,
+    block_size_override: Option<NonZeroU32>,
     modify_window: Option<u64>,
     remove_source_files: bool,
     bandwidth_limit: Option<BandwidthLimit>,
@@ -103,6 +105,7 @@ impl ClientConfigBuilder {
             max_delete: self.max_delete,
             min_file_size: self.min_file_size,
             max_file_size: self.max_file_size,
+            block_size_override: self.block_size_override,
             modify_window: self.modify_window,
             remove_source_files: self.remove_source_files,
             bandwidth_limit: self.bandwidth_limit,

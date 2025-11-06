@@ -50,6 +50,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
             "      --min-size=SIZE  Skip files smaller than SIZE.\n",
             "      --max-size=SIZE  Skip files larger than SIZE.\n",
+            "      --block-size=SIZE  Force the delta-transfer block size to SIZE bytes.\n",
             "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
             "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
             "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",

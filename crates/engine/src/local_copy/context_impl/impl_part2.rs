@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 impl<'a> CopyContext<'a> {
     pub(super) fn metadata_options(&self) -> MetadataOptions {
         MetadataOptions::new()
@@ -213,6 +215,10 @@ impl<'a> CopyContext<'a> {
 
     pub(super) fn compression_level(&self) -> CompressionLevel {
         self.options.compression_level()
+    }
+
+    pub(super) fn block_size_override(&self) -> Option<NonZeroU32> {
+        self.options.block_size_override()
     }
 
     pub(super) fn checksum_enabled(&self) -> bool {

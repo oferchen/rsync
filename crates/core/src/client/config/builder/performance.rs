@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 
 impl ClientConfigBuilder {
     /// Configures the optional bandwidth limit to apply during transfers.
@@ -64,6 +65,14 @@ impl ClientConfigBuilder {
     #[doc(alias = "--no-whole-file")]
     pub fn whole_file(mut self, whole_file: bool) -> Self {
         self.whole_file = Some(whole_file);
+        self
+    }
+
+    /// Applies an explicit delta-transfer block size override.
+    #[must_use]
+    #[doc(alias = "--block-size")]
+    pub const fn block_size_override(mut self, block_size: Option<NonZeroU32>) -> Self {
+        self.block_size_override = block_size;
         self
     }
 

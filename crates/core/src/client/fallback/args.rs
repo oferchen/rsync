@@ -49,6 +49,9 @@ pub struct RemoteFallbackArgs {
     pub min_size: Option<OsString>,
     /// Skips files larger than the provided size via `--max-size`.
     pub max_size: Option<OsString>,
+    /// Overrides the delta-transfer block size via `--block-size`.
+    #[doc(alias = "--block-size")]
+    pub block_size: Option<OsString>,
     /// Enables `--checksum`.
     pub checksum: bool,
     /// Optional strong checksum selection forwarded via `--checksum-choice`.

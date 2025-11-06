@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 
 impl ClientConfig {
     /// Reports whether compression was requested for transfers.
@@ -42,5 +43,12 @@ impl ClientConfig {
     #[doc(alias = "--sparse")]
     pub const fn sparse(&self) -> bool {
         self.sparse
+    }
+
+    /// Returns the configured delta-transfer block size override, if any.
+    #[must_use]
+    #[doc(alias = "--block-size")]
+    pub const fn block_size_override(&self) -> Option<NonZeroU32> {
+        self.block_size_override
     }
 }

@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ pub struct ClientConfig {
     pub(super) max_delete: Option<u64>,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
+    pub(super) block_size_override: Option<NonZeroU32>,
     pub(super) modify_window: Option<u64>,
     pub(super) remove_source_files: bool,
     pub(super) bandwidth_limit: Option<BandwidthLimit>,
@@ -102,6 +104,7 @@ impl Default for ClientConfig {
             max_delete: None,
             min_file_size: None,
             max_file_size: None,
+            block_size_override: None,
             modify_window: None,
             remove_source_files: false,
             bandwidth_limit: None,

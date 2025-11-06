@@ -102,6 +102,7 @@ where
     let max_delete = matches.remove_one::<OsString>("max-delete");
     let min_size = matches.remove_one::<OsString>("min-size");
     let max_size = matches.remove_one::<OsString>("max-size");
+    let block_size = matches.remove_one::<OsString>("block-size");
     let modify_window = matches.remove_one::<OsString>("modify-window");
 
     let delete_mode_conflicts = [
@@ -490,6 +491,7 @@ where
         max_delete,
         min_size,
         max_size,
+        block_size,
         modify_window,
         compress,
         no_compress,

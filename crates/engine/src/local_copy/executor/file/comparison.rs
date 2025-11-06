@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, Read};
-use std::num::NonZeroU8;
+use std::num::{NonZeroU8, NonZeroU32};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -24,6 +24,7 @@ pub(crate) fn destination_is_newer(source: &fs::Metadata, destination: &fs::Meta
 pub(crate) fn build_delta_signature(
     destination: &Path,
     metadata: &fs::Metadata,
+    block_size_override: Option<NonZeroU32>,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
     if length == 0 {
@@ -31,7 +32,12 @@ pub(crate) fn build_delta_signature(
     }
 
     let checksum_len = NonZeroU8::new(16).expect("strong checksum length must be non-zero");
-    let params = SignatureLayoutParams::new(length, None, ProtocolVersion::NEWEST, checksum_len);
+    let params = SignatureLayoutParams::new(
+        length,
+        block_size_override,
+        ProtocolVersion::NEWEST,
+        checksum_len,
+    );
     let layout = match calculate_signature_layout(params) {
         Ok(layout) => layout,
         Err(_) => return Ok(None),
@@ -159,6 +165,30 @@ pub(crate) fn files_match(source: &Path, destination: &Path) -> bool {
         if source_buffer[..source_read] != destination_buffer[..destination_read] {
             return false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn build_delta_signature_honours_block_size_override() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("data.bin");
+        let mut file = fs::File::create(&path).expect("create file");
+        file.write_all(&vec![0u8; 16384]).expect("write data");
+        drop(file);
+
+        let metadata = fs::metadata(&path).expect("metadata");
+        let override_size = NonZeroU32::new(2048).unwrap();
+        let index = build_delta_signature(&path, &metadata, Some(override_size))
+            .expect("signature")
+            .expect("index");
+
+        assert_eq!(index.block_length(), override_size.get() as usize);
     }
 }
 
