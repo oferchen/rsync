@@ -121,6 +121,28 @@ if '(pkgshare/"examples").install "packaging/examples/oc-rsyncd.conf"' not in te
         "Formula must install the sample oc-rsyncd.conf under pkgshare/examples"
     )
 
+if 'depends_on "rust" => :build' not in text:
+    errors.append(
+        'Formula must declare depends_on "rust" => :build to ensure Cargo is available'
+    )
+
+build_match = re.search(r'system "cargo", "build"([^)]*)\)', text)
+if build_match is None:
+    errors.append('Formula must invoke cargo build in the install stanza')
+else:
+    build_block = build_match.group(0)
+    for flag, description in [
+        ("--release", "use --release for optimized binaries"),
+        ("--locked", "pin Cargo.lock when building"),
+        ('"--bin", "oc-rsync"', "build the oc-rsync binary"),
+        ('"--bin", "oc-rsyncd"', "build the oc-rsyncd binary"),
+    ]:
+        if flag not in build_block:
+            errors.append(
+                "Formula cargo build invocation must "
+                f"{description}: missing {flag!r}"
+            )
+
 if errors:
     for error in errors:
         print(f"[ERROR] {error}")
