@@ -241,7 +241,7 @@ fn candidate_is_executable(path: &Path) -> bool {
 
     #[cfg(unix)]
     {
-        return unix_can_execute(&metadata);
+        unix_can_execute(&metadata)
     }
 
     #[cfg(not(unix))]
@@ -328,7 +328,7 @@ impl UnixProcessIdentity {
 #[cfg(unix)]
 fn collect_supplementary_groups() -> Vec<u32> {
     match nix::unistd::getgroups() {
-        Ok(groups) => groups.into_iter().map(|gid| gid.as_raw() as u32).collect(),
+        Ok(groups) => groups.into_iter().map(|gid| gid.as_raw()).collect(),
         Err(_) => Vec::new(),
     }
 }
