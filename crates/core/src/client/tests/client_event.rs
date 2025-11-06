@@ -280,6 +280,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         compress: false,
         compress_disabled: false,
         compress_level: None,
+        compress_choice: None,
         skip_compress: None,
         stop_after: None,
         stop_at: None,

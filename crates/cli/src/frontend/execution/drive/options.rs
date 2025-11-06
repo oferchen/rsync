@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::num::NonZeroU32;
 
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::client::{
     BandwidthLimit, CompressionSetting, SkipCompressList, force_no_compress_from_env,
@@ -12,7 +13,7 @@ use rsync_core::client::{
 use rsync_logging::MessageSink;
 
 use super::super::{
-    parse_bandwidth_limit, parse_block_size_argument, parse_compress_level,
+    parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,
     parse_compress_level_argument, parse_debug_flags, parse_info_flags, parse_max_delete_argument,
     parse_modify_window_argument, parse_size_limit_argument,
 };
@@ -45,6 +46,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) compress_flag: bool,
     pub(crate) no_compress: bool,
     pub(crate) compress_level: &'a Option<OsString>,
+    pub(crate) compress_choice: &'a Option<OsString>,
     pub(crate) skip_compress: &'a Option<OsString>,
 }
 
@@ -71,6 +73,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) compress_level_cli: Option<OsString>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
+    pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
 }
 
 /// Outcome of parsing additional execution settings.
@@ -230,6 +233,8 @@ where
 
     let mut compress = inputs.compress_flag;
     let mut compression_level_override = None;
+    let mut compression_algorithm = None;
+    let mut compress_choice_disabled = false;
     let mut compress_level_setting = match inputs.compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
@@ -237,6 +242,24 @@ where
         },
         None => None,
     };
+
+    if let Some(choice) = inputs.compress_choice.as_ref() {
+        match parse_compress_choice(choice.as_os_str()) {
+            Ok(None) => {
+                compress = false;
+                compression_level_override = None;
+                compress_level_setting = Some(CompressLevelArg::Disable);
+                compress_choice_disabled = true;
+            }
+            Ok(Some(algorithm)) => {
+                compression_algorithm = Some(algorithm);
+                if !inputs.no_compress {
+                    compress = true;
+                }
+            }
+            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+        }
+    }
 
     if let Some(ref setting) = compress_level_setting {
         match setting {
@@ -252,8 +275,9 @@ where
         }
     }
 
-    let mut compress_disabled =
-        inputs.no_compress || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
+    let mut compress_disabled = inputs.no_compress
+        || compress_choice_disabled
+        || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
 
     let force_no_compress = match force_no_compress_from_env("OC_RSYNC_FORCE_NO_COMPRESS") {
         Ok(value) => value,
@@ -265,6 +289,7 @@ where
         compression_level_override = None;
         compress_level_setting = Some(CompressLevelArg::Disable);
         compress_disabled = true;
+        compression_algorithm = None;
     }
 
     let compress_level_cli = match (compress_level_setting.as_ref(), compress_disabled) {
@@ -331,5 +356,6 @@ where
         compress_level_cli,
         skip_compress_list,
         compression_setting,
+        compression_algorithm,
     }))
 }

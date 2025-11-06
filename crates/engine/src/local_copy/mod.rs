@@ -49,6 +49,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+mod compressor;
 mod context;
 mod dir_merge;
 mod error;
@@ -76,6 +77,7 @@ pub(crate) use plan::FilterOutcome;
 
 pub use skip_compress::{SkipCompressList, SkipCompressParseError};
 
+pub(crate) use compressor::ActiveCompressor;
 pub(crate) use context::{
     CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams,
 };

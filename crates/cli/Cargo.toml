@@ -13,9 +13,10 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = []
+default = ["zstd"]
 xattr = ["rsync-core/xattr"]
 acl = ["rsync-core/acl"]
+zstd = ["rsync-core/zstd", "rsync-compress/zstd"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }

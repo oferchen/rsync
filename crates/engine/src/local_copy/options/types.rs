@@ -3,6 +3,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_filters::FilterSet;
 use rsync_meta::ChmodModifiers;
@@ -87,6 +88,7 @@ pub struct LocalCopyOptions {
     pub(super) bandwidth_limit: Option<NonZeroU64>,
     pub(super) bandwidth_burst: Option<NonZeroU64>,
     pub(super) compress: bool,
+    pub(super) compression_algorithm: CompressionAlgorithm,
     pub(super) compression_level_override: Option<CompressionLevel>,
     pub(super) compression_level: CompressionLevel,
     pub(super) skip_compress: SkipCompressList,
@@ -162,6 +164,7 @@ impl LocalCopyOptions {
             bandwidth_limit: None,
             bandwidth_burst: None,
             compress: false,
+            compression_algorithm: CompressionAlgorithm::default_algorithm(),
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
             skip_compress: SkipCompressList::default(),

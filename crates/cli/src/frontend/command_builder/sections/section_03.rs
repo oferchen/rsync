@@ -44,6 +44,15 @@ pub(crate) fn section_03(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("compress-choice")
+                .long("compress-choice")
+                .value_name("ALGO")
+                .help("Select compression algorithm (e.g. zlib, zstd).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("skip-compress")
                 .long("skip-compress")
                 .value_name("LIST")

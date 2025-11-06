@@ -6,26 +6,29 @@
 //!
 //! `rsync_compress` exposes compression primitives shared across the Rust rsync
 //! workspace. The initial focus is parity with upstream rsync's zlib-based
-//! compressor. Higher layers compose these helpers when negotiating `--compress`
+//! compressor while progressively expanding to additional algorithms such as
+//! Zstandard. Higher layers compose these helpers when negotiating `--compress`
 //! sessions, allowing the same encoder/decoder implementations to be reused by
 //! both client and daemon roles.
 //!
 //! # Design
 //!
-//! The crate currently provides the [`zlib`] module, which implements
-//! streaming-friendly encoders and decoders built on top of
-//! [`flate2`](https://docs.rs/flate2). The API emphasises incremental
-//! processing: callers provide scratch buffers that are filled with compressed
-//! or decompressed data while the internal state tracks totals for diagnostics
-//! and progress reporting.
+//! The crate currently provides the [`zlib`] and [`zstd`] modules, which
+//! implement streaming-friendly encoders and decoders built on top of
+//! [`flate2`](https://docs.rs/flate2) and
+//! [`zstd`](https://docs.rs/zstd) respectively. The API emphasises
+//! incremental processing: callers provide scratch buffers that are filled with
+//! compressed or decompressed data while the internal state tracks totals for
+//! diagnostics and progress reporting.
 //!
 //! # Invariants
 //!
 //! - Encoders and decoders never allocate internal output buffers. All output is
 //!   written into the caller-provided vectors, allowing upper layers to reuse
 //!   storage across files.
-//! - Streams are finalised explicitly via [`zlib::CountingZlibEncoder::finish`],
-//!   which emits trailer bytes and reports the final compressed length.
+//! - Streams are finalised explicitly via [`zlib::CountingZlibEncoder::finish`]
+//!   and [`zstd::CountingZstdEncoder::finish`], which emit trailer bytes and
+//!   report the final compressed length.
 //! - Errors from the underlying zlib implementation are surfaced as
 //!   [`std::io::Error`] values to integrate with the rest of the workspace.
 //!
@@ -60,7 +63,14 @@
 //!
 //! # See also
 //!
-//! - [`zlib`] for the encoder/decoder implementation and API surface.
+//! - [`zlib`] for the zlib encoder/decoder implementation and API surface.
+//! - [`zstd`] for the Zstandard encoder/decoder implementation.
 //! - `rsync_engine` for the transfer pipeline that integrates these helpers.
 
+pub mod algorithm;
+mod common;
 pub mod zlib;
+#[cfg(feature = "zstd")]
+pub mod zstd;
+
+pub use common::CountingSink;

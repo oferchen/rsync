@@ -240,7 +240,19 @@ impl<'a> CopyContext<'a> {
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
         let mut compressor = if compress {
-            Some(CountingZlibEncoder::new(self.compression_level()))
+            match ActiveCompressor::new(
+                self.compression_algorithm(),
+                self.compression_level(),
+            ) {
+                Ok(encoder) => Some(encoder),
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "initialise compression",
+                        source.to_path_buf(),
+                        error,
+                    ));
+                }
+            }
         } else {
             None
         };
