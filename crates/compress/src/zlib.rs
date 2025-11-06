@@ -68,6 +68,7 @@ use std::{
     num::NonZeroU8,
 };
 
+use crate::common::{CountingSink, CountingWriter};
 use flate2::{
     Compression,
     read::{ZlibDecoder as FlateDecoder, ZlibDecoder},
@@ -254,80 +255,6 @@ where
 
     fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> io::Result<()> {
         self.inner.write_fmt(fmt)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-/// Sink used by [`CountingZlibEncoder`] when callers do not supply their own writer.
-///
-/// The sink discards all bytes while allowing the encoder to keep track of the
-/// compressed length. It is exposed so downstream crates can use it in generic
-/// contexts that reference the encoder's default type parameter.
-pub struct CountingSink;
-
-impl Write for CountingSink {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
-    }
-
-    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-        Ok(bufs.iter().map(|slice| slice.len()).sum())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-struct CountingWriter<W> {
-    inner: W,
-    bytes: u64,
-}
-
-impl<W> CountingWriter<W> {
-    fn new(inner: W) -> Self {
-        Self { inner, bytes: 0 }
-    }
-
-    fn bytes(&self) -> u64 {
-        self.bytes
-    }
-
-    fn inner_ref(&self) -> &W {
-        &self.inner
-    }
-
-    fn inner_mut(&mut self) -> &mut W {
-        &mut self.inner
-    }
-
-    fn into_parts(self) -> (W, u64) {
-        (self.inner, self.bytes)
-    }
-
-    fn saturating_add_bytes(&mut self, written: usize) {
-        self.bytes = self.bytes.saturating_add(written as u64);
-    }
-}
-
-impl<W> Write for CountingWriter<W>
-where
-    W: Write,
-{
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let written = self.inner.write(buf)?;
-        self.saturating_add_bytes(written);
-        Ok(written)
-    }
-
-    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-        let written = self.inner.write_vectored(bufs)?;
-        self.saturating_add_bytes(written);
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
     }
 }
 

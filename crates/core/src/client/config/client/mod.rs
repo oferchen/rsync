@@ -3,6 +3,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::SkipCompressList;
 use rsync_meta::ChmodModifiers;
@@ -36,6 +37,7 @@ pub struct ClientConfig {
     pub(super) omit_dir_times: bool,
     pub(super) omit_link_times: bool,
     pub(super) compress: bool,
+    pub(super) compression_algorithm: CompressionAlgorithm,
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
     pub(super) skip_compress: SkipCompressList,
@@ -119,6 +121,7 @@ impl Default for ClientConfig {
             omit_dir_times: false,
             omit_link_times: false,
             compress: false,
+            compression_algorithm: CompressionAlgorithm::default_algorithm(),
             compression_level: None,
             compression_setting: CompressionSetting::default(),
             skip_compress: SkipCompressList::default(),

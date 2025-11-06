@@ -74,6 +74,8 @@ pub struct RemoteFallbackArgs {
     pub compress_disabled: bool,
     /// Optional compression level forwarded via `--compress-level`.
     pub compress_level: Option<OsString>,
+    /// Optional compression algorithm forwarded via `--compress-choice`.
+    pub compress_choice: Option<OsString>,
     /// Optional suffix list forwarded via `--skip-compress`.
     pub skip_compress: Option<OsString>,
     /// Optional `--stop-after` argument forwarded to the fallback binary.

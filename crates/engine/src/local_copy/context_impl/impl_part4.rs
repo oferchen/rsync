@@ -23,7 +23,19 @@ impl<'a> CopyContext<'a> {
             )
         })?;
         let mut compressor = if compress {
-            Some(CountingZlibEncoder::new(self.compression_level()))
+            match ActiveCompressor::new(
+                self.compression_algorithm(),
+                self.compression_level(),
+            ) {
+                Ok(encoder) => Some(encoder),
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "initialise compression",
+                        source.to_path_buf(),
+                        error,
+                    ));
+                }
+            }
         } else {
             None
         };
@@ -173,7 +185,7 @@ impl<'a> CopyContext<'a> {
         writer: &mut fs::File,
         chunk: &[u8],
         sparse: bool,
-        compressor: Option<&mut CountingZlibEncoder>,
+        compressor: Option<&mut ActiveCompressor>,
         compressed_progress: &mut u64,
         source: &Path,
         destination: &Path,

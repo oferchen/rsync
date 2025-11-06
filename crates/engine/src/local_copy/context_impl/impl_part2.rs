@@ -217,6 +217,10 @@ impl<'a> CopyContext<'a> {
         self.options.compression_level()
     }
 
+    pub(super) fn compression_algorithm(&self) -> CompressionAlgorithm {
+        self.options.compression_algorithm()
+    }
+
     pub(super) fn block_size_override(&self) -> Option<NonZeroU32> {
         self.options.block_size_override()
     }
