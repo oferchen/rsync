@@ -82,8 +82,9 @@ and parity is verified by tests or goldens.
   - *Impact*: CI now generates `.deb`, `.rpm`, and tarball artifacts for Linux
     (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
     using the `dist` profile with the Windows aarch64 lane currently disabled
-    while the toolchain stabilises. Packaging installs `oc-rsync`/`oc-rsyncd` under
-    dedicated paths so upstream rsync packages can remain in place, and
+    while the toolchain stabilises. Packaging installs `oc-rsync` under
+    `/usr/bin` and `oc-rsyncd` under `/usr/sbin` so upstream rsync packages can
+    remain in place, and
     optional alternatives registration stays disabled unless explicitly
     requested. The `tools/ci/run_interop.sh` harness downloads upstream
     releases 3.0.9, 3.1.3, and 3.4.1 and exercises both directions—upstream
