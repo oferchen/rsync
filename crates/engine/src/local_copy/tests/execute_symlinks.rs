@@ -208,3 +208,56 @@ fn execute_with_safe_links_skips_unsafe_symlink() {
             .any(|record| { matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink) })
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn execute_preserves_symlink_hard_links() {
+    use std::os::unix::fs::{symlink, MetadataExt};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("src");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    let target = source_root.join("target.txt");
+    fs::write(&target, b"payload").expect("write target");
+
+    let link_a = source_root.join("link-a");
+    symlink(Path::new("target.txt"), &link_a).expect("create primary link");
+    let link_b = source_root.join("link-b");
+    fs::hard_link(&link_a, &link_b).expect("duplicate symlink inode");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().hard_links(true),
+        )
+        .expect("copy succeeds");
+
+    let dest_link_a = dest_root.join("link-a");
+    let dest_link_b = dest_root.join("link-b");
+    let metadata_a = fs::symlink_metadata(&dest_link_a).expect("metadata a");
+    let metadata_b = fs::symlink_metadata(&dest_link_b).expect("metadata b");
+
+    assert!(metadata_a.file_type().is_symlink());
+    assert!(metadata_b.file_type().is_symlink());
+    assert_eq!(metadata_a.ino(), metadata_b.ino());
+    assert_eq!(metadata_a.nlink(), 2);
+    assert_eq!(metadata_b.nlink(), 2);
+    assert_eq!(
+        fs::read_link(&dest_link_a).expect("read dest link"),
+        Path::new("target.txt"),
+    );
+    assert_eq!(
+        fs::read_link(&dest_link_b).expect("read dest link"),
+        Path::new("target.txt"),
+    );
+    assert!(summary.hard_links_created() >= 1);
+    assert_eq!(summary.symlinks_copied(), 2);
+}

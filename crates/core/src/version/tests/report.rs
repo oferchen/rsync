@@ -28,12 +28,27 @@ fn version_info_report_renders_default_report() {
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
     )));
-    assert!(actual.contains(", symlinks,"));
-    assert!(actual.contains(", symtimes,"));
-    assert!(actual.contains(", hardlinks"));
-    assert!(!actual.contains("no symlinks"));
-    assert!(!actual.contains("no symtimes"));
-    assert!(!actual.contains("no hardlinks"));
+    #[cfg(unix)]
+    {
+        assert!(actual.contains(", symlinks,"));
+        assert!(actual.contains(", symtimes,"));
+        assert!(actual.contains(", hardlinks"));
+        assert!(actual.contains(", hardlink-specials"));
+        assert!(actual.contains("hardlink-symlinks"));
+        assert!(!actual.contains("no symlinks"));
+        assert!(!actual.contains("no symtimes"));
+        assert!(!actual.contains("no hardlinks"));
+        assert!(!actual.contains("no hardlink-specials"));
+        assert!(!actual.contains("no hardlink-symlinks"));
+    }
+    #[cfg(not(unix))]
+    {
+        assert!(actual.contains("no symlinks"));
+        assert!(actual.contains("no symtimes"));
+        assert!(actual.contains("no hardlinks"));
+        assert!(actual.contains("no hardlink-specials"));
+        assert!(actual.contains("no hardlink-symlinks"));
+    }
     assert!(actual.contains("IPv6, atimes"));
     assert!(actual.contains("optional secluded-args"));
     let compiled_line = format!("Compiled features:\n    {compiled_features_text}\n");
