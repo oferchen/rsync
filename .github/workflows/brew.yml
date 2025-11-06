@@ -1,4 +1,5 @@
 name: brew-formula
+
 on:
   release:
     types: [published]
@@ -8,132 +9,22 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  REPO: oferchen/rsync
+
 jobs:
   generate-brew-formula:
     runs-on: ubuntu-latest
-    env:
-      REPO: oferchen/rsync
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install jq
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
-
-      # 1. Decide TAG and VERSION from event (preferred) or latest (fallback)
-      - name: Determine tag and version
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "release" ] && [ -n "${{ github.event.release.tag_name }}" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG=$(curl -fsSL \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ env.REPO }}/releases/latest" \
-              | jq -r .tag_name)
-          fi
-          VERSION="${TAG#v}"
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-      # 2. Fetch the actual release JSON from your repo
-      - name: Fetch release JSON
-        run: |
-          curl -fsSL \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ env.REPO }}/releases/tags/${TAG}" \
-            -o release.json
-          cat release.json
-
-      # 3. Extract the real asset URLs with robust pattern matching
-      - name: Extract asset URLs
-        run: |
-          MACOS_ARM_URL=""
-          MACOS_INTEL_URL=""
-          LINUX_ARM_URL=""
-          LINUX_INTEL_URL=""
-
-          count=$(jq '.assets | length' release.json)
-          for i in $(seq 0 $((count - 1))); do
-            name=$(jq -r ".assets[$i].name" release.json)
-            url=$(jq -r ".assets[$i].browser_download_url" release.json)
-
-            # skip empty/null
-            if [ -z "$url" ] || [ "$url" = "null" ]; then
-              continue
-            fi
-
-            lname=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-
-            # only consider real installable tarballs
-            case "$lname" in
-              *oc-rsync*.tar.gz) ;;
-              *) continue ;;
-            esac
-
-            # macOS detection
-            if echo "$lname" | grep -Eq 'darwin|macos'; then
-              if echo "$lname" | grep -Eq 'aarch64|arm64'; then
-                [ -z "$MACOS_ARM_URL" ] && MACOS_ARM_URL="$url"
-              else
-                [ -z "$MACOS_INTEL_URL" ] && MACOS_INTEL_URL="$url"
-              fi
-            # linux detection
-            elif echo "$lname" | grep -Eq 'linux|unknown-linux-gnu|unknown-linux-musl'; then
-              if echo "$lname" | grep -Eq 'aarch64|arm64'; then
-                [ -z "$LINUX_ARM_URL" ] && LINUX_ARM_URL="$url"
-              else
-                [ -z "$LINUX_INTEL_URL" ] && LINUX_INTEL_URL="$url"
-              fi
-            fi
-          done
-
-          echo "MACOS_ARM_URL=$MACOS_ARM_URL" >> $GITHUB_ENV
-          echo "MACOS_INTEL_URL=$MACOS_INTEL_URL" >> $GITHUB_ENV
-          echo "LINUX_ARM_URL=$LINUX_ARM_URL" >> $GITHUB_ENV
-          echo "LINUX_INTEL_URL=$LINUX_INTEL_URL" >> $GITHUB_ENV
-
-      # 4. Download the actual assets and compute sha256
-      - name: Download assets and compute sha256
-        run: |
-          mkdir -p dl
-
-          download_and_sha() {
-            local url="$1"
-            local outvar="$2"
-            if [ -z "$url" ]; then
-              return 0
-            fi
-            local fname="dl/$(basename "$url")"
-            curl -fsSL "$url" -o "$fname"
-            local sha
-            sha=$(sha256sum "$fname" | awk '{print $1}')
-            echo "${outvar}=${sha}" >> $GITHUB_ENV
-          }
-
-          download_and_sha "${MACOS_ARM_URL}"   "MACOS_ARM_SHA"
-          download_and_sha "${MACOS_INTEL_URL}" "MACOS_INTEL_SHA"
-          download_and_sha "${LINUX_ARM_URL}"   "LINUX_ARM_SHA"
-          download_and_sha "${LINUX_INTEL_URL}" "LINUX_INTEL_SHA"
-
-      # 5. Generate the formula using the values from the actual release
-      - name: Generate Homebrew formula
+      - name: Update Homebrew formula
+        id: update
         env:
-          VERSION: ${{ env.VERSION }}
-          MACOS_ARM_URL: ${{ env.MACOS_ARM_URL }}
-          MACOS_ARM_SHA: ${{ env.MACOS_ARM_SHA }}
-          MACOS_INTEL_URL: ${{ env.MACOS_INTEL_URL }}
-          MACOS_INTEL_SHA: ${{ env.MACOS_INTEL_SHA }}
-          LINUX_ARM_URL: ${{ env.LINUX_ARM_URL }}
-          LINUX_ARM_SHA: ${{ env.LINUX_ARM_SHA }}
-          LINUX_INTEL_URL: ${{ env.LINUX_INTEL_URL }}
-          LINUX_INTEL_SHA: ${{ env.LINUX_INTEL_SHA }}
-        run: |
-          python3 tools/gen_brew_formula.py
+          OC_RSYNC_REPO: ${{ env.REPO }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./tools/update-brew-formula.sh
 
       - name: Upload formula artifact
         uses: actions/upload-artifact@v4
@@ -141,28 +32,16 @@ jobs:
           name: homebrew-formula
           path: Formula/oc-rsync.rb
 
-      - name: Ensure default branch is present
-        run: |
-          DEF_BRANCH="${{ github.event.repository.default_branch }}"
-          if [ -z "$DEF_BRANCH" ] || [ "$DEF_BRANCH" = "null" ]; then
-            DEF_BRANCH=master
-          fi
-
-          git fetch origin "$DEF_BRANCH":"$DEF_BRANCH"
-          git checkout "$DEF_BRANCH"
-
-          echo "DEF_BRANCH=$DEF_BRANCH" >> $GITHUB_ENV
-
       - name: Create PR with formula
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: update Homebrew formula for ${{ env.VERSION }}"
-          title: "Update Homebrew formula for ${{ env.VERSION }}"
+          commit-message: "chore: update Homebrew formula for ${{ steps.update.outputs.version }}"
+          title: "Update Homebrew formula for ${{ steps.update.outputs.version }}"
           body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ env.VERSION }}"
+          branch: "ci/brew-formula-${{ steps.update.outputs.version }}"
+          base: ${{ github.event.repository.default_branch || 'master' }}
           add-paths: |
             Formula/oc-rsync.rb
-          base: ${{ env.DEF_BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           author: oferchen <2673257+oferchen@users.noreply.github.com>
