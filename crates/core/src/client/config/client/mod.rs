@@ -80,6 +80,7 @@ pub struct ClientConfig {
     pub(super) append: bool,
     pub(super) append_verify: bool,
     pub(super) force_event_collection: bool,
+    pub(super) force_fallback: bool,
     pub(super) preserve_devices: bool,
     pub(super) preserve_specials: bool,
     pub(super) list_only: bool,
@@ -164,6 +165,7 @@ impl Default for ClientConfig {
             append: false,
             append_verify: false,
             force_event_collection: false,
+            force_fallback: false,
             preserve_devices: false,
             preserve_specials: false,
             list_only: false,
@@ -193,6 +195,7 @@ impl ClientConfig {
 
 mod arguments;
 mod deletion;
+mod fallback;
 mod filters;
 mod metadata;
 mod network;

@@ -243,6 +243,12 @@ pub struct RemoteFallbackArgs {
     pub rsync_path: Option<OsString>,
     /// Remaining operands to forward to the fallback binary.
     pub remainder: Vec<OsString>,
+    /// Optional prefix forwarded via `--write-batch`.
+    pub write_batch: Option<OsString>,
+    /// Optional prefix forwarded via `--only-write-batch`.
+    pub only_write_batch: Option<OsString>,
+    /// Optional prefix forwarded via `--read-batch`.
+    pub read_batch: Option<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
     #[cfg(feature = "acl")]
     pub acls: Option<bool>,

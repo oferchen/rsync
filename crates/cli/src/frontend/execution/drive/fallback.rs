@@ -126,6 +126,9 @@ pub(crate) struct FallbackInputs {
     #[cfg(feature = "xattr")]
     pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
+    pub(crate) write_batch: Option<OsString>,
+    pub(crate) only_write_batch: Option<OsString>,
+    pub(crate) read_batch: Option<OsString>,
 }
 
 /// Builds the remote fallback arguments when required.
@@ -265,6 +268,9 @@ where
         fallback_binary: None,
         rsync_path: inputs.rsync_path,
         remainder: inputs.remainder,
+        write_batch: inputs.write_batch,
+        only_write_batch: inputs.only_write_batch,
+        read_batch: inputs.read_batch,
         #[cfg(feature = "acl")]
         acls: inputs.acls,
         #[cfg(feature = "xattr")]

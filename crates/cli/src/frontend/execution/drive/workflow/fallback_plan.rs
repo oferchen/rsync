@@ -121,6 +121,9 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) itemize_changes: bool,
     pub(crate) log_file_path: Option<&'a PathBuf>,
     pub(crate) log_file_format: Option<&'a OsString>,
+    pub(crate) write_batch: Option<&'a OsString>,
+    pub(crate) only_write_batch: Option<&'a OsString>,
+    pub(crate) read_batch: Option<&'a OsString>,
 }
 
 pub(crate) fn build_fallback_arguments<Err>(
@@ -256,6 +259,9 @@ where
         address_mode: context.address_mode,
         rsync_path: context.rsync_path.cloned(),
         remainder: context.remainder.to_vec(),
+        write_batch: context.write_batch.cloned(),
+        only_write_batch: context.only_write_batch.cloned(),
+        read_batch: context.read_batch.cloned(),
         #[cfg(feature = "acl")]
         acls: context.acls,
         #[cfg(feature = "xattr")]

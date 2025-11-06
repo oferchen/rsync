@@ -138,6 +138,9 @@ where
         temp_dir,
         log_file,
         log_file_format,
+        write_batch,
+        only_write_batch,
+        read_batch,
         link_dests,
         remove_source_files,
         inplace,
@@ -330,8 +333,10 @@ where
     let files_from_used = !files_from.is_empty();
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
+    let batch_mode_requested =
+        write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
     let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
-    let fallback_required = requires_remote_fallback;
+    let fallback_required = requires_remote_fallback || batch_mode_requested;
 
     let fallback_context = FallbackArgumentsContext {
         required: fallback_required,
@@ -440,6 +445,9 @@ where
         itemize_changes,
         log_file_path: log_file_path_buf.as_ref(),
         log_file_format: log_file_format_cli.as_ref(),
+        write_batch: write_batch.as_ref(),
+        only_write_batch: only_write_batch.as_ref(),
+        read_batch: read_batch.as_ref(),
     };
     let fallback_args = match build_fallback_arguments(fallback_context, stderr) {
         Ok(args) => args,
@@ -609,6 +617,7 @@ where
         append: append_enabled,
         append_verify,
         whole_file: whole_file_enabled,
+        force_fallback: batch_mode_requested,
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
         stop_deadline: stop_request.as_ref().map(StopRequest::deadline),

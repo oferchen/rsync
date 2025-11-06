@@ -309,6 +309,9 @@ where
         .map(PathBuf::from);
     let log_file = matches.remove_one::<OsString>("log-file");
     let log_file_format = matches.remove_one::<OsString>("log-file-format");
+    let write_batch = matches.remove_one::<OsString>("write-batch");
+    let only_write_batch = matches.remove_one::<OsString>("only-write-batch");
+    let read_batch = matches.remove_one::<OsString>("read-batch");
     let link_dest_args: Vec<OsString> = matches
         .remove_many::<OsString>("link-dest")
         .map(|values| values.collect())
@@ -540,6 +543,9 @@ where
         temp_dir,
         log_file,
         log_file_format,
+        write_batch,
+        only_write_batch,
+        read_batch,
         link_dests,
         remove_source_files,
         inplace,
