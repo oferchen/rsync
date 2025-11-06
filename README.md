@@ -55,8 +55,8 @@
 
 ```
 
-bin/oc-rsync/           # Client entry (binary crate)
-bin/oc-rsyncd/          # Daemon entry (binary crate)
+bin/oc-rsync/           # Client and daemon entry (binary crate)
+bin/oc-rsyncd/          # Compatibility wrapper (binary crate)
 crates/cli/             # CLI: flags/help/UX parity
 crates/core/            # Core types, error model, shared utils
 crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
@@ -193,8 +193,8 @@ cargo xtask package --release --tarball
 cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 ```
 
-The packaging pipeline installs `oc-rsync`/`oc-rsyncd` under dedicated paths so
-upstream `rsync` packages can remain installed. CI publishes Linux
+The packaging pipeline installs `oc-rsync` and the `oc-rsyncd` shell wrapper
+under dedicated paths so upstream `rsync` packages can remain installed. CI publishes Linux
 (`x86_64`/`aarch64`) `.deb`/`.rpm` packages, macOS and Windows tarballs
 (`x86_64`/`aarch64`), and a CycloneDX SBOM generated from the same `dist`
 builds.
@@ -207,7 +207,7 @@ Defaults aim to **mirror [rsync](https://rsync.samba.org/)** semantics. Flags/en
 
 ```bash
 cargo run -p oc-rsync -- --help
-cargo run -p oc-rsyncd -- --help
+cargo run -p oc-rsync -- --daemon --help
 ```
 
 ---

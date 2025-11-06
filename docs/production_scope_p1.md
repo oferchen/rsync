@@ -3,11 +3,11 @@
 This document freezes the mandatory scope that must reach green status before the Rust implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project while tracking the branded **oc-rsync 3.4.1-rust** release line.
 
 > **Binary naming note**: The production scope targets the branded
-> `oc-rsync` client and `oc-rsyncd` daemon binaries defined in the
-> workspace metadata. Legacy compatibility wrappers (`rsync`, `rsyncd`)
-> remain available behind the `legacy-binaries` feature so existing
-> tooling can opt-in explicitly without conflicting with upstream
-> packages.
+> `oc-rsync` entrypoint (client plus `--daemon`) defined in the workspace
+> metadata. The shell wrapper `oc-rsyncd` and the legacy compatibility
+> wrappers (`rsync`, `rsyncd`) remain available behind the
+> `legacy-binaries` feature so existing tooling can opt-in explicitly
+> without conflicting with upstream packages.
 
 ## Platforms
 - Linux x86_64
@@ -80,7 +80,7 @@ This document freezes the mandatory scope that must reach green status before th
 - Debian package via `cargo-deb`
 - RPM package via `cargo-rpm`
 - amd64 (`x86_64-unknown-linux-gnu`) tarball at `target/dist/oc-rsync-<version>-x86_64-unknown-linux-gnu.tar.gz`
-- Systemd `oc-rsyncd.service` unit that avoids legacy aliases so upstream packages can coexist on the same host
+- Systemd `oc-rsyncd.service` unit that starts `oc-rsync --daemon` and avoids legacy aliases so upstream packages can coexist on the same host
 - Packaging scripts skip update-alternatives registration unless explicitly
   enabled, allowing upstream `rsync` packages to remain installed alongside
   oc-rsync without file conflicts

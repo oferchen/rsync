@@ -4,8 +4,8 @@ This log captures the observable parity checkpoints that the current Rust
 workspace satisfies today. Each entry is backed by automated tests living in
 the repository so results remain reproducible. Items will expand as additional
 layers (CLI, core, engine, daemon) land. The checkpoints were generated using
-the branded **oc-rsync 3.4.1-rust** client together with the **oc-rsyncd**
-daemon configured via `/etc/oc-rsyncd/oc-rsyncd.conf`, matching the packaging
+the branded **oc-rsync 3.4.1-rust** entrypoint (invoked as `oc-rsync --daemon`)
+configured via `/etc/oc-rsyncd/oc-rsyncd.conf`, matching the packaging
 layout enforced by the workspace metadata.
 
 ## Negotiation Detection & Replay
