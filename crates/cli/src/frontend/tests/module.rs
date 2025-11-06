@@ -69,13 +69,13 @@ fn module_list_username_prefix_legacy_syntax_is_accepted() {
 fn module_list_uses_password_file_for_authentication() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
-    use rsync_checksums::strong::Md5;
+    use rsync_checksums::strong::Sha512;
     use tempfile::tempdir;
 
     let challenge = "pw-test";
     let secret = b"cli-secret";
     let expected_digest = {
-        let mut hasher = Md5::new();
+        let mut hasher = Sha512::new();
         hasher.update(secret);
         hasher.update(challenge.as_bytes());
         let digest = hasher.finalize();
@@ -122,12 +122,12 @@ fn module_list_uses_password_file_for_authentication() {
 fn module_list_reads_password_from_stdin() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
-    use rsync_checksums::strong::Md5;
+    use rsync_checksums::strong::Sha512;
 
     let challenge = "stdin-test";
     let secret = b"stdin-secret";
     let expected_digest = {
-        let mut hasher = Md5::new();
+        let mut hasher = Sha512::new();
         hasher.update(secret);
         hasher.update(challenge.as_bytes());
         let digest = hasher.finalize();

@@ -176,6 +176,9 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
     let mut tm_year = tm_year;
     let mut tm_mon = tm_mon;
     let mut tm_mday = tm_mday;
+    let original_tm_year = tm_year;
+    let original_tm_mon = tm_mon;
+    let original_tm_mday = tm_mday;
     let mut in_date_flag = if in_date > 0 { in_date } else { 0 };
 
     if tm_year < 0 {
@@ -222,6 +225,11 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
     let mut old_mday = tm_mday;
     let mut datetime =
         build_offset_datetime(tm_year, tm_mon, tm_mday, tm_hour, tm_min, now.offset())?;
+    let no_date_specified = original_tm_year < 0 && original_tm_mon < 0 && original_tm_mday < 0;
+
+    if no_date_specified && datetime <= now {
+        return Err(StopAtError::NotInFuture);
+    }
 
     while in_date_flag > 0 && (datetime <= now || tm_mday < old_mday) {
         match in_date_flag {
