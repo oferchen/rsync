@@ -139,7 +139,10 @@ if ! curl -fsSL "${TARBALL_URL}" -o "${TARBALL_PATH}"; then
   echo "[ERROR] Failed to download ${TARBALL_URL}. Ensure the tag exists and is publicly accessible." >&2
   exit 1
 fi
-TARBALL_SHA256=$(sha256sum "${TARBALL_PATH}" | awk '{print $1}')
+if ! TARBALL_SHA256=$(python3 "${SCRIPT_DIR}/compute_sha256.py" "${TARBALL_PATH}"); then
+  echo "[ERROR] Failed to compute sha256 for ${TARBALL_PATH}" >&2
+  exit 1
+fi
 
 if [[ -z "${TARBALL_SHA256}" ]]; then
   echo "[ERROR] Failed to compute sha256 for ${TARBALL_PATH}" >&2
