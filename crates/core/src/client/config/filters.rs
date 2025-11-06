@@ -75,7 +75,7 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::Protect,
             pattern: pattern.into(),
             dir_merge_options: None,
-            applies_to_sender: true,
+            applies_to_sender: false,
             applies_to_receiver: true,
         }
     }
@@ -87,7 +87,7 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::Risk,
             pattern: pattern.into(),
             dir_merge_options: None,
-            applies_to_sender: true,
+            applies_to_sender: false,
             applies_to_receiver: true,
         }
     }
@@ -195,5 +195,34 @@ impl FilterRuleSpec {
         if let Some(receiver) = options.receiver_side_override() {
             self.applies_to_receiver = receiver;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protect_defaults_to_receiver_side_only() {
+        let rule = FilterRuleSpec::protect("keep");
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn risk_defaults_to_receiver_side_only() {
+        let rule = FilterRuleSpec::risk("keep");
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn dir_merge_sender_override_enables_sender_rules() {
+        let mut rule = FilterRuleSpec::protect("keep");
+        let options = DirMergeOptions::new().sender_modifier();
+        rule.apply_dir_merge_overrides(&options);
+
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
     }
 }
