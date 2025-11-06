@@ -29,10 +29,11 @@ name = "oc-rsyncd"
 path = "src/bin/oc-rsyncd.rs"
 
 [features]
-default = ["zstd"]
+default = ["zstd", "lz4"]
 legacy-binaries = []
 sd-notify = ["rsync-daemon/sd-notify"]
 zstd = ["rsync-core/zstd"]
+lz4 = ["rsync-core/lz4"]
 
 [dependencies]
 rsync-cli = { path = "crates/cli" }
