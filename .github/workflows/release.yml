@@ -273,8 +273,15 @@ jobs:
           path: ${{ env.TARBALL }}
           if-no-files-found: error
 
+      - name: Update Homebrew formula
+        if: ${{ matrix.platform.enabled && matrix.platform.package_brew && matrix.platform.name == 'linux-x86_64' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OC_RSYNC_FORMULA_TAG: v${{ env.PKG_VERSION }}
+        run: ./tools/update-brew-formula.sh
+
       - name: Ensure we are on the default branch
-        if: ${{ matrix.platform.enabled && matrix.platform.package_brew }}
+        if: ${{ matrix.platform.enabled && matrix.platform.package_brew && matrix.platform.name == 'linux-x86_64' }}
         run: |
           # Get default branch from the event payload (works on release + PR + push),
           # but on workflow_dispatch it may be empty/null, so we fall back to master.
@@ -289,7 +296,7 @@ jobs:
           echo "DEF_BRANCH=$DEF_BRANCH" >> "$GITHUB_ENV"
 
       - name: Create PR with formula
-        if: ${{ matrix.platform.enabled && matrix.platform.package_brew }}
+        if: ${{ matrix.platform.enabled && matrix.platform.package_brew && matrix.platform.name == 'linux-x86_64' }}
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "chore: update Homebrew formula for ${{ env.PKG_VERSION }}"
