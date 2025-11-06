@@ -53,6 +53,10 @@ fn availability_cache() -> &'static Mutex<HashMap<CacheKey, AvailabilityEntry>> 
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(test)]
+const NEGATIVE_CACHE_TTL: Duration = Duration::from_millis(100);
+
+#[cfg(not(test))]
 const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 
 /// Returns the set of candidate executable paths derived from `binary`.
@@ -501,6 +505,54 @@ mod tests {
         assert!(
             fallback_binary_available(OsStr::new("rsync")),
             "updated PATH should locate the fallback binary"
+        );
+    }
+
+    #[test]
+    fn fallback_binary_available_rechecks_after_negative_cache_ttl() {
+        let _lock = env_lock().lock().expect("lock env");
+
+        super::availability_cache()
+            .lock()
+            .expect("fallback availability cache lock poisoned")
+            .clear();
+
+        let temp_dir = TempDir::new().expect("tempdir");
+        let joined = env::join_paths([temp_dir.path()]).expect("join paths");
+        let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+        #[cfg(windows)]
+        let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+        let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+        let binary_path = temp_dir.path().join(binary_name);
+
+        assert!(
+            !fallback_binary_available(OsStr::new("rsync")),
+            "missing fallback binary should not be reported as available",
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let file = File::create(&binary_path).expect("create fallback binary placeholder");
+            let mut permissions = file.metadata().expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            file.set_permissions(permissions).expect("chmod");
+        }
+
+        #[cfg(not(unix))]
+        {
+            File::create(&binary_path).expect("create fallback binary placeholder");
+        }
+
+        let wait = super::NEGATIVE_CACHE_TTL + std::time::Duration::from_millis(50);
+        std::thread::sleep(wait);
+
+        assert!(
+            fallback_binary_available(OsStr::new("rsync")),
+            "fallback availability should be recomputed after the negative cache TTL expires",
         );
     }
 
