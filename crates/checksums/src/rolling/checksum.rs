@@ -698,14 +698,22 @@ pub(crate) mod neon {
     use core::arch::aarch64::{
         uint16x8_t, vaddvq_u16, vget_high_u8, vget_low_u8, vld1q_u8, vld1q_u16, vmovl_u8, vmulq_u16,
     };
+    use std::sync::OnceLock;
 
     const BLOCK_LEN: usize = 16;
     const HIGH_WEIGHTS: [u16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
     const LOW_WEIGHTS: [u16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
 
+    static NEON_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+    #[inline]
+    fn neon_available() -> bool {
+        *NEON_AVAILABLE.get_or_init(|| std::arch::is_aarch64_feature_detected!("neon"))
+    }
+
     #[inline]
     pub(super) fn simd_available() -> bool {
-        true
+        neon_available()
     }
 
     #[inline]
@@ -715,6 +723,10 @@ pub(crate) mod neon {
         len: usize,
         chunk: &[u8],
     ) -> (u32, u32, usize) {
+        if !neon_available() {
+            return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
+        }
+
         unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
     }
 
@@ -765,6 +777,10 @@ pub(crate) mod neon {
         len: usize,
         chunk: &[u8],
     ) -> (u32, u32, usize) {
+        if !neon_available() {
+            return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
+        }
+
         unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
     }
 }
