@@ -23,6 +23,7 @@ rsync-transport = { path = "../transport" }
 rsync-filters = { path = "../filters" }
 rsync-compress = { path = "../compress" }
 libc = "0.2"
+nix = { version = "0.29", default-features = false, features = ["user"] }
 base64 = "0.22"
 rsync-checksums = { path = "../checksums" }
 tempfile = "3.10"
