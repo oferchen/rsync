@@ -1,4 +1,8 @@
 use crate::version::SecludedArgsMode;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::sync::OnceLock;
 
 /// Configuration describing which capabilities the current build exposes.
 ///
@@ -114,9 +118,29 @@ impl VersionInfoConfig {
     #[must_use]
     pub fn with_runtime_capabilities() -> Self {
         let mut config = Self::new();
+        config.supports_socketpairs = socketpair_available();
         config.supports_simd_roll = rsync_checksums::simd_acceleration_available();
         config
     }
+}
+
+#[cfg(unix)]
+fn socketpair_available() -> bool {
+    static SOCKETPAIR_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+    *SOCKETPAIR_AVAILABLE.get_or_init(|| match UnixStream::pair() {
+        Ok((stream_a, stream_b)) => {
+            drop(stream_a);
+            drop(stream_b);
+            true
+        }
+        Err(_) => false,
+    })
+}
+
+#[cfg(not(unix))]
+fn socketpair_available() -> bool {
+    false
 }
 
 impl Default for VersionInfoConfig {

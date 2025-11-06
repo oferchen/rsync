@@ -128,6 +128,21 @@ fn version_info_report_for_daemon_brand_matches_builder() {
 }
 
 #[test]
+fn runtime_capabilities_reflect_socketpair_support() {
+    let config = VersionInfoConfig::with_runtime_capabilities();
+
+    #[cfg(unix)]
+    {
+        assert!(config.supports_socketpairs);
+    }
+
+    #[cfg(not(unix))]
+    {
+        assert!(!config.supports_socketpairs);
+    }
+}
+
+#[test]
 fn version_info_report_for_brand_with_config_matches_builder() {
     let config = VersionInfoConfig {
         supports_ipv6: false,
