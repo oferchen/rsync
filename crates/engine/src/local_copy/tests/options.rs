@@ -171,6 +171,7 @@ fn files_checksum_match_respects_algorithm_selection() {
     let algorithms = [
         SignatureAlgorithm::Md4,
         SignatureAlgorithm::Md5,
+        SignatureAlgorithm::Sha1,
         SignatureAlgorithm::Xxh64 { seed: 7 },
         SignatureAlgorithm::Xxh3 { seed: 13 },
         SignatureAlgorithm::Xxh3_128 { seed: 0 },
