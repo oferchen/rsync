@@ -1,33 +1,7 @@
 #!/bin/sh
 set -e
 
-ALT_NAME="rsync"
-ALT_IMPL="/usr/libexec/oc-rsync/rsync"
-
-have_update_alternatives() {
-    command -v update-alternatives >/dev/null 2>&1
-}
-
-remove_alternatives() {
-    if ! have_update_alternatives; then
-        return 0
-    fi
-
-    if update-alternatives --display "${ALT_NAME}" >/dev/null 2>&1; then
-        update-alternatives --remove "${ALT_NAME}" "${ALT_IMPL}" >/dev/null || true
-    fi
-}
-
-case "$1" in
-    remove|deconfigure)
-        remove_alternatives
-        ;;
-    upgrade|failed-upgrade)
-        :
-        ;;
-    *)
-        :
-        ;;
-esac
+# No alternative symlinks are registered by oc-rsync, so removal simply needs
+# to succeed without touching the system rsync binaries.
 
 exit 0

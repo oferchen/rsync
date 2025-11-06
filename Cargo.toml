@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-description = "Pure-Rust implementation of the rsync client and daemon binaries (with oc-rsync compatibility wrappers)"
+description = "Pure-Rust implementation of the rsync client and daemon binaries installed as oc-rsync/oc-rsyncd for side-by-side deployment"
 repository = "https://github.com/oferchen/rsync"
 publish = true
 autobins = false
@@ -116,21 +116,19 @@ section = "utils"
 priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
-extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding."
-features = ["legacy-binaries"]
+extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries installed as oc-rsync and oc-rsyncd so they can coexist with the system rsync package without replacing it."
 conflicts = []
 replaces = []
 
 assets = [
     ["target/dist/oc-rsync", "usr/bin/oc-rsync", "755"],
     ["target/dist/oc-rsyncd", "usr/bin/oc-rsyncd", "755"],
-    ["target/dist/rsync", "usr/libexec/oc-rsync/rsync", "755"],
-    ["target/dist/rsyncd", "usr/libexec/oc-rsync/rsyncd", "755"],
     ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
     ["packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
+    ["packaging/examples/oc-rsyncd.conf", "usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", "644"],
 ]
 conf-files = [
     "etc/oc-rsyncd/oc-rsyncd.conf",
@@ -141,16 +139,15 @@ maintainer-scripts = "packaging/deb"
 
 [package.metadata.rpm]
 package = "oc-rsync"
-summary = "Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)"
+summary = "Rust implementation of rsync-compatible client and daemon installed as oc-rsync/oc-rsyncd"
 assets = [
     { source = "target/dist/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
     { source = "target/dist/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
-    { source = "target/dist/rsync", dest = "/usr/libexec/oc-rsync/rsync", mode = "0755" },
-    { source = "target/dist/rsyncd", dest = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" },
     { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
     { source = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
+    { source = "packaging/examples/oc-rsyncd.conf", dest = "/usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", mode = "0644" },
 ]
 
 [package.metadata.rpm.files."../packaging/systemd/oc-rsyncd.service"]
@@ -174,160 +171,28 @@ mode = "0644"
 post = '''
 set -e
 
-ALT_NAME=rsync
-ALT_MASTER=/usr/bin/rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
-ALT_SLAVE_NAME=rsyncd
-ALT_SLAVE_LINK=/usr/bin/rsyncd
-ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
-ALT_PRIORITY=30
-DEFAULTS_FILE=/etc/default/oc-rsyncd
-
-is_truthy() {
-    case "$1" in
-        [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|1)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-should_register_alternatives() {
-    if is_truthy "${OC_RSYNC_PACKAGE_DISABLE_ALTERNATIVES:-}"; then
-        return 1
-    fi
-
-    if [ -n "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES:-}" ]; then
-        if is_truthy "${OC_RSYNC_PACKAGE_REGISTER_ALTERNATIVES}"; then
-            return 0
-        fi
-        return 1
-    fi
-
-    if [ -r "${DEFAULTS_FILE}" ]; then
-        . "${DEFAULTS_FILE}"
-    fi
-
-    if is_truthy "${OC_RSYNC_REGISTER_ALTERNATIVES:-}"; then
-        return 0
-    fi
-
-    return 1
-}
-
-detect_alternatives() {
-    if command -v update-alternatives >/dev/null 2>&1; then
-        ALT_TOOL=update-alternatives
-    elif command -v alternatives >/dev/null 2>&1; then
-        ALT_TOOL=alternatives
-    else
-        ALT_TOOL=
-    fi
-}
-
-register_alternatives() {
-    if ! should_register_alternatives; then
-        return 0
-    fi
-
-    detect_alternatives
-    if [ -z "$ALT_TOOL" ]; then
-        return 0
-    fi
-
-    if [ -e "$ALT_MASTER" ] && [ ! -L "$ALT_MASTER" ]; then
-        if ! "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    "$ALT_TOOL" --install "$ALT_MASTER" "$ALT_NAME" "$ALT_IMPL" "$ALT_PRIORITY" --slave "$ALT_SLAVE_LINK" "$ALT_SLAVE_NAME" "$ALT_SLAVE_IMPL" >/dev/null
-}
-
-register_alternatives
+# oc-rsync installs dedicated oc-* binaries and deliberately avoids
+# update-alternatives integration so the system rsync package remains untouched.
+exit 0
 '''
 preun = '''
 set -e
 
-ALT_NAME=rsync
-ALT_MASTER=/usr/bin/rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
-ALT_SLAVE_NAME=rsyncd
-ALT_SLAVE_LINK=/usr/bin/rsyncd
-ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
-
-detect_alternatives() {
-    if command -v update-alternatives >/dev/null 2>&1; then
-        ALT_TOOL=update-alternatives
-    elif command -v alternatives >/dev/null 2>&1; then
-        ALT_TOOL=alternatives
-    else
-        ALT_TOOL=
-    fi
-}
-
-remove_alternatives() {
-    detect_alternatives
-    if [ -z "$ALT_TOOL" ]; then
-        return 0
-    fi
-
-    if "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
-        "$ALT_TOOL" --remove "$ALT_NAME" "$ALT_IMPL" >/dev/null || true
-    fi
-}
-
-if [ "$1" -eq 0 ]; then
-    remove_alternatives
-fi
+exit 0
 '''
 postun = '''
 set -e
 
-ALT_NAME=rsync
-ALT_MASTER=/usr/bin/rsync
-ALT_IMPL=/usr/libexec/oc-rsync/rsync
-ALT_SLAVE_NAME=rsyncd
-ALT_SLAVE_LINK=/usr/bin/rsyncd
-ALT_SLAVE_IMPL=/usr/libexec/oc-rsync/rsyncd
-
-detect_alternatives() {
-    if command -v update-alternatives >/dev/null 2>&1; then
-        ALT_TOOL=update-alternatives
-    elif command -v alternatives >/dev/null 2>&1; then
-        ALT_TOOL=alternatives
-    else
-        ALT_TOOL=
-    fi
-}
-
-remove_alternatives() {
-    detect_alternatives
-    if [ -z "$ALT_TOOL" ]; then
-        return 0
-    fi
-
-    if "$ALT_TOOL" --display "$ALT_NAME" >/dev/null 2>&1; then
-        "$ALT_TOOL" --remove "$ALT_NAME" "$ALT_IMPL" >/dev/null || true
-    fi
-}
-
-if [ "$1" -eq 0 ]; then
-    remove_alternatives
-fi
+exit 0
 '''
 
 [package.metadata.rpm.cargo]
 profile = "dist"
-buildflags = ["--profile", "dist", "--bins", "--features", "legacy-binaries"]
+buildflags = ["--profile", "dist", "--bins"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
 "oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
-"rsync" = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
-"rsyncd" = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 
 [profile.dist]
 inherits = "release"
