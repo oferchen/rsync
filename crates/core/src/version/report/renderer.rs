@@ -333,6 +333,7 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("xxh64"),
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
+        Cow::Borrowed("sha1"),
         Cow::Borrowed("none"),
     ]
 }
@@ -346,6 +347,7 @@ pub(crate) fn default_compress_algorithms() -> Vec<Cow<'static, str>> {
         algorithms.push(Cow::Borrowed("zstd"));
     }
 
+    algorithms.push(Cow::Borrowed("zlib"));
     algorithms.push(Cow::Borrowed("none"));
     algorithms
 }
