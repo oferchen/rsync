@@ -31,9 +31,9 @@ pub(crate) use operands::{extract_operands, parse_bind_address_argument};
 #[cfg(test)]
 pub(crate) use options::{SizeParseError, pow_u128_for_size};
 pub(crate) use options::{
-    parse_checksum_seed_argument, parse_human_readable_level, parse_max_delete_argument,
-    parse_modify_window_argument, parse_protocol_version_arg, parse_size_limit_argument,
-    parse_timeout_argument,
+    parse_block_size_argument, parse_checksum_seed_argument, parse_human_readable_level,
+    parse_max_delete_argument, parse_modify_window_argument, parse_protocol_version_arg,
+    parse_size_limit_argument, parse_timeout_argument,
 };
 
 #[cfg(test)]

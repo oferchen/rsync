@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::num::{IntErrorKind, NonZeroU64};
+use std::num::{IntErrorKind, NonZeroU32, NonZeroU64};
 use std::str::FromStr;
 
 use rsync_core::{
@@ -287,6 +287,41 @@ pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64
         )
         .with_role(Role::Client)),
     }
+}
+
+pub(crate) fn parse_block_size_argument(value: &OsStr) -> Result<NonZeroU32, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    let limit = parse_size_limit_argument(value, "--block-size")?;
+    if limit == 0 {
+        return Err(rsync_error!(
+            1,
+            format!("invalid --block-size '{display}': size must be positive")
+        )
+        .with_role(Role::Client));
+    }
+
+    let block_size = u32::try_from(limit).map_err(|_| {
+        rsync_error!(
+            1,
+            format!("invalid --block-size '{display}': size exceeds the supported 32-bit range")
+        )
+        .with_role(Role::Client)
+    })?;
+
+    NonZeroU32::new(block_size).ok_or_else(|| {
+        rsync_error!(
+            1,
+            format!("invalid --block-size '{display}': size must be positive")
+        )
+        .with_role(Role::Client)
+    })
 }
 
 fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {

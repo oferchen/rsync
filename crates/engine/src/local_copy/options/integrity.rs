@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 use crate::signature::SignatureAlgorithm;
@@ -52,6 +53,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Applies an explicit delta-transfer block size override.
+    #[must_use]
+    #[doc(alias = "--block-size")]
+    pub const fn with_block_size_override(mut self, block_size: Option<NonZeroU32>) -> Self {
+        self.block_size_override = block_size;
+        self
+    }
+
     /// Applies the modification time tolerance used when comparing files.
     #[must_use]
     #[doc(alias = "--modify-window")]
@@ -94,6 +103,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn update_enabled(&self) -> bool {
         self.update
+    }
+
+    /// Returns the configured delta-transfer block size override, if any.
+    #[must_use]
+    pub const fn block_size_override(&self) -> Option<NonZeroU32> {
+        self.block_size_override
     }
 
     /// Returns the modification time tolerance applied during comparisons.

@@ -103,7 +103,9 @@ pub(super) fn execute_transfer(
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
         match existing_metadata {
-            Some(existing) if existing.is_file() => build_delta_signature(destination, existing)?,
+            Some(existing) if existing.is_file() => {
+                build_delta_signature(destination, existing, context.block_size_override())?
+            }
             _ => None,
         }
     } else {

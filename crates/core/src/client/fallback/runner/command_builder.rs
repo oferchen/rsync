@@ -41,6 +41,7 @@ pub(crate) fn prepare_invocation(
         max_delete,
         min_size,
         max_size,
+        block_size,
         checksum,
         checksum_choice,
         checksum_seed,
@@ -175,6 +176,11 @@ pub(crate) fn prepare_invocation(
     }
     if let Some(spec) = max_size {
         let mut arg = OsString::from("--max-size=");
+        arg.push(spec);
+        command_args.push(arg);
+    }
+    if let Some(spec) = block_size {
+        let mut arg = OsString::from("--block-size=");
         arg.push(spec);
         command_args.push(arg);
     }

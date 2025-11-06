@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 #[test]
 fn builder_enabling_compress_sets_default_level() {
     let config = ClientConfig::builder()
@@ -39,6 +41,22 @@ fn builder_sets_max_file_size_limit() {
         .build();
 
     assert_eq!(cleared.max_file_size(), None);
+}
+
+#[test]
+fn builder_sets_block_size_override() {
+    let override_size = NonZeroU32::new(16_384).unwrap();
+    let config = ClientConfig::builder()
+        .block_size_override(Some(override_size))
+        .build();
+
+    assert_eq!(config.block_size_override(), Some(override_size));
+
+    let cleared = ClientConfig::builder()
+        .block_size_override(Some(override_size))
+        .block_size_override(None)
+        .build();
+    assert_eq!(cleared.block_size_override(), None);
 }
 
 #[test]
